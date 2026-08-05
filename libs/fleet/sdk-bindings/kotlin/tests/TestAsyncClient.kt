@@ -32,8 +32,8 @@ private fun textExpected(
 private fun tokenExpected() = textExpected(
     "POST",
     "https://keycloak.invalid/token",
-    listOf("accept" to "application/json", "content-type" to "application/x-www-form-urlencoded"),
-    "grant_type=client_credentials&client_id=client-id&client_secret=client-secret".encodeToByteArray(),
+    listOf("accept" to "application/json", "content-type" to "application/x-www-form-urlencoded", "authorization" to "Basic Y2xpZW50LWlkOmNsaWVudC1zZWNyZXQ="),
+    "grant_type=client_credentials".encodeToByteArray(),
     200u,
     "{\"access_token\":\"offline-token\",\"expires_in\":3600}",
 )
@@ -50,13 +50,13 @@ private fun serviceExpected(body: ByteArray?, response: ByteArray) = Expected(
 private fun lifecycleQueue() = listOf(
     tokenExpected(),
     textExpected("POST", "https://cyclops.invalid/api/namespaces", jsonHeaders, "{\"name\":\"default\"}".encodeToByteArray(), 201u, "{}"),
-    textExpected("POST", "https://cyclops.invalid/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools", jsonHeaders, "{\"apiVersion\":\"cua.ai/v1\",\"kind\":\"OSGymWorkspacePool\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"replicas\":1,\"template\":{\"containerDiskImage\":\"registry.example/desktop:offline\"},\"services\":[{\"name\":\"mcp\",\"targetPort\":8080}]},\"status\":null}".encodeToByteArray(), 201u, "{\"apiVersion\":\"cua.ai/v1\",\"kind\":\"OSGymWorkspacePool\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"replicas\":1,\"template\":{\"containerDiskImage\":\"registry.example/desktop:offline\"},\"services\":[{\"name\":\"mcp\",\"targetPort\":8080}]},\"status\":null}"),
+    textExpected("POST", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools", jsonHeaders, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxWarmPool\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"replicas\":1,\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":null}".encodeToByteArray(), 201u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxWarmPool\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"replicas\":1,\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":null}"),
     textExpected("POST", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims", jsonHeaders, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxClaim\",\"metadata\":{\"namespace\":\"default\",\"name\":\"claim-1\",\"labels\":null},\"spec\":{\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":null}".encodeToByteArray(), 201u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxClaim\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":{\"phase\":\"Bound\",\"sandbox\":{\"name\":\"offline-sandbox\"}}}"),
     textExpected("GET", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default", jsonHeaders, null, 200u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxClaim\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":{\"phase\":\"Bound\",\"sandbox\":{\"name\":\"offline-sandbox\"}}}"),
-    textExpected("GET", "https://cyclops.invalid/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools/default", jsonHeaders, null, 200u, "{\"apiVersion\":\"cua.ai/v1\",\"kind\":\"OSGymWorkspacePool\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"replicas\":1,\"template\":{\"containerDiskImage\":\"registry.example/desktop:offline\"},\"services\":[{\"name\":\"mcp\",\"targetPort\":8080}]},\"status\":null}"),
+    textExpected("GET", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default", jsonHeaders, null, 200u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxTemplate\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"vmTemplate\":{\"containerDiskImage\":\"registry.example/desktop:offline\",\"services\":[{\"name\":\"mcp\",\"targetPort\":8080}]}}}"),
     serviceExpected("{\"offline\":true}".encodeToByteArray(), "offline service accepted".encodeToByteArray()),
     textExpected("DELETE", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default", jsonHeaders, null, 204u, ""),
-    textExpected("DELETE", "https://cyclops.invalid/api/k8s/apis/cua.ai/v1/namespaces/default/osgymworkspacepools/default", jsonHeaders, null, 204u, ""),
+    textExpected("DELETE", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools/default", jsonHeaders, null, 204u, ""),
     textExpected("DELETE", "https://cyclops.invalid/api/namespaces/default", jsonHeaders, null, 204u, ""),
 )
 
@@ -95,8 +95,7 @@ private fun serviceRequest(body: ByteArray?) = HttpRequest("POST", "https://igno
 private val sandbox = Sandbox("default", "default", "offline-sandbox", listOf("mcp"))
 
 fun main() = runBlocking {
-    val vmTemplate = VmTemplate("registry.example/desktop:offline", null, null, null, null, null, null, null, null, null, null, null, null, null)
-    val spec = PoolSpec(1u, PoolTemplate(null, null, null, null, null, vmTemplate.containerDiskImage, null, null, null, null, null, null), null, listOf(SandboxService("mcp", 8080u, null)))
+    val spec = OsGymSandboxWarmPoolSpec(1u, SandboxTemplateRef("default"), null)
     val transport = ScriptedHttpClient(lifecycleQueue())
     val client = CyclopsClient.connect(configuration(), transport)
     val pool = client.createPool(CreatePoolRequest("default", spec))

@@ -164,6 +164,10 @@ func TestK8sAllow_InfraPathsRequireAdmin(t *testing.T) {
 		{"cluster-wide pools / admin", "apis/cua.ai/v1/osgymworkspacepools", true, true},
 		{"cluster-wide claims / non-admin", "apis/osgym.cua.ai/v1alpha1/osgymsandboxclaims", false, false},
 		{"cluster-wide claims / admin", "apis/osgym.cua.ai/v1alpha1/osgymsandboxclaims", true, true},
+		{"cluster-wide warm pools / non-admin", "apis/osgym.cua.ai/v1alpha1/osgymsandboxwarmpools", false, false},
+		{"cluster-wide warm pools / admin", "apis/osgym.cua.ai/v1alpha1/osgymsandboxwarmpools", true, true},
+		{"cluster-wide templates / non-admin", "apis/osgym.cua.ai/v1alpha1/osgymsandboxtemplates", false, false},
+		{"cluster-wide sandboxes / non-admin", "apis/osgym.cua.ai/v1alpha1/osgymsandboxes", false, false},
 		{"Capsule tenants / non-admin", "apis/capsule.clastix.io/v1beta2/tenants", false, false},
 		{"Capsule tenant item / non-admin", "apis/capsule.clastix.io/v1beta2/tenants/user-u-1", false, false},
 		{"Capsule legacy tenants / non-admin", "apis/capsule.clastix.io/v1beta1/tenants", false, false},
@@ -180,6 +184,8 @@ func TestK8sAllow_InfraPathsRequireAdmin(t *testing.T) {
 		// (Capsule RBAC scopes the user to their own namespaces).
 		{"namespaced pools / non-admin", "apis/cua.ai/v1/namespaces/pool-foo/osgymworkspacepools", false, true},
 		{"namespaced claims / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxclaims", false, true},
+		{"namespaced warm pools / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxwarmpools", false, true},
+		{"namespaced templates / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxtemplates", false, true},
 		{"events list / non-admin (contents filtered elsewhere)", "api/v1/events", false, true},
 		{"namespaced events / non-admin", "api/v1/namespaces/pool-foo/events", false, true},
 	}

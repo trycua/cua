@@ -6,12 +6,12 @@
 //! MCP and daemon transports are downstream adapters rather than peer contracts.
 
 use cua_driver_contract::{
-    ClickInput, DragInput, EndSessionInput, EndSessionOutput, EscalateSessionInput,
-    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
-    GetSessionStateInput, HotkeyInput, MoveCursorInput, PressKeyInput, ScrollInput,
-    SessionStateOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput,
-    SetAgentCursorThemeInput, StartSessionInput, StartSessionOutput, ToolInput, TypeTextInput,
-    VerifyStateInput,
+    ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
+    EndSessionOutput, EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput,
+    GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput, HotkeyInput, InvokeMenuInput,
+    MoveCursorInput, PressKeyInput, ScrollInput, SessionStateOutput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
+    StartSessionOutput, ToolInput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -58,7 +58,8 @@ pub struct ToolResult {
     pub structured_json: Option<String>,
     pub is_error: bool,
     pub error_code: Option<String>,
-    pub verified: Option<bool>,
+    pub action: Option<ActionResult>,
+    pub verification: Option<VerifyStateOutput>,
     pub degraded: bool,
     pub raw_json: String,
 }
@@ -555,9 +556,13 @@ macro_rules! desktop_tool_methods {
             get_cursor_position: GetCursorPositionInput,
             verify_state: VerifyStateInput,
             move_cursor: MoveCursorInput,
+            set_window_frame: SetWindowFrameInput,
+            invoke_menu: InvokeMenuInput,
             click: ClickInput,
             drag: DragInput,
             scroll: ScrollInput,
+            clipboard_read: ClipboardReadInput,
+            clipboard_write: ClipboardWriteInput,
             type_text: TypeTextInput,
             press_key: PressKeyInput,
             hotkey: HotkeyInput,
@@ -1388,7 +1393,7 @@ impl CuaDriverSession {
             }
             SessionBackend::Remote(session) => session.invoke(name, arguments).await?,
         };
-        normalize_result(raw)
+        normalize_result(name, raw)
     }
 }
 
@@ -1410,7 +1415,7 @@ impl CuaDriver {
         }
         if let DriverBackend::Embedded(runtime) = &self.backend {
             let raw = runtime.invoke_from_trusted_adapter(name, arguments).await?;
-            return normalize_result(raw);
+            return normalize_result(name, raw);
         }
 
         // Trust evidence is local to the adapter/runtime boundary. A private
@@ -1486,11 +1491,22 @@ impl CuaDriver {
                 })?
             }
         };
-        normalize_result(raw)
+        normalize_result(name, raw)
     }
 }
 
 impl ToolResult {
+    /// Typed action facts when this result came from an action tool.
+    pub fn action(&self) -> Option<&ActionResult> {
+        self.action.as_ref()
+    }
+
+    /// Typed tri-state postcondition result when this result came from
+    /// `verify_state`.
+    pub fn verification(&self) -> Option<&VerifyStateOutput> {
+        self.verification.as_ref()
+    }
+
     fn typed_success<T: serde::de::DeserializeOwned>(self, tool: &str) -> Result<T, DriverError> {
         if self.is_error {
             return Err(DriverError::Tool {
@@ -1523,7 +1539,7 @@ fn parse_arguments(tool: &str, arguments_json: &str) -> Result<Value, DriverErro
     Ok(value)
 }
 
-fn normalize_result(raw: Value) -> Result<ToolResult, DriverError> {
+fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
     let object = raw.as_object().ok_or_else(|| DriverError::Protocol {
         reason: "tool result must be a JSON object".into(),
     })?;
@@ -1563,9 +1579,43 @@ fn normalize_result(raw: Value) -> Result<ToolResult, DriverError> {
             .or_else(|| value.get("refusal")?.get("code")?.as_str())
             .map(str::to_owned)
     });
-    let verified = structured
-        .and_then(|value| value.get("verified"))
-        .and_then(Value::as_bool);
+    let is_error = object
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let action = if !is_error && cua_driver_core::action_record::is_action_tool(tool) {
+        let structured = structured.ok_or_else(|| DriverError::Protocol {
+            reason: format!("{tool} response omitted ActionResult"),
+        })?;
+        let action =
+            serde_json::from_value::<ActionResult>(structured.clone()).map_err(|error| {
+                DriverError::Protocol {
+                    reason: format!("{tool} returned an invalid ActionResult: {error}"),
+                }
+            })?;
+        action
+            .validate_invariants()
+            .map_err(|error| DriverError::Protocol {
+                reason: format!("{tool} returned an invalid ActionResult: {error}"),
+            })?;
+        Some(action)
+    } else {
+        None
+    };
+    let verification = if !is_error && tool == VerifyStateInput::TOOL_NAME {
+        let structured = structured.ok_or_else(|| DriverError::Protocol {
+            reason: "verify_state response omitted VerifyStateOutput".into(),
+        })?;
+        Some(
+            serde_json::from_value::<VerifyStateOutput>(structured.clone()).map_err(|error| {
+                DriverError::Protocol {
+                    reason: format!("verify_state returned an invalid VerifyStateOutput: {error}"),
+                }
+            })?,
+        )
+    } else {
+        None
+    };
     let degraded = structured
         .and_then(|value| value.get("degraded"))
         .and_then(Value::as_bool)
@@ -1575,12 +1625,10 @@ fn normalize_result(raw: Value) -> Result<ToolResult, DriverError> {
         text: text_parts.join("\n"),
         images,
         structured_json: structured.map(Value::to_string),
-        is_error: object
-            .get("isError")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        is_error,
         error_code,
-        verified,
+        action,
+        verification,
         degraded,
         raw_json: raw.to_string(),
     })
@@ -2273,7 +2321,7 @@ mod tests {
                     {"type": "text", "text": "captured"},
                     {"type": "image", "mimeType": "image/png", "data": "cG5n"}
                 ],
-                "structuredContent": {"screenshot_width": 2, "verified": true},
+                "structuredContent": {"screenshot_width": 2},
                 "isError": false
             }
         });
@@ -2289,7 +2337,8 @@ mod tests {
             .unwrap();
         assert_eq!(result.text, "captured");
         assert_eq!(result.images[0].mime_type, "image/png");
-        assert_eq!(result.verified, Some(true));
+        assert!(result.action().is_none());
+        assert!(result.verification().is_none());
 
         let request = server.join().unwrap();
         assert_eq!(request["method"], "call");
@@ -2297,6 +2346,106 @@ mod tests {
         assert_eq!(request["args"], serde_json::json!({"session": "run-1"}));
         assert_eq!(request["observation_origin"], "direct");
         assert_eq!(request["client_kind"], "python_sdk");
+    }
+
+    #[test]
+    fn result_normalization_exposes_typed_action_and_verification_views() {
+        let action = normalize_result(
+            "type_text",
+            serde_json::json!({
+                "content": [{"type": "text", "text": "Action outcome"}],
+                "structuredContent": {
+                    "effect": "confirmed",
+                    "route": "accessibility",
+                    "delivery": {"mode": "background"},
+                    "evidence": [{"kind": "value_readback"}]
+                },
+                "isError": false
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            action.action().map(|value| value.effect),
+            Some(cua_driver_contract::ActionEffect::Confirmed)
+        );
+        assert!(action.verification().is_none());
+
+        let verification = normalize_result(
+            "verify_state",
+            serde_json::json!({
+                "content": [{"type": "text", "text": "satisfied"}],
+                "structuredContent": {
+                    "status": "satisfied",
+                    "stable": true,
+                    "elapsed_ms": 42,
+                    "samples": 2,
+                    "predicates": []
+                },
+                "isError": false
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            verification.verification().map(|value| value.status),
+            Some(cua_driver_contract::VerificationStatus::Satisfied)
+        );
+        assert!(verification.action().is_none());
+    }
+
+    #[test]
+    fn result_normalization_rejects_an_unsubstantiated_confirmation() {
+        let error = normalize_result(
+            "browser_click",
+            serde_json::json!({
+                "content": [{"type": "text", "text": "claimed success"}],
+                "structuredContent": {
+                    "effect": "confirmed",
+                    "route": "trusted_input"
+                },
+                "isError": false
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DriverError::Protocol { reason }
+                if reason.contains("confirmed effect requires evidence")
+        ));
+    }
+
+    #[test]
+    fn result_normalization_fails_closed_on_legacy_or_missing_action_payloads() {
+        let legacy = normalize_result(
+            "click",
+            serde_json::json!({
+                "content": [{"type": "text", "text": "legacy click"}],
+                "structuredContent": {
+                    "path": "ax",
+                    "verified": true
+                },
+                "isError": false
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            legacy,
+            DriverError::Protocol { reason }
+                if reason.contains("invalid ActionResult")
+        ));
+
+        let missing = normalize_result(
+            "click",
+            serde_json::json!({
+                "content": [{"type": "text", "text": "missing payload"}],
+                "isError": false
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            missing,
+            DriverError::Protocol { reason }
+                if reason.contains("omitted ActionResult")
+        ));
     }
 
     #[tokio::test]

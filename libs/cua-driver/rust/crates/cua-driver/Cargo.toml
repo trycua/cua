@@ -97,3 +97,6 @@ windows = { version = "0.61", features = [
     "Win32_Security",
     "Win32_System_Threading",
 ] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+core-foundation = "0.10"

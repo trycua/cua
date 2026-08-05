@@ -4,7 +4,7 @@ use cyclops_sdk::{
     CreatePoolRequest, CyclopsClient, CyclopsConfiguration, CyclopsCredentials, HttpHeader,
     HttpResponse, Pool, ResourceMetadata, SdkError,
 };
-use cyclops_sdk_schema::PoolSpec;
+use cyclops_sdk_schema::OSGymSandboxWarmPoolSpec;
 use futures_timer::Delay;
 use std::{sync::Arc, time::Duration};
 use support::ScriptedHttpClient;
@@ -12,8 +12,8 @@ use support::ScriptedHttpClient;
 const BASE_URL: &str = "https://cyclops.example:8443";
 const TOKEN_URL: &str = "https://identity.example/oauth/token";
 const NAMESPACE: &str = "example-pool";
-const COLLECTION: &str = "https://cyclops.example:8443/api/k8s/apis/cua.ai/v1/namespaces/example-pool/osgymworkspacepools";
-const ITEM: &str = "https://cyclops.example:8443/api/k8s/apis/cua.ai/v1/namespaces/example-pool/osgymworkspacepools/example-pool";
+const COLLECTION: &str = "https://cyclops.example:8443/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxwarmpools";
+const ITEM: &str = "https://cyclops.example:8443/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxwarmpools/example-pool";
 const NAMESPACE_COLLECTION: &str = "https://cyclops.example:8443/api/namespaces";
 const NAMESPACE_ITEM: &str = "https://cyclops.example:8443/api/namespaces/example-pool";
 
@@ -295,7 +295,7 @@ async fn creates_for_different_namespaces_proceed_concurrently() {
     assert_eq!(second_pool, pool_named(OTHER_NAMESPACE));
 
     let other_collection = format!(
-        "https://cyclops.example:8443/api/k8s/apis/cua.ai/v1/namespaces/{OTHER_NAMESPACE}/osgymworkspacepools"
+        "https://cyclops.example:8443/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/{OTHER_NAMESPACE}/osgymsandboxwarmpools"
     );
     let requests = resource_requests(&http).await;
     assert_eq!(requests.len(), 3);
@@ -371,33 +371,25 @@ async fn create_and_delete_for_the_same_namespace_do_not_interleave() {
 }
 
 #[tokio::test]
-async fn lists_gets_and_updates_typed_pools() {
+async fn gets_named_pool_and_updates_typed_pools() {
     let current = pool();
     let updated = Pool {
         spec: serde_json::from_value(serde_json::json!({
             "replicas": 2,
-            "template": { "containerDiskImage": "registry.example/updated:latest" },
+            "sandboxTemplateRef": { "name": "example-pool-template" },
         }))
         .unwrap(),
         ..pool()
     };
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
-        Ok(response(
-            200,
-            &json_bytes(&serde_json::json!({ "items": [current.clone()] })),
-        )),
         Ok(json_response(200, &current)),
         Ok(json_response(200, &updated)),
     ]));
     let client = client(Arc::clone(&http));
 
     assert_eq!(
-        client.clone().list_pools(NAMESPACE.into()).await.unwrap(),
-        vec![current.clone()]
-    );
-    assert_eq!(
-        client.clone().get_pool(current.clone()).await.unwrap(),
+        client.clone().get_pool(NAMESPACE.into()).await.unwrap(),
         current
     );
     assert_eq!(
@@ -406,9 +398,171 @@ async fn lists_gets_and_updates_typed_pools() {
     );
 
     let requests = resource_requests(&http).await;
-    assert_request(&requests[0], "GET", COLLECTION, None);
-    assert_request(&requests[1], "GET", ITEM, None);
-    assert_request(&requests[2], "PUT", ITEM, Some(&json_bytes(&updated)));
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_merge_patch_request(&requests[1], ITEM, Some(&json_bytes(&updated)));
+}
+
+#[tokio::test]
+async fn reconcile_updates_an_existing_named_pool() {
+    let current = pool();
+    let updated = Pool {
+        spec: serde_json::from_value(serde_json::json!({
+            "replicas": 2,
+            "sandboxTemplateRef": { "name": "example-pool-template" },
+        }))
+        .unwrap(),
+        ..pool()
+    };
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &current)),
+        Ok(json_response(200, &updated)),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert_eq!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: updated.spec.clone(),
+            })
+            .await
+            .unwrap(),
+        updated.clone()
+    );
+
+    let requests = resource_requests(&http).await;
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_merge_patch_request(&requests[1], ITEM, Some(&json_bytes(&updated)));
+}
+
+#[tokio::test]
+async fn reconcile_creates_after_named_pool_is_not_found() {
+    let created = pool();
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(404, b"not found")),
+        Ok(response(409, b"namespace already exists")),
+        Ok(json_response(201, &created)),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert_eq!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: pool_spec(),
+            })
+            .await
+            .unwrap(),
+        created
+    );
+
+    let requests = resource_requests(&http).await;
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_request(
+        &requests[1],
+        "POST",
+        NAMESPACE_COLLECTION,
+        Some(br#"{"name":"example-pool"}"#),
+    );
+    assert_request(&requests[2], "POST", COLLECTION, Some(&json_bytes(&pool())));
+}
+
+#[tokio::test]
+async fn reconcile_attempts_create_after_named_pool_is_forbidden() {
+    let created = pool();
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"get forbidden")),
+        Ok(response(409, b"namespace already exists")),
+        Ok(json_response(201, &created)),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert_eq!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: pool_spec(),
+            })
+            .await
+            .unwrap(),
+        created
+    );
+
+    let requests = resource_requests(&http).await;
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_request(
+        &requests[1],
+        "POST",
+        NAMESPACE_COLLECTION,
+        Some(br#"{"name":"example-pool"}"#),
+    );
+    assert_request(&requests[2], "POST", COLLECTION, Some(&json_bytes(&pool())));
+}
+
+#[tokio::test]
+async fn reconcile_returns_create_error_after_named_pool_is_forbidden() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"get forbidden")),
+        Ok(response(409, b"namespace already exists")),
+        Ok(response(422, b"create rejected")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert!(matches!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: pool_spec(),
+            })
+            .await,
+        Err(SdkError::Status {
+            ref operation,
+            status: 422,
+            ref body,
+        }) if operation == "create pool" && body == "create rejected"
+    ));
+
+    let requests = resource_requests(&http).await;
+    assert_eq!(requests.len(), 3);
+    assert_request(&requests[0], "GET", ITEM, None);
+    assert_request(
+        &requests[1],
+        "POST",
+        NAMESPACE_COLLECTION,
+        Some(br#"{"name":"example-pool"}"#),
+    );
+    assert_request(&requests[2], "POST", COLLECTION, Some(&json_bytes(&pool())));
+}
+
+#[tokio::test]
+async fn reconcile_returns_unrelated_named_pool_read_error_without_creating() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(500, b"read failed")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert!(matches!(
+        client
+            .reconcile_pool(CreatePoolRequest {
+                namespace: NAMESPACE.into(),
+                spec: pool_spec(),
+            })
+            .await,
+        Err(SdkError::Status {
+            ref operation,
+            status: 500,
+            ref body,
+        }) if operation == "get pool" && body == "read failed"
+    ));
+
+    let requests = resource_requests(&http).await;
+    assert_eq!(requests.len(), 1);
+    assert_request(&requests[0], "GET", ITEM, None);
 }
 
 #[tokio::test]
@@ -449,7 +603,7 @@ async fn rejects_deleting_a_pool_outside_the_namespace_owned_lifecycle() {
 }
 
 #[tokio::test]
-async fn gets_and_updates_non_lifecycle_pool_resources_without_namespace_cleanup() {
+async fn updates_non_lifecycle_pool_resources_without_namespace_cleanup() {
     let other = Pool {
         metadata: ResourceMetadata {
             namespace: NAMESPACE.into(),
@@ -462,20 +616,17 @@ async fn gets_and_updates_non_lifecycle_pool_resources_without_namespace_cleanup
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
         Ok(json_response(200, &other)),
-        Ok(json_response(200, &other)),
     ]));
     let client = client(Arc::clone(&http));
 
-    assert_eq!(client.clone().get_pool(other.clone()).await.unwrap(), other);
     assert_eq!(
         client.update_pool(other.clone()).await.unwrap(),
         other.clone()
     );
 
     let requests = resource_requests(&http).await;
-    assert_eq!(requests.len(), 2);
-    assert_request(&requests[0], "GET", &other_item, None);
-    assert_request(&requests[1], "PUT", &other_item, Some(&json_bytes(&other)));
+    assert_eq!(requests.len(), 1);
+    assert_merge_patch_request(&requests[0], &other_item, Some(&json_bytes(&other)));
 }
 
 #[tokio::test]
@@ -508,7 +659,7 @@ async fn maps_invalid_json_and_non_success_responses() {
     ]));
     let invalid_json_client = client(Arc::clone(&invalid_json_http));
     assert!(matches!(
-        invalid_json_client.get_pool(pool()).await,
+        invalid_json_client.get_pool(NAMESPACE.into()).await,
         Err(SdkError::Body { .. })
     ));
 
@@ -562,17 +713,7 @@ async fn rejects_invalid_dns_labels_without_http_requests() {
     ] {
         let http = Arc::new(ScriptedHttpClient::new([]));
         let client = client(Arc::clone(&http));
-        let error = client
-            .get_pool(Pool {
-                metadata: ResourceMetadata {
-                    namespace: NAMESPACE.into(),
-                    name: value.into(),
-                    labels: None,
-                },
-                ..pool()
-            })
-            .await
-            .unwrap_err();
+        let error = client.get_pool(value.into()).await.unwrap_err();
         assert!(matches!(
             error,
             SdkError::InvalidResourceName {
@@ -611,8 +752,8 @@ fn pool() -> Pool {
 
 fn pool_named(namespace: &str) -> Pool {
     Pool {
-        api_version: "cua.ai/v1".into(),
-        kind: "OSGymWorkspacePool".into(),
+        api_version: "osgym.cua.ai/v1alpha1".into(),
+        kind: "OSGymSandboxWarmPool".into(),
         metadata: ResourceMetadata {
             namespace: namespace.into(),
             name: namespace.into(),
@@ -623,10 +764,10 @@ fn pool_named(namespace: &str) -> Pool {
     }
 }
 
-fn pool_spec() -> PoolSpec {
+fn pool_spec() -> OSGymSandboxWarmPoolSpec {
     serde_json::from_value(serde_json::json!({
         "replicas": 1,
-        "template": { "containerDiskImage": "registry.example/image:latest" },
+        "sandboxTemplateRef": { "name": "example-pool-template" },
     }))
     .unwrap()
 }
@@ -653,6 +794,29 @@ fn response(status: u16, body: &[u8]) -> HttpResponse {
 
 async fn resource_requests(http: &ScriptedHttpClient) -> Vec<cyclops_sdk::HttpRequest> {
     http.requests().await.into_iter().skip(1).collect()
+}
+
+fn assert_merge_patch_request(request: &cyclops_sdk::HttpRequest, url: &str, body: Option<&[u8]>) {
+    assert_eq!(request.method, "PATCH");
+    assert_eq!(request.url, url);
+    assert_eq!(request.body.as_deref(), body);
+    assert_eq!(
+        request.headers,
+        vec![
+            HttpHeader {
+                name: "accept".into(),
+                value: "application/json".into(),
+            },
+            HttpHeader {
+                name: "content-type".into(),
+                value: "application/merge-patch+json".into(),
+            },
+            HttpHeader {
+                name: "authorization".into(),
+                value: "Bearer token-a".into(),
+            },
+        ]
+    );
 }
 
 fn assert_request(

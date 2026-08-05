@@ -18,6 +18,8 @@
 
 pub mod bindings;
 pub mod cache;
+pub mod enablement;
+pub mod exact_target;
 pub mod tree;
 pub mod window_scope;
 

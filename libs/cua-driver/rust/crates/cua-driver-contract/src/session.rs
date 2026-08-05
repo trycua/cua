@@ -52,7 +52,7 @@ fn start() -> ToolContract {
 fn escalate() -> ToolContract {
     contract::<EscalateSessionInput, SessionStateOutput>(
         "escalate_session",
-        "Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. This is a one-way transition for the live session and records a bounded reason.",
+        "Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. Escalation is permanent for that session and disables window-scoped tools. To recover window scope, call end_session, then start_session with a new session id.",
         &["session.capture_scope.escalate"],
         ToolAnnotations {
             read_only: false,

@@ -22,6 +22,7 @@ from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost, localhost
+from cua_sandbox.pool import Pool, Template
 from cua_sandbox.runtime.compat import (
     RuntimeSupport,
     check_local_support,
@@ -29,12 +30,42 @@ from cua_sandbox.runtime.compat import (
 )
 from cua_sandbox.sandbox import Sandbox, SandboxInfo, sandbox
 from cua_sandbox.transport.cloud import CloudTransport
+from fleet_sdk import (
+    ClaimSpec,
+    CreatePoolRequest,
+    CreateTemplateRequest,
+    Firmware,
+    OsGymSandboxTemplateSpec,
+    OsGymSandboxWarmPoolSpec,
+    RuntimeKind,
+    SandboxService,
+    SandboxTemplateRef,
+    ServiceProtocol,
+)
+from fleet_sdk import Template as TemplateResource
+from fleet_sdk import (
+    VmTemplate,
+)
 
 __all__ = [
     "configure",
     "login",
     "whoami",
     "Image",
+    "Pool",
+    "Template",
+    "TemplateResource",
+    "CreatePoolRequest",
+    "CreateTemplateRequest",
+    "ClaimSpec",
+    "SandboxTemplateRef",
+    "OsGymSandboxWarmPoolSpec",
+    "OsGymSandboxTemplateSpec",
+    "RuntimeKind",
+    "VmTemplate",
+    "SandboxService",
+    "ServiceProtocol",
+    "Firmware",
     "Sandbox",
     "SandboxInfo",
     "sandbox",

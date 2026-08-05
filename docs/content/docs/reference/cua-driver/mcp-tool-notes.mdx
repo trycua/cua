@@ -21,6 +21,10 @@ Several parameters are a **shared cross-platform contract**: the same JSON shape
 
 The `required` set is uniform across platforms: `click` requires nothing, `scroll` requires `direction`, and `zoom` requires `window_id` plus `x1`/`y1`/`x2`/`y2`. `pid` is **conditionally** required. Every per-window action needs it; a windowless desktop-scope call omits it. Code validates that rule with a clear error rather than pinning it in the schema, so a client that omits `pid` for a desktop-scope action is not schema-rejected.
 
+### PID-only window targets
+
+A window-scoped action may omit `window_id` only when its `pid` owns exactly one eligible top-level window. The driver resolves that unique window before dispatch. When the PID owns multiple windows, it sends no input and returns `code: "ambiguous_window_target"`, `effect: "refused"`, and candidate metadata. Select a candidate from that result or `list_windows({pid})`, then retry with the exact `window_id`. A PID with no eligible windows returns `window_target_not_found`. Explicit `(pid, window_id)` and `element_token` targets keep their exact resolution behavior.
+
 ### Platform-specific parameters
 
 A few parameters are platform-specific by design and are intentionally NOT part of the shared contract:

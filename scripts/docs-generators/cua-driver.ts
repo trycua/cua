@@ -626,6 +626,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
         'launch_app',
         'kill_app',
         'bring_to_front',
+        'set_window_frame',
         'click',
         'double_click',
         'right_click',
@@ -642,6 +643,10 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
     {
       title: 'Browser tools',
       tools: ['page'],
+    },
+    {
+      title: 'Clipboard tools',
+      tools: ['clipboard_read', 'clipboard_write'],
     },
     {
       title: 'Recording tools',
@@ -806,6 +811,7 @@ function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
         return 100;
       if (name === 'y' || name === 'y1' || name === 'y2' || name === 'from_y' || name === 'to_y')
         return 200;
+      if (prop.minimum !== undefined && prop.minimum > 0.5) return prop.minimum;
       return 0.5;
     case 'boolean':
       return false;

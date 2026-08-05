@@ -37,16 +37,19 @@ private func required(_ name: String) -> String {
     return value
 }
 
-private func poolSpec() -> PoolSpec {
-    PoolSpec(
-        replicas: 1,
-        template: PoolTemplate(
-            runtime: nil, runtimeClassName: nil, nodeSelector: nil, tolerations: nil, command: nil,
-            containerDiskImage: required("CUA_IMAGE"), imagePullSecret: required("CUA_IMAGE_PULL_SECRET"),
-            cpuCores: 4, memory: "4Gi", firmware: nil, probes: nil, oidc: nil
-        ),
-        autoscaling: nil,
-        services: [SandboxService(name: "mcp", targetPort: 3000, protocol: nil)]
+private func poolSpec(templateName: String) -> OsGymSandboxWarmPoolSpec {
+    OsGymSandboxWarmPoolSpec(replicas: 1, sandboxTemplateRef: SandboxTemplateRef(name: templateName), autoscaling: nil)
+}
+
+private func templateSpec() -> OsGymSandboxTemplateSpec {
+    OsGymSandboxTemplateSpec(
+        vmTemplate: VmTemplate(
+            containerDiskImage: required("CUA_IMAGE"), command: nil, runtime: nil, runtimeClassName: nil,
+            nodeSelector: nil, tolerations: nil, imagePullPolicy: nil,
+            imagePullSecret: required("CUA_IMAGE_PULL_SECRET"),
+            cpuCores: 4, memory: "4Gi", firmware: nil, probes: nil,
+            services: [SandboxService(name: "mcp", targetPort: 3000, protocol: nil)], oidc: nil
+        )
     )
 }
 
@@ -78,11 +81,16 @@ private func initializeMcp(client: CyclopsClient, sandbox: Sandbox) async throws
     }
 }
 
-private func cleanup(client: CyclopsClient, claim: Claim?, pool: Pool?) async {
+private func cleanup(client: CyclopsClient, claim: Claim?, template: Template?, pool: Pool?) async {
     do {
         if let claim { try await client.deleteClaim(claim: claim) }
     } catch {
         FileHandle.standardError.write(Data("claim cleanup failed: \(error)\n".utf8))
+    }
+    do {
+        if let template { try await client.deleteTemplate(template: template) }
+    } catch {
+        FileHandle.standardError.write(Data("template cleanup failed: \(error)\n".utf8))
     }
     do {
         if let pool { try await client.deletePool(pool: pool) }
@@ -99,20 +107,23 @@ private func cleanup(client: CyclopsClient, claim: Claim?, pool: Pool?) async {
             configuration: CyclopsConfiguration(baseUrl: required("CUA_BASE_URL"), tokenUrl: required("CUA_TOKEN_URL"), credentials: credentials, poolPollIntervalMs: 5_000, poolPollLimit: 120, claimPollIntervalMs: 5_000, claimPollLimit: 120),
             httpClient: UrlSessionHttpClient()
         )
+        let templateName = "\(namespace)-template"
         var createdPool: Pool?
+        var createdTemplate: Template?
         var createdClaim: Claim?
         do {
-            let pool = try await client.createPool(request: CreatePoolRequest(namespace: namespace, spec: poolSpec()))
+            let pool = try await client.createPool(request: CreatePoolRequest(namespace: namespace, spec: poolSpec(templateName: templateName)))
             createdPool = pool
+            createdTemplate = try await client.createTemplate(request: CreateTemplateRequest(namespace: namespace, name: templateName, spec: templateSpec()))
             let claim = try await client.createClaim(request: CreateClaimRequest(pool: pool, spec: nil))
             createdClaim = claim
             let sandbox = try await client.waitClaim(claim: claim)
             let status = try await initializeMcp(client: client, sandbox: sandbox)
             print(#"{"namespace":"\#(namespace)","pool":"\#(pool.metadata.name)","claim":"\#(claim.metadata.name)","sandbox":"\#(sandbox.name)","mcp_status":\#(status)}"#)
         } catch {
-            await cleanup(client: client, claim: createdClaim, pool: createdPool)
+            await cleanup(client: client, claim: createdClaim, template: createdTemplate, pool: createdPool)
             throw error
         }
-        await cleanup(client: client, claim: createdClaim, pool: createdPool)
+        await cleanup(client: client, claim: createdClaim, template: createdTemplate, pool: createdPool)
     }
 }

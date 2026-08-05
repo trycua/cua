@@ -130,29 +130,7 @@ unsafe fn set_value(element_ptr: usize, value: &str) -> Result<(), BrowserRefusa
 }
 
 fn force_setup_foreground(target: windows::Win32::Foundation::HWND) -> (bool, bool) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    };
-
-    if unsafe { crate::input::force_foreground_attached(target) } {
-        return (true, false);
-    }
-
-    // The approved setup transition is allowed to be visible. Claim the
-    // foreground-lock token with Windows' reserved no-name key, which has no
-    // application action, then retry the exact HWND a bounded number of times.
-    const VK_NONAME: u8 = 0xFC;
-    unsafe {
-        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
-        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
-    }
-    for _ in 0..3 {
-        if unsafe { crate::input::force_foreground_attached(target) } {
-            return (true, true);
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    (false, true)
+    unsafe { crate::input::force_foreground_assisted(target) }
 }
 
 fn confirm_setup_navigation(

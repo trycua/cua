@@ -31,6 +31,25 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     }
 }
 
+/// Verify that an X11 window still exists and belongs to the requested process.
+///
+/// Checking `/proc/<pid>` alone is insufficient because Linux may recycle the
+/// PID after the original application exits. The XID owner binds the two parts
+/// of a `get_window_state` target and fails closed when either is stale.
+pub fn window_belongs_to_pid(xid: u64, pid: u32) -> bool {
+    let Ok(xid) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    window_owner_matches(get_window_pid(&conn, xid).ok().flatten(), pid)
+}
+
+fn window_owner_matches(owner: Option<u32>, requested_pid: u32) -> bool {
+    owner == Some(requested_pid)
+}
+
 fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     let (conn, screen_num) = RustConnection::connect(None)?;
     let screen = &conn.setup().roots[screen_num];
@@ -79,7 +98,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
             app_name,
             title,
             is_on_screen,
-            z_index: Some(z_index),
+            z_index: Some(z_index_from_bottom_to_top(z_index)),
             x,
             y,
             width: w,
@@ -88,6 +107,10 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     }
 
     Ok(result)
+}
+
+fn z_index_from_bottom_to_top(position: usize) -> usize {
+    position
 }
 
 fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
@@ -136,6 +159,73 @@ fn fallback_window_is_listable(map_state: MapState) -> bool {
 
 fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
     Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
+}
+
+/// Ask the X11 window manager to set one exact top-level window frame, then
+/// read the window geometry back in the same desktop coordinate space exposed
+/// by `list_windows`. Uses EWMH rather than configuring a client directly.
+pub fn set_window_frame(
+    xid: u64,
+    pid: u32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(Option<WindowInfo>, bool, Option<String>)> {
+    let xid = u32::try_from(xid).map_err(|_| anyhow::anyhow!("window_id is out of X11 range"))?;
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[screen_num].root;
+    let owner = get_window_pid(&conn, xid)?;
+    match owner {
+        Some(owner) if owner == pid => {}
+        Some(owner) => anyhow::bail!("window_id {xid} belongs to pid {owner}, not pid {pid}"),
+        None => anyhow::bail!("window_id {xid} has no verifiable _NET_WM_PID owner"),
+    }
+
+    let atom = get_atom(&conn, "_NET_MOVERESIZE_WINDOW")?;
+    let fields = (1_u32 << 8) | (1 << 9) | (1 << 10) | (1 << 11);
+    let source_indication = 1_u32 << 12; // normal application (EWMH §4.1.5)
+    let event = ClientMessageEvent::new(
+        32,
+        xid,
+        atom,
+        ClientMessageData::from([
+            fields | source_indication,
+            x as u32,
+            y as u32,
+            width,
+            height,
+        ]),
+    );
+    let mutation_error = conn
+        .send_event(
+            false,
+            root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            event,
+        )
+        .and_then(|_| conn.flush())
+        .err()
+        .map(|error| format!("_NET_MOVERESIZE_WINDOW request failed: {error}"));
+
+    let requested = (x, y, width, height);
+    let mut observed = None;
+    for _ in 0..8 {
+        observed = list_windows(Some(pid))
+            .into_iter()
+            .find(|window| window.xid == u64::from(xid));
+        if observed
+            .as_ref()
+            .is_some_and(|window| (window.x, window.y, window.width, window.height) == requested)
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    let confirmed = observed
+        .as_ref()
+        .is_some_and(|window| (window.x, window.y, window.width, window.height) == requested);
+    Ok((observed, confirmed, mutation_error))
 }
 
 fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
@@ -226,9 +316,23 @@ mod tests {
     }
 
     #[test]
+    fn stale_or_reused_pid_window_owner_fails_closed() {
+        assert!(window_owner_matches(Some(42), 42));
+        assert!(!window_owner_matches(Some(43), 42));
+        assert!(!window_owner_matches(None, 42));
+    }
+
+    #[test]
     fn query_tree_fallback_only_lists_viewable_windows() {
         assert!(fallback_window_is_listable(MapState::VIEWABLE));
         assert!(!fallback_window_is_listable(MapState::UNMAPPED));
         assert!(!fallback_window_is_listable(MapState::UNVIEWABLE));
+    }
+
+    #[test]
+    fn ewmh_bottom_to_top_order_normalizes_to_higher_is_frontmost() {
+        let indices: Vec<_> = (0..3).map(z_index_from_bottom_to_top).collect();
+        assert_eq!(indices, vec![0, 1, 2]);
+        assert!(indices[2] > indices[0]);
     }
 }

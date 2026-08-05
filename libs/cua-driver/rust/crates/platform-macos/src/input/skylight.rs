@@ -41,6 +41,18 @@ type SetIntFieldFn = unsafe extern "C" fn(*mut c_void, u32, i64);
 /// `uint32_t CGSMainConnectionID(void)`
 type ConnectionIDFn = unsafe extern "C" fn() -> u32;
 
+/// `uint64_t CGSGetActiveSpace(uint32_t cid)`
+type GetActiveSpaceFn = unsafe extern "C" fn(u32) -> u64;
+
+/// `CFArrayRef SLSCopySpacesForWindows(uint32_t cid, int selector, CFArrayRef windowIDs)`
+type CopySpacesForWindowsFn = unsafe extern "C" fn(u32, i32, *const c_void) -> *mut c_void;
+
+/// `CFStringRef SLSCopyManagedDisplayForWindow(uint32_t cid, uint32_t wid)`
+type CopyManagedDisplayForWindowFn = unsafe extern "C" fn(u32, u32) -> *mut c_void;
+
+/// `uint64_t SLSManagedDisplayGetCurrentSpace(uint32_t cid, CFStringRef display)`
+type ManagedDisplayGetCurrentSpaceFn = unsafe extern "C" fn(u32, *const c_void) -> u64;
+
 // ── NSMenu shortcut activation SPIs ──────────────────────────────────────────
 
 /// `OSStatus SLPSSetFrontProcessWithOptions(const void *psn, uint32_t windowID, uint32_t options)`
@@ -138,6 +150,42 @@ fn set_int_field_fn() -> Option<SetIntFieldFn> {
 fn connection_id_fn() -> Option<ConnectionIDFn> {
     static SYM: OnceLock<Option<ConnectionIDFn>> = OnceLock::new();
     *SYM.get_or_init(|| find_sym(b"CGSMainConnectionID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn get_active_space_fn() -> Option<GetActiveSpaceFn> {
+    static SYM: OnceLock<Option<GetActiveSpaceFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSGetActiveSpace\0")
+            .or_else(|| find_sym(b"CGSGetActiveSpace\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+fn copy_spaces_for_windows_fn() -> Option<CopySpacesForWindowsFn> {
+    static SYM: OnceLock<Option<CopySpacesForWindowsFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSCopySpacesForWindows\0")
+            .or_else(|| find_sym(b"CGSCopySpacesForWindows\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+fn copy_managed_display_for_window_fn() -> Option<CopyManagedDisplayForWindowFn> {
+    static SYM: OnceLock<Option<CopyManagedDisplayForWindowFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSCopyManagedDisplayForWindow\0")
+            .or_else(|| find_sym(b"CGSCopyManagedDisplayForWindow\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+fn managed_display_get_current_space_fn() -> Option<ManagedDisplayGetCurrentSpaceFn> {
+    static SYM: OnceLock<Option<ManagedDisplayGetCurrentSpaceFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSManagedDisplayGetCurrentSpace\0")
+            .or_else(|| find_sym(b"CGSManagedDisplayGetCurrentSpace\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
 }
 
 fn factory_msg_send_fn() -> Option<FactoryMsgSendFn> {
@@ -332,6 +380,112 @@ pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
 }
 
+/// Return the current active macOS Space (desktop) ID.
+///
+/// Uses the private `CGSGetActiveSpace` SPI from SkyLight.  Returns `None`
+/// when the symbol is unavailable (future macOS version that removes it).
+pub fn get_active_space() -> Option<u64> {
+    let cid = main_connection_id()?;
+    nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(cid) }))
+}
+
+fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
+    space_id.filter(|id| *id != 0)
+}
+
+/// A consistent WindowServer connection and active-Space snapshot for one
+/// enumeration. Space membership must be queried one window at a time:
+/// `SLSCopySpacesForWindows` returns the set union for its input window list,
+/// not a positionally aligned result.
+pub(crate) struct SpaceQuery {
+    connection_id: u32,
+    current_space_id: Option<u64>,
+    copy_spaces_for_windows: Option<CopySpacesForWindowsFn>,
+    copy_managed_display_for_window: Option<CopyManagedDisplayForWindowFn>,
+    managed_display_get_current_space: Option<ManagedDisplayGetCurrentSpaceFn>,
+}
+
+impl SpaceQuery {
+    pub(crate) fn new() -> Option<Self> {
+        let connection_id = main_connection_id()?;
+        let current_space_id =
+            nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(connection_id) }));
+        Some(Self {
+            connection_id,
+            current_space_id,
+            copy_spaces_for_windows: copy_spaces_for_windows_fn(),
+            copy_managed_display_for_window: copy_managed_display_for_window_fn(),
+            managed_display_get_current_space: managed_display_get_current_space_fn(),
+        })
+    }
+
+    pub(crate) fn current_space_id(&self) -> Option<u64> {
+        self.current_space_id
+    }
+
+    /// Return every Space containing `window_id`.
+    pub(crate) fn window_space_ids(&self, window_id: u32) -> Option<Vec<u64>> {
+        use core_foundation::{
+            array::CFArray,
+            base::{CFGetTypeID, CFTypeRef, TCFType},
+            number::CFNumber,
+        };
+
+        let copy_spaces = self.copy_spaces_for_windows?;
+        let window_number = CFNumber::from(window_id as i64);
+        let window_ref = window_number.as_concrete_TypeRef() as *const c_void;
+        let windows = CFArray::<CFTypeRef>::from_copyable(&[window_ref]);
+        let result_ptr = unsafe {
+            copy_spaces(
+                self.connection_id,
+                0x7,
+                windows.as_concrete_TypeRef() as *const c_void,
+            )
+        };
+        if result_ptr.is_null() {
+            return None;
+        }
+
+        let result: CFArray<CFTypeRef> =
+            unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
+        let mut space_ids = Vec::with_capacity(result.len() as usize);
+        for item in result.iter() {
+            let item = *item;
+            if unsafe { CFGetTypeID(item) } != CFNumber::type_id() {
+                return None;
+            }
+            let number = unsafe { CFNumber::wrap_under_get_rule(item as _) };
+            let space_id = u64::try_from(number.to_i64()?).ok()?;
+            if space_id != 0 {
+                space_ids.push(space_id);
+            }
+        }
+
+        (!space_ids.is_empty()).then_some(space_ids)
+    }
+
+    /// Return the active Space on the display WindowServer associates with
+    /// `window_id`. This avoids comparing every window against the main
+    /// display's active Space when displays use independent Spaces.
+    pub(crate) fn current_space_for_window(&self, window_id: u32) -> Option<u64> {
+        use core_foundation::{base::TCFType, string::CFString};
+
+        let copy_display = self.copy_managed_display_for_window?;
+        let get_current_space = self.managed_display_get_current_space?;
+        let display_ptr = unsafe { copy_display(self.connection_id, window_id) };
+        if display_ptr.is_null() {
+            return None;
+        }
+        let display = unsafe { CFString::wrap_under_create_rule(display_ptr as _) };
+        nonzero_space_id(Some(unsafe {
+            get_current_space(
+                self.connection_id,
+                display.as_concrete_TypeRef() as *const c_void,
+            )
+        }))
+    }
+}
+
 // ── Focus-without-raise ───────────────────────────────────────────────────────
 
 /// Activate `target_pid`'s window `target_wid` without raising any windows
@@ -423,6 +577,22 @@ pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mu
     false
 }
 
+/// Return whether WindowServer currently considers the exact window's process
+/// frontmost. Unlike `NSWorkspace.frontmostApplication`, this query does not
+/// depend on the caller's AppKit run loop processing an activation update.
+pub fn front_process_matches(target_pid: libc::pid_t, target_wid: u32) -> Option<bool> {
+    let get_front = get_front_process_fn()?;
+    let mut front_psn = [0u8; 8];
+    if unsafe { get_front(front_psn.as_mut_ptr() as *mut c_void) } != 0 {
+        return None;
+    }
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return None;
+    }
+    Some(front_psn == target_psn)
+}
+
 /// Make `target_pid` and `target_wid` WindowServer-frontmost and leave them
 /// there. Unlike [`with_foreground_assist`], this deliberately does not save or
 /// restore the previous process. It is the persistent counterpart required by
@@ -443,6 +613,51 @@ pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) 
     // kCPSNoWindows = 0x400. Supplying the exact target window still makes
     // that window's process frontmost while avoiding a broad all-window raise.
     unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) == 0 }
+}
+
+fn make_key_window_record(window_id: u32, event_kind: u8) -> [u8; 0xF8] {
+    let mut record = [0u8; 0xF8];
+    record[0x04] = 0xF8;
+    record[0x08] = event_kind;
+    record[0x3A] = 0x10;
+    record[0x3C..0x40].copy_from_slice(&window_id.to_le_bytes());
+    record[0x20..0x30].fill(0xFF);
+    record
+}
+
+/// Make one exact application window native-key and frontmost.
+///
+/// Accessibility's `AXFocusedWindow` can change without AppKit making the
+/// corresponding `NSWindow` key. Native menu validation observes the latter,
+/// so focus-sensitive commands remain disabled in that split state. This is
+/// the bounded exact-window sequence used by established macOS window tools:
+/// mark the front-process request as user generated, synthesize the paired
+/// make-key records for the requested WindowServer id, then let the caller
+/// raise the matching AX window. No other application window is addressed.
+pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    let Some(set_front) = set_front_process_fn() else {
+        return false;
+    };
+    let Some(post) = post_event_record_to_fn() else {
+        return false;
+    };
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return false;
+    }
+
+    // kCPSUserGenerated = 0x200. Unlike kCPSNoWindows, this permits AppKit to
+    // establish the requested native key window before it validates NSMenu.
+    if unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x200) } != 0 {
+        return false;
+    }
+    for event_kind in [0x01, 0x02] {
+        let record = make_key_window_record(target_wid, event_kind);
+        if unsafe { post(target_psn.as_ptr() as *const c_void, record.as_ptr()) } != 0 {
+            return false;
+        }
+    }
+    true
 }
 
 /// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
@@ -490,6 +705,17 @@ pub fn with_foreground_hid_activation(
     if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
         anyhow::bail!("could not resolve target window for foreground HID delivery");
     }
+
+    let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(target_pid);
+    if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
+    {
+        // Re-activating an already key exact window can clear Chromium's
+        // renderer focus even though WindowServer keeps the app frontmost.
+        // The AX window proof lets us deliver directly without weakening the
+        // exact-window guard or disturbing the current key target.
+        return action();
+    }
+
     let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
     if activated != 0 {
         anyhow::bail!("WindowServer rejected foreground HID activation");
@@ -504,6 +730,18 @@ pub fn with_foreground_hid_activation(
     }
 
     result
+}
+
+fn preserves_exact_existing_focus(
+    previous_process_known: bool,
+    previous_psn: [u8; 8],
+    target_psn: [u8; 8],
+    focused_window_id: Option<u32>,
+    target_window_id: u32,
+) -> bool {
+    previous_process_known
+        && previous_psn == target_psn
+        && focused_window_id == Some(target_window_id)
 }
 
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
@@ -555,4 +793,58 @@ pub fn with_menu_shortcut_activation(
 
     result?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{make_key_window_record, preserves_exact_existing_focus};
+
+    #[test]
+    fn make_key_records_address_only_the_exact_window() {
+        let press = make_key_window_record(0x7856_3412, 0x01);
+        let release = make_key_window_record(0x7856_3412, 0x02);
+        assert_eq!(press.len(), 0xF8);
+        assert_eq!(press[0x04], 0xF8);
+        assert_eq!(press[0x08], 0x01);
+        assert_eq!(release[0x08], 0x02);
+        assert_eq!(&press[0x3C..0x40], &[0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(press[0x3A], 0x10);
+        assert!(press[0x20..0x30].iter().all(|byte| *byte == 0xFF));
+    }
+
+    #[test]
+    fn exact_existing_focus_avoids_reactivation() {
+        let psn = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert!(preserves_exact_existing_focus(true, psn, psn, Some(42), 42));
+    }
+
+    #[test]
+    fn process_or_window_uncertainty_requires_guarded_activation() {
+        let target = [1, 2, 3, 4, 5, 6, 7, 8];
+        let other = [8, 7, 6, 5, 4, 3, 2, 1];
+        assert!(!preserves_exact_existing_focus(
+            false,
+            target,
+            target,
+            Some(42),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true,
+            other,
+            target,
+            Some(42),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true,
+            target,
+            target,
+            Some(41),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true, target, target, None, 42
+        ));
+    }
 }

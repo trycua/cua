@@ -1,11 +1,21 @@
 ---
-title: 'What is computer use?'
-description: 'Computer use lets AI agents operate real computers through code, structured tools, and graphical interfaces. Learn how the three action surfaces work together.'
+title: 'Computer use: how AI agents operate computers'
+description: 'Understand computer use, computer-use agents and models, their observe-decide-act loop, and how they differ from APIs, RPA, and browser automation.'
 ---
 
-**Computer use** is the ability of an AI agent to operate a real computer and complete work across applications. A computer-use agent can inspect the computer's current state, choose an action, observe the result, and continue until it reaches a goal.
+**Computer use** is the ability of an AI agent to operate a real computer and complete work across applications. A computer-use agent can inspect the computer's current state, choose an action, observe the result, and continue until it reaches a goal. It can work through code, structured tools, or the same graphical interfaces people use.
 
 The term originally described agents that interpreted screenshots and controlled a graphical user interface (GUI) with mouse and keyboard actions. Cua uses **Computer-Use 2.0** for a broader model: an agent chooses among writing and running code, calling structured tools and APIs, and driving the same graphical interface a person would use. The screenshot-and-click loop remains important as one action surface inside the larger system.
+
+Computer use is therefore a capability rather than a single product, model, or interaction method. The defining property is that the agent can act on computer state, observe what changed, and continue across the boundaries between applications and interfaces.
+
+## Computer-use agents and computer-use models
+
+A **computer-use model** interprets an observation and proposes an action. Depending on the model, the observation may include screenshots, accessibility information, text, or structured application state. The proposed action may be a mouse movement, a keystroke, a tool call, or a program to run.
+
+A **computer-use agent** is the running system around that model. It supplies the computer, tools, memory, instructions, permissions, and feedback loop needed to turn proposed actions into completed work. It also decides when to stop, retry, ask for confirmation, or move to a different action surface.
+
+The distinction matters because a capable model alone does not provide a reliable agent. The surrounding system still has to deliver input to the intended application, preserve state between steps, recover from changed interfaces, and constrain consequential actions.
 
 ## Three action surfaces
 
@@ -13,7 +23,21 @@ On the **coding surface**, the agent writes and runs code as the action itself. 
 
 On the **tool-use surface**, the agent makes structured calls to tools, functions, APIs, and MCP servers. The action has a typed shape, with named inputs and defined outputs, so the agent can ask an external system to perform a specific operation without inventing a script or trying to reach the same control through the screen.
 
-On the **UI automation surface**, the agent clicks, types, scrolls, and presses keys on the real interface a person would use. This is the only surface that reaches native applications, web applications, enterprise and legacy software, and systems that have no useful API, because the GUI is often the only contract those systems expose to the user.
+On the **UI automation surface**, the agent clicks, types, scrolls, and presses keys on the interface a person would use. This surface reaches controls in native applications, web applications, and legacy software that expose no useful API. In those systems, the GUI is often the only contract available to the user.
+
+These surfaces are complementary. Computer use does not mean clicking through every task: the agent should use the most direct interface that preserves the required behavior and state.
+
+## Examples of computer use
+
+Computer use is useful when work spans interfaces that were designed for people rather than for one programmatic integration. Examples include:
+
+- testing a desktop application by installing it, changing settings, and verifying the visible result;
+- collecting information from a signed-in web application that has no suitable API;
+- moving between a terminal, code editor, browser, and operating-system dialog during one development task;
+- completing a business workflow across several applications while preserving the user's existing session;
+- reproducing a support issue on a real operating system and retaining the visual evidence needed to diagnose it.
+
+In each case, the agent must connect actions across changing application state. A script or API may still cover part of the work, while computer use covers the boundaries that those interfaces cannot reach.
 
 ## Choosing a surface
 
@@ -23,17 +47,30 @@ The skill is the judgment behind that choice. An agent that edits a file with co
 
 Computer use is most valuable when a task crosses those boundaries. Browser automation can be enough for a stable web workflow, and an API is usually best for a well-defined integration. A computer-use agent becomes useful when the task also depends on visual state, native applications, signed-in sessions, or software that exposes no suitable API.
 
+## How computer use differs from other automation
+
+Computer use overlaps with APIs, browser automation, and robotic process automation (RPA), but each approach has a different interface and tradeoff.
+
+| Approach               | Best fit                                                      | Main limitation                                                       |
+| ---------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------- |
+| API or structured tool | Stable, well-defined operations with typed inputs and outputs | Cannot reach behavior the API does not expose                         |
+| Browser automation     | Repeatable workflows contained within web pages               | Does not cover native applications or operating-system UI             |
+| Traditional RPA        | Known, predefined business processes                          | Often depends on fixed selectors, coordinates, and workflow branches  |
+| Computer-use agent     | Adaptive work across applications and interface types         | Requires careful observation, recovery, permissions, and verification |
+
+The approaches can be combined. An agent may query an API for structured data, use code to transform it, and then enter the result into a native application. Computer use describes the whole task even when only one part requires direct GUI control.
+
 ## The UI automation loop
 
 The observe, decide, act loop belongs specifically to the UI automation surface. Observation comes from a screenshot, an accessibility tree, or both, which gives the model either the pixels a person would see or the structured information exposed by the operating system. From there, grounding turns a target such as a button, field, menu item, or selected region into on-screen coordinates that input events can hit.
 
 Planning carries the task across changing interface states. A click may open a dialog, a page may reflow after loading, or an application may show an error that changes the next useful action, so the model has to keep track of the goal while the computer responds. Frontier models such as Claude can handle understanding, grounding, and planning together in one call, while grounding-specialist models such as UI-TARS and Moondream can help when coordinate accuracy is the limiting factor.
 
-The narrow origin of computer-use came in October 2024, when Anthropic introduced an agent that operated a GUI through screenshots and input events. Through 2025, coding agents were increasingly recognized as computer-use agents too, with CoAct-1 making the connection explicit. Cua uses **Computer-Use 2.0** as shorthand for that wider model. Francesco Bonacci traces that arc in [A Story of Computer-Use](https://github.com/trycua/cua/blob/main/blog/clawdbot-computer-use-history.md).
+The current wave of screenshot-driven computer use accelerated in October 2024, when Anthropic introduced an agent that operated a GUI through screenshots and input events. Through 2025, coding agents were increasingly recognized as computer-use agents too, with CoAct-1 making the connection explicit. Cua uses **Computer-Use 2.0** as shorthand for that wider model. Francesco Bonacci traces that arc in [A Story of Computer-Use](https://github.com/trycua/cua/blob/main/blog/clawdbot-computer-use-history.md).
 
 ## Where Cua fits
 
-You bring the agent, which already handles coding and tool-use on its own. Cua gives that agent the UI automation surface and a real computer to act in, so the same task can move from code to tools to the graphical interface when the application requires it.
+You bring the agent, which already handles coding and tool-use on its own. Cua gives that agent the UI automation surface and a real computer to act in, so the same task can move from code to tools to the graphical interface when the application requires it. [SDKs, MCP, and process hosting](/concepts/sdk-mcp-and-hosting) are different ways to connect the agent to that surface.
 
 **Cua Driver** drives the GUI of a real machine you already have, whether that machine runs macOS, Windows, or Linux. It is the right shape when the agent needs to work with local applications, signed-in accounts, existing files, or machine state that already lives on that computer.
 
@@ -45,8 +82,11 @@ Computer-use agents can affect the same files, accounts, and applications as a p
 
 Cua Driver exposes [permission policies](/concepts/how-permission-policies-work) for restricting what an agent can do on an existing machine. Cua Sandbox provides an [isolated computer](/concepts/how-sandboxes-work) whose lifecycle and credentials can be scoped to the task.
 
-## Start building
+## Further reading
 
-- [Drive your first app with Cua Driver](/tutorials/drive-your-first-app) on an existing macOS, Windows, or Linux computer.
-- [Start your first local sandbox](/tutorials/your-first-local-sandbox) for an isolated Linux computer.
-- [Install Cua Driver](/how-to-guides/driver/install) and connect it to an agent you already use.
+- **Learn it:** [Drive your first app with Cua Driver](/tutorials/drive-your-first-app) on an existing macOS, Windows, or Linux computer.
+- **Use it:** [Install Cua Driver](/how-to-guides/driver/install) and connect it to an agent you already use.
+- **Guide the agent:** [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill) to add cross-platform tool-selection and verification instructions.
+- **Isolate it:** [Start your first local sandbox](/tutorials/your-first-local-sandbox) for an isolated Linux computer.
+- **Understand delivery:** [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery) explains how browser tabs map to native windows.
+- **Evaluate it:** [How we continuously validate Cua Driver](/concepts/how-cua-driver-is-validated) describes the evidence used to test desktop behavior.

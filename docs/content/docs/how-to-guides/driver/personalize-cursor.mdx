@@ -16,7 +16,7 @@ The cursor helps a person follow an agent. It is not a security indicator,
 consent prompt, or proof that an action succeeded.
 </Callout>
 
-![The twelve semantic action animations in the built-in Cua cursor theme](/img/cua-driver/cursor-themes/action-animations.gif)
+![Interactive preview of the runtime cursor, session badge, delivery chip, and target chip](https://github.com/user-attachments/assets/cc315e23-ea8f-4564-b6c5-04a45bdbe2e8)
 
 ## Select a theme for a session
 
@@ -56,6 +56,8 @@ action is active and fade independently from the session name. They are drawn
 by Cua Driver, so their meaning stays consistent across themes and operating
 systems.
 
+![All session badge combinations for background and foreground delivery across accessibility, pixel, browser, and desktop targets](https://github.com/user-attachments/assets/071dbfd0-b0d4-442f-9654-994c84db3029)
+
 The old `set_agent_cursor_style` operation and its `cursor_id`, shape, color,
 label, size, opacity, image-path, gradient, and bloom styling fields have been
 removed. (`cursor_id` may still appear on input-delivery tools where it names a
@@ -79,8 +81,6 @@ manifest, animation inventory, frame limits, bounded vector feature set,
 author, and license. It preserves paths and strokes as vectors, so the native
 renderer can draw them at the current display scale instead of enlarging a
 fixed-resolution image.
-
-![The host-rendered delivery and target context chips](/img/cua-driver/cursor-themes/delivery-target-context.gif)
 
 Validate, compile, inspect, and preview the source:
 

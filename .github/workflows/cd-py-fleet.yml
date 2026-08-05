@@ -9,7 +9,7 @@ on:
       version:
         description: "Patch version to publish (without v prefix)"
         required: true
-        default: "0.0.5"
+        default: "0.0.10"
   workflow_call:
     inputs:
       version:
@@ -86,26 +86,26 @@ jobs:
         include:
           - platform: linux-x86_64
             runner: ubuntu-22.04
-            wheel: cua_train-0.1.1-py3-none-manylinux_2_34_x86_64.whl
-            sha256: 9ab37ae89ef6f95a1c0e315226af7716625bc6225e54770f94315905a744c5ad
+            wheel: cua_train-0.1.6-py3-none-manylinux_2_34_x86_64.whl
+            sha256: 418db974949f4020fae2f3ed2f5a8d0db6ddce38e34f5db89283ac479d816a55
             library_suffix: .so
             audit: auditwheel
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
-            wheel: cua_train-0.1.1-py3-none-manylinux_2_34_aarch64.whl
-            sha256: 6f8eb7f450f05d4a495de70a0a8f7acdb3dce20d842bae96f2aec27e2869fb85
+            wheel: cua_train-0.1.6-py3-none-manylinux_2_34_aarch64.whl
+            sha256: 80526bf94ed535383b3dddd9a7da800da9fcb32837c21c2e2caa39390e3548c9
             library_suffix: .so
             audit: auditwheel
           - platform: macos-x86_64
             runner: macos-15-intel
-            wheel: cua_train-0.1.1-py3-none-macosx_10_12_x86_64.whl
-            sha256: 1822fb9a63c6566d2763a9fb2e384ba4cc6a3771d97fb2cd3f1f9af66916e6df
+            wheel: cua_train-0.1.6-py3-none-macosx_10_12_x86_64.whl
+            sha256: 87cb4220054514ac5f44118d490ae404fbca5c97d2b964cd4fcaf1facd391fc0
             library_suffix: .dylib
             audit: delocate
           - platform: macos-arm64
             runner: macos-14
-            wheel: cua_train-0.1.1-py3-none-macosx_11_0_arm64.whl
-            sha256: 045b51e3ebebc7bf2107ec5a97801250b551e9617bcbbeec97a1e4f4c2ebd884
+            wheel: cua_train-0.1.6-py3-none-macosx_11_0_arm64.whl
+            sha256: 17563c0504c9270e570332924f3092faec3dcdbf48557a70ee830e165ac7751c
             library_suffix: .dylib
             audit: delocate
     steps:
@@ -163,24 +163,38 @@ jobs:
           from pathlib import Path
           import sys
 
-          import cyclops_sdk
-          from cyclops_sdk import (
+          import fleet_sdk
+          from fleet_sdk import (
               CreateClaimRequest,
               CreatePoolRequest,
               CyclopsClient,
-              PoolSpec,
+              CyclopsConfiguration,
+              CyclopsCredentials,
+              Firmware,
+              HttpHeader,
+              HttpRequest,
+              OsGymSandboxTemplateSpec,
+              OsGymSandboxWarmPoolSpec,
+              RuntimeKind,
               SandboxService,
           )
 
-          package = Path(cyclops_sdk.__file__).resolve().parent
+          package = Path(fleet_sdk.__file__).resolve().parent
           native = package / f"libcyclops_sdk{sys.argv[1]}"
           assert native.is_file(), native
           ctypes.CDLL(str(native))
           assert all((
-              CyclopsClient,
-              CreatePoolRequest,
               CreateClaimRequest,
-              PoolSpec,
+              CreatePoolRequest,
+              CyclopsClient,
+              CyclopsConfiguration,
+              CyclopsCredentials,
+              Firmware,
+              HttpHeader,
+              HttpRequest,
+              OsGymSandboxTemplateSpec,
+              OsGymSandboxWarmPoolSpec,
+              RuntimeKind,
               SandboxService,
           ))
           PY

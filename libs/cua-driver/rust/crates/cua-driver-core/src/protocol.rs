@@ -289,6 +289,11 @@ pub struct ToolResult {
     pub is_error: Option<bool>,
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<Value>,
+    /// Rich actuator facts retained inside the daemon. This is deliberately
+    /// skipped by serde so the nonbreaking truth-layer migration cannot alter
+    /// the MCP result envelope or its legacy structured payload.
+    #[serde(skip)]
+    pub action_record: Option<crate::action_record::ActionExecutionRecord>,
 }
 
 impl ToolResult {
@@ -309,6 +314,14 @@ impl ToolResult {
 
     pub fn with_structured(mut self, v: Value) -> Self {
         self.structured_content = Some(v);
+        self
+    }
+
+    pub fn with_action_record(
+        mut self,
+        record: crate::action_record::ActionExecutionRecord,
+    ) -> Self {
+        self.action_record = Some(record);
         self
     }
 }
@@ -356,18 +369,17 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Tools operate apps without stealing focus or moving the real pointer. Prefer `element_index` ({tree_kind}) over pixels; it works on backgrounded or hidden windows.
+Before starting UI work, classify the desired postcondition. For a non-GUI outcome, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
+
+For an app or window outcome, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
 
 Workflow per turn:
-0. `start_session(session)` once per run; reuse that id on actions. Concurrent runs use distinct ids. End it when done.
-1. `launch_app` returns pid and windows. Use `creates_new_application_instance:true` when another run may touch the app.
-2. `get_window_state(pid, window_id)` refreshes the tree and element indices.
-3. Act with the fresh index.
-4. `verify_state(pid, window_id, expect)` checks bounded structured postconditions. `unknown` is not success. Set `include_screenshot:true` when the multimodal agent should also read visual evidence and decide whether to stop, retry, or advance the ladder.
+0. `start_session(session)` once; reuse that id and end it when done.
+1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
+2. Act with the fresh index.
+3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
 
-A declared session owns a colored agent-cursor overlay; it never moves the real pointer. Pure accessibility actions show only a brief first pulse. Use `move_cursor` or a pixel action first when a recording needs a visible glide.
-
-If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
+If the `cua-driver` skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
     )
 }
 
@@ -418,6 +430,40 @@ mod image_mime_type_tests {
 }
 
 #[cfg(test)]
+mod action_record_wire_tests {
+    use super::ToolResult;
+    use crate::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+
+    #[test]
+    fn internal_action_record_never_changes_mcp_serialization() {
+        let legacy = serde_json::json!({
+            "path": "cgevent",
+            "verified": false,
+            "effect": "unverifiable",
+        });
+        let plain = ToolResult::text("clicked").with_structured(legacy.clone());
+        let with_truth = ToolResult::text("clicked")
+            .with_structured(legacy)
+            .with_action_record(
+                ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::MacosCgEventPid,
+                    RequestedDelivery::Background,
+                )
+                .actual_delivery(ActualDelivery::Background)
+                .build()
+                .expect("valid action record"),
+            );
+        assert_eq!(
+            serde_json::to_value(plain).expect("serialize plain result"),
+            serde_json::to_value(with_truth).expect("serialize result with internal truth"),
+        );
+    }
+}
+
+#[cfg(test)]
 mod agent_instruction_tests {
     use super::agent_instructions;
 
@@ -427,6 +473,18 @@ mod agent_instruction_tests {
         assert!(instructions.contains("verify_state"));
         assert!(instructions.contains("`unknown` is not success"));
         assert!(instructions.contains("multimodal agent"));
+        assert!(instructions.contains("client-provided app API/SDK"));
+        assert!(instructions.contains("headless/background interface"));
+        assert!(instructions.contains("read the result back in that semantic domain"));
+        assert!(instructions.contains("narrowest semantic Cua route first"));
+        assert!(instructions.contains("`set_window_frame` plus `list_windows` readback"));
+        assert!(instructions.contains("typed browser tools for supported page content"));
+        assert!(instructions.contains("has no shell"));
+        assert!(
+            instructions.find("client-provided app API/SDK")
+                < instructions.find("background `element_index`"),
+            "semantic/headless operations must precede native UI dispatch"
+        );
         assert!(
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"

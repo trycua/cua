@@ -31,6 +31,20 @@ Use one explicit `session` value throughout. Never substitute a raw CDP
 target id, tab ordinal, URL match, or remembered ref for a capability returned
 by `get_browser_state`.
 
+### Copy page content to the system clipboard
+
+If the requested outcome is exact page content on the system clipboard—not a
+literal text-selection gesture—read the content from a fresh semantic browser
+snapshot, call `clipboard_write` with the exact observed value, and verify it
+with `clipboard_read`. This path is background-safe and does not require a
+clickable ref: passive headings and text nodes are evidence sources, not
+controls that must be clicked before their value can be copied.
+
+Fall back to visual text selection and the platform copy hotkey only when the
+user explicitly requires that gesture or clipboard tools are unavailable.
+That fallback is native input, not a typed page mutation, and may require the
+foreground escalation rules in `SKILL.md`.
+
 ### Browser recording feedback
 
 On macOS and Windows, ref- and coordinate-targeted browser mutations drive the
@@ -282,9 +296,11 @@ cua-driver browser_click \
 
 `dom_event` calls the page element's click behavior without pretending that a
 trusted pointer event occurred. It requires a ref and is the full-background
-alternative where supported. Never silently change trust class after a
-refusal. Coordinate clicks accept viewport CSS `x` and `y`, but only on the
-trusted route; prefer refs.
+alternative where supported. Dispatch is not proof that the control activated:
+trust-gated controls can ignore synthetic events, so refresh page state and
+verify the expected postcondition. Never silently change trust class or
+foreground the browser after a refusal. Coordinate clicks accept viewport CSS
+`x` and `y`, but only on the trusted route; prefer refs.
 
 ### Type
 

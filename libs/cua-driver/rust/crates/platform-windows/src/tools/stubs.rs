@@ -113,7 +113,7 @@ stub_tool!(
     ClickTool,
     "click",
     "Click at (x, y) or on an AX/UIA element by element_index + window_id.",
-    serde_json::json!({"type":"object","required":[],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"element_token": cua_driver_core::tool_schema::element_token_schema(),"x":{"type":"number"},"y":{"type":"number"},"button": cua_driver_core::tool_schema::button_schema(),"modifier": cua_driver_core::tool_schema::modifier_schema(),"from_zoom":{"type":"boolean"}},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":[],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"element_token": cua_driver_core::tool_schema::element_token_schema(),"snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),"x":{"type":"number"},"y":{"type":"number"},"button": cua_driver_core::tool_schema::button_schema(),"modifier": cua_driver_core::tool_schema::modifier_schema(),"from_zoom":{"type":"boolean"}},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -212,6 +212,7 @@ contract_stub_tool!(
     SetAgentCursorThemeTool,
     "set_agent_cursor_theme"
 );
+contract_stub_tool!(invoke_menu_m, InvokeMenuTool, "invoke_menu");
 
 stub_tool!(
     check_perms_m,
@@ -316,6 +317,7 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool));
+    r.register(Box::new(InvokeMenuTool));
     r.register(Box::new(ScrollTool));
     r.register(Box::new(ScreenshotTool));
     r.register(Box::new(GetScreenSizeTool));

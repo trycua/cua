@@ -1,8 +1,8 @@
 use crate::{
     Claim, CreateClaimRequest, CyclopsClient, HttpHeader, HttpRequest, HttpResponse, Pool,
-    ResourceMetadata, Sandbox, SdkError, routes,
+    ResourceMetadata, Sandbox, SdkError, Template, routes,
 };
-use cyclops_sdk_schema::{ClaimSpec, SandboxTemplateRef};
+use cyclops_sdk_schema::ClaimSpec;
 #[cfg(not(target_arch = "wasm32"))]
 use futures_timer::Delay;
 #[cfg(target_arch = "wasm32")]
@@ -36,10 +36,12 @@ impl CyclopsClient {
     ) -> Result<Claim, SdkError> {
         self.ensure_claim_pool_identity(&request.pool)?;
         let pool = request.pool;
+        // Default the template ref from the warm pool's own spec — never from
+        // a naming convention. A hand-built ref that names a nonexistent
+        // template makes the bind queue lookup miss forever and the claim
+        // times out with no useful error (the hermes-cua-pool incident).
         let spec = request.spec.unwrap_or_else(|| ClaimSpec {
-            sandbox_template_ref: SandboxTemplateRef {
-                name: format!("{}-template", pool.metadata.name),
-            },
+            sandbox_template_ref: pool.spec.sandbox_template_ref.clone(),
             warmpool: None,
             bind_deadline: None,
             lifecycle: None,
@@ -55,7 +57,7 @@ impl CyclopsClient {
             kind: "OSGymSandboxClaim".into(),
             metadata: ResourceMetadata {
                 namespace: pool.metadata.namespace.clone(),
-                name: claim_name(self.next_claim_sequence()?),
+                name: claim_name()?,
                 labels: None,
             },
             spec,
@@ -120,7 +122,7 @@ impl CyclopsClient {
                     .ok_or_else(|| SdkError::Body {
                         reason: "bound claim omitted status.sandbox.name".into(),
                     })?;
-                let services = service_names(&self.pool_for_claim(&current).await?);
+                let services = service_names(&self.template_for_claim(&current).await?);
                 return Ok(Sandbox {
                     namespace: current.metadata.namespace,
                     claim: current.metadata.name,
@@ -164,19 +166,17 @@ impl CyclopsClient {
         )
     }
 
-    async fn pool_for_claim(&self, claim: &Claim) -> Result<Pool, SdkError> {
+    async fn template_for_claim(&self, claim: &Claim) -> Result<Template, SdkError> {
         let template = &claim.spec.sandbox_template_ref.name;
         if template.is_empty() {
             return Err(SdkError::Body {
                 reason: "claim omitted spec.sandboxTemplateRef.name".into(),
             });
         }
-        let pool_name = template.strip_suffix("-template").unwrap_or(template);
-        let item_url =
-            pool_item_for_template(self.base_url(), &claim.metadata.namespace, pool_name)?;
+        let item_url = routes::template_item(self.base_url(), &claim.metadata.namespace, template)?;
         send_json(
             self,
-            "get pool services",
+            "get claim template",
             json_request("GET", item_url, None),
             &[200],
         )
@@ -184,23 +184,21 @@ impl CyclopsClient {
     }
 }
 
-fn pool_item_for_template(base: &Url, namespace: &str, template: &str) -> Result<Url, SdkError> {
-    let mut url = routes::pool_collection(base, namespace)?;
-    url.path_segments_mut()
-        .map_err(|_| SdkError::Configuration {
-            reason: "base_url cannot accept path segments".into(),
-        })?
-        .push(template);
-    Ok(url)
+// Random petnames instead of a sequence: a per-client counter restarts at 1
+// for every fresh client, so retries and concurrent leases all proposed
+// claim-1 and collided with whatever the previous lease still held.
+fn claim_name() -> Result<String, SdkError> {
+    petname::petname(2, "-")
+        .map(|name| format!("claim-{name}"))
+        .ok_or_else(|| SdkError::Configuration {
+            reason: "claim name generation returned no words".into(),
+        })
 }
 
-fn claim_name(sequence: u64) -> String {
-    format!("claim-{sequence}")
-}
-
-fn service_names(pool: &Pool) -> Vec<String> {
-    let mut names: Vec<String> = pool
+fn service_names(template: &Template) -> Vec<String> {
+    let mut names: Vec<String> = template
         .spec
+        .vm_template
         .services
         .as_deref()
         .unwrap_or_default()

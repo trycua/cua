@@ -8,7 +8,10 @@ import {
   type HttpRequest,
   type HttpResponse,
   type Pool,
-  type PoolSpec,
+  type CreateTemplateRequest,
+  type OsGymSandboxWarmPoolSpec,
+  type OsGymSandboxTemplateSpec,
+  type Template,
 } from "../index.ts";
 
 const serviceName = "mcp";
@@ -35,17 +38,23 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-function poolSpec(image: string, imagePullSecret?: string): PoolSpec {
+function templateSpec(image: string, imagePullSecret?: string): OsGymSandboxTemplateSpec {
   return {
-    replicas: 1,
-    template: {
+    vmTemplate: {
       // The live example requests the same resources as the working SDK examples.
       containerDiskImage: image,
       imagePullSecret,
       cpuCores: 4,
       memory: "4Gi",
+      services: [{ name: serviceName, targetPort: 3000 }],
     },
-    services: [{ name: serviceName, targetPort: 3000 }],
+  };
+}
+
+function poolSpec(namespace: string): OsGymSandboxWarmPoolSpec {
+  return {
+    replicas: 1,
+    sandboxTemplateRef: { name: `${namespace}-template` },
   };
 }
 
@@ -63,11 +72,18 @@ async function main(): Promise<void> {
   }, new FetchHttpClient());
 
   let pool: Pool | undefined;
+  let template: Template | undefined;
   let claim: Claim | undefined;
   try {
-    console.log("[1/5] Creating pool...");
-    const createPool: CreatePoolRequest = { namespace, spec: poolSpec(image, process.env.CYCLOPS_IMAGE_PULL_SECRET) };
+    console.log("[1/5] Creating pool and template...");
+    const createPool: CreatePoolRequest = { namespace, spec: poolSpec(namespace) };
     pool = await client.createPool(createPool);
+    const createTemplate: CreateTemplateRequest = {
+      namespace,
+      name: `${namespace}-template`,
+      spec: templateSpec(image, process.env.CYCLOPS_IMAGE_PULL_SECRET),
+    };
+    template = await client.createTemplate(createTemplate);
     console.log(pool);
 
     console.log("[2/5] Creating claim...");
@@ -89,6 +105,10 @@ async function main(): Promise<void> {
     if (claim) {
       console.log("[cleanup] Deleting claim...");
       await client.deleteClaim(claim);
+    }
+    if (template) {
+      console.log("[cleanup] Deleting template...");
+      await client.deleteTemplate(template);
     }
     if (pool) {
       console.log("[cleanup] Deleting pool...");

@@ -60,7 +60,7 @@ fn def() -> &'static ToolDef {
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID for the window the pixel coordinates were measured against. Optional — when omitted the driver picks the frontmost window of pid."
+                    "description": "CGWindowID for the window the pixel coordinates were measured against. Optional only when pid owns exactly one eligible top-level window; otherwise the action refuses with ambiguous_window_target."
                 },
                 "from_x": { "type": "number", "description": "Drag-start X in window-local screenshot pixels. Top-left origin." },
                 "from_y": { "type": "number", "description": "Drag-start Y in window-local screenshot pixels. Top-left origin." },

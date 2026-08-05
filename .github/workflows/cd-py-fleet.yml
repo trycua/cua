@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Patch version to publish (without v prefix)"
+        description: "Canonical cua-fleet version to mirror"
         required: true
-        default: "0.0.10"
+        default: "0.1.6"
   workflow_call:
     inputs:
       version:
-        description: "Patch version to publish"
+        description: "Canonical cua-fleet version to mirror"
         required: true
         type: string
     secrets:
@@ -23,13 +23,17 @@ on:
 permissions:
   contents: write
 
+env:
+  MANIFEST: libs/python/cua-fleet/canonical-wheels.json
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
     steps:
-      - name: Determine and validate patch version
+      - uses: actions/checkout@v4
+      - name: Validate requested version against canonical manifest
         id: get-version
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -39,46 +43,38 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "$INPUT_VERSION" ]]; then
-            VERSION="$INPUT_VERSION"
+            REQUESTED_VERSION="$INPUT_VERSION"
           elif [[ "$EVENT_NAME" == "push" && "$GITHUB_REF" =~ ^refs/tags/fleet-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            VERSION="${BASH_REMATCH[1]}"
+            REQUESTED_VERSION="${BASH_REMATCH[1]}"
           elif [[ -n "$DISPATCH_VERSION" ]]; then
-            VERSION="$DISPATCH_VERSION"
+            REQUESTED_VERSION="$DISPATCH_VERSION"
           else
             echo "::error::No cua-fleet version was provided."
             exit 1
           fi
 
-          curl --fail --silent --show-error --location \
-            https://pypi.org/pypi/cua-fleet/json > /tmp/cua-fleet-pypi.json
-          python3 - "$VERSION" /tmp/cua-fleet-pypi.json <<'PY'
+          VERSION="$(python3 - "$REQUESTED_VERSION" "$MANIFEST" libs/python/cua-fleet/pyproject.toml <<'PY'
           import json
-          import re
+          from pathlib import Path
           import sys
+          import tomllib
 
-          version, metadata_path = sys.argv[1:]
-          if not re.fullmatch(r"0\.0\.[0-9]+", version):
-              raise SystemExit("cua-fleet releases must be 0.0.x patches")
-
-          releases = json.load(open(metadata_path))["releases"]
-          stable = sorted(
-              int(match.group(1))
-              for candidate in releases
-              if (match := re.fullmatch(r"0\.0\.([0-9]+)", candidate))
-          )
-          if not stable:
-              raise SystemExit("PyPI does not contain a stable cua-fleet patch release")
-          latest = stable[-1]
-          proposed = int(version.rsplit(".", 1)[1])
-          if proposed not in {latest, latest + 1}:
-              raise SystemExit(f"expected 0.0.{latest + 1}, got {version}")
-          print(f"Validated cua-fleet patch version {version}")
+          requested, manifest_path, pyproject_path = sys.argv[1:]
+          manifest = json.loads(Path(manifest_path).read_text())
+          project = tomllib.loads(Path(pyproject_path).read_text())["project"]
+          version = manifest["version"]
+          if requested != version:
+              raise SystemExit(f"requested cua-fleet {requested}, canonical manifest is {version}")
+          if project["version"] != version:
+              raise SystemExit(f"pyproject version {project['version']} does not match manifest {version}")
+          print(version)
           PY
+          )"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-  repackage:
+  mirror:
     needs: prepare
-    name: Repackage ${{ matrix.platform }} wheel
+    name: Verify ${{ matrix.platform }} wheel
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -86,134 +82,175 @@ jobs:
         include:
           - platform: linux-x86_64
             runner: ubuntu-22.04
-            wheel: cua_train-0.1.6-py3-none-manylinux_2_34_x86_64.whl
-            sha256: 418db974949f4020fae2f3ed2f5a8d0db6ddce38e34f5db89283ac479d816a55
-            library_suffix: .so
+            wheel_tag: manylinux_2_34_x86_64
+            native_library: libcyclops_sdk.so
             audit: auditwheel
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
-            wheel: cua_train-0.1.6-py3-none-manylinux_2_34_aarch64.whl
-            sha256: 80526bf94ed535383b3dddd9a7da800da9fcb32837c21c2e2caa39390e3548c9
-            library_suffix: .so
+            wheel_tag: manylinux_2_34_aarch64
+            native_library: libcyclops_sdk.so
             audit: auditwheel
           - platform: macos-x86_64
             runner: macos-15-intel
-            wheel: cua_train-0.1.6-py3-none-macosx_10_12_x86_64.whl
-            sha256: 87cb4220054514ac5f44118d490ae404fbca5c97d2b964cd4fcaf1facd391fc0
-            library_suffix: .dylib
+            wheel_tag: macosx_10_12_x86_64
+            native_library: libcyclops_sdk.dylib
             audit: delocate
           - platform: macos-arm64
             runner: macos-14
-            wheel: cua_train-0.1.6-py3-none-macosx_11_0_arm64.whl
-            sha256: 17563c0504c9270e570332924f3092faec3dcdbf48557a70ee830e165ac7751c
-            library_suffix: .dylib
+            wheel_tag: macosx_11_0_arm64
+            native_library: libcyclops_sdk.dylib
             audit: delocate
+          - platform: windows-x86_64
+            runner: windows-2022
+            wheel_tag: win_amd64
+            native_library: cyclops_sdk.dll
+            audit: none
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Download and verify canonical native wheel
-        env:
-          WHEEL: ${{ matrix.wheel }}
-          SHA256: ${{ matrix.sha256 }}
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 \
-            --output "$WHEEL" \
-            "https://wheels.cua.ai/simple/cua-train/$WHEEL"
-
-      - name: Repackage as cua-fleet
+      - name: Select canonical wheel
+        shell: bash
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-          WHEEL: ${{ matrix.wheel }}
-          SHA256: ${{ matrix.sha256 }}
+          WHEEL_TAG: ${{ matrix.wheel_tag }}
         run: |
-          python .github/scripts/repackage_cua_train_wheel.py \
-            --source "$WHEEL" \
-            --expected-sha256 "$SHA256" \
-            --destination-version "$VERSION" \
-            --outdir dist
-          python .github/scripts/repackage_cua_train_wheel.py --verify dist/*.whl
+          set -euo pipefail
+          WHEEL="cua_fleet-${VERSION}-py3-none-${WHEEL_TAG}.whl"
+          SHA256="$(python - "$MANIFEST" "$WHEEL" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
 
-      - name: Audit native dependencies without modifying the wheel
+          manifest_path, wheel = sys.argv[1:]
+          manifest = json.loads(Path(manifest_path).read_text())
+          try:
+              print(manifest["wheels"][wheel])
+          except KeyError:
+              raise SystemExit(f"canonical manifest does not contain {wheel}")
+          PY
+          )"
+          echo "WHEEL=$WHEEL" >> "$GITHUB_ENV"
+          echo "SHA256=$SHA256" >> "$GITHUB_ENV"
+
+      - name: Download exact canonical wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          curl --fail --location --retry 3 \
+            --output "dist/$WHEEL" \
+            "https://wheels.cua.ai/simple/cua-fleet/$WHEEL"
+          python - "$SHA256" "dist/$WHEEL" <<'PY'
+          import hashlib
+          from pathlib import Path
+          import sys
+
+          expected, path = sys.argv[1:]
+          actual = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"SHA-256 mismatch for {path}: {actual}")
+          PY
+
+      - name: Verify wheel metadata and payload
+        shell: bash
+        run: |
+          python .github/scripts/verify_cua_fleet_wheels.py \
+            --manifest "$MANIFEST" \
+            --dist dist \
+            --allow-partial
+          python -m pip install --upgrade twine
+          python -m twine check "dist/$WHEEL"
+
+      - name: Audit Unix native dependencies
+        if: matrix.audit != 'none'
+        shell: bash
         env:
           AUDIT: ${{ matrix.audit }}
         run: |
           set -euo pipefail
+          python -m pip install --upgrade "$AUDIT"
           if [[ "$AUDIT" == "auditwheel" ]]; then
-            python -m pip install --upgrade auditwheel
-            auditwheel show dist/*.whl
+            auditwheel show "dist/$WHEEL"
           else
-            python -m pip install --upgrade delocate
-            delocate-listdeps dist/*.whl
+            delocate-listdeps "dist/$WHEEL"
           fi
 
-      - name: Install only the promoted wheel and load native bindings
+      - name: Clean-install and load Unix native binding
+        if: matrix.platform != 'windows-x86_64'
+        shell: bash
         env:
-          LIBRARY_SUFFIX: ${{ matrix.library_suffix }}
+          NATIVE_LIBRARY: ${{ matrix.native_library }}
         run: |
           set -euo pipefail
-          python -m venv /tmp/cua-fleet-wheel-smoke
-          /tmp/cua-fleet-wheel-smoke/bin/pip install --no-index --no-deps dist/*.whl
-          /tmp/cua-fleet-wheel-smoke/bin/python - "$LIBRARY_SUFFIX" <<'PY'
+          VENV="$RUNNER_TEMP/cua-fleet-wheel-smoke"
+          python -m venv "$VENV"
+          "$VENV/bin/pip" install --no-index --no-deps "dist/$WHEEL"
+          (
+            cd "$RUNNER_TEMP"
+            "$VENV/bin/python" -I - "$NATIVE_LIBRARY" <<'PY'
           import ctypes
           from pathlib import Path
           import sys
 
           import fleet_sdk
-          from fleet_sdk import (
-              CreateClaimRequest,
-              CreatePoolRequest,
-              CyclopsClient,
-              CyclopsConfiguration,
-              CyclopsCredentials,
-              Firmware,
-              HttpHeader,
-              HttpRequest,
-              OsGymSandboxTemplateSpec,
-              OsGymSandboxWarmPoolSpec,
-              RuntimeKind,
-              SandboxService,
-          )
+          from fleet_sdk import CreateClaimRequest, CreatePoolRequest, CyclopsClient
 
-          package = Path(fleet_sdk.__file__).resolve().parent
-          native = package / f"libcyclops_sdk{sys.argv[1]}"
+          native = Path(fleet_sdk.__file__).resolve().parent / sys.argv[1]
           assert native.is_file(), native
           ctypes.CDLL(str(native))
-          assert all((
-              CreateClaimRequest,
-              CreatePoolRequest,
-              CyclopsClient,
-              CyclopsConfiguration,
-              CyclopsCredentials,
-              Firmware,
-              HttpHeader,
-              HttpRequest,
-              OsGymSandboxTemplateSpec,
-              OsGymSandboxWarmPoolSpec,
-              RuntimeKind,
-              SandboxService,
-          ))
+          assert CyclopsClient and CreateClaimRequest and CreatePoolRequest
+          print(native)
           PY
+          )
 
-      - name: Exercise the example startup boundary without credentials
+      - name: Clean-install and load Windows native binding
+        if: matrix.platform == 'windows-x86_64'
+        shell: pwsh
         run: |
-          set +e
-          env -i PATH="$PATH" HOME="$HOME" \
-            /tmp/cua-fleet-wheel-smoke/bin/python \
-            libs/fleet/sdk-bindings/examples/python/live_app_controlled.py \
-            > /tmp/live-app.stdout 2> /tmp/live-app.stderr
-          status=$?
-          set -e
-          test "$status" -ne 0
-          grep -Fq "KeyError: 'CUA_CLIENT_ID'" /tmp/live-app.stderr
-          if grep -Eq "ModuleNotFoundError|cannot open shared object|Library not loaded" /tmp/live-app.stderr; then
-            cat /tmp/live-app.stderr
-            exit 1
-          fi
+          $ErrorActionPreference = 'Stop'
+          $venv = Join-Path $env:RUNNER_TEMP 'cua-fleet-wheel-smoke'
+          python -m venv $venv
+          $python = Join-Path $venv 'Scripts\python.exe'
+          & $python -m pip --isolated install --no-index --no-deps --no-cache-dir "dist/$env:WHEEL"
+          if ($LASTEXITCODE -ne 0) { throw 'offline wheel installation failed' }
+          $validation = @"
+          import ctypes
+          from pathlib import Path
+          import fleet_sdk
+          from fleet_sdk import CreateClaimRequest, CreatePoolRequest, CyclopsClient
+          native = Path(fleet_sdk.__file__).resolve().parent / 'cyclops_sdk.dll'
+          assert native.is_file(), native
+          ctypes.WinDLL(str(native))
+          assert CyclopsClient and CreateClaimRequest and CreatePoolRequest
+          print(native)
+          "@
+          Push-Location $env:RUNNER_TEMP
+          try {
+            $dll = (& $python -I -c $validation | Select-Object -Last 1)
+            if ($LASTEXITCODE -ne 0) { throw 'isolated fleet_sdk import failed' }
+            $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+            $installationPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $installationPath) { throw 'Visual Studio C++ tools were not found' }
+            $dumpbin = Get-ChildItem (Join-Path $installationPath 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe') |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if (-not $dumpbin) { throw 'dumpbin.exe was not found in the Visual Studio installation' }
+            $dumpbinOutput = & $dumpbin.FullName /DEPENDENTS $dll
+            $dumpbinOutput | ForEach-Object { Write-Output $_ }
+            $systemDirectory = Join-Path $env:WINDIR 'System32'
+            $dependencies = $dumpbinOutput | Select-String '^\s+[A-Za-z0-9_.-]+\.dll\s*$' | ForEach-Object { $_.Matches.Value.Trim() }
+            foreach ($dependency in $dependencies) {
+              $isApiSet = $dependency -match '^(api-ms-win-|ext-ms-win-)'
+              if (-not $isApiSet -and -not (Test-Path (Join-Path $systemDirectory $dependency))) {
+                throw "non-system DLL dependency: $dependency"
+              }
+            }
+          } finally {
+            Pop-Location
+          }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -222,7 +259,7 @@ jobs:
           if-no-files-found: error
 
   validate:
-    needs: [prepare, repackage]
+    needs: [prepare, mirror]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -233,74 +270,68 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Verify four promoted wheels and packaging metadata
+      - name: Verify complete canonical wheel set
         run: |
           set -euo pipefail
+          python .github/scripts/verify_cua_fleet_wheels.py \
+            --manifest "$MANIFEST" \
+            --dist dist
           python -m pip install --upgrade twine
           python -m twine check dist/*.whl
-          python .github/scripts/repackage_cua_train_wheel.py --verify dist/*.whl
-          python - "${{ needs.prepare.outputs.version }}" dist <<'PY'
-          from pathlib import Path
-          import sys
-
-          version, dist_directory = sys.argv[1:]
-          wheels = sorted(Path(dist_directory).glob("*.whl"))
-          expected = {
-              f"cua_fleet-{version}-py3-none-manylinux_2_34_x86_64.whl",
-              f"cua_fleet-{version}-py3-none-manylinux_2_34_aarch64.whl",
-              f"cua_fleet-{version}-py3-none-macosx_10_12_x86_64.whl",
-              f"cua_fleet-{version}-py3-none-macosx_11_0_arm64.whl",
-          }
-          actual = {wheel.name for wheel in wheels}
-          assert actual == expected, (actual, expected)
-          PY
-
-  unsupported-windows:
-    needs: [prepare, repackage]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Reject native wheels on Windows
-        shell: pwsh
-        run: |
-          python -c "import subprocess, sys; result = subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-index', '--no-deps', '--find-links', 'dist', 'cua-fleet==${{ needs.prepare.outputs.version }}']); raise SystemExit('Windows unexpectedly resolved a native cua-fleet wheel' if result.returncode == 0 else 0)"
 
   publish:
-    needs: [prepare, validate, unsupported-windows]
+    needs: [prepare, validate]
     runs-on: ubuntu-latest
     environment: pypi-fleet
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Reconcile PyPI state before publishing
+      - name: Reconcile PyPI state against canonical hashes
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
+          python .github/scripts/verify_cua_fleet_wheels.py \
+            --manifest "$MANIFEST" \
+            --dist dist
           curl --fail --silent --show-error --location \
             https://pypi.org/pypi/cua-fleet/json > /tmp/cua-fleet-pypi.json
-          python - "$VERSION" dist /tmp/cua-fleet-pypi.json <<'PY'
+          python - "$VERSION" "$MANIFEST" dist /tmp/cua-fleet-pypi.json <<'PY'
           import hashlib
           import json
           from pathlib import Path
           import sys
 
-          version, dist_dir, metadata_path = sys.argv[1:]
-          expected = {wheel.name: hashlib.sha256(wheel.read_bytes()).hexdigest() for wheel in Path(dist_dir).glob("*.whl")}
+          version, manifest_path, dist_dir, metadata_path = sys.argv[1:]
+          manifest = json.loads(Path(manifest_path).read_text())
+          expected = manifest["wheels"]
+          actual = {
+              wheel.name: hashlib.sha256(wheel.read_bytes()).hexdigest()
+              for wheel in Path(dist_dir).glob("*.whl")
+          }
+          if actual != expected:
+              raise SystemExit(f"downloaded wheels differ from canonical manifest: {actual}")
           releases = json.load(open(metadata_path))["releases"]
-          existing = {item["filename"]: item["digests"]["sha256"] for item in releases.get(version, [])}
+          existing = {
+              item["filename"]: item["digests"]["sha256"]
+              for item in releases.get(version, [])
+          }
           unexpected = set(existing) - set(expected)
-          mismatched = {name for name, digest in existing.items() if expected.get(name) != digest}
+          mismatched = {
+              name for name, digest in existing.items()
+              if expected.get(name) != digest
+          }
           if unexpected or mismatched:
-              raise SystemExit(f"PyPI {version} conflicts: unexpected={unexpected}, mismatched={mismatched}")
+              raise SystemExit(
+                  f"PyPI {version} conflicts: unexpected={unexpected}, mismatched={mismatched}"
+              )
           missing = sorted(set(expected) - set(existing))
           Path("/tmp/cua-fleet-missing-wheels.txt").write_text("\n".join(missing))
           PY
+
       - name: Publish only missing verified wheels
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
@@ -311,11 +342,24 @@ jobs:
             echo "All cua-fleet wheels are already published with matching hashes."
             exit 0
           fi
-          python -m pip install --upgrade twine
           files=()
           for wheel in "${missing[@]}"; do
             files+=("dist/$wheel")
           done
+          python - "$MANIFEST" "${files[@]}" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+
+          manifest = json.loads(Path(sys.argv[1]).read_text())["wheels"]
+          for raw_path in sys.argv[2:]:
+              path = Path(raw_path)
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              if manifest.get(path.name) != actual:
+                  raise SystemExit(f"refusing to upload non-canonical wheel: {path}")
+          PY
+          python -m pip install --upgrade twine
           TWINE_USERNAME="__token__" TWINE_PASSWORD="$PYPI_TOKEN" \
             python -m twine upload --verbose "${files[@]}"
 

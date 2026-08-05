@@ -21,7 +21,7 @@ WHEEL_PATTERN = re.compile(
 PLATFORM_NATIVE_NAMES = {
     "manylinux_2_34_x86_64": "libcyclops_sdk.so",
     "manylinux_2_34_aarch64": "libcyclops_sdk.so",
-    "macosx_10_13_x86_64": "libcyclops_sdk.dylib",
+    "macosx_10_12_x86_64": "libcyclops_sdk.dylib",
     "macosx_11_0_arm64": "libcyclops_sdk.dylib",
     "win_amd64": "cyclops_sdk.dll",
 }
@@ -119,14 +119,17 @@ def verify_wheel(path: Path, version: str, expected_sha256: str) -> str:
 def verify_release(manifest_path: Path, dist_directory: Path, require_all_platforms: bool = True) -> None:
     version, wheels = load_manifest(manifest_path)
     actual_files = {path.name: path for path in dist_directory.glob("*.whl")}
-    if set(actual_files) != set(wheels):
+    actual_names = set(actual_files)
+    expected_names = set(wheels)
+    valid_set = actual_names == expected_names if require_all_platforms else bool(actual_names) and actual_names <= expected_names
+    if not valid_set:
         raise WheelError(
             f"wheel set does not match manifest: actual={sorted(actual_files)}, expected={sorted(wheels)}"
         )
 
     platforms = {
-        verify_wheel(actual_files[name], version, expected_sha256)
-        for name, expected_sha256 in wheels.items()
+        verify_wheel(path, version, wheels[name])
+        for name, path in actual_files.items()
     }
     expected_platforms = set(PLATFORM_NATIVE_NAMES)
     if require_all_platforms and platforms != expected_platforms:
@@ -139,13 +142,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--dist", type=Path, required=True)
+    parser.add_argument("--allow-partial", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        verify_release(args.manifest, args.dist)
+        verify_release(args.manifest, args.dist, require_all_platforms=not args.allow_partial)
     except WheelError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

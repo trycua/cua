@@ -1,16 +1,26 @@
 # cua-fleet
 
-Cua Fleet facade for the [Cua Cloud](https://run.cua.ai) Python SDK.
+Platform wheels for the Cua Fleet UniFFI SDK.
 
 ```bash
 pip install cua-fleet
 ```
 
-```python
-from cua_fleet import TrainClient
+The distribution exposes the generated `fleet_sdk` module directly:
 
-client = TrainClient.from_key(
-    client_id="ukey-...",
-    client_secret="...",
+```python
+from fleet_sdk import CyclopsClient, CyclopsConfiguration, CyclopsCredentials
+
+client = CyclopsClient(
+    CyclopsConfiguration(
+        api_base="https://api.cua.ai",
+        credentials=CyclopsCredentials(
+            client_id="ukey-...",
+            client_secret="...",
+        ),
+    )
 )
 ```
+
+There is no `cua_fleet` compatibility module. Import all generated Fleet SDK
+symbols from `fleet_sdk`.

@@ -1,0 +1,10 @@
+{
+  "version": "0.1.6",
+  "wheels": {
+    "cua_fleet-0.1.6-py3-none-macosx_10_12_x86_64.whl": "bce6c86535767f9e2ab547f482de1045532016d10e350076097c442eb8d56f81",
+    "cua_fleet-0.1.6-py3-none-macosx_11_0_arm64.whl": "8eba5d4c24769e949845c63d4ce9a35307900d6475531781f6b2fd3a1b93e537",
+    "cua_fleet-0.1.6-py3-none-manylinux_2_34_aarch64.whl": "07e113e0fdbcd4b554a2b3f88411ac4eb691cd1be207dc62959c4f59c19b4e1b",
+    "cua_fleet-0.1.6-py3-none-manylinux_2_34_x86_64.whl": "ef096dd2dae312a1eca6cbf08f8e1a78e32e5a7938418831f00c16be0663f23d",
+    "cua_fleet-0.1.6-py3-none-win_amd64.whl": "230ebd003dee59b2d343b9ea136bd664c548afa3e5c1ad4cb44dad66b0816cea"
+  }
+}

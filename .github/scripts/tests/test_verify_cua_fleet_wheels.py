@@ -67,7 +67,7 @@ class VerifyCuaFleetWheelsTest(unittest.TestCase):
             platforms = {
                 "manylinux_2_34_x86_64": "libcyclops_sdk.so",
                 "manylinux_2_34_aarch64": "libcyclops_sdk.so",
-                "macosx_10_13_x86_64": "libcyclops_sdk.dylib",
+                "macosx_10_12_x86_64": "libcyclops_sdk.dylib",
                 "macosx_11_0_arm64": "libcyclops_sdk.dylib",
                 "win_amd64": "cyclops_sdk.dll",
             }
@@ -112,6 +112,26 @@ class VerifyCuaFleetWheelsTest(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest))
             with self.assertRaisesRegex(verifier.WheelError, "unexpected payload roots"):
                 verifier.verify_release(manifest_path, dist, require_all_platforms=False)
+
+    def test_allows_one_manifest_wheel_in_a_platform_job(self):
+        verifier = load_verifier()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            dist = root / "dist"
+            dist.mkdir()
+            version = "0.1.6"
+            wheels = {}
+            for platform, native_name in verifier.PLATFORM_NATIVE_NAMES.items():
+                wheel = root / f"cua_fleet-{version}-py3-none-{platform}.whl"
+                write_wheel(wheel, version, native_name)
+                wheels[wheel.name] = hashlib.sha256(wheel.read_bytes()).hexdigest()
+
+            selected = root / next(iter(wheels))
+            selected.rename(dist / selected.name)
+            manifest_path = root / "canonical-wheels.json"
+            manifest_path.write_text(json.dumps({"version": version, "wheels": wheels}))
+
+            verifier.verify_release(manifest_path, dist, require_all_platforms=False)
 
 
 if __name__ == "__main__":

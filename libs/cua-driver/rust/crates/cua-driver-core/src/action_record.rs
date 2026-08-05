@@ -1820,4 +1820,45 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn every_legacy_text_only_action_is_conservatively_unverifiable() {
+        let tools = [
+            "click",
+            "double_click",
+            "right_click",
+            "scroll",
+            "drag",
+            "mouse_drag",
+            "parallel_mouse_drag",
+            "move_cursor",
+            "mouse_button_down",
+            "mouse_button_up",
+            "type_text",
+            "type_text_chars",
+            "press_key",
+            "hotkey",
+            "set_value",
+            "browser_click",
+            "browser_pointer",
+            "browser_type",
+        ];
+
+        for tool in tools {
+            let record = ActionExecutionRecord::from_legacy(
+                tool,
+                &serde_json::json!({}),
+                &serde_json::Value::Null,
+            )
+            .unwrap_or_else(|| panic!("legacy text-only action {tool} must normalize"));
+            assert_eq!(
+                record.effect,
+                ActionEffect::Unverifiable,
+                "legacy text-only action {tool} must never imply confirmation"
+            );
+            record
+                .public_result()
+                .unwrap_or_else(|error| panic!("{tool} must publish: {error:?}"));
+        }
+    }
 }

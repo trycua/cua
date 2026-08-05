@@ -1,43 +1,29 @@
 use serde::{Deserialize, Serialize};
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-const SCHEMA_VERSION: u32 = 1;
 const FILE_NAME: &str = "direct-capture-verification.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectCaptureVerification {
-    pub schema_version: u32,
-    pub status: String,
     pub verified_at: String,
     pub bundle_id: String,
-    pub driver_version: String,
-    pub source: String,
 }
 
 impl DirectCaptureVerification {
-    fn new(bundle_id: &str, driver_version: &str, verified_at: String) -> Self {
+    fn new(bundle_id: &str, verified_at: String) -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
-            status: "verified".to_owned(),
             verified_at,
             bundle_id: bundle_id.to_owned(),
-            driver_version: driver_version.to_owned(),
-            source: "permissions_grant".to_owned(),
         }
     }
 
     fn matches_identity(&self, bundle_id: &str) -> bool {
-        self.schema_version == SCHEMA_VERSION
-            && self.status == "verified"
-            && self.source == "permissions_grant"
-            && self.bundle_id == bundle_id
-            && !self.verified_at.is_empty()
+        self.bundle_id == bundle_id && !self.verified_at.is_empty()
     }
 }
 
 fn state_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::env::var_os("HOME")?;
     Some(
         PathBuf::from(home)
             .join(crate::bundle::user_home_subdirectory())
@@ -50,11 +36,7 @@ pub fn record_now() -> Result<DirectCaptureVerification, String> {
     let verified_at = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|error| format!("format verification time: {error}"))?;
-    let verification = DirectCaptureVerification::new(
-        crate::bundle::bundle_id(),
-        env!("CARGO_PKG_VERSION"),
-        verified_at,
-    );
+    let verification = DirectCaptureVerification::new(crate::bundle::bundle_id(), verified_at);
     persist_to_path(&path, &verification)?;
     Ok(verification)
 }
@@ -89,36 +71,13 @@ fn persist_to_path(path: &Path, verification: &DirectCaptureVerification) -> Res
         .ok_or_else(|| "direct-capture verification path has no parent".to_owned())?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("create {}: {error}", parent.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-            .map_err(|error| format!("secure {}: {error}", parent.display()))?;
-    }
 
     let temporary = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     let result = (|| {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary)
-            .map_err(|error| format!("create {}: {error}", temporary.display()))?;
         let bytes = serde_json::to_vec_pretty(verification)
             .map_err(|error| format!("serialize direct-capture verification: {error}"))?;
-        file.write_all(&bytes)
+        std::fs::write(&temporary, bytes)
             .map_err(|error| format!("write {}: {error}", temporary.display()))?;
-        file.sync_all()
-            .map_err(|error| format!("sync {}: {error}", temporary.display()))?;
-        #[cfg(windows)]
-        if path.exists() {
-            std::fs::remove_file(path)
-                .map_err(|error| format!("replace {}: {error}", path.display()))?;
-        }
         std::fs::rename(&temporary, path)
             .map_err(|error| format!("replace {}: {error}", path.display()))
     })();
@@ -133,7 +92,7 @@ mod tests {
     use super::*;
 
     fn verification(bundle_id: &str) -> DirectCaptureVerification {
-        DirectCaptureVerification::new(bundle_id, "0.18.0", "2026-08-06T12:34:56Z".to_owned())
+        DirectCaptureVerification::new(bundle_id, "2026-08-06T12:34:56Z".to_owned())
     }
 
     #[test]

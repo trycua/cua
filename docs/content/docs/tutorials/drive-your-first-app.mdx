@@ -50,15 +50,15 @@ Use the same one-line installer on every platform; it picks the right path for t
 
     macOS prompts once for each permission. Neither prompt grants anything on its own — both offer **Open System Settings**, not **Allow**:
 
-    ![The macOS Accessibility Access prompt for CuaDriver, offering Open System Settings or Deny](/img/cua-driver/permissions/accessibility-prompt.png)
+    ![The macOS Accessibility Access prompt for CuaDriver, offering Open System Settings or Deny](https://github.com/user-attachments/assets/b7a5a0c0-f297-4249-81f9-ca42c6b6f8ba)
 
-    ![The macOS Screen Recording prompt for CuaDriver, offering Open System Settings or Deny](/img/cua-driver/permissions/screen-recording-prompt.png)
+    ![The macOS Screen Recording prompt for CuaDriver, offering Open System Settings or Deny](https://github.com/user-attachments/assets/69efc964-a375-495e-8a27-400c9dd08e17)
 
     Clicking **Open System Settings** adds CuaDriver to that permission's list for you — switched off. Toggling it on is what actually grants access:
 
-    ![CuaDriver listed under Accessibility in System Settings with its toggle switched off](/img/cua-driver/permissions/accessibility-settings.png)
+    ![CuaDriver listed under Accessibility in System Settings with its toggle switched off](https://github.com/user-attachments/assets/d149fe5a-28cb-460c-8868-4eda80d540a4)
 
-    ![CuaDriver listed under Screen & System Audio Recording in System Settings with its toggle switched off](/img/cua-driver/permissions/screen-recording-settings.png)
+    ![CuaDriver listed under Screen & System Audio Recording in System Settings with its toggle switched off](https://github.com/user-attachments/assets/469308b5-84d7-4fd6-a580-e62925120337)
 
     <Callout type="warn">
       Do this for both **Accessibility** and **Screen & System Audio Recording**; choosing **Deny** leaves the driver unable to see or drive your desktop. macOS may offer to quit and reopen CuaDriver when you flip a toggle — accept, because the driver only picks up a changed grant after a full relaunch. If the daemon does not come back, start it again with `open -n -g -a CuaDriver --args serve`.

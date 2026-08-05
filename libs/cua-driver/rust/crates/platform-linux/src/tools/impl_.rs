@@ -7906,7 +7906,10 @@ pub fn build_registry_with_provider(
         state: state.clone(),
     }));
     r.register(Box::new(
-        cua_driver_core::application_observation::UnsupportedApplicationStateTool::new("linux"),
+        cua_driver_core::accessibility_surface::UnsupportedAccessibilitySurfaceTool::list("linux"),
+    ));
+    r.register(Box::new(
+        cua_driver_core::accessibility_surface::UnsupportedAccessibilitySurfaceTool::get("linux"),
     ));
     r.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(std::sync::Arc::new(

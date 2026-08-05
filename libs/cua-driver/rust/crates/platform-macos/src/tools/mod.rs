@@ -23,10 +23,10 @@ mod type_text;
 // path. The capture functions they wrapped (ScreenCaptureKit, CGWindow,
 // etc.) live elsewhere under CuaDriverCore::Capture and are reached
 // through GetWindowStateTool.
+mod accessibility_surfaces;
 mod check_permissions;
 mod cursor_tools;
 mod get_accessibility_tree;
-mod get_application_state;
 mod get_config;
 mod get_cursor_position;
 mod get_desktop_state;
@@ -723,6 +723,7 @@ impl Default for SessionConfigRegistry {
 /// Shared state passed to all tools.
 pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
+    pub accessibility_surfaces: Arc<crate::ax::surface::SurfaceRegistry>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
@@ -762,6 +763,7 @@ impl ToolState {
     ) -> Self {
         Self {
             element_cache: Arc::new(ElementCache::new()),
+            accessibility_surfaces: Arc::new(crate::ax::surface::SurfaceRegistry::default()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
@@ -892,7 +894,12 @@ pub fn register_all(
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(
         state.clone(),
     )));
-    registry.register(Box::new(get_application_state::GetApplicationStateTool));
+    registry.register(Box::new(
+        accessibility_surfaces::ListAccessibilitySurfacesTool::new(state.clone()),
+    ));
+    registry.register(Box::new(
+        accessibility_surfaces::GetAccessibilitySurfaceStateTool::new(state.clone()),
+    ));
     registry.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(Arc::new(
             cua_driver_core::expectation::ToolObservationProvider::new(

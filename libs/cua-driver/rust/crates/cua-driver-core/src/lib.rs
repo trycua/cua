@@ -45,9 +45,9 @@ pub fn parent_liveness_stdin_enabled() -> bool {
     embedded_mode() && std::env::var_os(PARENT_LIVENESS_STDIN_ENV).is_some_and(|value| value == "1")
 }
 
+pub mod accessibility_surface;
 pub mod action_record;
 pub mod action_target;
-pub mod application_observation;
 pub mod authorization;
 pub mod background_input;
 pub mod browser;

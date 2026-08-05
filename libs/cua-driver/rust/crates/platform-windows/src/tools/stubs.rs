@@ -301,7 +301,12 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool));
     r.register(Box::new(
-        cua_driver_core::application_observation::UnsupportedApplicationStateTool::new("windows"),
+        cua_driver_core::accessibility_surface::UnsupportedAccessibilitySurfaceTool::list(
+            "windows",
+        ),
+    ));
+    r.register(Box::new(
+        cua_driver_core::accessibility_surface::UnsupportedAccessibilitySurfaceTool::get("windows"),
     ));
     r.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(std::sync::Arc::new(

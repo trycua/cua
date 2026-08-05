@@ -23,6 +23,8 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
+use x11rb::connection::Connection as _;
+use x11rb::protocol::xproto::{Format, ImageOrder, Setup, VisualClass, Visualtype};
 
 /// Max edge length accepted for a single SHM/XGetImage capture (px).
 const MAX_CAPTURE_DIM: u32 = 16_384;
@@ -87,58 +89,208 @@ fn capture_window_with_backends(
 fn capture_via_import(xid: u64) -> Result<Vec<u8>> {
     let out = Command::new("import")
         .args(["-window", &xid.to_string(), "png:-"])
-        .output()?;
-    if !out.status.success() || out.stdout.is_empty() {
-        bail!("import failed");
+        .output()
+        .map_err(|e| anyhow!("failed to launch ImageMagick import: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let detail = stderr.trim().chars().take(512).collect::<String>();
+        bail!("ImageMagick import exited {}: {detail}", out.status);
+    }
+    if out.stdout.is_empty() {
+        bail!("ImageMagick import returned empty stdout");
     }
     Ok(out.stdout)
 }
 
 // ── shared pixel conversion ───────────────────────────────────────────────
 
-/// Convert packed BGRA/BGRX (`w*h*4` bytes) to PNG. Depth 32 uses byte 3 as
-/// alpha; depth 24 forces alpha=255. Exact `w*h*4` length is required.
-fn bgra_zpixmap_to_png(data: &[u8], w: u32, h: u32, depth: u8) -> Result<Vec<u8>> {
-    let expected = checked_image_byte_len(w, h)?;
-    if data.len() != expected {
-        bail!(
-            "pixel buffer length {} != expected {} ({}x{}, depth {})",
-            data.len(),
-            expected,
-            w,
-            h,
-            depth
-        );
-    }
-    match depth {
-        24 | 32 => {}
-        other => bail!("Unsupported depth: {other}"),
-    }
-
-    let mut rgba = Vec::with_capacity(expected);
-    for chunk in data.chunks_exact(4) {
-        let (b, g, r) = (chunk[0], chunk[1], chunk[2]);
-        let a = if depth == 32 { chunk[3] } else { 255 };
-        rgba.extend_from_slice(&[r, g, b, a]);
-    }
-    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+#[derive(Clone)]
+struct PixelCatalog {
+    image_byte_order: ImageOrder,
+    formats: Vec<Format>,
+    visuals: Vec<Visualtype>,
 }
 
-fn checked_image_byte_len(w: u32, h: u32) -> Result<usize> {
+#[derive(Clone, Copy)]
+struct PackedLayout {
+    byte_order: ImageOrder,
+    bytes_per_pixel: usize,
+    stride: usize,
+    len: usize,
+}
+
+#[derive(Clone, Copy)]
+struct PixelDecoder {
+    layout: PackedLayout,
+    red_mask: u32,
+    green_mask: u32,
+    blue_mask: u32,
+}
+
+impl PixelCatalog {
+    fn from_setup(setup: &Setup) -> Self {
+        Self {
+            image_byte_order: setup.image_byte_order,
+            formats: setup.pixmap_formats.clone(),
+            visuals: setup
+                .roots
+                .iter()
+                .flat_map(|screen| screen.allowed_depths.iter())
+                .flat_map(|depth| depth.visuals.iter().copied())
+                .collect(),
+        }
+    }
+
+    fn packed_layout(&self, w: u32, h: u32, depth: u8) -> Result<PackedLayout> {
+        checked_capture_dimensions(w, h)?;
+        let format = self
+            .formats
+            .iter()
+            .find(|format| format.depth == depth)
+            .ok_or_else(|| anyhow!("no X11 pixmap format for depth {depth}"))?;
+        if !matches!(format.bits_per_pixel, 16 | 24 | 32) {
+            bail!(
+                "unsupported X11 bits-per-pixel {} for depth {depth}",
+                format.bits_per_pixel
+            );
+        }
+        if !matches!(format.scanline_pad, 8 | 16 | 32) {
+            bail!(
+                "unsupported X11 scanline pad {} for depth {depth}",
+                format.scanline_pad
+            );
+        }
+
+        let row_bits = u64::from(w)
+            .checked_mul(u64::from(format.bits_per_pixel))
+            .ok_or_else(|| anyhow!("window geometry {w}x{h} overflows row length"))?;
+        let pad = u64::from(format.scanline_pad);
+        let stride_bits = row_bits
+            .checked_add(pad - 1)
+            .map(|bits| (bits / pad) * pad)
+            .ok_or_else(|| anyhow!("window geometry {w}x{h} overflows padded row length"))?;
+        let stride = usize::try_from(stride_bits / 8)
+            .map_err(|_| anyhow!("window geometry {w}x{h} stride does not fit usize"))?;
+        let len = stride
+            .checked_mul(h as usize)
+            .ok_or_else(|| anyhow!("window geometry {w}x{h} overflows byte length"))?;
+        if len == 0 || len > MAX_CAPTURE_BYTES {
+            bail!("window capture size {len} out of bounds (max {MAX_CAPTURE_BYTES})");
+        }
+        Ok(PackedLayout {
+            byte_order: self.image_byte_order,
+            bytes_per_pixel: usize::from(format.bits_per_pixel / 8),
+            stride,
+            len,
+        })
+    }
+
+    fn decoder(&self, w: u32, h: u32, depth: u8, visual_id: u32) -> Result<PixelDecoder> {
+        let layout = self.packed_layout(w, h, depth)?;
+        let visual = self
+            .visuals
+            .iter()
+            .find(|visual| visual.visual_id == visual_id)
+            .ok_or_else(|| anyhow!("unknown X11 visual 0x{visual_id:x} for depth {depth}"))?;
+        if visual.class != VisualClass::TRUE_COLOR {
+            bail!(
+                "unsupported X11 visual class {:?} for visual 0x{visual_id:x}",
+                visual.class
+            );
+        }
+        for (name, mask) in [
+            ("red", visual.red_mask),
+            ("green", visual.green_mask),
+            ("blue", visual.blue_mask),
+        ] {
+            validate_component_mask(name, mask)?;
+        }
+        if visual.red_mask & visual.green_mask != 0
+            || visual.red_mask & visual.blue_mask != 0
+            || visual.green_mask & visual.blue_mask != 0
+        {
+            bail!("overlapping RGB masks for X11 visual 0x{visual_id:x}");
+        }
+        Ok(PixelDecoder {
+            layout,
+            red_mask: visual.red_mask,
+            green_mask: visual.green_mask,
+            blue_mask: visual.blue_mask,
+        })
+    }
+}
+
+fn checked_capture_dimensions(w: u32, h: u32) -> Result<()> {
     if w == 0 || h == 0 {
         bail!("window geometry is 0x0");
     }
     if w > MAX_CAPTURE_DIM || h > MAX_CAPTURE_DIM {
         bail!("window geometry {w}x{h} exceeds max {MAX_CAPTURE_DIM}px edge");
     }
-    let bytes = (w as u64)
-        .checked_mul(h as u64)
-        .and_then(|n| n.checked_mul(4))
-        .ok_or_else(|| anyhow!("window geometry {w}x{h} overflows byte length"))?;
-    if bytes == 0 || bytes > MAX_CAPTURE_BYTES as u64 {
-        bail!("window capture size {bytes} out of bounds (max {MAX_CAPTURE_BYTES})");
+    Ok(())
+}
+
+fn validate_component_mask(name: &str, mask: u32) -> Result<()> {
+    if mask == 0 {
+        bail!("X11 {name} mask is zero");
     }
-    Ok(bytes as usize)
+    let normalized = mask >> mask.trailing_zeros();
+    if normalized & normalized.wrapping_add(1) != 0 {
+        bail!("X11 {name} mask 0x{mask:x} is not contiguous");
+    }
+    Ok(())
+}
+
+fn component_to_u8(pixel: u32, mask: u32) -> u8 {
+    let shifted_mask = mask >> mask.trailing_zeros();
+    let value = (pixel & mask) >> mask.trailing_zeros();
+    ((u64::from(value) * 255 + u64::from(shifted_mask) / 2) / u64::from(shifted_mask)) as u8
+}
+
+fn packed_zpixmap_to_png(data: &[u8], w: u32, h: u32, decoder: PixelDecoder) -> Result<Vec<u8>> {
+    if data.len() != decoder.layout.len {
+        bail!(
+            "pixel buffer length {} != expected {} ({}x{})",
+            data.len(),
+            decoder.layout.len,
+            w,
+            h
+        );
+    }
+    let rgba_len = (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| anyhow!("window geometry {w}x{h} overflows RGBA length"))?;
+    let mut rgba = Vec::with_capacity(rgba_len);
+    for y in 0..h as usize {
+        let row = &data[y * decoder.layout.stride..(y + 1) * decoder.layout.stride];
+        for x in 0..w as usize {
+            let start = x * decoder.layout.bytes_per_pixel;
+            let bytes = &row[start..start + decoder.layout.bytes_per_pixel];
+            let pixel = if decoder.layout.byte_order == ImageOrder::LSB_FIRST {
+                bytes.iter().enumerate().fold(0u32, |value, (index, byte)| {
+                    value | (u32::from(*byte) << (index * 8))
+                })
+            } else if decoder.layout.byte_order == ImageOrder::MSB_FIRST {
+                bytes
+                    .iter()
+                    .fold(0u32, |value, byte| (value << 8) | u32::from(*byte))
+            } else {
+                bail!("unsupported X11 image byte order");
+            };
+            rgba.extend_from_slice(&[
+                component_to_u8(pixel, decoder.red_mask),
+                component_to_u8(pixel, decoder.green_mask),
+                component_to_u8(pixel, decoder.blue_mask),
+                255,
+            ]);
+        }
+    }
+    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+}
+
+fn xid_to_window(xid: u64) -> Result<u32> {
+    u32::try_from(xid).map_err(|_| anyhow!("X11 window id {xid} does not fit u32"))
 }
 
 fn current_display() -> String {
@@ -160,6 +312,7 @@ struct ShmBuffer {
 struct XShmSession {
     display: String,
     conn: x11rb::rust_connection::RustConnection,
+    pixels: PixelCatalog,
     #[allow(dead_code)]
     screen_num: usize,
     buffer: Option<ShmBuffer>,
@@ -256,8 +409,9 @@ impl XShmSession {
     fn connect(display: String) -> Result<Self> {
         use x11rb::protocol::shm::ConnectionExt as _;
 
-        let (conn, screen_num) = x11rb::rust_connection::RustConnection::connect(None)
+        let (conn, screen_num) = x11rb::rust_connection::RustConnection::connect(Some(&display))
             .map_err(|e| anyhow!("X11 connect for SHM: {e}"))?;
+        let pixels = PixelCatalog::from_setup(conn.setup());
 
         // MUST query version before any other SHM request.
         let ver = conn
@@ -278,17 +432,31 @@ impl XShmSession {
         Ok(Self {
             display,
             conn,
+            pixels,
             screen_num,
             buffer: None,
         })
     }
 
     fn detach_buffer_best_effort(&mut self) {
+        let _ = self.detach_buffer();
+    }
+
+    fn detach_buffer(&mut self) -> Result<()> {
         use x11rb::protocol::shm::ConnectionExt as _;
         if let Some(buf) = self.buffer.take() {
-            let _ = self.conn.shm_detach(buf.seg);
-            // `buf.map` drops here; never panic on detach failure.
+            let seg = buf.seg;
+            let detach = self
+                .conn
+                .shm_detach(seg)
+                .map_err(|e| anyhow!("shm_detach request for segment 0x{seg:x}: {e}"))?
+                .check()
+                .map_err(|e| anyhow!("shm_detach reply for segment 0x{seg:x}: {e}"));
+            // Drop the mapping even when the connection is already broken.
+            drop(buf);
+            detach?;
         }
+        Ok(())
     }
 
     fn ensure_buffer(&mut self, need: usize) -> Result<()> {
@@ -308,7 +476,7 @@ impl XShmSession {
         }
 
         // Grow: detach old segment and drop old mapping before allocating.
-        self.detach_buffer_best_effort();
+        self.detach_buffer()?;
 
         let size_u32 =
             u32::try_from(need).map_err(|_| anyhow!("SHM buffer size {need} does not fit u32"))?;
@@ -358,7 +526,7 @@ impl XShmSession {
         use x11rb::protocol::shm::ConnectionExt as _;
         use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
 
-        let window = xid as u32;
+        let window = xid_to_window(xid)?;
         let geom = self
             .conn
             .get_geometry(window)
@@ -367,7 +535,8 @@ impl XShmSession {
             .map_err(|e| anyhow!("get_geometry reply: {e}"))?;
         let w = u32::from(geom.width);
         let h = u32::from(geom.height);
-        let need = checked_image_byte_len(w, h)?;
+        let layout = self.pixels.packed_layout(w, h, geom.depth)?;
+        let need = layout.len;
 
         self.ensure_buffer(need)?;
         let (seg, map_len) = {
@@ -399,13 +568,19 @@ impl XShmSession {
             .map_err(|e| anyhow!("shm_get_image reply: {e}"))?;
 
         match reply.depth {
-            24 | 32 => {}
+            16 | 24 | 32 => {}
             other => bail!("Unsupported depth: {other}"),
         }
 
         let size = reply.size as usize;
         if size != need {
-            bail!("shm_get_image size {size} != expected {need} ({}x{})", w, h);
+            bail!(
+                "shm_get_image size {size} != expected {need} ({}x{}, depth {}, stride {})",
+                w,
+                h,
+                reply.depth,
+                layout.stride
+            );
         }
         if size > map_len {
             bail!("shm_get_image size {size} exceeds mapped {map_len}");
@@ -422,7 +597,7 @@ impl XShmSession {
             data,
             w,
             h,
-            depth: reply.depth,
+            decoder: self.pixels.decoder(w, h, reply.depth, reply.visual)?,
         })
     }
 }
@@ -431,7 +606,7 @@ struct RawFrame {
     data: Vec<u8>,
     w: u32,
     h: u32,
-    depth: u8,
+    decoder: PixelDecoder,
 }
 
 fn xshm_state() -> &'static Mutex<XShmState> {
@@ -442,20 +617,27 @@ fn xshm_state() -> &'static Mutex<XShmState> {
 fn capture_via_xshm(xid: u64) -> Result<Vec<u8>> {
     let display = current_display();
     let mut guard = lock_mutex(xshm_state());
+    let frame = capture_raw_via_xshm_state(&mut guard, &display, xid)?;
 
+    // Release the session mutex before pixel conversion and PNG encode.
+    drop(guard);
+    packed_zpixmap_to_png(&frame.data, frame.w, frame.h, frame.decoder)
+}
+
+fn capture_raw_via_xshm_state(guard: &mut XShmState, display: &str, xid: u64) -> Result<RawFrame> {
     // Init backoff for this DISPLAY — no per-frame reprobe while active.
     // Expired same-DISPLAY / different-DISPLAY Unsupported → Uninit (probeable).
-    if let Err(reason) = guard.consume_init_backoff(&display, Instant::now()) {
+    if let Err(reason) = guard.consume_init_backoff(display, Instant::now()) {
         bail!("MIT-SHM disabled for DISPLAY={display}: {reason}");
     }
 
     // Ensure Ready session for current DISPLAY (connect only on init/recovery).
-    match ensure_xshm_ready(&mut guard, &display) {
+    match ensure_xshm_ready(guard, display) {
         Ok(()) => {}
         Err(e) => {
             let reason = format!("{e:#}");
             *guard = XShmState::unsupported_after_init_failure(
-                display.clone(),
+                display.to_string(),
                 reason.clone(),
                 Instant::now(),
             );
@@ -472,12 +654,12 @@ fn capture_via_xshm(xid: u64) -> Result<Vec<u8>> {
         session.capture_raw(xid)
     };
 
-    let frame = match first {
-        Ok(frame) => frame,
+    match first {
+        Ok(frame) => Ok(frame),
         Err(first_err) => {
             // Cached session failure: discard/detach and reconnect+retry once.
             *guard = XShmState::Uninit;
-            let retry_init = ensure_xshm_ready(&mut guard, &display);
+            let retry_init = ensure_xshm_ready(guard, display);
             let second = match retry_init {
                 Ok(()) => {
                     let session = match &mut *guard {
@@ -491,7 +673,7 @@ fn capture_via_xshm(xid: u64) -> Result<Vec<u8>> {
                 Err(e) => Err(e),
             };
             match second {
-                Ok(frame) => frame,
+                Ok(frame) => Ok(frame),
                 Err(second_err) => {
                     let combined = format!("first: {first_err:#}; retry: {second_err:#}");
                     // Request/capture failures never enter Unsupported.
@@ -502,11 +684,7 @@ fn capture_via_xshm(xid: u64) -> Result<Vec<u8>> {
                 }
             }
         }
-    };
-
-    // Release the session mutex before BGRA→RGBA conversion and PNG encode.
-    drop(guard);
-    bgra_zpixmap_to_png(&frame.data, frame.w, frame.h, frame.depth)
+    }
 }
 
 fn ensure_xshm_ready(guard: &mut XShmState, display: &str) -> Result<()> {
@@ -533,6 +711,7 @@ fn ensure_xshm_ready(guard: &mut XShmState, display: &str) -> Result<()> {
 struct XGetImageSession {
     display: String,
     conn: x11rb::rust_connection::RustConnection,
+    pixels: PixelCatalog,
 }
 
 fn xgetimage_state() -> &'static Mutex<Option<XGetImageSession>> {
@@ -571,7 +750,7 @@ fn capture_via_persistent_xgetimage(xid: u64) -> Result<Vec<u8>> {
     };
 
     drop(guard);
-    bgra_zpixmap_to_png(&frame.data, frame.w, frame.h, frame.depth)
+    packed_zpixmap_to_png(&frame.data, frame.w, frame.h, frame.decoder)
 }
 
 fn ensure_xgetimage_ready(guard: &mut Option<XGetImageSession>, display: &str) -> Result<()> {
@@ -581,20 +760,26 @@ fn ensure_xgetimage_ready(guard: &mut Option<XGetImageSession>, display: &str) -
         }
     }
     *guard = None;
-    let (conn, _screen) =
-        x11rb::rust_connection::RustConnection::connect(None).map_err(|e| anyhow!("{e}"))?;
-    *guard = Some(XGetImageSession {
-        display: display.to_string(),
-        conn,
-    });
+    *guard = Some(XGetImageSession::connect(display.to_string())?);
     Ok(())
 }
 
 impl XGetImageSession {
+    fn connect(display: String) -> Result<Self> {
+        let (conn, _screen) = x11rb::rust_connection::RustConnection::connect(Some(&display))
+            .map_err(|e| anyhow!("{e}"))?;
+        let pixels = PixelCatalog::from_setup(conn.setup());
+        Ok(Self {
+            display,
+            conn,
+            pixels,
+        })
+    }
+
     fn capture_raw(&mut self, xid: u64) -> Result<RawFrame> {
         use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
 
-        let window = xid as u32;
+        let window = xid_to_window(xid)?;
         let geom = self
             .conn
             .get_geometry(window)
@@ -603,7 +788,8 @@ impl XGetImageSession {
             .map_err(|e| anyhow!("get_geometry reply: {e}"))?;
         let w = u32::from(geom.width);
         let h = u32::from(geom.height);
-        let need = checked_image_byte_len(w, h)?;
+        let layout = self.pixels.packed_layout(w, h, geom.depth)?;
+        let need = layout.len;
 
         let img = self
             .conn
@@ -621,7 +807,7 @@ impl XGetImageSession {
             .map_err(|e| anyhow!("get_image reply: {e}"))?;
 
         match img.depth {
-            24 | 32 => {}
+            16 | 24 | 32 => {}
             other => bail!("Unsupported depth: {other}"),
         }
         if img.data.len() != need {
@@ -637,7 +823,7 @@ impl XGetImageSession {
             data: img.data,
             w,
             h,
-            depth: img.depth,
+            decoder: self.pixels.decoder(w, h, img.depth, img.visual)?,
         })
     }
 }
@@ -772,6 +958,100 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
     use std::time::{Duration, Instant};
+
+    fn decode_png_rgba(png: &[u8]) -> Vec<u8> {
+        image::load_from_memory_with_format(png, image::ImageFormat::Png)
+            .expect("decode PNG")
+            .to_rgba8()
+            .into_raw()
+    }
+
+    #[test]
+    fn zpixmap_decoder_honors_little_endian_24bpp_stride_and_masks() {
+        let decoder = PixelDecoder {
+            layout: PackedLayout {
+                byte_order: ImageOrder::LSB_FIRST,
+                bytes_per_pixel: 3,
+                stride: 12,
+                len: 24,
+            },
+            red_mask: 0x00ff_0000,
+            green_mask: 0x0000_ff00,
+            blue_mask: 0x0000_00ff,
+        };
+        // Width 3 at 24bpp with 32-bit scanline padding: 9 payload bytes +
+        // 3 ignored padding bytes per row. Colors are deliberately varied.
+        let packed = [
+            0x33, 0x22, 0x11, 0x66, 0x55, 0x44, 0x99, 0x88, 0x77, 0xde, 0xad, 0xbe, 0xcc, 0xbb,
+            0xaa, 0xff, 0xee, 0xdd, 0x03, 0x02, 0x01, 0xef, 0xca, 0xfe,
+        ];
+        let png = packed_zpixmap_to_png(&packed, 3, 2, decoder).expect("decode little-endian");
+        assert_eq!(
+            decode_png_rgba(&png),
+            vec![
+                0x11, 0x22, 0x33, 0xff, 0x44, 0x55, 0x66, 0xff, 0x77, 0x88, 0x99, 0xff, 0xaa, 0xbb,
+                0xcc, 0xff, 0xdd, 0xee, 0xff, 0xff, 0x01, 0x02, 0x03, 0xff,
+            ]
+        );
+    }
+
+    #[test]
+    fn zpixmap_decoder_honors_big_endian_rgb565_masks() {
+        let decoder = PixelDecoder {
+            layout: PackedLayout {
+                byte_order: ImageOrder::MSB_FIRST,
+                bytes_per_pixel: 2,
+                stride: 4,
+                len: 4,
+            },
+            red_mask: 0xf800,
+            green_mask: 0x07e0,
+            blue_mask: 0x001f,
+        };
+        let packed = [0xf8, 0x00, 0x07, 0xe0];
+        let png = packed_zpixmap_to_png(&packed, 2, 1, decoder).expect("decode big-endian");
+        assert_eq!(decode_png_rgba(&png), vec![255, 0, 0, 255, 0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn pixel_catalog_uses_server_bpp_padding_and_rejects_bad_masks() {
+        let valid = Visualtype {
+            visual_id: 0x21,
+            class: VisualClass::TRUE_COLOR,
+            bits_per_rgb_value: 8,
+            colormap_entries: 256,
+            red_mask: 0x00ff_0000,
+            green_mask: 0x0000_ff00,
+            blue_mask: 0x0000_00ff,
+        };
+        let mut catalog = PixelCatalog {
+            image_byte_order: ImageOrder::LSB_FIRST,
+            formats: vec![Format {
+                depth: 24,
+                bits_per_pixel: 24,
+                scanline_pad: 32,
+            }],
+            visuals: vec![valid],
+        };
+        let decoder = catalog.decoder(3, 2, 24, 0x21).expect("valid decoder");
+        assert_eq!(decoder.layout.bytes_per_pixel, 3);
+        assert_eq!(decoder.layout.stride, 12);
+        assert_eq!(decoder.layout.len, 24);
+
+        catalog.visuals[0].red_mask = 0x00f0_f000;
+        let err = catalog
+            .decoder(3, 2, 24, 0x21)
+            .err()
+            .expect("non-contiguous mask must fail");
+        assert!(format!("{err:#}").contains("not contiguous"));
+    }
+
+    #[test]
+    fn xid_narrowing_rejects_values_above_x11_range() {
+        assert_eq!(xid_to_window(u64::from(u32::MAX)).unwrap(), u32::MAX);
+        let err = xid_to_window(u64::from(u32::MAX) + 1).expect_err("overflow must fail");
+        assert!(format!("{err:#}").contains("does not fit u32"));
+    }
 
     /// Mapping failure after a server SHM segment exists must run cleanup
     /// exactly once and still surface the original map error.
@@ -967,26 +1247,227 @@ mod tests {
         assert_eq!(imagemagick_calls.get(), 0);
     }
 
-    /// Live native MIT-SHM acceptance: direct `capture_via_xshm` on a mapped
-    /// 64×48 child window (no public cascade / XGetImage / ImageMagick).
     #[test]
-    #[ignore = "requires a live X11 server with MIT-SHM 1.2"]
-    fn live_xshm_captures_mapped_x11_window() {
-        use x11rb::connection::Connection;
-        use x11rb::protocol::shm::ConnectionExt as _;
+    fn capture_cascade_preserves_every_backend_error() {
+        let err = capture_window_with_backends(
+            42,
+            |_| Err(anyhow!("shm transport disconnected")),
+            |_| Err(anyhow!("get-image bad drawable")),
+            |_| Err(anyhow!("import executable unavailable")),
+        )
+        .expect_err("all failures must be returned");
+        let message = format!("{err:#}");
+        assert!(message.contains("shm transport disconnected"));
+        assert!(message.contains("get-image bad drawable"));
+        assert!(message.contains("import executable unavailable"));
+    }
+
+    #[test]
+    fn empty_fast_paths_fall_through_to_imagemagick() {
+        let png = vec![1, 2, 3];
+        let result = capture_window_with_backends(
+            42,
+            |_| Ok(Vec::new()),
+            |_| Ok(Vec::new()),
+            |_| Ok(png.clone()),
+        )
+        .expect("fallback succeeds");
+        assert_eq!(result, png);
+    }
+
+    struct LiveFixture {
+        conn: x11rb::rust_connection::RustConnection,
+        window: u32,
+    }
+
+    struct XvfbServer {
+        child: Option<std::process::Child>,
+    }
+
+    impl XvfbServer {
+        fn start(display: &str) -> Self {
+            let mut child = Command::new("Xvfb")
+                .args([
+                    display,
+                    "-screen",
+                    "0",
+                    "640x480x24",
+                    "-ac",
+                    "-nolisten",
+                    "tcp",
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("start restart-test Xvfb");
+            for _ in 0..100 {
+                if x11rb::rust_connection::RustConnection::connect(Some(display)).is_ok() {
+                    return Self { child: Some(child) };
+                }
+                if let Some(status) = child.try_wait().expect("poll restart-test Xvfb") {
+                    panic!("restart-test Xvfb exited before ready: {status}");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("restart-test Xvfb did not become ready on {display}");
+        }
+
+        fn stop(&mut self) {
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    impl Drop for XvfbServer {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    fn create_live_fixture(display: &str, width: u16, height: u16) -> LiveFixture {
         use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, WindowClass};
         use x11rb::rust_connection::RustConnection;
 
-        const W: u16 = 64;
-        const H: u16 = 48;
-        // Deterministic solid background (0xRRGGBB in the low 24 bits).
-        const BG_PIXEL: u32 = 0x00_33_99_CC;
-        const PNG_SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let (conn, screen_num) = RustConnection::connect(Some(display)).expect("connect fixture");
+        let screen = &conn.setup().roots[screen_num];
+        let window = conn.generate_id().expect("generate window id");
+        conn.create_window(
+            screen.root_depth,
+            window,
+            screen.root,
+            0,
+            0,
+            width,
+            height,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new().background_pixel(0x0011_2233),
+        )
+        .expect("create_window request")
+        .check()
+        .expect("create_window sync check");
+        conn.map_window(window)
+            .expect("map_window request")
+            .check()
+            .expect("map_window sync check");
+        let fixture = LiveFixture { conn, window };
+        paint_live_fixture(&fixture, width, height);
+        fixture
+    }
 
-        let _ = std::env::var("DISPLAY").expect("DISPLAY must be set for live X11 test");
-        let (conn, screen_num) = RustConnection::connect(None).expect("connect to DISPLAY");
+    fn paint_live_fixture(fixture: &LiveFixture, width: u16, height: u16) {
+        use x11rb::protocol::xproto::{ConnectionExt as _, CreateGCAux, Rectangle};
 
-        let ver = conn
+        let split1 = width / 3;
+        let split2 = width.saturating_mul(2) / 3;
+        for (pixel, rectangle) in [
+            (
+                0x0017_5b_a8,
+                Rectangle {
+                    x: 0,
+                    y: 0,
+                    width: split1,
+                    height,
+                },
+            ),
+            (
+                0x00c4_3d_52,
+                Rectangle {
+                    x: split1 as i16,
+                    y: 0,
+                    width: split2 - split1,
+                    height,
+                },
+            ),
+            (
+                0x002d_b8_71,
+                Rectangle {
+                    x: split2 as i16,
+                    y: 0,
+                    width: width - split2,
+                    height,
+                },
+            ),
+        ] {
+            let gc = fixture.conn.generate_id().expect("generate GC id");
+            fixture
+                .conn
+                .create_gc(gc, fixture.window, &CreateGCAux::new().foreground(pixel))
+                .expect("create_gc request")
+                .check()
+                .expect("create_gc sync check");
+            fixture
+                .conn
+                .poly_fill_rectangle(fixture.window, gc, &[rectangle])
+                .expect("poly_fill_rectangle request")
+                .check()
+                .expect("poly_fill_rectangle sync check");
+            fixture.conn.free_gc(gc).expect("free_gc request");
+        }
+        fixture.conn.flush().expect("flush fixture paint");
+        fixture
+            .conn
+            .get_input_focus()
+            .expect("fixture sync request")
+            .reply()
+            .expect("fixture sync reply");
+    }
+
+    fn raw_frame_png(frame: RawFrame) -> Vec<u8> {
+        packed_zpixmap_to_png(&frame.data, frame.w, frame.h, frame.decoder)
+            .expect("encode raw frame")
+    }
+
+    fn percentile_micros(samples: &mut [u128], percentile: usize) -> u128 {
+        samples.sort_unstable();
+        samples[(samples.len() - 1) * percentile / 100]
+    }
+
+    /// Live correctness and bounded-performance evidence against three Xvfb
+    /// servers. The fixture uses nontrivial colors and a non-power-of-two row
+    /// width, then proves MIT-SHM and XGetImage decode to identical pixels,
+    /// survive resize and DISPLAY switches, reuse one warm segment, and detach
+    /// it before replacement. CreateSegment is FD-backed MIT-SHM 1.2, so no
+    /// SysV `IPC_RMID` lifecycle exists in this implementation.
+    #[test]
+    #[ignore = "requires two live X11 servers with MIT-SHM 1.2"]
+    fn live_xshm_matches_xgetimage_across_resize_reconnect_and_repetition() {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::shm::ConnectionExt as _;
+        use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt as _, ImageFormat};
+
+        const W1: u16 = 67;
+        const H1: u16 = 43;
+        const W2: u16 = 131;
+        const H2: u16 = 79;
+        const REPEATS: usize = 40;
+        const IMPORT_REPEATS: usize = 10;
+
+        let display = std::env::var("DISPLAY").expect("DISPLAY must be set");
+        let second_display =
+            std::env::var("CUA_X11_SECOND_DISPLAY").expect("CUA_X11_SECOND_DISPLAY must be set");
+        let restart_display =
+            std::env::var("CUA_X11_RESTART_DISPLAY").expect("CUA_X11_RESTART_DISPLAY must be set");
+        assert_ne!(
+            display, second_display,
+            "tests require distinct DISPLAY values"
+        );
+        assert_ne!(display, restart_display, "restart DISPLAY must be distinct");
+        assert_ne!(
+            second_display, restart_display,
+            "restart DISPLAY must be distinct"
+        );
+        let fixture = create_live_fixture(&display, W1, H1);
+        let second_fixture = create_live_fixture(&second_display, W1, H1);
+
+        let mut xshm = XShmSession::connect(display.clone()).expect("connect XShm session");
+        let ver = xshm
+            .conn
             .shm_query_version()
             .expect("shm_query_version request")
             .reply()
@@ -998,52 +1479,218 @@ mod tests {
             ver.minor_version
         );
 
-        let screen = &conn.setup().roots[screen_num];
-        let window = conn.generate_id().expect("generate window id");
-        let aux = CreateWindowAux::new().background_pixel(BG_PIXEL);
-        conn.create_window(
-            screen.root_depth,
-            window,
-            screen.root,
-            0,
-            0,
-            W,
-            H,
-            0,
-            WindowClass::INPUT_OUTPUT,
-            screen.root_visual,
-            &aux,
-        )
-        .expect("create_window request")
-        .check()
-        .expect("create_window sync check");
-        conn.map_window(window)
-            .expect("map_window request")
+        let mut xget = XGetImageSession::connect(display.clone()).expect("connect XGetImage");
+        let shm_png = raw_frame_png(
+            xshm.capture_raw(u64::from(fixture.window))
+                .expect("initial XShm capture"),
+        );
+        let xget_png = raw_frame_png(
+            xget.capture_raw(u64::from(fixture.window))
+                .expect("initial XGetImage capture"),
+        );
+        let import_png = capture_via_import(u64::from(fixture.window))
+            .expect("initial ImageMagick capture oracle");
+        let shm_rgba = decode_png_rgba(&shm_png);
+        assert_eq!(shm_rgba, decode_png_rgba(&xget_png));
+        assert_eq!(shm_rgba, decode_png_rgba(&import_png));
+        assert_eq!(&shm_rgba[0..4], &[0x17, 0x5b, 0xa8, 0xff]);
+        let middle = ((usize::from(H1 / 2) * usize::from(W1) + usize::from(W1 / 2)) * 4)
+            ..((usize::from(H1 / 2) * usize::from(W1) + usize::from(W1 / 2)) * 4 + 4);
+        assert_eq!(&shm_rgba[middle], &[0xc4, 0x3d, 0x52, 0xff]);
+
+        let warm_seg = xshm.buffer.as_ref().expect("warm SHM buffer").seg;
+        let mut shm_micros = Vec::with_capacity(REPEATS);
+        let mut xget_micros = Vec::with_capacity(REPEATS);
+        let mut import_micros = Vec::with_capacity(IMPORT_REPEATS);
+        for _ in 0..REPEATS {
+            let started = Instant::now();
+            let frame = xshm
+                .capture_raw(u64::from(fixture.window))
+                .expect("repeated XShm capture");
+            let _ = raw_frame_png(frame);
+            shm_micros.push(started.elapsed().as_micros());
+            assert_eq!(xshm.buffer.as_ref().expect("reused buffer").seg, warm_seg);
+
+            let started = Instant::now();
+            let frame = xget
+                .capture_raw(u64::from(fixture.window))
+                .expect("repeated XGetImage capture");
+            let _ = raw_frame_png(frame);
+            xget_micros.push(started.elapsed().as_micros());
+        }
+        for _ in 0..IMPORT_REPEATS {
+            let started = Instant::now();
+            let _ = capture_via_import(u64::from(fixture.window))
+                .expect("repeated ImageMagick capture");
+            import_micros.push(started.elapsed().as_micros());
+        }
+
+        fixture
+            .conn
+            .configure_window(
+                fixture.window,
+                &ConfigureWindowAux::new()
+                    .width(u32::from(W2))
+                    .height(u32::from(H2)),
+            )
+            .expect("resize request")
             .check()
-            .expect("map_window sync check");
-        conn.flush().expect("flush after map");
-
-        let png1 = capture_via_xshm(u64::from(window)).expect("first capture_via_xshm");
-        assert!(
-            png1.starts_with(&PNG_SIG),
-            "first capture missing PNG signature"
+            .expect("resize reply");
+        paint_live_fixture(&fixture, W2, H2);
+        let resized_shm = raw_frame_png(
+            xshm.capture_raw(u64::from(fixture.window))
+                .expect("resized XShm capture"),
         );
-        let dims1 =
-            cua_driver_core::image_utils::png_dimensions(&png1).expect("png_dimensions first");
-        assert_eq!(dims1, (u32::from(W), u32::from(H)));
-
-        // Second direct call proves the warm SHM session/buffer is reusable.
-        let png2 = capture_via_xshm(u64::from(window)).expect("second capture_via_xshm");
-        assert!(
-            png2.starts_with(&PNG_SIG),
-            "second capture missing PNG signature"
+        let resized_xget = raw_frame_png(
+            xget.capture_raw(u64::from(fixture.window))
+                .expect("resized XGetImage capture"),
         );
-        let dims2 =
-            cua_driver_core::image_utils::png_dimensions(&png2).expect("png_dimensions second");
-        assert_eq!(dims2, (u32::from(W), u32::from(H)));
+        let resized_import = capture_via_import(u64::from(fixture.window))
+            .expect("resized ImageMagick capture oracle");
+        assert_eq!(
+            decode_png_rgba(&resized_shm),
+            decode_png_rgba(&resized_xget)
+        );
+        assert_eq!(
+            decode_png_rgba(&resized_shm),
+            decode_png_rgba(&resized_import)
+        );
+        assert_eq!(
+            cua_driver_core::image_utils::png_dimensions(&resized_shm).unwrap(),
+            (u32::from(W2), u32::from(H2))
+        );
+        let resized_seg = xshm.buffer.as_ref().expect("resized SHM buffer").seg;
+        assert_ne!(resized_seg, warm_seg, "growth must replace the segment");
 
-        // Best-effort cleanup — never panic here.
-        let _ = conn.destroy_window(window);
-        let _ = conn.flush();
+        // Explicit detach is synchronous. Reusing the old XID must be rejected
+        // by the server while the connection remains healthy.
+        xshm.detach_buffer().expect("detach resized segment");
+        let detached = xshm
+            .conn
+            .shm_get_image(
+                fixture.window,
+                0,
+                0,
+                W2,
+                H2,
+                !0u32,
+                u8::from(ImageFormat::Z_PIXMAP),
+                resized_seg,
+                0,
+            )
+            .expect("detached-segment request")
+            .reply();
+        assert!(detached.is_err(), "server accepted a detached SHM segment");
+        xshm.capture_raw(u64::from(fixture.window))
+            .expect("capture allocates replacement after detach");
+
+        let mut shm_state = XShmState::Ready(xshm);
+        ensure_xshm_ready(&mut shm_state, &second_display).expect("switch XShm DISPLAY");
+        let second_shm = match &mut shm_state {
+            XShmState::Ready(session) => {
+                assert_eq!(session.display, second_display);
+                raw_frame_png(
+                    session
+                        .capture_raw(u64::from(second_fixture.window))
+                        .expect("capture on second XShm DISPLAY"),
+                )
+            }
+            _ => panic!("XShm state not ready after DISPLAY switch"),
+        };
+        let mut xget_state = Some(xget);
+        ensure_xgetimage_ready(&mut xget_state, &second_display).expect("switch XGetImage DISPLAY");
+        let second_xget = raw_frame_png(
+            xget_state
+                .as_mut()
+                .expect("second XGetImage session")
+                .capture_raw(u64::from(second_fixture.window))
+                .expect("capture on second XGetImage DISPLAY"),
+        );
+        assert_eq!(decode_png_rgba(&second_shm), decode_png_rgba(&second_xget));
+
+        // Prove that a cached connection failure retries once, returns the
+        // state to Uninit when the server remains unavailable, then recovers
+        // after a server restart at the exact same DISPLAY value.
+        let mut restart_server = XvfbServer::start(&restart_display);
+        let restart_fixture = create_live_fixture(&restart_display, W1, H1);
+        let mut restart_state = XShmState::Uninit;
+        capture_raw_via_xshm_state(
+            &mut restart_state,
+            &restart_display,
+            u64::from(restart_fixture.window),
+        )
+        .expect("initial capture on restart DISPLAY");
+        restart_server.stop();
+        let disconnected = match capture_raw_via_xshm_state(
+            &mut restart_state,
+            &restart_display,
+            u64::from(restart_fixture.window),
+        ) {
+            Ok(_) => panic!("capture must fail while restart DISPLAY is down"),
+            Err(error) => error,
+        };
+        assert!(
+            format!("{disconnected:#}").contains("capture failed after reconnect"),
+            "unexpected disconnect error: {disconnected:#}"
+        );
+        assert!(matches!(restart_state, XShmState::Uninit));
+        drop(restart_fixture);
+
+        restart_server = XvfbServer::start(&restart_display);
+        let restarted_fixture = create_live_fixture(&restart_display, W1, H1);
+        let restarted_shm = raw_frame_png(
+            capture_raw_via_xshm_state(
+                &mut restart_state,
+                &restart_display,
+                u64::from(restarted_fixture.window),
+            )
+            .expect("capture after same-DISPLAY server restart"),
+        );
+        let mut restarted_xget = XGetImageSession::connect(restart_display.clone())
+            .expect("connect restarted XGetImage");
+        let restarted_xget = raw_frame_png(
+            restarted_xget
+                .capture_raw(u64::from(restarted_fixture.window))
+                .expect("XGetImage capture after server restart"),
+        );
+        assert_eq!(
+            decode_png_rgba(&restarted_shm),
+            decode_png_rgba(&restarted_xget)
+        );
+        drop(restart_state);
+        drop(restarted_fixture);
+        restart_server.stop();
+
+        let shm_p50 = percentile_micros(&mut shm_micros, 50);
+        let shm_p95 = percentile_micros(&mut shm_micros, 95);
+        let xget_p50 = percentile_micros(&mut xget_micros, 50);
+        let xget_p95 = percentile_micros(&mut xget_micros, 95);
+        let import_p50 = percentile_micros(&mut import_micros, 50);
+        let import_p95 = percentile_micros(&mut import_micros, 95);
+        assert!(
+            shm_p95.saturating_mul(2) < import_p95,
+            "MIT-SHM p95 ({shm_p95}us) must be less than half the ImageMagick p95 ({import_p95}us)"
+        );
+        println!(
+            "CAPTURE_EVIDENCE {{\"display\":\"{}\",\"second_display\":\"{}\",\"restart_display\":\"{}\",\"fast_samples\":{},\"import_samples\":{},\"width\":{},\"height\":{},\"xshm_p50_us\":{},\"xshm_p95_us\":{},\"xgetimage_p50_us\":{},\"xgetimage_p95_us\":{},\"imagemagick_p50_us\":{},\"imagemagick_p95_us\":{},\"performance_bound\":\"xshm_p95_lt_half_imagemagick_p95\",\"pixel_equivalent\":true,\"imagemagick_equivalent\":true,\"resize_equivalent\":true,\"segment_reused\":true,\"detach_verified\":true,\"display_switch_verified\":true,\"server_restart_verified\":true}}",
+            display,
+            second_display,
+            restart_display,
+            REPEATS,
+            IMPORT_REPEATS,
+            W1,
+            H1,
+            shm_p50,
+            shm_p95,
+            xget_p50,
+            xget_p95,
+            import_p50,
+            import_p95
+        );
+
+        let _ = fixture.conn.destroy_window(fixture.window);
+        let _ = fixture.conn.flush();
+        let _ = second_fixture.conn.destroy_window(second_fixture.window);
+        let _ = second_fixture.conn.flush();
     }
 }

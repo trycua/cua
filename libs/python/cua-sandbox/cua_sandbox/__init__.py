@@ -31,12 +31,14 @@ from cua_sandbox.runtime.compat import (
 from cua_sandbox.sandbox import Sandbox, SandboxInfo, sandbox
 from cua_sandbox.transport.cloud import CloudTransport
 from fleet_sdk import (
+    ClaimLifecycle,
     ClaimSpec,
     CreatePoolRequest,
     CreateTemplateRequest,
     Firmware,
     OsGymSandboxTemplateSpec,
     OsGymSandboxWarmPoolSpec,
+    PreservedJson,
     RuntimeKind,
     SandboxService,
     SandboxTemplateRef,
@@ -57,7 +59,9 @@ __all__ = [
     "TemplateResource",
     "CreatePoolRequest",
     "CreateTemplateRequest",
+    "ClaimLifecycle",
     "ClaimSpec",
+    "PreservedJson",
     "SandboxTemplateRef",
     "OsGymSandboxWarmPoolSpec",
     "OsGymSandboxTemplateSpec",

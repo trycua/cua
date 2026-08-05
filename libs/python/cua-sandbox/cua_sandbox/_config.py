@@ -9,6 +9,7 @@ from typing import Optional
 _DEFAULT_BASE_URL = "https://api.cua.ai"
 _DEFAULT_FLEET_BASE_URL = "https://run.cua.ai"
 _DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
+_DEFAULT_FLEET_REQUEST_TIMEOUT = 30.0
 
 
 @dataclass
@@ -19,6 +20,7 @@ class _Config:
     token_url: str = _DEFAULT_TOKEN_URL
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
+    fleet_request_timeout: Optional[float] = None
 
 
 _global_config = _Config()
@@ -32,11 +34,15 @@ def configure(
     token_url: Optional[str] = None,
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
+    fleet_request_timeout: Optional[float] = None,
 ) -> None:
     """Set global configuration for cloud sandboxes.
 
     API-key cloud operations use ``base_url``. Fleet uses ``fleet_base_url`` and
-    OAuth client credentials.
+    OAuth client credentials. ``fleet_request_timeout`` is the per-request HTTP
+    timeout (seconds) for Fleet control-plane and ``services.request`` calls;
+    raise it when routing long-blocking service calls (e.g. an MCP ``tools/call``
+    that only answers once the tool finishes) through a claimed sandbox.
     """
     if api_key is not None:
         _global_config.api_key = api_key
@@ -50,6 +56,8 @@ def configure(
         _global_config.client_id = client_id
     if client_secret is not None:
         _global_config.client_secret = client_secret
+    if fleet_request_timeout is not None:
+        _global_config.fleet_request_timeout = fleet_request_timeout
 
 
 def get_api_key(override: Optional[str] = None) -> Optional[str]:
@@ -75,6 +83,21 @@ def get_fleet_base_url() -> str:
 
 def get_token_url() -> str:
     return os.environ.get("CUA_TOKEN_URL") or _global_config.token_url
+
+
+def get_fleet_request_timeout() -> float:
+    """Per-request HTTP timeout (seconds) for Fleet calls.
+
+    Precedence mirrors ``get_fleet_base_url``: the ``CUA_FLEET_REQUEST_TIMEOUT``
+    environment variable wins over ``configure(fleet_request_timeout=...)``,
+    which wins over the 30-second default.
+    """
+    env_value = os.environ.get("CUA_FLEET_REQUEST_TIMEOUT")
+    if env_value:
+        return float(env_value)
+    if _global_config.fleet_request_timeout is not None:
+        return _global_config.fleet_request_timeout
+    return _DEFAULT_FLEET_REQUEST_TIMEOUT
 
 
 def get_client_id(override: Optional[str] = None) -> Optional[str]:

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from cua_sandbox import (
+    ClaimLifecycle,
     ClaimSpec,
     CreatePoolRequest,
     CreateTemplateRequest,
@@ -11,6 +12,7 @@ from cua_sandbox import (
     OsGymSandboxTemplateSpec,
     OsGymSandboxWarmPoolSpec,
     Pool,
+    PreservedJson,
     RuntimeKind,
     SandboxService,
     SandboxTemplateRef,
@@ -26,6 +28,15 @@ from fleet_sdk import Sandbox as FleetSandbox
 
 def test_public_pool_schema_exports_runtime_kind() -> None:
     assert RuntimeKind.KUBEVIRT.value == 0
+
+
+def test_public_pool_schema_exports_claim_lifecycle_and_preserved_json() -> None:
+    lifecycle = ClaimLifecycle(
+        shutdown_time="2026-01-01T00:00:00Z", shutdown_policy=None, auto_renew=False
+    )
+    assert lifecycle.shutdown_time == "2026-01-01T00:00:00Z"
+    assert lifecycle.auto_renew is False
+    assert hasattr(PreservedJson, "from_json")
 
 
 def pool_request(

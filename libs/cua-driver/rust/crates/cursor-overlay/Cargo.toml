@@ -20,3 +20,4 @@ zstd.workspace = true
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 fontdue = { version = "0.9", default-features = false }
+unicode-segmentation.workspace = true

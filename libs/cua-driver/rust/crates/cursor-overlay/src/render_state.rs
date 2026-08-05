@@ -989,6 +989,7 @@ mod glide_duration_tests {
 mod session_badge_and_action_tests {
     use super::*;
     use crate::{CursorConfig, DeliveryModifier, TargetModifier};
+    use unicode_segmentation::UnicodeSegmentation;
 
     #[test]
     fn session_badge_holds_then_fades_once() {
@@ -1034,6 +1035,30 @@ mod session_badge_and_action_tests {
             false,
         );
         assert_eq!(core.session_badge_alpha(), 1.0);
+    }
+
+    #[test]
+    fn bounded_public_label_keeps_private_cursor_identity() {
+        let mut cfg = CursorConfig::default();
+        cfg.cursor_id = "private-runtime-key".to_owned();
+        let mut core = RenderStateCore::new(cfg);
+
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("e\u{301}".repeat(10_000)),
+            false,
+            false,
+        );
+
+        assert_eq!(core.cfg.cursor_id, "private-runtime-key");
+        assert_eq!(
+            core.session_label
+                .as_deref()
+                .unwrap()
+                .graphemes(true)
+                .count(),
+            crate::session_badge::MAX_SESSION_LABEL_GRAPHEMES
+        );
+        assert!(core.session_label.as_deref().unwrap().ends_with('…'));
     }
 
     #[test]

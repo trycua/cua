@@ -38,3 +38,4 @@ uniffi = "=0.31.0"
 postcard = { version = "1", features = ["alloc"] }
 sha2 = "0.10"
 zstd = "0.13"
+unicode-segmentation = "1"

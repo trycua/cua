@@ -17,8 +17,11 @@ use tiny_skia::{
     Color, GradientStop, LinearGradient, Paint, Path, PathBuilder, Pixmap, PixmapPaint, Point,
     Rect, SpreadMode, Stroke, Transform,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
-pub const MAX_SESSION_LABEL_CHARS: usize = 28;
+pub const MAX_SESSION_LABEL_GRAPHEMES: usize = 28;
+/// Backward-compatible name for the public label limit.
+pub const MAX_SESSION_LABEL_CHARS: usize = MAX_SESSION_LABEL_GRAPHEMES;
 pub const BADGE_MAX_WIDTH: f32 = 188.0;
 pub const BADGE_HEIGHT: f32 = 28.0;
 pub const BADGE_CURSOR_GAP: f32 = 25.0;
@@ -103,7 +106,13 @@ struct TextBounds {
 
 fn text_layout(font: &fontdue::Font, text: &str, font_size: f32) -> Layout {
     let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-    layout.reset(&LayoutSettings::default());
+    layout.reset(&LayoutSettings {
+        // Session badges have a fixed one-line height. Sanitized runtime labels
+        // contain no hard breaks, and disabling them here keeps this invariant
+        // true for direct callers of the shared renderer too.
+        wrap_hard_breaks: false,
+        ..LayoutSettings::default()
+    });
     layout.append(&[font], &TextStyle::new(text, font_size, 0));
     layout
 }
@@ -149,13 +158,13 @@ fn ellipsize_to_width(
         return Some((label.to_owned(), bounds));
     }
 
-    let mut characters = label.chars().collect::<Vec<_>>();
-    if characters.last() == Some(&'…') {
-        characters.pop();
+    let mut graphemes = label.graphemes(true).collect::<Vec<_>>();
+    if graphemes.last() == Some(&"…") {
+        graphemes.pop();
     }
-    while !characters.is_empty() {
-        characters.pop();
-        let candidate = format!("{}…", characters.iter().collect::<String>());
+    while !graphemes.is_empty() {
+        graphemes.pop();
+        let candidate = format!("{}…", graphemes.concat());
         let layout = text_layout(font, &candidate, font_size);
         let bounds = text_bounds(&layout)?;
         if bounds.width <= max_width {
@@ -169,7 +178,7 @@ fn ellipsize_to_width(
 /// Convert an untrusted public session label into compact display text.
 ///
 /// Controls are removed, all whitespace runs collapse to one ASCII space,
-/// and the visible value is bounded by Unicode scalar count. Runtime keys and
+/// and the visible value is bounded by extended grapheme count. Runtime keys and
 /// transport identifiers must never be passed to this function.
 pub fn sanitize_session_label(input: &str) -> Option<String> {
     let mut normalized = String::new();
@@ -193,13 +202,13 @@ pub fn sanitize_session_label(input: &str) -> Option<String> {
     if normalized.is_empty() {
         return None;
     }
-    let mut chars = normalized.chars();
-    let mut result: String = chars.by_ref().take(MAX_SESSION_LABEL_CHARS).collect();
-    if chars.next().is_some() {
-        result.pop();
+    let graphemes = normalized.graphemes(true).collect::<Vec<_>>();
+    if graphemes.len() > MAX_SESSION_LABEL_GRAPHEMES {
+        let mut result = graphemes[..MAX_SESSION_LABEL_GRAPHEMES - 1].concat();
         result.push('…');
+        return Some(result);
     }
-    Some(result)
+    Some(normalized.to_owned())
 }
 
 fn rounded_rect(rect: Rect, radius: f32) -> Option<Path> {
@@ -585,6 +594,50 @@ mod tests {
     }
 
     #[test]
+    fn sanitizing_never_splits_a_grapheme_cluster() {
+        let cluster = "e\u{301}";
+        let input = cluster.repeat(MAX_SESSION_LABEL_GRAPHEMES + 8);
+        let label = sanitize_session_label(&input).unwrap();
+        let graphemes = label.graphemes(true).collect::<Vec<_>>();
+
+        assert_eq!(graphemes.len(), MAX_SESSION_LABEL_GRAPHEMES);
+        assert!(graphemes[..MAX_SESSION_LABEL_GRAPHEMES - 1]
+            .iter()
+            .all(|grapheme| *grapheme == cluster));
+        assert_eq!(graphemes.last(), Some(&"…"));
+    }
+
+    #[test]
+    fn short_and_boundary_labels_remain_single_line() {
+        let font = font().unwrap();
+        let max_width = BADGE_MAX_WIDTH - HORIZONTAL_PADDING * 2.0;
+        let short = ellipsize_to_width(font, "Research run", FONT_SIZE, max_width).unwrap();
+        assert_eq!(short.0, "Research run");
+        assert!(short.1.height <= BADGE_HEIGHT);
+
+        let first_truncated = (1..100)
+            .map(|length| "W".repeat(length))
+            .find(|label| {
+                ellipsize_to_width(font, label, FONT_SIZE, max_width)
+                    .is_some_and(|(rendered, _)| rendered != *label)
+            })
+            .expect("a boundary label should eventually require truncation");
+        let last_fitting = "W".repeat(first_truncated.chars().count() - 1);
+
+        assert_eq!(
+            ellipsize_to_width(font, &last_fitting, FONT_SIZE, max_width)
+                .unwrap()
+                .0,
+            last_fitting
+        );
+        let (rendered, bounds) =
+            ellipsize_to_width(font, &first_truncated, FONT_SIZE, max_width).unwrap();
+        assert!(rendered.ends_with('…'));
+        assert!(bounds.width <= max_width);
+        assert!(bounds.height <= BADGE_HEIGHT);
+    }
+
+    #[test]
     fn badge_paints_at_one_and_two_x_backing_scales() {
         for scale in [1.0, 2.0] {
             let mut pixmap = Pixmap::new((240.0 * scale) as u32, (160.0 * scale) as u32).unwrap();
@@ -669,7 +722,7 @@ mod tests {
     #[test]
     fn long_label_stays_inside_the_bounded_badge() {
         let layout = session_badge_layout(SessionBadgeInput {
-            label: Some("A very long public session label"),
+            label: Some("cursor-badge-layout-test-123"),
             delivery: Some(DeliveryModifier::Foreground),
             target: Some(TargetModifier::Desktop),
             cursor: (120.0, 60.0),
@@ -681,5 +734,31 @@ mod tests {
         .unwrap();
         assert!(layout.rect.width() <= BADGE_MAX_WIDTH);
         assert!(layout.label.unwrap().text.ends_with('…'));
+    }
+
+    #[test]
+    fn very_long_unicode_label_renders_in_one_bounded_badge() {
+        let source = format!("{}{}", "e\u{301}".repeat(5_000), " final identity");
+        let sanitized = sanitize_session_label(&source).unwrap();
+        let layout = session_badge_layout(SessionBadgeInput {
+            label: Some(&sanitized),
+            delivery: Some(DeliveryModifier::Foreground),
+            target: Some(TargetModifier::Desktop),
+            cursor: (120.0, 60.0),
+            backing_scale: 1.0,
+            label_alpha: 1.0,
+            chip_alpha: 1.0,
+            clip: None,
+        })
+        .unwrap();
+        let label = layout.label.as_ref().unwrap();
+        let bounds = text_bounds(&text_layout(font().unwrap(), &label.text, FONT_SIZE)).unwrap();
+
+        assert_eq!(layout.rect.height(), BADGE_HEIGHT);
+        assert!(layout.rect.width() <= BADGE_MAX_WIDTH);
+        assert!(label.text.ends_with('…'));
+        assert!(bounds.height <= BADGE_HEIGHT);
+        assert!(label.origin.0 + bounds.min_x >= layout.rect.x());
+        assert!(label.origin.0 + bounds.min_x + bounds.width <= layout.rect.right());
     }
 }

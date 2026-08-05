@@ -1125,6 +1125,7 @@ dependencies = [
  "sha2",
  "tiny-skia",
  "tracing",
+ "unicode-segmentation",
  "zstd",
 ]
 

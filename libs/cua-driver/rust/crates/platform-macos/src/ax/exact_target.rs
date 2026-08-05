@@ -3,8 +3,8 @@
 //! Gathers the facts [`cua_driver_core::background_input`] needs about one
 //! requested `(pid, CGWindowID)` immediately before a background mutation:
 //! WindowServer ownership, fresh `AXWindows` membership (mapped through
-//! `_AXUIElementGetWindow`), minimized/hidden state, competing same-pid
-//! keyboard destinations, and addressed-element ancestry. All reads are
+//! `_AXUIElementGetWindow`), minimized/hidden state, competing same-pid AX
+//! top-level keyboard destinations, and addressed-element ancestry. All reads are
 //! bounded and fail closed — an unreadable fact never unlocks a route.
 
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -114,6 +114,31 @@ unsafe fn ax_window_records(app: AXUIElementRef) -> Vec<AxWindowRecord> {
         .collect()
 }
 
+/// Count independently AX-mapped, non-minimized sibling top-level windows.
+///
+/// WindowServer may expose several layer-0 compositor surfaces for one native
+/// Electron, Tauri, or WebKit window. A raw same-pid CGWindow row is therefore
+/// not enough to prove another process-scoped keyboard destination. Requiring a
+/// fresh `AXWindows` mapping preserves the fail-closed two-window guard while
+/// ignoring render surfaces that cannot independently become the AX key window.
+fn count_competing_keyboard_destinations(
+    pid: i32,
+    target_window_id: u32,
+    window_server_rows: impl IntoIterator<Item = (i32, u32)>,
+    ax_records: &[AxWindowRecord],
+) -> usize {
+    window_server_rows
+        .into_iter()
+        .filter(|(owner_pid, window_id)| {
+            *owner_pid == pid
+                && *window_id != target_window_id
+                && ax_records
+                    .iter()
+                    .any(|record| record.window_id == *window_id && record.minimized != Some(true))
+        })
+        .count()
+}
+
 /// Gather fresh background-input facts for one `(pid, window_id)` target.
 ///
 /// `element_ptr` is an optional retained `AXUIElementRef` (as `usize`) for an
@@ -161,24 +186,14 @@ pub fn gather_background_facts(
     };
 
     let target = records.iter().find(|record| record.window_id == window_id);
-    let minimized_ids: Vec<u32> = records
-        .iter()
-        .filter(|record| record.minimized == Some(true))
-        .map(|record| record.window_id)
-        .collect();
-
-    // Competing keyboard destinations come from WindowServer, not AX: an
-    // off-Space sibling that AXWindows cannot see is still a real key-window
-    // candidate for process-scoped events. Proven-minimized windows are
-    // excluded — a miniaturized window cannot be the key window.
-    let competing_keyboard_destinations = all_windows()
-        .iter()
-        .filter(|window| {
-            window.pid == pid
-                && window.window_id != window_id
-                && !minimized_ids.contains(&window.window_id)
-        })
-        .count();
+    let competing_keyboard_destinations = count_competing_keyboard_destinations(
+        pid,
+        window_id,
+        all_windows()
+            .iter()
+            .map(|window| (window.pid, window.window_id)),
+        &records,
+    );
 
     BackgroundTargetFacts {
         window_server,
@@ -187,5 +202,61 @@ pub fn gather_background_facts(
         app_hidden,
         competing_keyboard_destinations,
         element: element.unwrap_or(ElementAncestry::NotAddressed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{count_competing_keyboard_destinations, AxWindowRecord};
+
+    fn ax_window(window_id: u32, minimized: Option<bool>) -> AxWindowRecord {
+        AxWindowRecord {
+            window_id,
+            minimized,
+        }
+    }
+
+    #[test]
+    fn compositor_surfaces_do_not_create_keyboard_ambiguity() {
+        let rows = [(42, 10), (42, 11), (42, 12), (42, 13), (42, 14), (42, 15)];
+        let records = [ax_window(10, Some(false))];
+
+        assert_eq!(
+            count_competing_keyboard_destinations(42, 10, rows, &records),
+            0
+        );
+    }
+
+    #[test]
+    fn independently_mapped_sibling_remains_ambiguous() {
+        let rows = [(42, 10), (42, 11)];
+        let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
+
+        assert_eq!(
+            count_competing_keyboard_destinations(42, 10, rows, &records),
+            1
+        );
+    }
+
+    #[test]
+    fn minimized_mapped_sibling_is_not_a_keyboard_destination() {
+        let rows = [(42, 10), (42, 11)];
+        let records = [ax_window(10, Some(false)), ax_window(11, Some(true))];
+
+        assert_eq!(
+            count_competing_keyboard_destinations(42, 10, rows, &records),
+            0
+        );
+    }
+
+    #[test]
+    fn unmapped_window_server_sibling_is_not_a_keyboard_destination() {
+        let rows = [(42, 10), (42, 99), (7, 11)];
+        let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
+
+        assert_eq!(
+            count_competing_keyboard_destinations(42, 10, rows, &records),
+            0
+        );
     }
 }

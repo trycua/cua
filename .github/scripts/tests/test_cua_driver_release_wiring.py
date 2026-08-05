@@ -20,6 +20,20 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('workflows: ["CD: Cua Driver (cross-platform)"]', workflow)
         self.assertNotIn("branches:\n      - main", workflow)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
+        self.assertIn("  actions: read", workflow)
+        self.assertIn('RUN_ID="${{ github.event.workflow_run.id }}"', workflow)
+        self.assertIn(
+            'actions/runs/$RUN_ID/artifacts?per_page=100',
+            workflow,
+        )
+        self.assertIn("cua-driver-release-metadata-", workflow)
+        self.assertIn('"${#RELEASE_VERSIONS[@]}" -gt 1', workflow)
+        sha_fallback = 'HEAD_SHA="${{ github.event.workflow_run.head_sha }}"'
+        self.assertIn(sha_fallback, workflow)
+        self.assertLess(
+            workflow.index("cua-driver-release-metadata-"),
+            workflow.index(sha_fallback),
+        )
         self.assertIn('gh release view "$TAG" --repo "$GITHUB_REPOSITORY"', workflow)
 
     def test_python_publish_defaults_to_current_rust_version(self) -> None:

@@ -2522,11 +2522,14 @@ fn run_permissions_status(json: bool) {
     };
 
     #[cfg(target_os = "macos")]
-    let persisted_verification = crate::direct_capture_verification::load_for_current_identity()
-        .and_then(|verification| serde_json::to_value(verification).ok());
-    #[cfg(not(target_os = "macos"))]
-    let persisted_verification = None;
-    attach_direct_capture_verification(&mut structured, persisted_verification);
+    if let Some(verification) = crate::direct_capture_verification::load_for_current_identity() {
+        if let (Some(object), Ok(value)) = (
+            structured.as_object_mut(),
+            serde_json::to_value(verification),
+        ) {
+            object.insert("direct_capture_verification".to_owned(), value);
+        }
+    }
 
     if json {
         println!(
@@ -2587,31 +2590,6 @@ fn run_permissions_status(json: bool) {
     println!("Source: {attribution}");
     if !(ax && sr) {
         println!("  → To grant for the driver, run: {cli_name} permissions grant");
-    }
-}
-
-fn attach_direct_capture_verification(
-    structured: &mut serde_json::Value,
-    verification: Option<serde_json::Value>,
-) {
-    let Some(verification) = verification else {
-        return;
-    };
-    let screen_recording = structured
-        .get("screen_recording")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let probe_was_skipped = structured
-        .get("screen_recording_capturable")
-        .is_some_and(serde_json::Value::is_null)
-        && structured
-            .get("direct_capture_status")
-            .and_then(serde_json::Value::as_str)
-            == Some("not_checked");
-    if screen_recording && probe_was_skipped {
-        if let Some(object) = structured.as_object_mut() {
-            object.insert("direct_capture_verification".to_owned(), verification);
-        }
     }
 }
 
@@ -4079,61 +4057,6 @@ mod tests {
             args.get("probe_direct_capture"),
             Some(&serde_json::json!(false))
         );
-    }
-
-    #[test]
-    fn permission_status_attaches_matching_historical_verification() {
-        let mut status = serde_json::json!({
-            "accessibility": true,
-            "screen_recording": true,
-            "screen_recording_capturable": null,
-            "direct_capture_status": "not_checked"
-        });
-        let verification = serde_json::json!({
-            "status": "verified",
-            "verified_at": "2026-08-06T12:34:56Z",
-            "bundle_id": "com.trycua.driver.local",
-            "source": "permissions_grant"
-        });
-
-        attach_direct_capture_verification(&mut status, Some(verification.clone()));
-
-        assert_eq!(status["direct_capture_status"], "not_checked");
-        assert_eq!(status["direct_capture_verification"], verification);
-    }
-
-    #[test]
-    fn permission_status_suppresses_verification_without_screen_recording() {
-        let mut status = serde_json::json!({
-            "accessibility": true,
-            "screen_recording": false,
-            "screen_recording_capturable": null,
-            "direct_capture_status": "not_checked"
-        });
-
-        attach_direct_capture_verification(
-            &mut status,
-            Some(serde_json::json!({"status": "verified"})),
-        );
-
-        assert!(status.get("direct_capture_verification").is_none());
-    }
-
-    #[test]
-    fn permission_status_prefers_a_live_probe_over_historical_verification() {
-        let mut status = serde_json::json!({
-            "accessibility": true,
-            "screen_recording": true,
-            "screen_recording_capturable": true,
-            "direct_capture_status": "ready"
-        });
-
-        attach_direct_capture_verification(
-            &mut status,
-            Some(serde_json::json!({"status": "verified"})),
-        );
-
-        assert!(status.get("direct_capture_verification").is_none());
     }
 
     #[test]

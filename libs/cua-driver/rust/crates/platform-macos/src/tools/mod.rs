@@ -26,6 +26,7 @@ mod type_text;
 mod check_permissions;
 mod cursor_tools;
 mod get_accessibility_tree;
+mod get_application_state;
 mod get_config;
 mod get_cursor_position;
 mod get_desktop_state;
@@ -891,6 +892,7 @@ pub fn register_all(
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(
         state.clone(),
     )));
+    registry.register(Box::new(get_application_state::GetApplicationStateTool));
     registry.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(Arc::new(
             cua_driver_core::expectation::ToolObservationProvider::new(

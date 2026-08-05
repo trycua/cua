@@ -148,6 +148,16 @@ pub struct TreeWalkResult {
     pub window_scope: Option<WindowScope>,
 }
 
+/// Release the retains added for actionable nodes when a read-only caller does
+/// not transfer the snapshot into [`crate::ax::cache::ElementCache`].
+pub fn release_actionable_nodes(nodes: &[AXNode]) {
+    for node in nodes.iter().filter(|node| node.element_index.is_some()) {
+        if node.element_ptr != 0 {
+            unsafe { CFRelease(node.element_ptr as CFTypeRef) };
+        }
+    }
+}
+
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
 ///
 /// `window_id` — when Some, only the AXWindow matching that CGWindowID is

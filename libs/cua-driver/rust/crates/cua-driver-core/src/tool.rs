@@ -342,6 +342,12 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         ],
         // ── accessibility / window state ─────────────────────────────
         "get_accessibility_tree" => &["accessibility.tree", "accessibility.tree.structured"],
+        "get_application_state" => &[
+            "accessibility.tree",
+            "accessibility.tree.structured",
+            "accessibility.tree.bounded",
+            "accessibility.observation.application_composite",
+        ],
         "get_window_state" => &[
             "accessibility.window_state",
             "accessibility.tree",

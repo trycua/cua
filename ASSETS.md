@@ -23,59 +23,33 @@ does not. That is why assets are minted here rather than in the destination page
 
 ## Index
 
-<!-- minted attachments follow --><img width="1200" height="675" alt="windows-wpf-agent-qa" src="https://github.com/user-attachments/assets/54536146-328a-431c-95b4-14a799248026" />
-<img width="1200" height="675" alt="windows-msbuild-piano" src="https://github.com/user-attachments/assets/6f878582-8f5d-4400-be44-fc503fcbc1ab" />
-<img width="1200" height="675" alt="windows-legacy-postal-app" src="https://github.com/user-attachments/assets/0fb62243-56ec-4d51-8771-35640a5e6031" />
-<img width="1920" height="1080" alt="windows-hermes-four-agent-windows" src="https://github.com/user-attachments/assets/15091959-0f93-4076-9338-18ef3a737091" />
+<!-- minted attachments follow -->
 
-https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b
-
-
-
-https://github.com/user-attachments/assets/354af433-8769-44ff-beab-b5cb02ff798e
-
-
-
-https://github.com/user-attachments/assets/11b248e5-d505-4349-aaae-ad9f95a1162f
-
-
-
-https://github.com/user-attachments/assets/dcc5a81f-6379-4378-a225-adaf5dfa5dcd
-
-
-
-https://github.com/user-attachments/assets/35bf5156-d326-4484-ad1a-87a7991c85f6
-
-
-
-https://github.com/user-attachments/assets/9eafceca-1738-4e34-949a-2fb0dbe1832e
-
-
-
-https://github.com/user-attachments/assets/ef3c7ad5-2689-4de5-b844-1c1bb3b621ae
-
-
-
-https://github.com/user-attachments/assets/46f4be37-92c2-4360-bc20-bde35401bc71
-
-
-
-https://github.com/user-attachments/assets/17696766-210d-40b7-b95a-e81be383cc6f
-
-
-
-https://github.com/user-attachments/assets/7096c772-aa24-4286-a453-6aedfbeb3e23
-
-
-
-https://github.com/user-attachments/assets/c4e23e2f-1112-4b7b-a575-c6185c78eda4
-
-
-<img width="1200" height="675" alt="macos-trajectory-capture" src="https://github.com/user-attachments/assets/d896dd2f-3f0a-4978-93a3-c9a5c562c3e8" />
-<img width="1280" height="720" alt="macos-background-dev-loop" src="https://github.com/user-attachments/assets/34217d66-c560-4532-a77b-67ea2f8885af" />
-<img width="1200" height="675" alt="macos-background-chrome" src="https://github.com/user-attachments/assets/bcbe275a-9b37-4432-9f76-124d88574f6a" />
-<img width="960" height="540" alt="linux-wayland-16-cursors" src="https://github.com/user-attachments/assets/cd354a0b-b0ca-4236-a640-eeb79c338d0c" />
-<img width="1200" height="675" alt="linux-multi-pointers" src="https://github.com/user-attachments/assets/b8257284-aef6-46a4-8250-61e6bf5fd57c" />
-<img width="1200" height="750" alt="linux-headless-spreadsheet" src="https://github.com/user-attachments/assets/74d428cb-1adc-4ebc-bc43-590f0966e84b" />
-<img width="1920" height="1080" alt="open-source-overview" src="https://github.com/user-attachments/assets/1b60d1c6-06fb-47e3-97c0-726421cf45fb" />
-
+| Source file | Attachment | Used by |
+| --- | --- | --- |
+| `open-source-overview.jpg` | [`1b60d1c6…`](https://github.com/user-attachments/assets/1b60d1c6-06fb-47e3-97c0-726421cf45fb) | `concepts/what-is-cua-bench` |
+| `open-source-overview.mp4` | [`35bf5156…`](https://github.com/user-attachments/assets/35bf5156-d326-4484-ad1a-87a7991c85f6) | `concepts/what-is-cua-bench` |
+| `linux-headless-spreadsheet.jpg` | [`74d428cb…`](https://github.com/user-attachments/assets/74d428cb-1adc-4ebc-bc43-590f0966e84b) | `index` |
+| `linux-headless-spreadsheet.mp4` | [`7096c772…`](https://github.com/user-attachments/assets/7096c772-aa24-4286-a453-6aedfbeb3e23) | `index` |
+| `windows-wpf-agent-qa.jpg` | [`54536146…`](https://github.com/user-attachments/assets/54536146-328a-431c-95b4-14a799248026) | `index` |
+| `windows-wpf-agent-qa.mp4` | [`4159f98d…`](https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b) | `index` |
+| `windows-msbuild-piano.jpg` | [`6f878582…`](https://github.com/user-attachments/assets/6f878582-8f5d-4400-be44-fc503fcbc1ab) | `tutorials/drive-your-first-app` |
+| `windows-msbuild-piano.mp4` | [`354af433…`](https://github.com/user-attachments/assets/354af433-8769-44ff-beab-b5cb02ff798e) | `tutorials/drive-your-first-app` |
+| `linux-multi-pointers.jpg` | [`b8257284…`](https://github.com/user-attachments/assets/b8257284-aef6-46a4-8250-61e6bf5fd57c) | `concepts/the-no-foreground-contract` |
+| `linux-multi-pointers.mp4` | [`c4e23e2f…`](https://github.com/user-attachments/assets/c4e23e2f-1112-4b7b-a575-c6185c78eda4) | `concepts/the-no-foreground-contract` |
+| `linux-wayland-16-cursors.jpg` | [`cd354a0b…`](https://github.com/user-attachments/assets/cd354a0b-b0ca-4236-a640-eeb79c338d0c) | `concepts/the-no-foreground-contract` |
+| `linux-wayland-16-cursors.mp4` | [`17696766…`](https://github.com/user-attachments/assets/17696766-210d-40b7-b95a-e81be383cc6f) | `concepts/the-no-foreground-contract` |
+| `macos-background-dev-loop.jpg` | [`34217d66…`](https://github.com/user-attachments/assets/34217d66-c560-4532-a77b-67ea2f8885af) | `concepts/the-no-foreground-contract` |
+| `macos-background-dev-loop.mp4` | [`ef3c7ad5…`](https://github.com/user-attachments/assets/ef3c7ad5-2689-4de5-b844-1c1bb3b621ae) | `concepts/the-no-foreground-contract` |
+| `macos-background-chrome.jpg` | [`bcbe275a…`](https://github.com/user-attachments/assets/bcbe275a-9b37-4432-9f76-124d88574f6a) | `how-to-guides/driver/drive-a-web-page` |
+| `macos-background-chrome.mp4` | [`46f4be37…`](https://github.com/user-attachments/assets/46f4be37-92c2-4360-bc20-bde35401bc71) | `how-to-guides/driver/drive-a-web-page` |
+| `macos-trajectory-capture.jpg` | [`d896dd2f…`](https://github.com/user-attachments/assets/d896dd2f-3f0a-4978-93a3-c9a5c562c3e8) | `how-to-guides/driver/record-and-render-a-trajectory` |
+| `macos-trajectory-capture.mp4` | [`9eafceca…`](https://github.com/user-attachments/assets/9eafceca-1738-4e34-949a-2fb0dbe1832e) | `how-to-guides/driver/record-and-render-a-trajectory` |
+| `windows-legacy-postal-app.jpg` | [`0fb62243…`](https://github.com/user-attachments/assets/0fb62243-56ec-4d51-8771-35640a5e6031) | `how-to-guides/recipes/automate-a-legacy-windows-app-behind-a-vpn` |
+| `windows-legacy-postal-app.mp4` | [`11b248e5…`](https://github.com/user-attachments/assets/11b248e5-d505-4349-aaae-ad9f95a1162f) | `how-to-guides/recipes/automate-a-legacy-windows-app-behind-a-vpn` |
+| `windows-hermes-four-agent-windows.jpg` | [`15091959…`](https://github.com/user-attachments/assets/15091959-0f93-4076-9338-18ef3a737091) | `reference/cua-driver/process-model` |
+| `windows-hermes-four-agent-windows.mp4` | [`dcc5a81f…`](https://github.com/user-attachments/assets/dcc5a81f-6379-4378-a225-adaf5dfa5dcd) | `reference/cua-driver/process-model` |
+| `accessibility-prompt.png` | [`b7a5a0c0…`](https://github.com/user-attachments/assets/b7a5a0c0-f297-4249-81f9-ca42c6b6f8ba) | `tutorials/drive-your-first-app, how-to-guides/driver/install` |
+| `accessibility-settings.png` | [`d149fe5a…`](https://github.com/user-attachments/assets/d149fe5a-28cb-460c-8868-4eda80d540a4) | `tutorials/drive-your-first-app, how-to-guides/driver/install` |
+| `screen-recording-prompt.png` | [`69efc964…`](https://github.com/user-attachments/assets/69efc964-a375-495e-8a27-400c9dd08e17) | `tutorials/drive-your-first-app, how-to-guides/driver/install` |
+| `screen-recording-settings.png` | [`469308b5…`](https://github.com/user-attachments/assets/469308b5-84d7-4fd6-a580-e62925120337) | `tutorials/drive-your-first-app, how-to-guides/driver/install` |

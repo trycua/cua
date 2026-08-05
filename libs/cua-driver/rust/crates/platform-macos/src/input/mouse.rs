@@ -17,6 +17,74 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MousePostTransport {
+    SkyLight,
+    PublicCgEvent,
+}
+
+fn chromium_bundle_id(bundle_id: &str) -> bool {
+    let products = [
+        "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
+        "iridium", "yandex",
+    ];
+    bundle_id
+        .to_ascii_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| products.contains(&token))
+}
+
+fn plist_has_key(bytes: &[u8], key: &[u8]) -> bool {
+    bytes.windows(key.len()).any(|window| window == key)
+}
+
+fn transport_for_metadata(
+    bundle_id: Option<&str>,
+    info_plist: Option<&[u8]>,
+    has_electron_framework: bool,
+) -> MousePostTransport {
+    let catalyst = info_plist.is_some_and(|bytes| {
+        plist_has_key(bytes, b"UIApplicationSceneManifest")
+            || plist_has_key(bytes, b"UIDeviceFamily")
+    });
+    if bundle_id.is_some_and(chromium_bundle_id) || has_electron_framework || catalyst {
+        MousePostTransport::SkyLight
+    } else {
+        MousePostTransport::PublicCgEvent
+    }
+}
+
+pub(super) fn post_transport_for_pid(pid: i32) -> MousePostTransport {
+    let bundle_id = crate::apps::bundle_id_for_pid(pid);
+    let bundle_path = crate::apps::bundle_path_for_pid(pid).map(std::path::PathBuf::from);
+    let info_plist = bundle_path
+        .as_ref()
+        .and_then(|path| std::fs::read(path.join("Contents/Info.plist")).ok());
+    let has_electron_framework = bundle_path.as_ref().is_some_and(|path| {
+        path.join("Contents/Frameworks/Electron Framework.framework")
+            .exists()
+    });
+    transport_for_metadata(
+        bundle_id.as_deref(),
+        info_plist.as_deref(),
+        has_electron_framework,
+    )
+}
+
+fn post_to_pid_once(pid: i32, event: &CGEvent, transport: MousePostTransport) {
+    match transport {
+        MousePostTransport::SkyLight => {
+            let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+            // The SPI resolver returning false is explicit evidence that no
+            // SkyLight attempt occurred, so the public route is a safe fallback.
+            if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false) {
+                event.post_to_pid(pid as libc::pid_t);
+            }
+        }
+        MousePostTransport::PublicCgEvent => event.post_to_pid(pid as libc::pid_t),
+    }
+}
+
 /// Left-click at `(x, y)` screen coordinates, posted to `pid`.
 ///
 /// Window-local coordinates for backgrounded targets: if `window_local` is
@@ -267,6 +335,7 @@ fn click_at_xy_inner(
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let point = CGPoint::new(x, y);
     let flags = parse_modifier_flags(modifiers);
+    let transport = post_transport_for_pid(pid);
 
     // Shared click-group ID (f58) when window_id is known: keeps all pairs
     // in one gesture so WindowServer / Chromium coalesce them correctly.
@@ -282,7 +351,15 @@ fn click_at_xy_inner(
         // mouseMoved so an AppKit NSButton / NSView hit-tests the down at the
         // right point. Without it the synthetic mouseDown on a backgrounded
         // AppKit control is silently ignored.
-        post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
+        post_mouse_moved_primer(
+            pid,
+            &source,
+            point,
+            transport,
+            window_local,
+            wid,
+            click_group_id,
+        );
         std::thread::sleep(std::time::Duration::from_millis(12));
 
         for pair_index in 0..count {
@@ -302,6 +379,7 @@ fn click_at_xy_inner(
             post_mouse_event(
                 pid,
                 &down,
+                transport,
                 window_local,
                 wid,
                 click_group_id,
@@ -328,6 +406,7 @@ fn click_at_xy_inner(
             post_mouse_event(
                 pid,
                 &up,
+                transport,
                 window_local,
                 wid,
                 click_group_id,
@@ -383,8 +462,8 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f58 = constant click-group ID across all events (gesture coalescing)
 ///  - `CGEventSetWindowLocation` per-event (window-local point)
 ///
-/// Uses both SkyLight `SLEventPostToPid` AND `CGEvent::post_to_pid` (belt+suspenders)
-/// for AppKit / Catalyst target coverage.
+/// Uses the SkyLight route selected for Chromium-compatible targets, with a
+/// public fallback only when the private symbol is unavailable.
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
@@ -406,6 +485,8 @@ pub fn click_at_xy_chromium(
     let win_local = (win_local_x, win_local_y);
     let off_local = (-1.0_f64, -1.0_f64);
     let flags = parse_modifier_flags(modifiers);
+    // This entry point is selected only for Chromium-compatible targets.
+    let transport = MousePostTransport::SkyLight;
     let click_pairs = count.clamp(1, 2);
     let window_id = wid as i64;
 
@@ -440,12 +521,7 @@ pub fn click_at_xy_chromium(
         }
     };
 
-    // Belt+suspenders: SkyLight path for Chromium/Catalyst + public API for AppKit.
-    let post = |event: &CGEvent| {
-        let ptr = event.as_ptr() as *mut std::ffi::c_void;
-        crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false);
-        event.post_to_pid(pid as libc::pid_t);
-    };
+    let post = |event: &CGEvent| post_to_pid_once(pid, event, transport);
 
     // Step 1: mouseMoved at target (phase=2, clickState=0).
     let move_event = CGEvent::new_mouse_event(
@@ -595,6 +671,7 @@ where
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let flags = parse_modifier_flags(modifiers);
+    let transport = post_transport_for_pid(pid);
 
     let (cg_button, down_type, dragged_type, up_type) = match button {
         DragButton::Left => (
@@ -647,6 +724,7 @@ where
     post_mouse_event(
         pid,
         &down,
+        transport,
         from_local,
         wid,
         click_group_id,
@@ -671,7 +749,17 @@ where
         if flags != CGEventFlags::CGEventFlagNull {
             drag.set_flags(flags);
         }
-        post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
+        post_mouse_event(
+            pid,
+            &drag,
+            transport,
+            il,
+            wid,
+            click_group_id,
+            1,
+            button_number,
+            0,
+        );
         observe(ix, iy);
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
@@ -688,7 +776,17 @@ where
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
+    post_mouse_event(
+        pid,
+        &up,
+        transport,
+        to_local,
+        wid,
+        click_group_id,
+        1,
+        button_number,
+        0,
+    );
     if foreground_release {
         // A frontmost Chromium surface can consume PID-routed down/move
         // events yet filter the synthetic release. Re-post only the release
@@ -866,8 +964,8 @@ pub enum DragButton {
 /// Middle-click at `(x, y)` with optional modifier keys.
 ///
 /// Posts an `OtherMouseDown` / `OtherMouseUp` pair with `CGMouseButton::Center`
-/// to the target pid through the same SkyLight + public-API postBoth path the
-/// left- and right-click primitives use. Window-local stamping mirrors
+/// to the target pid through the same single-route policy as the left- and
+/// right-click primitives. Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
     middle_click_at_xy_inner(pid, x, y, None, modifiers)
@@ -896,6 +994,7 @@ fn middle_click_at_xy_inner(
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let point = CGPoint::new(x, y);
     let flags = parse_modifier_flags(modifiers);
+    let transport = post_transport_for_pid(pid);
 
     let down = CGEvent::new_mouse_event(
         source.clone(),
@@ -907,7 +1006,7 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event(pid, &down, window_local, None, None, 1, 2, 3);
+    post_mouse_event(pid, &down, transport, window_local, None, None, 1, 2, 3);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     let up = CGEvent::new_mouse_event(
@@ -920,7 +1019,7 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
+    post_mouse_event(pid, &up, transport, window_local, None, None, 1, 2, 3);
 
     Ok(())
 }
@@ -965,6 +1064,7 @@ fn right_click_at_xy_inner(
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let point = CGPoint::new(x, y);
     let flags = parse_modifier_flags(modifiers);
+    let transport = post_transport_for_pid(pid);
 
     let click_group_id: Option<i64> = wid.map(|_| {
         SystemTime::now()
@@ -975,7 +1075,15 @@ fn right_click_at_xy_inner(
 
     // Prime cursor-tracking state at the target so AppKit hit-tests the
     // right-down at the right NSView (same rationale as the left path).
-    post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
+    post_mouse_moved_primer(
+        pid,
+        &source,
+        point,
+        transport,
+        window_local,
+        wid,
+        click_group_id,
+    );
     std::thread::sleep(std::time::Duration::from_millis(12));
 
     let down = CGEvent::new_mouse_event(
@@ -990,7 +1098,17 @@ fn right_click_at_xy_inner(
     }
     // button_number = 1 (right). Stamping 0 here routes the event as a left
     // button-number on the receiving side even though the type is rightMouseDown.
-    post_mouse_event(pid, &down, window_local, wid, click_group_id, 1, 1, 3);
+    post_mouse_event(
+        pid,
+        &down,
+        transport,
+        window_local,
+        wid,
+        click_group_id,
+        1,
+        1,
+        3,
+    );
     std::thread::sleep(std::time::Duration::from_millis(28));
 
     let up = CGEvent::new_mouse_event(
@@ -1003,19 +1121,27 @@ fn right_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, window_local, wid, click_group_id, 1, 1, 3);
+    post_mouse_event(
+        pid,
+        &up,
+        transport,
+        window_local,
+        wid,
+        click_group_id,
+        1,
+        1,
+        3,
+    );
 
     Ok(())
 }
 
 /// Post a mouse event to `pid`.
 ///
-/// Matches Swift's `MouseInput.postBoth(_:toPid:)`:
-/// - Fires `SLEventPostToPid` (SkyLight path — reaches backgrounded Chromium/Catalyst).
-/// - Also fires `CGEvent::post_to_pid` (public path — lands on AppKit targets where
-///   SkyLight mouse delivery drops).
-///
-/// Both are always posted in sequence regardless of whether the other succeeded.
+/// Uses exactly one target transport. Chromium, Electron, and Catalyst targets
+/// use SkyLight; AppKit, WKWebView, and unknown targets use the public API. The
+/// public API is also used when the SkyLight symbol is unavailable and no
+/// private post was attempted.
 ///
 /// Field stamps applied (always):
 /// - f40 = `pid`  (Chromium's synthetic-event filter)
@@ -1038,6 +1164,7 @@ fn right_click_at_xy_inner(
 pub(super) fn post_mouse_event(
     pid: i32,
     event: &CGEvent,
+    transport: MousePostTransport,
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     click_group_id: Option<i64>,
@@ -1070,13 +1197,7 @@ pub(super) fn post_mouse_event(
     // Always stamp f40 = target pid (Chromium synthetic-event filter).
     crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
 
-    // SkyLight path: activity-monitor tickle → reaches Catalyst/Chromium.
-    // Mouse events skip the auth-message envelope (Swift: attachAuthMessage: false).
-    crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-
-    // Public path: delivers to AppKit targets where SkyLight mouse drops.
-    // Belt+suspenders — both fire unconditionally (matches Swift `postBoth`).
-    event.post_to_pid(pid as libc::pid_t);
+    post_to_pid_once(pid, event, transport);
 }
 
 /// Post a stamped `mouseMoved` to `pid` at `point` before a down/up pair.
@@ -1094,6 +1215,7 @@ fn post_mouse_moved_primer(
     pid: i32,
     source: &CGEventSource,
     point: CGPoint,
+    transport: MousePostTransport,
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     click_group_id: Option<i64>,
@@ -1104,7 +1226,17 @@ fn post_mouse_moved_primer(
         point,
         CGMouseButton::Left,
     ) {
-        post_mouse_event(pid, &mv, window_local, wid, click_group_id, 0, 0, 3);
+        post_mouse_event(
+            pid,
+            &mv,
+            transport,
+            window_local,
+            wid,
+            click_group_id,
+            0,
+            0,
+            3,
+        );
     }
 }
 
@@ -1151,6 +1283,7 @@ pub fn scroll_wheel_at_xy(
     ticks: usize,
 ) -> anyhow::Result<()> {
     use core_graphics::event::ScrollEventUnit;
+    let transport = post_transport_for_pid(pid);
 
     // Prime AppKit/WebKit's tracking state at the target before the wheel
     // gesture. Background windows can retain a stale hit-test location; a
@@ -1162,6 +1295,7 @@ pub fn scroll_wheel_at_xy(
         pid,
         &primer_source,
         CGPoint::new(screen_x, screen_y),
+        transport,
         window_local,
         wid,
         Some(
@@ -1208,10 +1342,7 @@ pub fn scroll_wheel_at_xy(
         // f40 = target pid (Chromium synthetic-event filter).
         crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
 
-        // Belt+suspenders post: SkyLight reaches backgrounded Chromium/Catalyst;
-        // the public path lands on AppKit/WKWebView. Mouse-class → no auth envelope.
-        crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-        event.post_to_pid(pid as libc::pid_t);
+        post_to_pid_once(pid, &event, transport);
 
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
@@ -1240,4 +1371,46 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
         }
     }
     flags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{transport_for_metadata, MousePostTransport};
+
+    #[test]
+    fn native_and_unknown_targets_use_public_posting() {
+        assert_eq!(
+            transport_for_metadata(Some("com.example.NativeApp"), None, false),
+            MousePostTransport::PublicCgEvent
+        );
+        assert_eq!(
+            transport_for_metadata(None, None, false),
+            MousePostTransport::PublicCgEvent
+        );
+    }
+
+    #[test]
+    fn chromium_and_electron_targets_use_skylight() {
+        assert_eq!(
+            transport_for_metadata(Some("com.google.Chrome"), None, false),
+            MousePostTransport::SkyLight
+        );
+        assert_eq!(
+            transport_for_metadata(Some("com.example.desktop"), None, true),
+            MousePostTransport::SkyLight
+        );
+    }
+
+    #[test]
+    fn catalyst_plist_keys_use_skylight() {
+        for plist in [
+            b"<key>UIApplicationSceneManifest</key>".as_slice(),
+            b"bplist00_UIDeviceFamily_".as_slice(),
+        ] {
+            assert_eq!(
+                transport_for_metadata(Some("com.example.app"), Some(plist), false),
+                MousePostTransport::SkyLight
+            );
+        }
+    }
 }

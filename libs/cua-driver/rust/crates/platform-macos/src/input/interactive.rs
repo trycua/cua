@@ -360,6 +360,7 @@ fn run_worker(
 struct NativeInputState {
     config: InteractiveInputConfig,
     source: CGEventSource,
+    post_transport: super::mouse::MousePostTransport,
     pressed_button: Option<PointerButton>,
     click_group_id: i64,
     scroll_residual_x: f64,
@@ -374,9 +375,11 @@ impl NativeInputState {
         source: CGEventSource,
         bounds: crate::windows::WindowBounds,
     ) -> Self {
+        let post_transport = super::mouse::post_transport_for_pid(config.pid);
         Self {
             config,
             source,
+            post_transport,
             pressed_button: None,
             click_group_id: 1,
             scroll_residual_x: 0.0,
@@ -570,6 +573,7 @@ impl NativeInputState {
             super::mouse::post_mouse_event(
                 self.config.pid,
                 &event,
+                self.post_transport,
                 Some(window_local),
                 Some(self.config.window_id),
                 Some(self.click_group_id),
@@ -621,6 +625,7 @@ impl NativeInputState {
             super::mouse::post_mouse_event(
                 self.config.pid,
                 event,
+                self.post_transport,
                 Some(window_local),
                 Some(self.config.window_id),
                 Some(self.click_group_id),

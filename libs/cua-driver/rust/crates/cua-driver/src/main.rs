@@ -21,6 +21,7 @@ mod autostart;
 mod bundle;
 mod check_update_tool;
 mod cli;
+mod direct_capture_verification;
 mod doctor;
 mod mcp_http;
 mod private_worker;

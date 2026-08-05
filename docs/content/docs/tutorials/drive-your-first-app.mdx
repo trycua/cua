@@ -47,6 +47,35 @@ Use the same one-line installer on every platform; it picks the right path for t
     ```bash
     cua-driver permissions grant
     ```
+
+    macOS prompts once for each permission. Neither prompt grants anything on its own — both offer **Open System Settings**, not **Allow**:
+
+    ![The macOS Accessibility Access prompt for CuaDriver, offering Open System Settings or Deny](/img/cua-driver/permissions/accessibility-prompt.png)
+
+    ![The macOS Screen Recording prompt for CuaDriver, offering Open System Settings or Deny](/img/cua-driver/permissions/screen-recording-prompt.png)
+
+    Clicking **Open System Settings** adds CuaDriver to that permission's list for you — switched off. Toggling it on is what actually grants access:
+
+    ![CuaDriver listed under Accessibility in System Settings with its toggle switched off](/img/cua-driver/permissions/accessibility-settings.png)
+
+    ![CuaDriver listed under Screen & System Audio Recording in System Settings with its toggle switched off](/img/cua-driver/permissions/screen-recording-settings.png)
+
+    <Callout type="warn">
+      Do this for both **Accessibility** and **Screen & System Audio Recording**; choosing **Deny** leaves the driver unable to see or drive your desktop. macOS may offer to quit and reopen CuaDriver when you flip a toggle — accept, because the driver only picks up a changed grant after a full relaunch. If the daemon does not come back, start it again with `open -n -g -a CuaDriver --args serve`.
+    </Callout>
+
+    macOS does not always raise both prompts in one pass. Check what actually landed:
+
+    ```bash
+    cua-driver permissions status
+    ```
+
+    If one is still missing, run the pair again to prompt for it:
+
+    ```bash
+    open -n -g -a CuaDriver --args serve
+    cua-driver permissions grant
+    ```
   </Tab>
   <Tab value="Windows">
     Requires Windows 10/11 with an interactive desktop session and PowerShell.

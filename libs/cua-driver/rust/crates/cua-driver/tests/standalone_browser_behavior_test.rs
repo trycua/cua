@@ -45,6 +45,31 @@ fn standalone_fixture_html() -> String {
     )
 }
 
+/// Synthetic control that records event delivery but deliberately rejects the
+/// application action unless the browser marks the click as trusted.
+fn standalone_trust_gated_click_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<fieldset>
+  <legend>trust-gated click</legend>
+  <button id="standalone-trust-gated" data-cua-id="standalone-trust-gated">
+    Activate trust-gated control
+  </button>
+  <span id="standalone-trust-gated-state" data-cua-id="standalone-trust-gated-state">
+    activation=idle
+  </span>
+</fieldset>
+<script>
+  document.getElementById('standalone-trust-gated').addEventListener('click', event => {
+    document.getElementById('standalone-trust-gated-state').textContent = event.isTrusted
+      ? 'activation=accepted-trusted'
+      : 'activation=ignored-untrusted';
+  });
+</script>
+</body>"#,
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn standalone_generic_type_text_html() -> String {
     standalone_fixture_html().replace(
@@ -1573,6 +1598,68 @@ fn run_roundtrip(spec: &BrowserSpec) {
             );
             assert_eq!(typed.action_effect(), Some("unverifiable"), "{}", typed.raw);
             wait_for_value(&fixture.server, "txt-input", "standalone-browser");
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+fn run_trust_gated_dom_click(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-trust-gated-dom-click",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(case(&spec.name, "trust_gated_dom_click"), |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_trust_gated_click_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-trust-gated-dom-click-{}", fixture.pid);
+            let (target, tab, snapshot) = bind(fixture, &session);
+            let click_ref = ref_by_label(&snapshot, "id=standalone-trust-gated");
+            let click = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": click_ref,
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+
+            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(click.action_route(), Some("dom"), "{}", click.raw);
+            assert_eq!(
+                click.action_delivery_mode(),
+                Some("background"),
+                "{}",
+                click.raw
+            );
+            assert_eq!(
+                click.structured()["escalation"]["target"],
+                "page",
+                "{}",
+                click.raw
+            );
+            assert_eq!(
+                click.structured()["escalation"]["reason"],
+                "effect_unconfirmed",
+                "{}",
+                click.raw
+            );
+            assert!(
+                click.text().contains("application effect not verified")
+                    && click.text().contains("trust-gated controls"),
+                "{}",
+                click.raw
+            );
+            wait_for_text(
+                &fixture.server,
+                "standalone-trust-gated-state",
+                "activation=ignored-untrusted",
+            );
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
@@ -4544,6 +4631,10 @@ macro_rules! standalone_browser_test {
 }
 
 standalone_browser_test!(standalone_browser_roundtrip, run_roundtrip);
+standalone_browser_test!(
+    standalone_browser_trust_gated_dom_click,
+    run_trust_gated_dom_click
+);
 standalone_browser_test!(standalone_browser_semantic_state, run_semantic_state);
 standalone_browser_test!(standalone_browser_background_type, run_background_type);
 standalone_browser_test!(standalone_browser_type_replace, run_type_replace);

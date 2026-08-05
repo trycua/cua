@@ -315,7 +315,11 @@ browser_click({
 ```
 
 Use this only when the page's DOM click semantics are acceptable. The driver
-never silently falls back from trusted input to a DOM event.
+never silently falls back from trusted input to a DOM event. A successful
+`dom_event` dispatch returns `effect: "unverifiable"`: it does not mean the
+control activated, and trust-gated controls may ignore it. Take a fresh page
+snapshot and verify the expected state before continuing. Cua Driver does not
+automatically foreground the browser when that verification fails.
 
 Snapshot again, then type into the fresh input ref:
 

@@ -135,7 +135,7 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
         // Capture the target while it is still foreground. Electron may prune
         // parts of its UIA tree once another full-size window covers it, but
         // the snapshot remains a stable handle for the later background click.
-        let target_state = window_state(&mut driver, target);
+        let target_state = wait_for_window_text(&mut driver, target, "btn-increment");
         let button_index = ax::element_index_by_id(target_state.tree_text(), "btn-increment")
             .unwrap_or_else(|| {
                 panic!(

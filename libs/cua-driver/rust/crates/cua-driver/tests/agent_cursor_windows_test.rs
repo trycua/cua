@@ -72,7 +72,6 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
                 serde_json::json!({
                     "x": x,
                     "y": y,
-                    "scope": "desktop",
                     "cursor_id": cursor_id
                 }),
             ),
@@ -276,7 +275,6 @@ fn agent_cursor_move_does_not_leak_input() {
                         serde_json::json!({
                             "x": x,
                             "y": y,
-                            "scope": "desktop",
                             "cursor_id": cursor_id
                         }),
                     ),

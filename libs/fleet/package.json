@@ -39,7 +39,7 @@
     "overrides": {
       "@babel/core": "7.29.6",
       "js-yaml": "4.3.0",
-      "postcss": "8.5.18"
+      "postcss": "8.5.23"
     },
     "patchedDependencies": {
       "@novnc/novnc@1.7.0": "patches/@novnc__novnc@1.7.0.patch"

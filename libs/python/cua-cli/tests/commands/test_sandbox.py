@@ -358,6 +358,59 @@ class TestCmdSuspend:
         assert result == 1
 
 
+class TestCmdResume:
+    """Tests for cmd_resume function."""
+
+    def test_resume_sandbox_success(self, args_namespace, mock_api_key):
+        """Test resuming a cloud sandbox."""
+        args = args_namespace(name="test-sandbox", local=False)
+        mock_resume = AsyncMock()
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.resume = mock_resume
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "print_success"):
+                result = sandbox.cmd_resume(args)
+
+        assert result == 0
+        mock_resume.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
+
+    def test_resume_sandbox_not_found(self, args_namespace, mock_api_key):
+        """Test resuming a sandbox that does not exist."""
+        args = args_namespace(name="missing-sandbox", local=False)
+        mock_resume = AsyncMock(side_effect=ValueError("Sandbox not found"))
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.resume = mock_resume
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
+                result = sandbox.cmd_resume(args)
+
+        assert result == 1
+        mock_resume.assert_awaited_once_with(
+            "missing-sandbox", local=False, api_key="test-access-token"
+        )
+        mock_error.assert_called_once_with("Failed to resume sandbox: Sandbox not found")
+
+    def test_resume_local_sandbox(self, args_namespace):
+        """Test resuming a local sandbox without cloud authentication."""
+        args = args_namespace(name="local-sandbox", local=True)
+        mock_resume = AsyncMock()
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.resume = mock_resume
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "get_access_token", new_callable=AsyncMock) as mock_token:
+                with patch.object(sandbox, "print_success"):
+                    result = sandbox.cmd_resume(args)
+
+        assert result == 0
+        mock_token.assert_not_awaited()
+        mock_resume.assert_awaited_once_with("local-sandbox", local=True)
+
+
 class TestCmdDelete:
     """Tests for cmd_delete function."""
 

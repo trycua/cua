@@ -4,6 +4,12 @@ _Published on August 6, 2026 by Francesco Bonacci_
 
 Today, we're launching what we believe is the first extension-free browser-use interface built into an agent-neutral computer-use driver. Cua Driver binds an exact Chromium tab to its native process and window, giving coding agents page-aware browser actions and full desktop control in the same session, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.18.0.
 
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/c5f489b6-a9b8-4c0a-9cd8-e52b5f4f4f01" alt="Animated browser-use launch slide showing Cua Driver controlling an exact Chromium tab alongside native desktop applications." width="760" />
+</div>
+
+_Cua Driver combines page-aware browser actions with native desktop control in one named session._
+
 When we started working on Cua Driver, we saw it as a CLI that would let coding agents operate desktop apps. As we worked through window discovery, accessibility, capture, input delivery, focus, and session isolation, we realized that this low-level operating-system plumbing could also give us a path to more frictionless browser use. Agents that need page-aware access to an existing browser commonly add a Chrome extension or move the task into a separate embedded browser. Cua Driver could instead connect an exact native browser window to its page context while keeping the rest of the desktop in reach.
 
 That plumbing lets an agent move between a terminal and the native applications involved in a development workflow. It can run commands, inspect windows, handle a permission prompt, and verify what changed without turning every step into a screenshot and a coordinate.
@@ -13,7 +19,7 @@ Browser use is already becoming part of coding agents. [Claude Code connects to 
 We wanted a different integration boundary. Cua Driver puts the bridge in an agent-neutral computer-use driver rather than a specific agent host or browser integration. It binds an operating-system process and native window to an exact Chrome or Edge tab, then keeps page-aware CDP actions and native desktop control inside the same named session. A connected agent can move from the document to browser chrome, permission UI, file pickers, terminals, editors, and other desktop apps without installing an extension or moving the workflow into an embedded browser.
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/224650a4-21ed-4bbb-8d32-2d9dfe4cf9b1" poster="https://github.com/user-attachments/assets/b01007af-ed8a-4ebd-b305-81594c8e9df1" width="760" controls></video>
+  <video src="https://github.com/user-attachments/assets/63ea24a8-7c6c-41b0-8d82-2bb672d6cbc6" poster="https://github.com/user-attachments/assets/b01007af-ed8a-4ebd-b305-81594c8e9df1" width="760" controls></video>
 </div>
 
 _Cua Driver launches an isolated Edge profile, binds its exact native window to loopback CDP, and verifies the result without a browser extension._
@@ -25,7 +31,7 @@ Cua Driver started with coding agents, but I soon found myself using it from mor
 I have been using this setup for the mundane work that accumulates during a normal week: filling forms, working through payroll portals, and automating repetitive tasks in Slack and Discord. These workflows look simple to a person, but they rarely live inside one interface. The source data may be in a local file, the main task in an authenticated browser, a confirmation in a native dialog, and the follow-up in a messaging app. For consequential steps, I keep the final decision or submission behind an approval.
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/e35ac80b-ff3d-439d-8e48-891ade6dfa21" poster="https://github.com/user-attachments/assets/a52997f7-b854-46b2-a00b-e34f436a47e8" width="760" controls></video>
+  <video src="https://github.com/user-attachments/assets/4c155fba-2e8f-492f-a40e-e142199edd42" poster="https://github.com/user-attachments/assets/a52997f7-b854-46b2-a00b-e34f436a47e8" width="760" controls></video>
 </div>
 
 _Cua Driver operates Chrome while Terminal remains foreground and the physical mouse remains untouched._
@@ -51,7 +57,7 @@ Using CDP safely requires more than opening a debugging port. A browser has two 
 
 Before Cua Driver allows a page mutation, it proves that both identities describe the same surface.
 
-![A Cua Driver session connecting a coding agent through MCP, CLI, or SDK to native operating-system routes and a loopback CDP page route, converging on an exact process, window, and tab.](https://github.com/user-attachments/assets/71df6e03-fd71-4d73-b83d-49fe78e6e358)
+![A Cua Driver session connecting coding agents through MCP, CLI, or SDK to native operating-system routes and a loopback CDP page route, converging on an exact process, window, and tab.](https://github.com/user-attachments/assets/5fefe69b-9670-4e04-9063-dffce4106c39)
 
 _Cua Driver keeps native OS actions and page-aware CDP actions inside one exact, session-scoped browser binding._
 
@@ -144,7 +150,7 @@ On macOS and Windows, typed browser actions now drive the same session-scoped cu
 For multi-tab workflows, each tab can use a separate declared session and a stable cursor color. The matching cursor appears while its tab is active. An agent can still inspect or act on an inactive tab through a supported background route, but Cua Driver does not paint that tab's cursor over the page the person is currently viewing.
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/c40e741c-1f73-4fa8-b4c4-3cf4efe65993" poster="https://github.com/user-attachments/assets/cc42349c-2cbb-4c3a-afd4-f5f62919ee8b" width="760" controls></video>
+  <video src="https://github.com/user-attachments/assets/56de26d9-3433-46e3-b907-8b1aef6f12bf" poster="https://github.com/user-attachments/assets/cc42349c-2cbb-4c3a-afd4-f5f62919ee8b" width="760" controls></video>
 </div>
 
 _One coding-agent loop crosses three real Chrome tabs, patches the component, and returns to two passing browser checks._

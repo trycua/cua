@@ -1084,17 +1084,11 @@ impl Tool for ClickTool {
                                     // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
                                     // for better backgrounded-target delivery.
                                     if let Some(wid) = window_id {
-                                        if fg {
-                                            return crate::input::mouse::click_at_xy_with_window_local(
-                                                pid, screen_x, screen_y,
-                                                win_local_x, win_local_y,
-                                                wid, count, &m,
-                                            );
-                                        }
-                                        return crate::input::mouse::click_at_xy_chromium(
+                                        return crate::input::mouse::click_at_xy_with_window_local(
                                             pid, screen_x, screen_y,
                                             win_local_x, win_local_y,
                                             wid, count, &m,
+                                            crate::input::mouse::WindowClickDelivery::from_foreground(fg),
                                         );
                                     }
                                     crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
@@ -1277,6 +1271,7 @@ fn perform_ax_click(
                     window_id,
                     1,
                     &modifier_refs,
+                    crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
                 )?;
             }
             // AppKit may publish a transient AXSelected transition while the

@@ -589,6 +589,17 @@ impl RenderState {
             || self.core.spring.is_some()
             || self.core.click_t.is_some()
             || self.core.session_badge_needs_frame_tick()
+            // The resting float bob (`shared_float_motion`) is part of the
+            // cursor's visual identity, not a transient animation: it runs
+            // whenever the cursor is on screen and reduced motion is off, so
+            // a settled cursor must keep receiving frames or the bob freezes
+            // mid-swing on Linux while macOS keeps levitating. The term dies
+            // with `idle_alpha` once the idle fade completes, returning the
+            // parked-overlay fast path to the fully hidden cursor.
+            || (self.core.visible
+                && self.core.pos.0 >= -100.0
+                && self.core.idle_alpha >= 0.004
+                && self.core.visual.reduced_motion != cursor_overlay::ReducedMotion::On)
             || (self.core.motion.idle_hide_ms > 0.0
                 && self.core.visible
                 && self.core.pos.0 >= -100.0
@@ -3318,15 +3329,36 @@ mod tests {
         assert!(!render_map_needs_z_order_tick(&map));
     }
 
+    // The idle-park contract now applies to reduced-motion sessions: with the
+    // float bob active (the default), a visible cursor keeps ticking so it
+    // levitates at rest, and only a hidden or reduced-motion cursor parks.
     #[test]
     fn resting_visible_cursor_only_requires_cheap_z_order_ticks() {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
         cursor.core.motion.idle_hide_ms = 0.0;
+        cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
 
         assert!(!render_map_needs_frame_tick(&map));
         assert!(render_map_needs_z_order_tick(&map));
+    }
+
+    #[test]
+    fn resting_visible_cursor_keeps_ticking_for_the_float_bob() {
+        let mut map = default_render_map();
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (100.0, 100.0);
+        cursor.core.motion.idle_hide_ms = 0.0;
+
+        // Default reduced_motion (auto) floats, so frames keep flowing while
+        // the cursor is visible…
+        assert!(render_map_needs_frame_tick(&map));
+
+        // …and stop once the idle fade has fully hidden it.
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.idle_alpha = 0.0;
+        assert!(!render_map_needs_frame_tick(&map));
     }
 
     #[test]
@@ -3335,6 +3367,7 @@ mod tests {
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
         cursor.core.motion.idle_hide_ms = 0.0;
+        cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         let (_tx, rx) = std::sync::mpsc::channel();
 
         assert!(!render_map_needs_frame_tick(&map));
@@ -3381,6 +3414,7 @@ mod tests {
         // before sending MoveTo; mirror that valid on-screen starting state.
         cursor.core.pos = (100.0, 100.0);
         cursor.core.motion.idle_hide_ms = 500.0;
+        cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         cursor.apply_command(OverlayCommand::MoveTo {
             x: 250.0,
             y: 150.0,
@@ -3552,6 +3586,7 @@ mod tests {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (100.0, 100.0);
             cursor.core.motion.idle_hide_ms = 500.0;
+            cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
 
             // Cheap 80 ms z-order heartbeats advance the idle clock without
             // requesting expensive frame paints during the opaque delay.
@@ -3594,6 +3629,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.motion.idle_hide_ms = 0.0;
+        cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         cursor.apply_command(OverlayCommand::ClickPulse { x: 20.0, y: 30.0 });
         assert!(cursor.needs_frame_tick());
 

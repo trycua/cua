@@ -221,9 +221,8 @@ class TestCmdLaunch:
                     result = sandbox.cmd_launch(args)
 
         assert result == 1
-        assert (
-            "Failed to launch sandbox: RuntimeError('Quota exceeded')"
-            in (mock_error.call_args.args[0])
+        assert "Failed to launch sandbox: RuntimeError('Quota exceeded')" in (
+            mock_error.call_args.args[0]
         )
 
     def test_launch_json_output(self, args_namespace, mock_api_key):

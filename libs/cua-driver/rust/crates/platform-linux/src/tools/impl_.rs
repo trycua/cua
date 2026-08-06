@@ -15,6 +15,7 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::{Arc, RwLock};
 
 use crate::atspi::ElementCache;
@@ -946,6 +947,57 @@ impl Tool for GetWindowStateTool {
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+const LAUNCH_STARTUP_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+
+enum LaunchOutcome {
+    Running(u32),
+    Exited(std::process::ExitStatus),
+}
+
+async fn observe_launched_child(
+    mut child: tokio::process::Child,
+) -> std::io::Result<LaunchOutcome> {
+    let pid = child
+        .id()
+        .ok_or_else(|| std::io::Error::other("spawned process has no pid"))?;
+    tokio::time::sleep(LAUNCH_STARTUP_GRACE).await;
+    if let Some(status) = child.try_wait()? {
+        return Ok(LaunchOutcome::Exited(status));
+    }
+
+    // Retain the handle until exit so the launched application cannot become a
+    // zombie owned by the long-running MCP daemon.
+    tokio::spawn(async move {
+        if let Err(error) = child.wait().await {
+            tracing::warn!(pid, %error, "failed to reap launched application");
+        }
+    });
+    Ok(LaunchOutcome::Running(pid))
+}
+
+async fn spawn_launch_path(
+    launch_path: &str,
+    additional_arguments: &[String],
+) -> std::io::Result<LaunchOutcome> {
+    // Desktop Exec= values are shell command lines, not whitespace-delimited
+    // argv. `exec` keeps the returned pid bound to the application rather than
+    // a shell wrapper. Extra arguments are passed as positional parameters so
+    // their contents are never evaluated as shell syntax.
+    let command = format!("exec {launch_path} \"$@\"");
+    let mut launch = tokio::process::Command::new("sh");
+    launch
+        .arg("-c")
+        .arg(command)
+        .arg("cua-driver-launch")
+        .args(additional_arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env("ACCESSIBILITY_ENABLED", "1")
+        .env("NO_AT_BRIDGE", "0");
+    observe_launched_child(launch.spawn()?).await
+}
+
 fn contains_remote_debugging_flag(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
@@ -998,72 +1050,111 @@ impl Tool for LaunchAppTool {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
         }
 
-        let result = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(String, Option<u32>, String)> {
-                // Open URLs via xdg-open.
-                if !urls.is_empty() {
-                    for url in &urls {
-                        std::process::Command::new("xdg-open").arg(url).spawn()?;
-                    }
-                    return Ok((
-                        format!("Opened {} URL(s) via xdg-open.", urls.len()),
+        let result: anyhow::Result<(String, Option<u32>, String, Option<bool>)> = async {
+            // Open URLs via xdg-open. The helper may exit after handing the URL
+            // off, so no application pid or running claim is made.
+            if !urls.is_empty() {
+                for url in &urls {
+                    let mut command = tokio::process::Command::new("xdg-open");
+                    command
+                        .arg(url)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null());
+                    let mut child = command.spawn()?;
+                    tokio::spawn(async move {
+                        let _ = child.wait().await;
+                    });
+                }
+                return Ok((
+                    format!("Opened {} URL(s) via xdg-open.", urls.len()),
+                    None,
+                    "xdg-open".to_owned(),
+                    None,
+                ));
+            }
+
+            if let Some(cmd) = launch_path_opt.as_deref() {
+                return match spawn_launch_path(cmd, &additional_arguments).await? {
+                    LaunchOutcome::Running(pid) => Ok((
+                        format!("✅ Launched {cmd} (pid {pid}) in background."),
+                        Some(pid),
+                        cmd.to_owned(),
+                        Some(true),
+                    )),
+                    LaunchOutcome::Exited(status) if status.success() => Ok((
+                        format!(
+                            "Launch command '{cmd}' exited successfully before an application pid could be confirmed."
+                        ),
                         None,
-                        "xdg-open".to_owned(),
-                    ));
+                        cmd.to_owned(),
+                        Some(false),
+                    )),
+                    LaunchOutcome::Exited(status) => anyhow::bail!(
+                        "launch_path command exited during startup with {status}: {cmd}"
+                    ),
+                };
+            }
+
+            if let Some(cmd) = name_opt.as_deref() {
+                let mut parts = cmd.split_whitespace();
+                let prog = parts.next().unwrap_or(cmd);
+                let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+                rest.extend(additional_arguments);
+                let mut launch = tokio::process::Command::new(prog);
+                launch
+                    .args(&rest)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .env("ACCESSIBILITY_ENABLED", "1")
+                    .env("NO_AT_BRIDGE", "0");
+                if chromium_family_program(prog)
+                    && !rest
+                        .iter()
+                        .any(|arg| arg == "--force-renderer-accessibility")
+                {
+                    launch.arg("--force-renderer-accessibility");
                 }
-                // launch_path > name. Both go through the same direct-exec path
-                // (so XDG `Exec=` commands round-trip), but launch_path is the
-                // canonical form preferred by list_apps callers.
-                let command = launch_path_opt.as_deref().or(name_opt.as_deref());
-                if let Some(cmd) = command {
-                    let mut parts = cmd.split_whitespace();
-                    let prog = parts.next().unwrap_or(cmd);
-                    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
-                    rest.extend(additional_arguments);
-                    let mut launch = std::process::Command::new(prog);
-                    launch
-                        .args(&rest)
-                        // Enable accessibility for this child without toggling
-                        // GNOME's global ScreenReaderEnabled setting (which can
-                        // launch Orca). Native toolkits ignore these when they
-                        // do not need them.
-                        .env("ACCESSIBILITY_ENABLED", "1")
-                        .env("NO_AT_BRIDGE", "0");
-                    if chromium_family_program(prog)
-                        && !rest
-                            .iter()
-                            .any(|arg| arg == "--force-renderer-accessibility")
-                    {
-                        launch.arg("--force-renderer-accessibility");
-                    }
-                    match launch.spawn() {
-                        Ok(child) => {
-                            let pid = child.id();
-                            return Ok((
-                                format!("✅ Launched {cmd} (pid {pid}) in background."),
-                                Some(pid),
-                                cmd.to_owned(),
-                            ));
-                        }
-                        Err(_) => {
-                            // Fall back to xdg-open for .desktop app names. xdg-open may
-                            // spawn a helper and exit, so do not claim its pid is the app pid.
-                            std::process::Command::new("xdg-open").arg(cmd).spawn()?;
-                            return Ok((
-                                format!("Opened '{cmd}' via xdg-open."),
-                                None,
-                                cmd.to_owned(),
-                            ));
-                        }
+                match launch.spawn() {
+                    Ok(child) => match observe_launched_child(child).await? {
+                        LaunchOutcome::Running(pid) => Ok((
+                            format!("✅ Launched {cmd} (pid {pid}) in background."),
+                            Some(pid),
+                            cmd.to_owned(),
+                            Some(true),
+                        )),
+                        LaunchOutcome::Exited(status) => anyhow::bail!(
+                            "application command exited during startup with {status}: {cmd}"
+                        ),
+                    },
+                    Err(_) => {
+                        let mut fallback = tokio::process::Command::new("xdg-open");
+                        fallback
+                            .arg(cmd)
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null());
+                        let mut child = fallback.spawn()?;
+                        tokio::spawn(async move {
+                            let _ = child.wait().await;
+                        });
+                        Ok((
+                            format!("Opened '{cmd}' via xdg-open."),
+                            None,
+                            cmd.to_owned(),
+                            None,
+                        ))
                     }
                 }
+            } else {
                 unreachable!()
-            },
-        )
+            }
+        }
         .await;
 
         match result {
-            Ok(Ok((message, pid_opt, name))) => {
+            Ok((message, pid_opt, name, running)) => {
                 if let Some(pid) = pid_opt {
                     let windows = tokio::task::spawn_blocking(move || {
                         let deadline =
@@ -1082,7 +1173,7 @@ impl Tool for LaunchAppTool {
                         "pid": pid,
                         "bundle_id": Value::Null,
                         "name": name,
-                        "running": true,
+                        "running": running,
                         "active": false,
                         "windows": windows,
                     }))
@@ -1091,14 +1182,16 @@ impl Tool for LaunchAppTool {
                         "pid": Value::Null,
                         "bundle_id": Value::Null,
                         "name": name,
-                        "running": Value::Null,
+                        "running": running,
                         "active": false,
                         "windows": [],
                     }))
                 }
             }
-            Ok(Err(e)) => ToolResult::error(format!("Failed to launch: {e}")),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Failed to launch: {e}")).with_structured(json!({
+                "status": "failed",
+                "effect": "not_observed",
+            })),
         }
     }
 }
@@ -6998,6 +7091,59 @@ impl Tool for TypeTextCharsTool {
 pub struct KillAppTool;
 static KILL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+const KILL_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+const KILL_CONFIRM_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LinuxProcessIdentity {
+    state: char,
+    start_time: u64,
+}
+
+fn read_linux_process_identity(pid: i32) -> std::io::Result<Option<LinuxProcessIdentity>> {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let fields = stat
+        .rsplit_once(')')
+        .map(|(_, fields)| fields.trim_start())
+        .ok_or_else(|| std::io::Error::other("malformed /proc process stat"))?;
+    let mut fields = fields.split_whitespace();
+    let state = fields
+        .next()
+        .and_then(|value| value.chars().next())
+        .ok_or_else(|| std::io::Error::other("missing process state in /proc stat"))?;
+    let start_time = fields
+        .nth(18)
+        .ok_or_else(|| std::io::Error::other("missing process start time in /proc stat"))?
+        .parse()
+        .map_err(|_| std::io::Error::other("invalid process start time in /proc stat"))?;
+    Ok(Some(LinuxProcessIdentity { state, start_time }))
+}
+
+async fn confirm_process_terminated(
+    pid: i32,
+    expected: LinuxProcessIdentity,
+) -> std::io::Result<&'static str> {
+    let deadline = tokio::time::Instant::now() + KILL_CONFIRM_TIMEOUT;
+    loop {
+        match read_linux_process_identity(pid)? {
+            None => return Ok("process_absent"),
+            Some(current) if current.start_time != expected.start_time => return Ok("pid_reused"),
+            Some(current) if current.state == 'Z' => return Ok("zombie"),
+            Some(_) if tokio::time::Instant::now() >= deadline => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "process remained alive after SIGKILL",
+                ));
+            }
+            Some(_) => tokio::time::sleep(KILL_CONFIRM_INTERVAL).await,
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for KillAppTool {
     fn def(&self) -> &ToolDef {
@@ -7068,16 +7214,64 @@ impl Tool for KillAppTool {
                 )
             }
         };
+        let identity = match read_linux_process_identity(pid_i) {
+            Ok(Some(identity)) => identity,
+            Ok(None) => {
+                return ToolResult::error(format!("kill_app: pid {pid_i} does not exist"))
+                    .with_structured(json!({
+                        "status": "failed",
+                        "effect": "not_observed",
+                        "pid": pid_i,
+                        "code": "process_not_found",
+                    }))
+            }
+            Err(error) => {
+                return ToolResult::error(format!(
+                    "kill_app: cannot verify pid {pid_i} before signaling: {error}"
+                ))
+                .with_structured(json!({
+                    "status": "failed",
+                    "effect": "not_observed",
+                    "pid": pid_i,
+                    "code": "process_identity_unavailable",
+                }))
+            }
+        };
         // SAFETY: libc::kill is a thin syscall wrapper, no thread-safety concerns.
         let rc = unsafe { libc::kill(pid_i, libc::SIGKILL) };
         if rc == 0 {
-            ToolResult::text(format!("✅ Sent SIGKILL to pid {pid_i}."))
+            match confirm_process_terminated(pid_i, identity).await {
+                Ok(observation) => ToolResult::text(format!(
+                    "✅ Terminated pid {pid_i} with SIGKILL (confirmed: {observation})."
+                ))
+                .with_structured(json!({
+                    "status": "terminated",
+                    "effect": "confirmed",
+                    "pid": pid_i,
+                    "observation": observation,
+                })),
+                Err(error) => ToolResult::error(format!(
+                    "kill_app: SIGKILL was accepted for pid {pid_i}, but termination could not be confirmed: {error}"
+                ))
+                .with_structured(json!({
+                    "status": "failed",
+                    "effect": "not_observed",
+                    "pid": pid_i,
+                    "code": "termination_unconfirmed",
+                })),
+            }
         } else {
             let err = std::io::Error::last_os_error();
             ToolResult::error(format!(
                 "kill_app: kill(pid={pid_i}, SIGKILL) failed: {err}. \
                  The process may not exist, or the daemon lacks permission to signal it."
             ))
+            .with_structured(json!({
+                "status": "failed",
+                "effect": "not_observed",
+                "pid": pid_i,
+                "code": "signal_failed",
+            }))
         }
     }
 }
@@ -7761,7 +7955,9 @@ mod click_button_schema_tests {
 
 #[cfg(test)]
 mod browser_launch_guard_tests {
-    use super::contains_remote_debugging_flag;
+    use super::{contains_remote_debugging_flag, spawn_launch_path, KillAppTool, LaunchOutcome};
+    use cua_driver_core::tool::Tool;
+    use serde_json::json;
 
     #[test]
     fn rejects_all_chromium_remote_debugging_spellings() {
@@ -7773,6 +7969,56 @@ mod browser_launch_guard_tests {
         assert!(!contains_remote_debugging_flag(
             "--user-data-dir=/tmp/profile"
         ));
+    }
+
+    #[tokio::test]
+    async fn launch_path_executes_shell_syntax_with_detached_stdio() {
+        let marker = std::env::temp_dir().join(format!(
+            "cua-driver-launch-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        let command = format!("sh -c 'printf launched > {}'", marker.display());
+        let outcome = spawn_launch_path(&command, &[])
+            .await
+            .expect("launch_path should spawn");
+        assert!(matches!(outcome, LaunchOutcome::Exited(status) if status.success()));
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "launched");
+        std::fs::remove_file(marker).unwrap();
+    }
+
+    #[tokio::test]
+    async fn launch_path_surfaces_immediate_failure() {
+        let outcome = spawn_launch_path("sh -c 'exit 23'", &[])
+            .await
+            .expect("shell should spawn");
+        assert!(matches!(outcome, LaunchOutcome::Exited(status) if status.code() == Some(23)));
+    }
+
+    #[tokio::test]
+    async fn kill_app_confirms_process_exit() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+
+        let result = KillAppTool.invoke(json!({"pid": pid})).await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value["status"].as_str()),
+            Some("terminated")
+        );
+        child.wait().expect("reap sleep process");
     }
 }
 

@@ -91,6 +91,42 @@ cua-driver doctor
 
 `doctor` checks the version, install layout, and telemetry setup on every platform. It also runs platform probes for TCC on macOS, the interactive session on Windows, and AT-SPI plus the display server on Linux.
 
+## Choose a permission mode
+
+Cua Driver authorizes every agent action inside the native runtime, and the mode is fixed when that runtime starts. An agent cannot change it, and neither can you change it on a running daemon — you restart the daemon with different flags. Decide which mode you want before starting the daemon below.
+
+| Mode | Use it when |
+| ---- | ----------- |
+| `standard` | Normal local CLI and MCP use. Observation, input, isolated browser use, recording, and validated file transfer run without prompts. Residual boundaries, such as attaching to an existing logged-in Chromium profile, still need an explicit grant. |
+| `bounded` | An unattended agent, gateway, or embedded application must stay inside a reviewed manifest of tools, applications, browser origins, and directories. Anything outside the manifest is denied. |
+| `unrestricted` | The machine is disposable or fully trusted and you accept every capability the built-in, managed, and user policy ceilings still allow. |
+
+`standard` is the default and is what the rest of this guide assumes, so plain `cua-driver serve` needs no flags. For `bounded`, pass a manifest plus the review acknowledgement:
+
+```bash
+cua-driver serve \
+  --permission-mode bounded \
+  --session-policy ~/cua-session.yaml \
+  --approve-session-policy
+```
+
+For `unrestricted`, pass the dangerous acknowledgement. `--permission-mode unrestricted` on its own fails closed:
+
+```bash
+cua-driver serve --dangerously-bypass-approvals
+```
+
+On macOS, put those flags after `serve` in the app-bundle launch so TCC attribution stays with `CuaDriver.app`. The manifest path must resolve on its own: your shell expands `~` before `open` sees it, but a relative path fails, because an app started by `open` does not inherit the shell's working directory.
+
+```bash
+open -n -g -a CuaDriver --args serve \
+  --permission-mode bounded \
+  --session-policy ~/cua-session.yaml \
+  --approve-session-policy
+```
+
+See [Permission modes](/reference/cua-driver/permission-modes) for exactly what each mode allows, and [Write a bounded manifest](/how-to-guides/driver/write-a-bounded-manifest) for a tested manifest. To keep a non-default mode across reboots, its flags belong in the autostart entry — see [Pin a permission mode](/how-to-guides/driver/keep-running#pin-a-permission-mode).
+
 ## Grant TCC permissions (macOS only)
 
 **Start the daemon first** so macOS attributes the TCC request to `CuaDriver.app` instead of your terminal:
@@ -154,6 +190,7 @@ cua-driver permissions status
 
 ## Next steps
 
+- [Permission modes](/reference/cua-driver/permission-modes): what standard allows, and how bounded and unrestricted differ.
 - [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill): add the cross-platform instructions from ClawHub or install them directly for another agent.
 - [Keep Cua Driver running](/how-to-guides/driver/keep-running): configure autostart so the daemon comes back after reboots.
 - [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent): register it with Claude Code, Cursor, Codex, and other clients.

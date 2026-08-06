@@ -28,6 +28,35 @@ cua-driver permissions status
 
 See [Install Cua Driver](/how-to-guides/driver/install) and [macOS permissions](/reference/cua-driver/macos-permissions) for setup details.
 
+## Decide the permission mode first
+
+Registering the server does not choose an authorization
+[permission mode](/reference/cua-driver/permission-modes) — the process that owns
+the driver runtime does, at launch. Every config below therefore runs in the
+default `standard` mode unless you change that process.
+
+- **macOS:** `cua-driver mcp` proxies to the `CuaDriver.app` daemon to keep TCC
+  attribution with the app, so that daemon's launch flags decide the mode. Start
+  it in the mode you want before the client connects, and use
+  [autostart](/how-to-guides/driver/keep-running#pin-a-permission-mode) to make
+  that stick.
+- **Windows and Linux:** bare `cua-driver mcp` owns its own runtime and has no
+  `--permission-mode` flag. Either set `CUA_DRIVER_PERMISSION_MODE` — plus
+  `CUA_DRIVER_SESSION_POLICY_FILE` and `CUA_DRIVER_SESSION_POLICY_APPROVED` for
+  `bounded` — in the client's `env` block, or run a `cua-driver serve` daemon in
+  that mode and point the client at it with `--socket`.
+
+`--grant existing-profile` is the one authorization flag `cua-driver mcp` accepts
+directly, and it applies only to a runtime this command launches. An agent cannot
+widen any of this from a tool call.
+
+<Callout type="warn">
+  A `standard`-mode runtime allows input against every application on the
+  desktop. If an agent should reach only a reviewed set of apps, origins, and
+  directories, register it against a `bounded` runtime instead — see [Write a
+  bounded manifest](/how-to-guides/driver/write-a-bounded-manifest).
+</Callout>
+
 ## Generate the client config
 
 Use `mcp-config` to print the registration command or JSON for a supported client:

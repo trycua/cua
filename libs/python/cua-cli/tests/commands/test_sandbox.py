@@ -2,7 +2,7 @@
 
 import argparse
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from cua_cli.commands import sandbox
 
@@ -62,7 +62,7 @@ class TestRegisterParser:
         assert args.json is True
 
     def test_launch_command_has_required_args(self):
-        """Test launch parses its image and supported options."""
+        """Test that launch accepts its image and optional settings."""
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers()
         sandbox.register_parser(subparsers)
@@ -72,30 +72,15 @@ class TestRegisterParser:
                 "sandbox",
                 "launch",
                 "ubuntu:24.04",
-                "--local",
                 "--name",
                 "test-sandbox",
-                "--vm",
-                "--cpu",
-                "4",
-                "--memory",
-                "8GB",
-                "--disk",
-                "50GB",
                 "--region",
                 "north-america",
-                "--json",
             ]
         )
         assert args.image == "ubuntu:24.04"
-        assert args.local is True
         assert args.name == "test-sandbox"
-        assert args.vm is True
-        assert args.cpu == 4
-        assert args.memory == "8GB"
-        assert args.disk == "50GB"
         assert args.region == "north-america"
-        assert args.json is True
 
 
 class TestExecute:
@@ -107,7 +92,7 @@ class TestExecute:
             command="sandbox", sandbox_command="list", json=False, show_passwords=False
         )
 
-        with patch.object(sandbox, "cmd_list", return_value=0) as mock_cmd:
+        with patch.object(sandbox, "cmd_ls", return_value=0) as mock_cmd:
             result = sandbox.execute(args)
 
         mock_cmd.assert_called_once_with(args)
@@ -117,7 +102,7 @@ class TestExecute:
         """Test dispatch to list command via ls alias."""
         args = args_namespace(command="sb", sandbox_command="ls", json=False, show_passwords=False)
 
-        with patch.object(sandbox, "cmd_list", return_value=0) as mock_cmd:
+        with patch.object(sandbox, "cmd_ls", return_value=0) as mock_cmd:
             sandbox.execute(args)
 
         mock_cmd.assert_called_once_with(args)
@@ -133,73 +118,86 @@ class TestExecute:
         mock_error.assert_called()
 
 
-class TestCmdList:
-    """Tests for cmd_list function."""
+class TestCmdLs:
+    """Tests for cmd_ls function."""
 
-    def test_list_sandboxes_success(self, args_namespace, sample_vm_list, mock_api_key):
-        """Test listing sandboxes successfully."""
-        args = args_namespace(json=False, show_passwords=False)
+    def test_ls_cloud_sandboxes(self, args_namespace, mock_api_key):
+        """Test the default list path uses the cloud Fleet SDK."""
+        args = args_namespace(json=False, local=False, all=False)
+        cloud_sandboxes = [SimpleNamespace(name="cloudbox", status="running")]
+        mock_list = AsyncMock(return_value=cloud_sandboxes)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = mock_list
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=sample_vm_list)
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_table") as mock_print:
-                result = sandbox.cmd_list(args)
-
-        assert result == 0
-        mock_print.assert_called_once()
-
-    def test_list_sandboxes_empty(self, args_namespace, mock_api_key):
-        """Test listing when no sandboxes exist."""
-        args = args_namespace(json=False, show_passwords=False)
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[])
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_info") as mock_print:
-                result = sandbox.cmd_list(args)
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_table") as mock_table:
+                result = sandbox.cmd_ls(args)
 
         assert result == 0
-        mock_print.assert_called_with("No sandboxes found.")
+        mock_list.assert_awaited_once_with(local=False, api_key="test-access-token")
+        mock_table.assert_called_once_with(
+            [{"name": "cloudbox", "status": "running", "source": "cloud"}],
+            [("name", "NAME"), ("status", "STATUS"), ("source", "SOURCE")],
+        )
 
-    def test_list_sandboxes_json_output(self, args_namespace, sample_vm_list, mock_api_key):
-        """Test JSON output format."""
-        args = args_namespace(json=True, show_passwords=False)
+    def test_ls_local_sandboxes(self, args_namespace):
+        """Test --local lists only local sandboxes without cloud auth."""
+        args = args_namespace(json=False, local=True, all=False)
+        local_sandboxes = [SimpleNamespace(name="localbox", status="running", source="local")]
+        mock_list = AsyncMock(return_value=local_sandboxes)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = mock_list
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=sample_vm_list)
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_json") as mock_print:
-                result = sandbox.cmd_list(args)
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "get_access_token", new_callable=AsyncMock) as mock_token:
+                with patch.object(sandbox, "print_table"):
+                    result = sandbox.cmd_ls(args)
 
         assert result == 0
-        mock_print.assert_called_once_with(sample_vm_list)
+        mock_list.assert_awaited_once_with(local=True)
+        mock_token.assert_not_awaited()
+
+    def test_ls_all_json(self, args_namespace, mock_api_key):
+        """Test --all combines local and cloud results in JSON output."""
+        args = args_namespace(json=True, local=False, all=True)
+        local_sandboxes = [SimpleNamespace(name="localbox", status="running", source="local")]
+        cloud_sandboxes = [SimpleNamespace(name="cloudbox", status="pending")]
+        mock_list = AsyncMock(side_effect=[local_sandboxes, cloud_sandboxes])
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = mock_list
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_json") as mock_json:
+                result = sandbox.cmd_ls(args)
+
+        assert result == 0
+        assert mock_list.await_args_list == [
+            call(local=True),
+            call(local=False, api_key="test-access-token"),
+        ]
+        mock_json.assert_called_once_with(
+            [
+                {"name": "localbox", "status": "running", "source": "local"},
+                {"name": "cloudbox", "status": "pending", "source": "cloud"},
+            ]
+        )
 
 
 class TestCmdLaunch:
     """Tests for cmd_launch function."""
 
-    def test_launch_sandbox_success(self, args_namespace, mock_api_key):
-        """Test launching a cloud sandbox through the Sandbox SDK."""
+    def test_launch_cloud_with_options(self, args_namespace, mock_api_key):
+        """Test cloud launch forwards resource and image options to Fleet."""
         args = args_namespace(
             image="ubuntu:24.04",
             local=False,
             name="new-sandbox",
-            vm=False,
-            cpu=None,
-            memory=None,
-            disk=None,
-            region=None,
-            json=False,
+            vm=True,
+            cpu=4,
+            memory="8GB",
+            disk="50GB",
+            region="us-east",
+            json=True,
         )
         image = object()
         created = MagicMock()
@@ -210,73 +208,26 @@ class TestCmdLaunch:
         mock_sdk.Sandbox.create = mock_create
 
         with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
-            with patch.object(sandbox, "_parse_image", return_value=image):
-                with patch.object(sandbox, "print_success") as mock_success:
-                    result = sandbox.cmd_launch(args)
-
-        assert result == 0
-        mock_create.assert_awaited_once_with(image, name="new-sandbox", api_key="test-access-token")
-        created.disconnect.assert_awaited_once_with()
-        mock_success.assert_called_once_with("Sandbox 'new-sandbox' is ready")
-
-    def test_launch_sandbox_error(self, args_namespace, mock_api_key):
-        """Test SDK launch errors return a clear failure."""
-        args = args_namespace(
-            image="ubuntu:24.04",
-            local=False,
-            name="new-sandbox",
-            vm=False,
-            cpu=None,
-            memory=None,
-            disk=None,
-            region=None,
-            json=False,
-        )
-        image = object()
-        mock_sdk = MagicMock()
-        mock_sdk.Sandbox.create = AsyncMock(side_effect=RuntimeError("Quota exceeded"))
-
-        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
-            with patch.object(sandbox, "_parse_image", return_value=image):
-                with patch.object(sandbox, "print_error") as mock_error:
-                    result = sandbox.cmd_launch(args)
-
-        assert result == 1
-        assert "Failed to launch sandbox: RuntimeError('Quota exceeded')" in (
-            mock_error.call_args.args[0]
-        )
-
-    def test_launch_json_output(self, args_namespace, mock_api_key):
-        """Test launch JSON output contains the sandbox name and status."""
-        args = args_namespace(
-            image="ubuntu:24.04",
-            local=False,
-            name=None,
-            vm=False,
-            cpu=None,
-            memory=None,
-            disk=None,
-            region=None,
-            json=True,
-        )
-        image = object()
-        created = MagicMock()
-        created.name = "json-sandbox"
-        created.disconnect = AsyncMock()
-        mock_sdk = MagicMock()
-        mock_sdk.Sandbox.create = AsyncMock(return_value=created)
-
-        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
-            with patch.object(sandbox, "_parse_image", return_value=image):
+            with patch.object(sandbox, "_parse_image", return_value=image) as mock_parse:
                 with patch.object(sandbox, "print_json") as mock_json:
                     result = sandbox.cmd_launch(args)
 
         assert result == 0
-        mock_json.assert_called_once_with({"name": "json-sandbox", "status": "ready"})
+        mock_parse.assert_called_once_with("ubuntu:24.04", vm=True)
+        mock_create.assert_awaited_once_with(
+            image,
+            name="new-sandbox",
+            region="us-east",
+            cpu=4,
+            memory_mb=8192,
+            disk_gb=50,
+            api_key="test-access-token",
+        )
         created.disconnect.assert_awaited_once_with()
+        mock_json.assert_called_once_with({"name": "new-sandbox", "status": "ready"})
 
     def test_launch_local(self, args_namespace):
-        """Test --local is passed through without cloud authentication."""
+        """Test --local launches through Fleet without cloud authentication."""
         args = args_namespace(
             image="macos:sequoia",
             local=True,
@@ -301,13 +252,14 @@ class TestCmdLaunch:
                 with patch.object(
                     sandbox, "get_access_token", new_callable=AsyncMock
                 ) as mock_token:
-                    with patch.object(sandbox, "print_success"):
+                    with patch.object(sandbox, "print_success") as mock_success:
                         result = sandbox.cmd_launch(args)
 
         assert result == 0
         mock_create.assert_awaited_once_with(image, local=True, name="local-sandbox")
         mock_token.assert_not_awaited()
         created.disconnect.assert_awaited_once_with()
+        mock_success.assert_called_once_with("Sandbox 'local-sandbox' is ready")
 
 
     def test_launch_with_wif_omits_legacy_key_and_interactive_token(self, args_namespace, monkeypatch):
@@ -338,111 +290,70 @@ class TestCmdLaunch:
         mock_create.assert_awaited_once_with(image, name="fleet-sandbox")
         created.disconnect.assert_awaited_once_with()
 
-class TestCmdGet:
-    """Tests for cmd_get function."""
+class TestCmdInfo:
+    """Tests for cmd_info function."""
 
-    def test_get_sandbox_success(self, args_namespace, sample_vm, mock_api_key):
-        """Test getting sandbox details."""
-        args = args_namespace(
-            name="test-sandbox-1",
-            json=False,
-            show_passwords=False,
-            show_vnc_url=False,
+    def test_info_cloud_json(self, args_namespace, mock_api_key):
+        """Test cloud info uses Fleet and renders all available JSON fields."""
+        args = args_namespace(name="cloudbox", local=False, json=True)
+        info = SimpleNamespace(
+            name="cloudbox",
+            status="running",
+            os_type="linux",
+            host="cloudbox.example.com",
+            region="us-east",
+            created_at="2026-08-06T00:00:00Z",
+            cpu=4,
+            memory_mb=8192,
+            disk_gb=50,
+        )
+        mock_get_info = AsyncMock(return_value=info)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.get_info = mock_get_info
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_json") as mock_json:
+                result = sandbox.cmd_info(args)
+
+        assert result == 0
+        mock_get_info.assert_awaited_once_with("cloudbox", local=False, api_key="test-access-token")
+        mock_json.assert_called_once_with(
+            {
+                "name": "cloudbox",
+                "status": "running",
+                "os_type": "linux",
+                "host": "cloudbox.example.com",
+                "region": "us-east",
+                "created_at": "2026-08-06T00:00:00Z",
+                "cpu": 4,
+                "memory_mb": 8192,
+                "disk_gb": 50,
+            }
         )
 
-        vm_dict = {
-            "name": sample_vm.name,
-            "status": sample_vm.status,
-            "os_type": sample_vm.os_type,
-            "host": "sandbox.example.com",
-        }
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[vm_dict])
-        mock_provider.get_vm = AsyncMock(return_value={"status": "running"})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_info"):
-                result = sandbox.cmd_get(args)
-
-        assert result == 0
-
-    def test_get_sandbox_not_found(self, args_namespace, mock_api_key):
-        """Test getting nonexistent sandbox."""
-        args = args_namespace(
-            name="nonexistent",
-            json=False,
-            show_passwords=False,
-            show_vnc_url=False,
+    def test_info_local(self, args_namespace):
+        """Test --local gets sandbox info without cloud authentication."""
+        args = args_namespace(name="localbox", local=True, json=False)
+        info = SimpleNamespace(
+            name="localbox",
+            status="running",
+            os_type="macos",
+            host=None,
+            region=None,
+            created_at=None,
         )
+        mock_get_info = AsyncMock(return_value=info)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.get_info = mock_get_info
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[])
-        mock_provider.get_vm = AsyncMock(return_value={"status": "not_found"})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_error") as mock_error:
-                result = sandbox.cmd_get(args)
-
-        assert result == 1
-        mock_error.assert_called()
-
-
-class TestCmdStart:
-    """Tests for cmd_start function."""
-
-    def test_start_sandbox_success(self, args_namespace, mock_api_key):
-        """Test starting a sandbox."""
-        args = args_namespace(name="test-sandbox")
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.run_vm = AsyncMock(return_value={"status": "starting"})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_success"):
-                result = sandbox.cmd_start(args)
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "get_access_token", new_callable=AsyncMock) as mock_token:
+                with patch.object(sandbox, "print_info"):
+                    result = sandbox.cmd_info(args)
 
         assert result == 0
-
-    def test_start_sandbox_not_found(self, args_namespace, mock_api_key):
-        """Test starting nonexistent sandbox."""
-        args = args_namespace(name="nonexistent")
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.run_vm = AsyncMock(return_value={"status": "not_found"})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_error"):
-                result = sandbox.cmd_start(args)
-
-        assert result == 1
-
-
-class TestCmdStop:
-    """Tests for cmd_stop function."""
-
-    def test_stop_sandbox_success(self, args_namespace, mock_api_key):
-        """Test stopping a sandbox."""
-        args = args_namespace(name="test-sandbox")
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.stop_vm = AsyncMock(return_value={"status": "stopping"})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_success"):
-                result = sandbox.cmd_stop(args)
-
-        assert result == 0
+        mock_get_info.assert_awaited_once_with("localbox", local=True)
+        mock_token.assert_not_awaited()
 
 
 class TestCmdRestart:
@@ -499,19 +410,61 @@ class TestCmdSuspend:
 class TestCmdDelete:
     """Tests for cmd_delete function."""
 
-    def test_delete_sandbox_success(self, args_namespace, mock_api_key):
-        """Test deleting a sandbox."""
-        args = args_namespace(name="test-sandbox")
+    def test_delete_force_cloud(self, args_namespace, mock_api_key):
+        """Test --force deletes a cloud sandbox without prompting."""
+        args = args_namespace(name="cloudbox", local=False, force=True)
+        mock_delete = AsyncMock()
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.delete = mock_delete
 
-        # Mock the API response (status 202 = deleting)
-        async def mock_api_request(*args, **kwargs):
-            return (202, {"status": "deleting"})
-
-        with patch.object(sandbox, "_api_request", side_effect=mock_api_request):
-            with patch.object(sandbox, "print_success"):
-                result = sandbox.cmd_delete(args)
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch("builtins.input") as mock_input:
+                with patch.object(sandbox, "print_success") as mock_success:
+                    result = sandbox.cmd_delete(args)
 
         assert result == 0
+        mock_input.assert_not_called()
+        mock_delete.assert_awaited_once_with("cloudbox", local=False, api_key="test-access-token")
+        mock_success.assert_called_once_with("Sandbox 'cloudbox' is being deleted.")
+
+    def test_delete_confirmation_aborts(self, args_namespace):
+        """Test declining interactive confirmation does not call Fleet."""
+        args = args_namespace(name="cloudbox", local=False, force=False)
+        mock_delete = AsyncMock()
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.delete = mock_delete
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch("sys.stdin") as mock_stdin:
+                mock_stdin.isatty.return_value = True
+                with patch("builtins.input", return_value="n"):
+                    with patch.object(sandbox, "print_info") as mock_info:
+                        result = sandbox.cmd_delete(args)
+
+        assert result == 0
+        mock_delete.assert_not_awaited()
+        mock_info.assert_called_once_with("Aborted.")
+
+    def test_delete_confirmed_local(self, args_namespace):
+        """Test confirming a local delete avoids cloud authentication."""
+        args = args_namespace(name="localbox", local=True, force=False)
+        mock_delete = AsyncMock()
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.delete = mock_delete
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch("sys.stdin") as mock_stdin:
+                mock_stdin.isatty.return_value = True
+                with patch("builtins.input", return_value="yes"):
+                    with patch.object(
+                        sandbox, "get_access_token", new_callable=AsyncMock
+                    ) as mock_token:
+                        with patch.object(sandbox, "print_success"):
+                            result = sandbox.cmd_delete(args)
+
+        assert result == 0
+        mock_delete.assert_awaited_once_with("localbox", local=True)
+        mock_token.assert_not_awaited()
 
 
     def test_delete_with_wif_omits_legacy_key_and_interactive_token(

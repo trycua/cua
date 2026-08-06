@@ -95,6 +95,11 @@ allow:
     - browser_type
 
 resources:
+  apps:
+    - bundle_id: com.google.Chrome
+      launch: false
+      windows: all
+      terminate: deny
   browser:
     profiles:
       - kind: existing_profile
@@ -104,7 +109,7 @@ resources:
     display: false
 ```
 
-Start the reviewed policy with `cua-driver serve --permission-mode bounded --session-policy ./cua-session.yaml --approve-session-policy`. The manifest intentionally omits generic desktop input, which could bypass the browser-origin check.
+This example uses Chrome's macOS bundle id. On Windows and Linux, replace it with Chrome's canonical absolute executable path. Start the reviewed policy with `cua-driver serve --permission-mode bounded --session-policy ./cua-session.yaml --approve-session-policy`. The manifest intentionally omits generic desktop input, which could bypass the browser-origin check.
 
 Cua Driver does not show its own confirmation modal or persistent banner for existing-profile attachment. The launch grant, host callback, bounded manifest, or unrestricted dangerous acknowledgement supplies the authorization. The browser may still show its own remote-debugging consent prompt.
 

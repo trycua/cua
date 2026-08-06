@@ -36,6 +36,17 @@ Do not pass remote-debugging flags or a user-data directory through
 `launch_app`. Cua Driver rejects those flags because they could expose a
 person's normal profile to DevTools.
 
+Relaunching the browser yourself with `--remote-debugging-port` is not a
+workaround. Chrome and Edge ignore that flag when the browser runs on its
+**default** user-data directory, which is exactly the case an existing-profile
+attachment is for: no listener opens, and no `DevToolsActivePort` file is
+written. The flag only takes effect alongside a non-default `--user-data-dir`,
+which is a different profile and therefore not the authenticated one you wanted.
+On a real profile the browser's own remote-debugging toggle is the only route
+that works — see [Attach to an existing Chrome or Edge
+profile](#attach-to-an-existing-chrome-or-edge-profile), which is the route
+`browser_prepare` drives for you.
+
 ## Prepare an isolated browser when required
 
 If inspection returns `browser_requires_setup`, call `browser_prepare` as a

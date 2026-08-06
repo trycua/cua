@@ -28,10 +28,20 @@ pub type AXUIElementRef = *mut __AXUIElement;
 pub type AXError = c_int;
 pub const kAXErrorSuccess: AXError = 0;
 pub const kAXErrorFailure: AXError = -25200;
+pub const kAXErrorIllegalArgument: AXError = -25201;
 pub const kAXErrorInvalidUIElement: AXError = -25202;
+pub const kAXErrorInvalidUIElementObserver: AXError = -25203;
+pub const kAXErrorCannotComplete: AXError = -25204;
 pub const kAXErrorAttributeUnsupported: AXError = -25205;
-pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorActionUnsupported: AXError = -25206;
+pub const kAXErrorNotificationUnsupported: AXError = -25207;
+pub const kAXErrorNotImplemented: AXError = -25208;
+pub const kAXErrorNotificationAlreadyRegistered: AXError = -25209;
+pub const kAXErrorNotificationNotRegistered: AXError = -25210;
 pub const kAXErrorAPIDisabled: AXError = -25211;
+pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorParameterizedAttributeUnsupported: AXError = -25213;
+pub const kAXErrorNotEnoughPrecision: AXError = -25214;
 
 // ── AXValue opaque type ──────────────────────────────────────────────────────
 
@@ -54,6 +64,18 @@ extern "C" {
         element: AXUIElementRef,
         attribute: CFStringRef,
         value: *mut CFTypeRef,
+    ) -> AXError;
+    pub fn AXUIElementGetAttributeValueCount(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        count: *mut isize,
+    ) -> AXError;
+    pub fn AXUIElementCopyAttributeValues(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        index: isize,
+        max_values: isize,
+        values: *mut CFArrayRef,
     ) -> AXError;
     pub fn AXUIElementCopyAttributeNames(
         element: AXUIElementRef,

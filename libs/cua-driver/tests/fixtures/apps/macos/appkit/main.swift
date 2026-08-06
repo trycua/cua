@@ -54,6 +54,9 @@ let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kAxOnlySurfaceTitle = "CuaTestHarness AX-only Surface"
+let kAxOnlySurfaceAID = "ax-only-surface"
+let kAxOnlySurfaceMarker = "AX_ONLY_SURFACE_MARKER_v1"
 
 // MARK: - Controller
 
@@ -541,6 +544,79 @@ final class BringToFrontMatrixWindows {
     }
 }
 
+// Opt-in synthetic AXWindow for the accessibility-only surface contract. It is
+// published through AXWindows but has no backing NSWindow, so the accessibility
+// server owns it under this process while _AXUIElementGetWindow has no native
+// window number to return. Ordinary harness launches do not install it.
+final class AccessibilityOnlySurfaceFixture {
+    let root = NSAccessibilityElement()
+    private var retainedElements: [NSAccessibilityElement] = []
+
+    init(application: NSApplication, exactWindow: NSWindow) {
+        root.setAccessibilityRole(.window)
+        root.setAccessibilitySubrole(.standardWindow)
+        root.setAccessibilityTitle(kAxOnlySurfaceTitle)
+        root.setAccessibilityIdentifier(kAxOnlySurfaceAID)
+        root.setAccessibilityFrame(NSRect(x: 40, y: 40, width: 360, height: 260))
+        root.setAccessibilityParent(application)
+
+        let marker = element(
+            role: .staticText,
+            identifier: "ax-only-marker",
+            label: kAxOnlySurfaceMarker,
+            parent: root)
+
+        var directChildren: [NSAccessibilityElement] = [marker]
+        for index in 0..<8 {
+            directChildren.append(element(
+                role: .staticText,
+                identifier: "ax-only-wide-\(index)",
+                label: "ax-only-wide-value-\(index)",
+                parent: root))
+        }
+
+        let depthOne = element(
+            role: .group,
+            identifier: "ax-only-depth-1",
+            label: "depth-one",
+            parent: root)
+        let depthTwo = element(
+            role: .group,
+            identifier: "ax-only-depth-2",
+            label: "depth-two",
+            parent: depthOne)
+        let depthThree = element(
+            role: .staticText,
+            identifier: "ax-only-depth-3",
+            label: "AX_ONLY_DEEP_MARKER_v1",
+            parent: depthTwo)
+        depthTwo.setAccessibilityChildren([depthThree])
+        depthOne.setAccessibilityChildren([depthTwo])
+        directChildren.append(depthOne)
+        root.setAccessibilityChildren(directChildren)
+
+        // Put the synthetic surface first so a small global query budget can
+        // observe and truncate it without scanning unrelated native windows.
+        application.setAccessibilityWindows([root, exactWindow])
+    }
+
+    private func element(
+        role: NSAccessibility.Role,
+        identifier: String,
+        label: String,
+        parent: Any
+    ) -> NSAccessibilityElement {
+        let element = NSAccessibilityElement()
+        element.setAccessibilityRole(role)
+        element.setAccessibilityIdentifier(identifier)
+        element.setAccessibilityLabel(label)
+        element.setAccessibilityFrame(NSRect(x: 60, y: 60, width: 240, height: 20))
+        element.setAccessibilityParent(parent)
+        retainedElements.append(element)
+        return element
+    }
+}
+
 func writeBringToFrontWindowReport(
     main: NSWindow,
     matrix: BringToFrontMatrixWindows?
@@ -616,9 +692,16 @@ struct CuaAppKitHarness {
         if let mode = ProcessInfo.processInfo.environment["CUA_HARNESS_BRING_TO_FRONT_MODE"] {
             matrixWindows = BringToFrontMatrixWindows(parent: controller.window, mode: mode)
         }
+        var accessibilityOnlySurface: AccessibilityOnlySurfaceFixture?
+        if ProcessInfo.processInfo.environment["CUA_HARNESS_AX_ONLY_SURFACE"] == "1" {
+            accessibilityOnlySurface = AccessibilityOnlySurfaceFixture(
+                application: app,
+                exactWindow: controller.window)
+        }
         app.activate(ignoringOtherApps: true)
         writeBringToFrontWindowReport(main: controller.window, matrix: matrixWindows)
         app.run()
         _ = matrixWindows
+        _ = accessibilityOnlySurface
     }
 }

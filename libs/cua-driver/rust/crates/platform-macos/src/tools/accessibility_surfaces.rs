@@ -55,7 +55,21 @@ impl Tool for GetAccessibilitySurfacesTool {
         })
         .await
         {
-            Ok(observation) => observation,
+            Ok(Ok(observation)) => observation,
+            Ok(Err(failure)) => {
+                return ToolResult::error(format!(
+                    "accessibility surface observation failed for pid={pid}: {failure}"
+                ))
+                .with_structured(json!({
+                    "code": "ax_observation_failed",
+                    "effect": "refused",
+                    "pid": pid,
+                    "failure": failure,
+                    "capability": accessibility_surface::capability("query_failed", "macos"),
+                    "actions_supported": false,
+                    "screenshot_supported": false,
+                }))
+            }
             Err(error) => {
                 return ToolResult::error(format!(
                     "accessibility surface observation failed for pid={pid}: {error}"

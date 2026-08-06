@@ -4,9 +4,7 @@ _Published on August 6, 2026 by Francesco Bonacci_
 
 Today, we're launching what we believe is the first extension-free browser-use interface built into an agent-neutral computer-use driver. Cua Driver binds an exact Chromium tab to its native process and window, giving coding agents page-aware browser actions and full desktop control in the same session, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.18.0.
 
-<div align="center">
-  <img src="https://github.com/user-attachments/assets/c5f489b6-a9b8-4c0a-9cd8-e52b5f4f4f01" alt="Animated browser-use launch slide showing Cua Driver controlling an exact Chromium tab alongside native desktop applications." width="760" />
-</div>
+![Cua Driver: extension-free browser use across Chromium tabs and native desktop applications](https://github.com/user-attachments/assets/c5f489b6-a9b8-4c0a-9cd8-e52b5f4f4f01)
 
 _Cua Driver combines page-aware browser actions with native desktop control in one named session._
 
@@ -57,7 +55,7 @@ Using CDP safely requires more than opening a debugging port. A browser has two 
 
 Before Cua Driver allows a page mutation, it proves that both identities describe the same surface.
 
-![A Cua Driver session connecting coding agents through MCP, CLI, or SDK to native operating-system routes and a loopback CDP page route, converging on an exact process, window, and tab.](https://github.com/user-attachments/assets/5fefe69b-9670-4e04-9063-dffce4106c39)
+![Cua Driver: MCP, CLI, and SDK routes converge on an exact process, window, and Chromium tab](https://github.com/user-attachments/assets/5fefe69b-9670-4e04-9063-dffce4106c39)
 
 _Cua Driver keeps native OS actions and page-aware CDP actions inside one exact, session-scoped browser binding._
 

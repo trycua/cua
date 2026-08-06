@@ -52,6 +52,40 @@ Passing `--permission-mode unrestricted` without
 remains a configuration alias for `unrestricted`. New integrations should use
 the canonical names.
 
+## Configure a mode without CLI flags
+
+The mode is read once, when the runtime that owns the driver starts. Only
+`cua-driver serve` takes the flags above. A launcher that cannot pass them —
+`cua-driver mcp` owning its own runtime on Windows and Linux, a Windows
+Scheduled Task registered by `cua-driver autostart enable`, or an embedding
+host — uses the equivalent environment variables:
+
+| Flag | Environment variable |
+| --- | --- |
+| `--permission-mode <mode>` | `CUA_DRIVER_PERMISSION_MODE=<mode>` |
+| `--session-policy <path>` | `CUA_DRIVER_SESSION_POLICY_FILE=<path>` |
+| `--approve-session-policy` | `CUA_DRIVER_SESSION_POLICY_APPROVED=1` |
+| `--dangerously-bypass-approvals` | `CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1` |
+
+The variables accept `1`, `true`, `yes`, or `on` for their boolean form. The CLI
+flag normalizes mode plus acknowledgement in one step; the environment form does
+not, so `unrestricted` requires `CUA_DRIVER_PERMISSION_MODE=unrestricted` **and**
+`CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1`, and `bounded` requires both the
+policy file and its approval. Missing halves fail startup instead of downgrading
+to `standard`.
+
+`CUA_DRIVER_SESSION_POLICY_FILE` and `CUA_DRIVER_SESSION_POLICY_APPROVED` are
+rejected in `standard` and `unrestricted` mode, so a stale exported variable
+prevents startup rather than applying silently.
+
+These variables are trusted launch configuration on the same footing as the
+flags. Whoever can write them for the daemon's environment sets its mode, so
+treat them like the plist, unit file, or Scheduled Task that carries them. An
+agent tool call can never set them.
+
+A running daemon's mode cannot be changed. Stop it and start it again with the
+configuration you want.
+
 ## What standard allows
 
 Standard mode is designed to preserve practical autonomous workflows. It does

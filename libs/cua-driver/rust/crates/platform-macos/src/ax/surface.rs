@@ -1,8 +1,13 @@
 //! Stateless, read-only observation of AX windows without CGWindowID.
 
 use super::bindings::*;
-use core_foundation::base::{CFRelease, CFTypeRef};
+use core_foundation::{
+    array::{CFArray, CFArrayRef},
+    base::{CFGetTypeID, CFRelease, CFRetain, CFTypeRef, TCFType},
+    string::CFString,
+};
 use serde::Serialize;
+use std::fmt;
 
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
 
@@ -13,6 +18,203 @@ fn is_surface_candidate(
     window_id: Option<u32>,
 ) -> bool {
     role == "AXWindow" && owner_pid == Some(requested_pid) && window_id.is_none()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ObservationFailure {
+    pub operation: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ax_error: Option<AxErrorDetail>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AxErrorDetail {
+    pub code: AXError,
+    pub name: &'static str,
+}
+
+impl ObservationFailure {
+    fn ax(operation: &'static str, attribute: Option<&'static str>, code: AXError) -> Self {
+        Self {
+            operation,
+            attribute,
+            ax_error: Some(AxErrorDetail {
+                code,
+                name: ax_error_name(code),
+            }),
+        }
+    }
+
+    fn unavailable(operation: &'static str) -> Self {
+        Self {
+            operation,
+            attribute: None,
+            ax_error: None,
+        }
+    }
+}
+
+impl fmt::Display for ObservationFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.operation)?;
+        if let Some(attribute) = self.attribute {
+            write!(formatter, "({attribute})")?;
+        }
+        if let Some(error) = &self.ax_error {
+            write!(formatter, " failed with {} ({})", error.name, error.code)?;
+        }
+        Ok(())
+    }
+}
+
+#[allow(non_upper_case_globals)]
+fn ax_error_name(error: AXError) -> &'static str {
+    match error {
+        kAXErrorSuccess => "success",
+        kAXErrorFailure => "failure",
+        kAXErrorIllegalArgument => "illegal_argument",
+        kAXErrorInvalidUIElement => "invalid_ui_element",
+        kAXErrorInvalidUIElementObserver => "invalid_ui_element_observer",
+        kAXErrorCannotComplete => "cannot_complete",
+        kAXErrorAttributeUnsupported => "attribute_unsupported",
+        kAXErrorActionUnsupported => "action_unsupported",
+        kAXErrorNotificationUnsupported => "notification_unsupported",
+        kAXErrorNotImplemented => "not_implemented",
+        kAXErrorNotificationAlreadyRegistered => "notification_already_registered",
+        kAXErrorNotificationNotRegistered => "notification_not_registered",
+        kAXErrorAPIDisabled => "api_disabled",
+        kAXErrorNoValue => "no_value",
+        kAXErrorParameterizedAttributeUnsupported => "parameterized_attribute_unsupported",
+        kAXErrorNotEnoughPrecision => "not_enough_precision",
+        _ => "unknown",
+    }
+}
+
+struct OwnedAxElement(AXUIElementRef);
+
+impl OwnedAxElement {
+    fn as_ptr(&self) -> AXUIElementRef {
+        self.0
+    }
+}
+
+impl Drop for OwnedAxElement {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.0 as CFTypeRef) };
+    }
+}
+
+#[allow(non_upper_case_globals)]
+unsafe fn attribute_count(
+    element: AXUIElementRef,
+    attribute: &'static str,
+    unsupported_is_empty: bool,
+) -> Result<usize, ObservationFailure> {
+    let attribute_ref = CFString::new(attribute);
+    let mut count = 0_isize;
+    let error =
+        AXUIElementGetAttributeValueCount(element, attribute_ref.as_concrete_TypeRef(), &mut count);
+    match error {
+        kAXErrorSuccess => Ok(count.max(0) as usize),
+        kAXErrorNoValue => Ok(0),
+        kAXErrorAttributeUnsupported if unsupported_is_empty => Ok(0),
+        _ => Err(ObservationFailure::ax(
+            "get_attribute_value_count",
+            Some(attribute),
+            error,
+        )),
+    }
+}
+
+unsafe fn copy_element_at(
+    element: AXUIElementRef,
+    attribute: &'static str,
+    index: usize,
+) -> Result<OwnedAxElement, ObservationFailure> {
+    let attribute_ref = CFString::new(attribute);
+    let mut values: CFArrayRef = std::ptr::null();
+    let error = AXUIElementCopyAttributeValues(
+        element,
+        attribute_ref.as_concrete_TypeRef(),
+        index as isize,
+        1,
+        &mut values,
+    );
+    if error != kAXErrorSuccess {
+        return Err(ObservationFailure::ax(
+            "copy_attribute_values",
+            Some(attribute),
+            error,
+        ));
+    }
+    if values.is_null() {
+        return Err(ObservationFailure::unavailable(
+            "copy_attribute_values_returned_null",
+        ));
+    }
+    let array = CFArray::<CFTypeRef>::wrap_under_create_rule(values);
+    let Some(value) = array.get(0).map(|item| *item) else {
+        return Err(ObservationFailure::unavailable(
+            "copy_attribute_values_returned_empty",
+        ));
+    };
+    if CFGetTypeID(value) != AXUIElementGetTypeID() {
+        return Err(ObservationFailure::unavailable(
+            "copy_attribute_values_returned_non_element",
+        ));
+    }
+    CFRetain(value);
+    Ok(OwnedAxElement(value as AXUIElementRef))
+}
+
+unsafe fn required_pid(
+    element: AXUIElementRef,
+    attribute: Option<&'static str>,
+) -> Result<i32, ObservationFailure> {
+    let mut pid = 0;
+    let error = AXUIElementGetPid(element, &mut pid);
+    if error == kAXErrorSuccess {
+        Ok(pid)
+    } else {
+        Err(ObservationFailure::ax("get_pid", attribute, error))
+    }
+}
+
+unsafe fn required_role(element: AXUIElementRef) -> Result<String, ObservationFailure> {
+    let attribute = CFString::new("AXRole");
+    let mut value: CFTypeRef = std::ptr::null();
+    let error = AXUIElementCopyAttributeValue(element, attribute.as_concrete_TypeRef(), &mut value);
+    if error != kAXErrorSuccess {
+        return Err(ObservationFailure::ax(
+            "copy_attribute_value",
+            Some("AXRole"),
+            error,
+        ));
+    }
+    if value.is_null() || CFGetTypeID(value) != CFString::type_id() {
+        if !value.is_null() {
+            CFRelease(value);
+        }
+        return Err(ObservationFailure::unavailable("invalid_ax_role"));
+    }
+    Ok(CFString::wrap_under_create_rule(value as _).to_string())
+}
+
+#[allow(non_upper_case_globals)]
+unsafe fn window_id_or_absent(element: AXUIElementRef) -> Result<Option<u32>, ObservationFailure> {
+    let mut window_id = 0_u32;
+    let error = _AXUIElementGetWindow(element, &mut window_id);
+    match error {
+        kAXErrorSuccess => Ok((window_id != 0).then_some(window_id)),
+        // A same-process NSAccessibilityElement published as AXWindow but not
+        // backed by NSWindow returns illegal_argument here. That is the live
+        // macOS representation of “this AXWindow has no CGWindowID”, not a
+        // transport failure. Other errors retain their typed failure state.
+        kAXErrorIllegalArgument | kAXErrorAttributeUnsupported | kAXErrorNoValue => Ok(None),
+        _ => Err(ObservationFailure::ax("get_window_id", None, error)),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,7 +260,11 @@ pub struct ObservationSet {
     pub truncated: bool,
 }
 
-pub fn observe_surfaces(pid: i32, max_elements: usize, max_depth: usize) -> ObservationSet {
+pub fn observe_surfaces(
+    pid: i32,
+    max_elements: usize,
+    max_depth: usize,
+) -> Result<ObservationSet, ObservationFailure> {
     let mut result = ObservationSet {
         surfaces: Vec::new(),
         node_count: 0,
@@ -66,48 +272,61 @@ pub fn observe_surfaces(pid: i32, max_elements: usize, max_depth: usize) -> Obse
     };
 
     unsafe {
-        let application = AXUIElementCreateApplication(pid);
-        if application.is_null() {
-            return result;
+        let application_ref = AXUIElementCreateApplication(pid);
+        if application_ref.is_null() {
+            return Err(ObservationFailure::unavailable("create_application"));
         }
-        let _ = AXUIElementSetMessagingTimeout(application, AX_MESSAGING_TIMEOUT_SECONDS);
-        let windows = copy_ax_windows(application);
-        CFRelease(application as CFTypeRef);
+        let application = OwnedAxElement(application_ref);
+        let timeout_error =
+            AXUIElementSetMessagingTimeout(application.as_ptr(), AX_MESSAGING_TIMEOUT_SECONDS);
+        if timeout_error != kAXErrorSuccess {
+            return Err(ObservationFailure::ax(
+                "set_messaging_timeout",
+                None,
+                timeout_error,
+            ));
+        }
+        let window_count = attribute_count(application.as_ptr(), "AXWindows", false)?;
 
-        for window in windows {
-            let _ = AXUIElementSetMessagingTimeout(window, AX_MESSAGING_TIMEOUT_SECONDS);
-            let role = copy_string_attr(window, "AXRole").unwrap_or_default();
-            let mut owner_pid = 0;
-            let owner_pid =
-                (AXUIElementGetPid(window, &mut owner_pid) == kAXErrorSuccess).then_some(owner_pid);
-            if !is_surface_candidate(&role, owner_pid, pid, ax_get_window_id(window)) {
-                CFRelease(window as CFTypeRef);
+        for window_index in 0..window_count {
+            let window = copy_element_at(application.as_ptr(), "AXWindows", window_index)?;
+            let timeout_error =
+                AXUIElementSetMessagingTimeout(window.as_ptr(), AX_MESSAGING_TIMEOUT_SECONDS);
+            if timeout_error != kAXErrorSuccess {
+                return Err(ObservationFailure::ax(
+                    "set_messaging_timeout",
+                    Some("AXWindows"),
+                    timeout_error,
+                ));
+            }
+            let role = required_role(window.as_ptr())?;
+            let owner_pid = required_pid(window.as_ptr(), Some("AXWindows"))?;
+            let window_id = window_id_or_absent(window.as_ptr())?;
+            if !is_surface_candidate(&role, Some(owner_pid), pid, window_id) {
                 continue;
             }
 
             let remaining = max_elements.saturating_sub(result.node_count);
             if remaining == 0 {
                 result.truncated = true;
-                CFRelease(window as CFTypeRef);
-                continue;
+                break;
             }
-            let (nodes, truncated) = observe_tree(window, pid, remaining, max_depth);
+            let (nodes, truncated) = observe_tree(window.as_ptr(), pid, remaining, max_depth)?;
             result.node_count += nodes.len();
             result.truncated |= truncated;
             result.surfaces.push(SurfaceObservation {
                 kind: "ax_window",
                 role,
-                subrole: copy_string_attr(window, "AXSubrole"),
-                title: nonempty_attr(window, "AXTitle"),
-                identifier: nonempty_attr(window, "AXIdentifier"),
-                frame: element_screen_rect(window),
+                subrole: copy_string_attr(window.as_ptr(), "AXSubrole"),
+                title: nonempty_attr(window.as_ptr(), "AXTitle"),
+                identifier: nonempty_attr(window.as_ptr(), "AXIdentifier"),
+                frame: element_screen_rect(window.as_ptr()),
                 nodes,
                 truncated,
             });
-            CFRelease(window as CFTypeRef);
         }
     }
-    result
+    Ok(result)
 }
 
 unsafe fn nonempty_attr(element: AXUIElementRef, name: &str) -> Option<String> {
@@ -119,7 +338,7 @@ unsafe fn observe_tree(
     pid: i32,
     max_elements: usize,
     max_depth: usize,
-) -> (Vec<ObservationNode>, bool) {
+) -> Result<(Vec<ObservationNode>, bool), ObservationFailure> {
     let mut nodes = Vec::new();
     let mut truncated = false;
     walk_observation(
@@ -131,8 +350,8 @@ unsafe fn observe_tree(
         max_depth,
         &mut nodes,
         &mut truncated,
-    );
-    (nodes, truncated)
+    )?;
+    Ok((nodes, truncated))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -145,17 +364,16 @@ unsafe fn walk_observation(
     max_depth: usize,
     nodes: &mut Vec<ObservationNode>,
     truncated: &mut bool,
-) {
+) -> Result<(), ObservationFailure> {
     if depth > max_depth || nodes.len() >= max_elements {
         *truncated = true;
-        return;
+        return Ok(());
     }
-    let mut owner_pid = 0;
-    if AXUIElementGetPid(element, &mut owner_pid) != kAXErrorSuccess || owner_pid != pid {
-        return;
+    if required_pid(element, Some("AXChildren"))? != pid {
+        return Ok(());
     }
 
-    let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
+    let role = required_role(element)?;
     let title = nonempty_attr(element, "AXTitle");
     let description = nonempty_attr(element, "AXDescription");
     let value = copy_stringish_attr(element, "AXValue")
@@ -180,9 +398,19 @@ unsafe fn walk_observation(
         selected: copy_bool_attr(element, "AXSelected"),
     });
 
-    for child in copy_children(element) {
+    let child_count = attribute_count(element, "AXChildren", true)?;
+    if depth == max_depth && child_count > 0 {
+        *truncated = true;
+        return Ok(());
+    }
+    for child_index in 0..child_count {
+        if nodes.len() >= max_elements {
+            *truncated = true;
+            break;
+        }
+        let child = copy_element_at(element, "AXChildren", child_index)?;
         walk_observation(
-            child,
+            child.as_ptr(),
             pid,
             depth + 1,
             Some(index),
@@ -190,9 +418,9 @@ unsafe fn walk_observation(
             max_depth,
             nodes,
             truncated,
-        );
-        CFRelease(child as CFTypeRef);
+        )?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -225,5 +453,19 @@ mod tests {
         assert!(!is_surface_candidate("AXWindow", Some(7), 7, Some(42)));
         assert!(!is_surface_candidate("AXGroup", Some(7), 7, None));
         assert!(!is_surface_candidate("AXWindow", None, 7, None));
+    }
+
+    #[test]
+    fn ax_errors_have_stable_typed_names() {
+        let failure = ObservationFailure::ax(
+            "copy_attribute_values",
+            Some("AXWindows"),
+            kAXErrorCannotComplete,
+        );
+        let value = serde_json::to_value(failure).unwrap();
+        assert_eq!(value["operation"], "copy_attribute_values");
+        assert_eq!(value["attribute"], "AXWindows");
+        assert_eq!(value["ax_error"]["code"], kAXErrorCannotComplete);
+        assert_eq!(value["ax_error"]["name"], "cannot_complete");
     }
 }

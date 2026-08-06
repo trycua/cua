@@ -40,8 +40,8 @@ class TestRegisterParser:
         args = parser.parse_args(["sandbox", "list", "--json"])
         assert args.json is True
 
-    def test_create_command_has_required_args(self):
-        """Test that create command has required arguments."""
+    def test_launch_command_has_required_args(self):
+        """Test launch parses its image and supported options."""
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers()
         sandbox.register_parser(subparsers)
@@ -49,18 +49,32 @@ class TestRegisterParser:
         args = parser.parse_args(
             [
                 "sandbox",
-                "create",
-                "--os",
-                "linux",
-                "--size",
-                "medium",
+                "launch",
+                "ubuntu:24.04",
+                "--local",
+                "--name",
+                "test-sandbox",
+                "--vm",
+                "--cpu",
+                "4",
+                "--memory",
+                "8GB",
+                "--disk",
+                "50GB",
                 "--region",
                 "north-america",
+                "--json",
             ]
         )
-        assert args.os == "linux"
-        assert args.size == "medium"
+        assert args.image == "ubuntu:24.04"
+        assert args.local is True
+        assert args.name == "test-sandbox"
+        assert args.vm is True
+        assert args.cpu == 4
+        assert args.memory == "8GB"
+        assert args.disk == "50GB"
         assert args.region == "north-america"
+        assert args.json is True
 
 
 class TestExecute:
@@ -150,54 +164,130 @@ class TestCmdList:
         mock_print.assert_called_once_with(sample_vm_list)
 
 
-class TestCmdCreate:
-    """Tests for cmd_create function."""
+class TestCmdLaunch:
+    """Tests for cmd_launch function."""
 
-    def test_create_sandbox_success(self, args_namespace, mock_api_key):
-        """Test creating a sandbox successfully."""
+    def test_launch_sandbox_success(self, args_namespace, mock_api_key):
+        """Test launching a cloud sandbox through the Sandbox SDK."""
         args = args_namespace(
-            os="linux",
-            size="medium",
-            region="north-america",
+            image="ubuntu:24.04",
+            local=False,
+            name="new-sandbox",
+            vm=False,
+            cpu=None,
+            memory=None,
+            disk=None,
+            region=None,
             json=False,
         )
+        image = object()
+        created = MagicMock()
+        created.name = "new-sandbox"
+        created.disconnect = AsyncMock()
+        mock_create = AsyncMock(return_value=created)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.create = mock_create
 
-        # Mock the API response (status 202 = provisioning)
-        async def mock_api_request(*args, **kwargs):
-            return (
-                202,
-                {
-                    "status": "provisioning",
-                    "name": "new-sandbox",
-                    "host": "sandbox.example.com",
-                },
-            )
-
-        with patch.object(sandbox, "_api_request", side_effect=mock_api_request):
-            with patch.object(sandbox, "print_info"):
-                result = sandbox.cmd_create(args)
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "_parse_image", return_value=image):
+                with patch.object(sandbox, "print_success") as mock_success:
+                    result = sandbox.cmd_launch(args)
 
         assert result == 0
+        mock_create.assert_awaited_once_with(image, name="new-sandbox", api_key="test-access-token")
+        created.disconnect.assert_awaited_once_with()
+        mock_success.assert_called_once_with("Sandbox 'new-sandbox' is ready")
 
-    def test_create_sandbox_error(self, args_namespace, mock_api_key):
-        """Test handling create error."""
+    def test_launch_sandbox_error(self, args_namespace, mock_api_key):
+        """Test SDK launch errors return a clear failure."""
         args = args_namespace(
-            os="linux",
-            size="medium",
-            region="north-america",
+            image="ubuntu:24.04",
+            local=False,
+            name="new-sandbox",
+            vm=False,
+            cpu=None,
+            memory=None,
+            disk=None,
+            region=None,
             json=False,
         )
+        image = object()
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.create = AsyncMock(side_effect=RuntimeError("Quota exceeded"))
 
-        # Mock the API response (status 500 = error)
-        async def mock_api_request(*args, **kwargs):
-            return (500, "Quota exceeded")
-
-        with patch.object(sandbox, "_api_request", side_effect=mock_api_request):
-            with patch.object(sandbox, "print_error") as mock_error:
-                result = sandbox.cmd_create(args)
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "_parse_image", return_value=image):
+                with patch.object(sandbox, "print_error") as mock_error:
+                    result = sandbox.cmd_launch(args)
 
         assert result == 1
-        mock_error.assert_called()
+        assert (
+            "Failed to launch sandbox: RuntimeError('Quota exceeded')"
+            in (mock_error.call_args.args[0])
+        )
+
+    def test_launch_json_output(self, args_namespace, mock_api_key):
+        """Test launch JSON output contains the sandbox name and status."""
+        args = args_namespace(
+            image="ubuntu:24.04",
+            local=False,
+            name=None,
+            vm=False,
+            cpu=None,
+            memory=None,
+            disk=None,
+            region=None,
+            json=True,
+        )
+        image = object()
+        created = MagicMock()
+        created.name = "json-sandbox"
+        created.disconnect = AsyncMock()
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.create = AsyncMock(return_value=created)
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "_parse_image", return_value=image):
+                with patch.object(sandbox, "print_json") as mock_json:
+                    result = sandbox.cmd_launch(args)
+
+        assert result == 0
+        mock_json.assert_called_once_with({"name": "json-sandbox", "status": "ready"})
+        created.disconnect.assert_awaited_once_with()
+
+    def test_launch_local(self, args_namespace):
+        """Test --local is passed through without cloud authentication."""
+        args = args_namespace(
+            image="macos:sequoia",
+            local=True,
+            name="local-sandbox",
+            vm=False,
+            cpu=None,
+            memory=None,
+            disk=None,
+            region=None,
+            json=False,
+        )
+        image = object()
+        created = MagicMock()
+        created.name = "local-sandbox"
+        created.disconnect = AsyncMock()
+        mock_create = AsyncMock(return_value=created)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.create = mock_create
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "_parse_image", return_value=image):
+                with patch.object(
+                    sandbox, "get_access_token", new_callable=AsyncMock
+                ) as mock_token:
+                    with patch.object(sandbox, "print_success"):
+                        result = sandbox.cmd_launch(args)
+
+        assert result == 0
+        mock_create.assert_awaited_once_with(image, local=True, name="local-sandbox")
+        mock_token.assert_not_awaited()
+        created.disconnect.assert_awaited_once_with()
 
 
 class TestCmdGet:

@@ -158,7 +158,7 @@ pub enum Command {
     /// `cua-driver skills {install|update|uninstall|status|path}` —
     /// agent skill-pack management. The verb is the ONLY way a user
     /// installs or updates the cua-driver skill pack into their agent
-    /// dirs (Claude Code / Codex / OpenClaw / OpenCode); the install
+    /// dirs (Claude Code / Codex / Prime Agent / OpenClaw / OpenCode); the install
     /// scripts never touch ~/.claude/skills/ etc. directly. `install`
     /// fetches the matching versioned release asset
     /// (`cua-driver-rs-v<v>-skills.tar.gz` — the asset filename keeps
@@ -393,6 +393,7 @@ fn finite_client_kind_from_args(args: &[String]) -> &'static str {
         "opencode" => "opencode",
         "hermes" => "hermes",
         "pi" => "pi",
+        "prime-agent" => "prime_agent",
         "antigravity" | "gemini" => "antigravity",
         "qwen" | "qwen-code" => "qwen_code",
         "droid" | "factory" => "factory_droid",
@@ -461,8 +462,8 @@ pub fn parse_command() -> Command {
         println!();
         println!("skills options (agent skill-pack management, opt-in):");
         println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
-        println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, OpenClaw,");
-        println!("                                  OpenCode). Idempotent. Never overwrites existing user links.");
+        println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, Prime Agent,");
+        println!("                                  OpenClaw, OpenCode). Idempotent. Never overwrites existing user links.");
         println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
         println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
@@ -1510,8 +1511,8 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "mcp-config",
-              "description": "Print the MCP server config snippet or a client-specific install command.",
-              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, qwen, droid, zcode. Omit for the generic snippet." } ] },
+              "description": "Print client-specific connection guidance (MCP config where supported).",
+              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode. Omit for the generic snippet." } ] },
             { "name": "manifest",
               "description": "Emit this machine-readable description of the CLI surface.",
               "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
@@ -1576,10 +1577,11 @@ pub fn build_manifest() -> serde_json::Value {
     })
 }
 
-/// Print the MCP server config snippet or a client-specific install command.
+/// Print client-specific connection guidance (MCP config where supported).
 ///
 /// `--client <name>` selects one of: claude, codex, cursor, hermes,
-/// antigravity, openclaw, opencode, pi. Omit for the generic JSON snippet.
+/// antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode.
+/// Omit for the generic JSON snippet.
 pub fn run_mcp_config(client: Option<&str>) {
     let binary = std::env::current_exe()
         .ok()
@@ -1755,6 +1757,18 @@ pub fn run_mcp_config(client: Option<&str>) {
                  exactly the shape Pi is designed around."
             );
         }
+        Some("prime-agent") => {
+            println!(
+                "Prime Agent loads Agent Skills and can call cua-driver directly from its\n\
+                 persistent IPython control environment. No MCP registration is required.\n\n\
+                 Install and verify the Cua Driver skill pack:\n\n\
+                     {binary} skills install\n\
+                     {binary} skills status\n\n\
+                 Then run /reload in Prime Agent (or start a new session) and ask it to\n\
+                 use the Cua Driver skill. Use /skill:cua-driver to invoke it explicitly.\n\
+                 The skill calls the cua-driver CLI with a snapshot/action/verify workflow."
+            );
+        }
         Some("qwen") | Some("qwen-code") => {
             // Qwen Code (Alibaba's open-source coding CLI, a Gemini-CLI fork).
             // Config: ~/.qwen/settings.json (user) or .qwen/settings.json
@@ -1794,7 +1808,7 @@ pub fn run_mcp_config(client: Option<&str>) {
             );
         }
         Some(other) => {
-            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, qwen, droid, zcode.");
+            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode.");
             process::exit(2);
         }
     }
@@ -3094,8 +3108,8 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "mcp-config",
-                "abstract": "Print MCP server config or a client-specific install command.",
-                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, qwen, droid, and zcode.",
+                "abstract": "Print client-specific connection guidance (MCP config where supported).",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode.",
                 "arguments": no_args,
                 "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
                 "flags": no_flags,
@@ -3950,6 +3964,10 @@ mod tests {
         assert_eq!(
             finite_client_kind_from_args(&args(&["mcp-config", "--client", "antigravity"])),
             "antigravity"
+        );
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["mcp-config", "--client", "prime-agent"])),
+            "prime_agent"
         );
         assert_eq!(
             finite_client_kind_from_args(&args(&["mcp-config", "--client", "/private/client"])),

@@ -1,11 +1,11 @@
 ---
 title: Connect your agent to Cua Driver
-description: Register Cua Driver as an MCP server so an agent can drive the host desktop.
+description: Connect an agent to Cua Driver through MCP or the Cua Driver skill and CLI.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver mcp` runs Cua Driver as a stdio MCP server. Register it when you want an MCP-capable [computer-use agent](/concepts/what-is-computer-use) to drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session.
+Cua Driver lets a [computer-use agent](/concepts/what-is-computer-use) drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session. MCP-capable agents connect through `cua-driver mcp`; skill-based agents such as Prime Agent call the CLI directly.
 
 <Callout type="info">
   This connects an agent to Cua Driver on the current machine. To create a disposable local desktop, use [Cua Sandbox](/tutorials/your-first-local-sandbox) instead.
@@ -107,6 +107,32 @@ cua-driver skills status
 ```
 
 See [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill) for the ClawHub and direct-install paths.
+
+## Prime Agent
+
+Prime Agent uses Cua Driver through its persistent IPython environment and the
+Cua Driver agent skill. It does not need a local MCP registration.
+
+Install the skill pack after both tools are installed:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+Cua Driver links the skill into `~/.prime/agent/skills/` when Prime Agent's
+skill directory exists. Prime Agent also scans the shared `~/.agents/skills/`
+directory, so an existing Codex-targeted link remains discoverable. Run
+`/reload` in Prime Agent or start a new session after installation, then ask it
+to use the Cua Driver skill. Use `/skill:cua-driver` to invoke it explicitly.
+See [Prime Agent's skill documentation](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/skills.md)
+for its complete discovery and invocation behavior.
+
+Print the same current guidance from the installed binary:
+
+```bash
+cua-driver mcp-config --client prime-agent
+```
 
 ## Cursor
 

@@ -16,8 +16,14 @@ Next steps:
 
   3. Agent skill pack (optional):
        {{BINARY}} skills install   # fetch + link the cua-driver skill pack
-                                   # into Claude Code / Codex / OpenClaw / OpenCode.
-                                   # The install never touches your agent dirs.
+                                   # into Claude Code / Codex / Prime Agent /
+                                   # OpenClaw / OpenCode and other supported agents.
+                                   # The binary installer never touches your agent dirs.
+
+     Prime Agent needs no MCP registration. It loads the installed skill and
+     calls cua-driver from its persistent IPython environment. Print its setup:
+       {{BINARY}} mcp-config --client prime-agent
+     Then run /reload in Prime Agent (or start a new session).
 
   4. As an MCP server — run the one matching your client. Each is also
      available via '{{BINARY}} mcp-config --client <name>':
@@ -93,4 +99,4 @@ Next steps:
          {{BINARY}} serve --permission-mode unrestricted \
            --dangerously-bypass-approvals
 
-Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust
+Docs: https://cua.ai/docs/how-to-guides/driver/connect-your-agent

@@ -16,6 +16,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
+	github.com/stripe/stripe-go/v85 v85.2.0
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/swaggo/swag v1.16.6
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.53.0

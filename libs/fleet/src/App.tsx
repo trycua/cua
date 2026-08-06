@@ -21,6 +21,7 @@ import { PoolDetail } from "./pages/PoolDetail"
 import { PoolNew } from "./pages/PoolNew"
 import { UserApiKeys } from "./pages/UserApiKeys"
 import { Settings } from "./pages/Settings"
+import { FeatureFlagProvider } from "./components/FeatureFlagContext"
 import { FlashContext, type FlashMsg } from "./components/FlashContext"
 import { logout, userInfo } from "./auth/keycloak"
 
@@ -180,31 +181,34 @@ function Shell() {
 export function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route element={<Shell />}>
-          <Route index element={<Navigate to="/pools" replace />} />
-          <Route path="/pools" element={<PoolsList />} />
-          <Route path="/pools/new" element={<PoolNew />} />
-          <Route
-            path="/pools/templates"
-            element={<Navigate to="/pools" replace />}
-          />
-          <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
-          <Route path="/user-keys" element={<UserApiKeys />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route
-            path="/pools/:namespace/:poolName/claims/:claimName"
-            element={<ClaimDetail />}
-          />
-          <Route path="/modules" element={<Navigate to="/pools" replace />} />
-          <Route
-            path="/modules/new"
-            element={<Navigate to="/pools/new" replace />}
-          />
-          <Route path="/modules/:name" element={<RedirectModule />} />
-          <Route path="/pools/:name" element={<Navigate to="/pools" replace />} />
-        </Route>
-      </Routes>
+      <FeatureFlagProvider>
+        <Routes>
+          <Route element={<Shell />}>
+            <Route index element={<Navigate to="/pools" replace />} />
+            <Route path="/pools" element={<PoolsList />} />
+            <Route path="/pools/new" element={<PoolNew />} />
+            <Route
+              path="/pools/templates"
+              element={<Navigate to="/pools" replace />}
+            />
+            <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
+            <Route path="/user-keys" element={<UserApiKeys />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/billing" element={<Navigate to="/settings" replace />} />
+            <Route
+              path="/pools/:namespace/:poolName/claims/:claimName"
+              element={<ClaimDetail />}
+            />
+            <Route path="/modules" element={<Navigate to="/pools" replace />} />
+            <Route
+              path="/modules/new"
+              element={<Navigate to="/pools/new" replace />}
+            />
+            <Route path="/modules/:name" element={<RedirectModule />} />
+            <Route path="/pools/:name" element={<Navigate to="/pools" replace />} />
+          </Route>
+        </Routes>
+      </FeatureFlagProvider>
     </BrowserRouter>
   )
 }

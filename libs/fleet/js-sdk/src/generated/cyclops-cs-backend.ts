@@ -10,6 +10,22 @@
  * ---------------------------------------------------------------
  */
 
+export interface BillingCardSummary {
+  brand?: string;
+  exp_month?: number;
+  exp_year?: number;
+  last4?: string;
+}
+
+export interface BillingSummary {
+  card: BillingCardSummary | null;
+  payment_method_present: boolean;
+}
+
+export interface HandlersBillingSessionResponse {
+  url?: string;
+}
+
 export interface HandlersConfigResponse {
   /**
    * Admin is true when the caller is in input.flags.admin_subs (OPA-evaluated).
@@ -18,6 +34,7 @@ export interface HandlersConfigResponse {
    * server-side by authz.rego.
    */
   admin?: boolean;
+  billing?: boolean;
 }
 
 export interface HandlersCreateKeyRequest {
@@ -104,6 +121,22 @@ export type BatchDeleteError = Record<string, string>;
 export type BatchResultsListError = Record<string, string>;
 
 export type BatchStatusListError = Record<string, string>;
+
+export type BillingPortalSessionCreateData = HandlersBillingSessionResponse;
+
+export type BillingPortalSessionCreateError = Record<string, string>;
+
+export type BillingSetupSessionCreateData = HandlersBillingSessionResponse;
+
+export type BillingSetupSessionCreateError = Record<string, string>;
+
+export type BillingSummaryListData = BillingSummary;
+
+export type BillingSummaryListError = Record<string, string>;
+
+export type BillingWebhookCreateData = any;
+
+export type BillingWebhookCreateError = Record<string, string>;
 
 export type ConfigListData = HandlersConfigResponse;
 
@@ -558,6 +591,83 @@ export class Api<
         path: `/api/batch/${pool}/${id}/status`,
         method: "GET",
         secure: true,
+        ...params,
+      }),
+  };
+  billing = {
+    /**
+     * @description Creates a Stripe-hosted Billing Portal Session for the customer owned by the authenticated Cyclops subject.
+     *
+     * @tags billing
+     * @name BillingPortalSessionCreate
+     * @summary Create Stripe Billing Portal Session
+     * @request POST:/api/billing/portal-session
+     * @secure
+     */
+    billingPortalSessionCreate: (params: RequestParams = {}) =>
+      this.request<
+        BillingPortalSessionCreateData,
+        BillingPortalSessionCreateError
+      >({
+        path: `/api/billing/portal-session`,
+        method: "POST",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Creates a Stripe-hosted Checkout Session in setup mode for reusable off-session card collection.
+     *
+     * @tags billing
+     * @name BillingSetupSessionCreate
+     * @summary Create Stripe card setup Session
+     * @request POST:/api/billing/setup-session
+     * @secure
+     */
+    billingSetupSessionCreate: (params: RequestParams = {}) =>
+      this.request<
+        BillingSetupSessionCreateData,
+        BillingSetupSessionCreateError
+      >({
+        path: `/api/billing/setup-session`,
+        method: "POST",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject.
+     *
+     * @tags billing
+     * @name BillingSummaryList
+     * @summary Billing summary
+     * @request GET:/api/billing/summary
+     * @secure
+     */
+    billingSummaryList: (params: RequestParams = {}) =>
+      this.request<BillingSummaryListData, BillingSummaryListError>({
+        path: `/api/billing/summary`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Verifies a Stripe-signed raw webhook body and configures the default payment method for completed fleet setup intents.
+     *
+     * @tags billing
+     * @name BillingWebhookCreate
+     * @summary Receive Stripe webhook
+     * @request POST:/api/billing/webhook
+     */
+    billingWebhookCreate: (params: RequestParams = {}) =>
+      this.request<BillingWebhookCreateData, BillingWebhookCreateError>({
+        path: `/api/billing/webhook`,
+        method: "POST",
+        type: ContentType.Json,
         ...params,
       }),
   };

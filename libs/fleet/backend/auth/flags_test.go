@@ -116,3 +116,24 @@ func asStrings(v any) []string {
 	}
 	return out
 }
+
+func TestEvalBillingEnabledDefaultsFalseAndReadsBooleanFlag(t *testing.T) {
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+	LoadOpa()
+
+	t.Setenv("CYCLOPS_CS_BILLING_ENABLED", "false")
+	resetFlagsCache()
+	enabled, err := EvalBillingEnabled(context.Background(), &User{ID: "user-1", AZP: "cyclops-cs-spa"})
+	if err != nil || enabled {
+		t.Fatalf("EvalBillingEnabled(false) = %v, %v; want false, nil", enabled, err)
+	}
+
+	t.Setenv("CYCLOPS_CS_BILLING_ENABLED", "true")
+	resetFlagsCache()
+	enabled, err = EvalBillingEnabled(context.Background(), &User{ID: "user-1", AZP: "cyclops-cs-spa"})
+	if err != nil || !enabled {
+		t.Fatalf("EvalBillingEnabled(true) = %v, %v; want true, nil", enabled, err)
+	}
+}

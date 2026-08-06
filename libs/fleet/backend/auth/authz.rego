@@ -75,6 +75,15 @@ allow {
     is_interactive_client
 }
 
+# Stripe-hosted billing browser endpoints. The backend derives the customer
+# identity from input.user.sub and never accepts Stripe ownership identifiers.
+allow {
+    startswith(input.route, "/api/billing/")
+    input.route != "/api/billing/webhook"
+    input.user.sub != ""
+    input.user.azp == "cyclops-cs-spa"
+}
+
 # /api/namespaces — namespace management (list, create, delete).
 # Exact interactive clients may manage their own namespaces.
 # Capsule enforces per-user scoping at the K8s API level via

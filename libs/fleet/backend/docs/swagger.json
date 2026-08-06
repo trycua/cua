@@ -255,6 +255,242 @@
                 }
             }
         },
+        "/api/billing/portal-session": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a Stripe-hosted Billing Portal Session for the customer owned by the authenticated Cyclops subject.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Create Stripe Billing Portal Session",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/setup-session": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a Stripe-hosted Checkout Session in setup mode for reusable off-session card collection.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Create Stripe card setup Session",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/summary": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Billing summary",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/billing.Summary"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/webhook": {
+            "post": {
+                "description": "Verifies a Stripe-signed raw webhook body and configures the default payment method for completed fleet setup intents.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Receive Stripe webhook",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/config": {
             "get": {
                 "security": [
@@ -1112,11 +1348,59 @@
         }
     },
     "definitions": {
+        "billing.CardSummary": {
+            "type": "object",
+            "properties": {
+                "brand": {
+                    "type": "string"
+                },
+                "exp_month": {
+                    "type": "integer"
+                },
+                "exp_year": {
+                    "type": "integer"
+                },
+                "last4": {
+                    "type": "string"
+                }
+            }
+        },
+        "billing.Summary": {
+            "type": "object",
+            "required": [
+                "card",
+                "payment_method_present"
+            ],
+            "properties": {
+                "card": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/billing.CardSummary"
+                        }
+                    ],
+                    "x-nullable": true
+                },
+                "payment_method_present": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "handlers.BillingSessionResponse": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.ConfigResponse": {
             "type": "object",
             "properties": {
                 "admin": {
                     "description": "Admin is true when the caller is in input.flags.admin_subs (OPA-evaluated).\nNon-admins get the customer view: infra-only nav (Nodes, Operator events)\nis hidden in the SPA and the corresponding kubectl-proxy paths are denied\nserver-side by authz.rego.",
+                    "type": "boolean"
+                },
+                "billing": {
                     "type": "boolean"
                 }
             }

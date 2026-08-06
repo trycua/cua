@@ -1,5 +1,7 @@
 // Settings page — shows the signed-in user's identity (username and
-// subject) read from the Keycloak token, with copy-to-clipboard for each.
+// subject) read from the Keycloak token, with copy-to-clipboard for each,
+// plus payment methods and recent invoices when the billing
+// feature flag is enabled.
 
 import Box from "@cloudscape-design/components/box"
 import Container from "@cloudscape-design/components/container"
@@ -8,9 +10,12 @@ import FormField from "@cloudscape-design/components/form-field"
 import Header from "@cloudscape-design/components/header"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import { userInfo } from "../auth/keycloak"
+import { useFeatureFlags } from "../components/FeatureFlagContext"
+import { BillingSettings } from "./Billing"
 
 export function Settings() {
   const { sub, name } = userInfo()
+  const { billing } = useFeatureFlags()
 
   return (
     <SpaceBetween size="l">
@@ -46,6 +51,7 @@ export function Settings() {
           </FormField>
         </SpaceBetween>
       </Container>
+      {billing && <BillingSettings />}
     </SpaceBetween>
   )
 }

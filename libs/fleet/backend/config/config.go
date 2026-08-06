@@ -24,6 +24,7 @@ type Configuration struct {
 	Auth      AuthConfiguration
 	Keycloak  KeycloakConfiguration
 	Gateway   GatewayConfiguration
+	Stripe    StripeConfiguration
 	Metrics   MetricsConfiguration
 	Telemetry TelemetryConfiguration
 }
@@ -71,6 +72,13 @@ type GatewayConfiguration struct {
 	ClusterDomain string
 }
 
+type StripeConfiguration struct {
+	SecretKey          string
+	WebhookSecret      string
+	CheckoutSuccessURL string
+	CheckoutCancelURL  string
+	PortalReturnURL    string
+}
 
 type MetricsConfiguration struct {
 	Addr string // METRICS_ADDR — Prometheus listen addr
@@ -109,6 +117,11 @@ var specs = []flagSpec{
 	{"gateway.scheme", "orch-scheme", "ORCH_SCHEME", "http", "orchestrator scheme"},
 	{"gateway.port", "orch-port", "ORCH_PORT", "80", "orchestrator port"},
 	{"gateway.cluster-domain", "cluster-domain", "CLUSTER_DOMAIN", "svc.cluster.local", "in-cluster DNS domain"},
+	{"stripe.secret-key", "stripe-secret-key", "STRIPE_SECRET_KEY", "", "Stripe secret key (server-only)"},
+	{"stripe.webhook-secret", "stripe-webhook-secret", "STRIPE_WEBHOOK_SECRET", "", "Stripe webhook signing secret"},
+	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
+	{"stripe.checkout-cancel-url", "stripe-checkout-cancel-url", "STRIPE_CHECKOUT_CANCEL_URL", "", "Stripe Checkout cancel redirect URL"},
+	{"stripe.portal-return-url", "stripe-portal-return-url", "STRIPE_PORTAL_RETURN_URL", "", "Stripe Billing Portal return URL"},
 	{"metrics.addr", "metrics-addr", "METRICS_ADDR", ":9091", "Prometheus metrics listen address"},
 	{"telemetry.endpoint", "otel-endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.cua.ai", "OTLP HTTP traces endpoint"},
 	{"telemetry.protocol", "otel-protocol", "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf", "OTLP exporter protocol"},
@@ -140,7 +153,6 @@ func LoadConfig() (*Configuration, error) {
 		issuer = realmPath
 	}
 
-
 	cfg := &Configuration{
 		WebServer: WebServerConfiguration{Addr: viper.GetString("webserver.addr")},
 		Auth: AuthConfiguration{
@@ -170,7 +182,14 @@ func LoadConfig() (*Configuration, error) {
 			Port:          viper.GetString("gateway.port"),
 			ClusterDomain: viper.GetString("gateway.cluster-domain"),
 		},
-		Metrics:   MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
+		Stripe: StripeConfiguration{
+			SecretKey:          viper.GetString("stripe.secret-key"),
+			WebhookSecret:      viper.GetString("stripe.webhook-secret"),
+			CheckoutSuccessURL: viper.GetString("stripe.checkout-success-url"),
+			CheckoutCancelURL:  viper.GetString("stripe.checkout-cancel-url"),
+			PortalReturnURL:    viper.GetString("stripe.portal-return-url"),
+		},
+		Metrics: MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
 		Telemetry: TelemetryConfiguration{
 			Endpoint:         viper.GetString("telemetry.endpoint"),
 			Protocol:         viper.GetString("telemetry.protocol"),

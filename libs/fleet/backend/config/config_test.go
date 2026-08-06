@@ -52,3 +52,56 @@ func TestLoadConfig_TelemetryDefaults(t *testing.T) {
 		t.Fatalf("Telemetry.Environment = %q, want %q", got, want)
 	}
 }
+
+func TestLoadConfig_StripeBillingValues(t *testing.T) {
+	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+	t.Setenv("STRIPE_SECRET_KEY", "sk_test_server_only")
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
+	t.Setenv("STRIPE_CHECKOUT_SUCCESS_URL", "https://run.example.test/billing?checkout=success")
+	t.Setenv("STRIPE_CHECKOUT_CANCEL_URL", "https://run.example.test/billing?checkout=cancelled")
+	t.Setenv("STRIPE_PORTAL_RETURN_URL", "https://run.example.test/billing")
+	RegisterFlags(pflag.NewFlagSet("stripe-test", pflag.ContinueOnError))
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+
+	if got, want := cfg.Stripe.SecretKey, "sk_test_server_only"; got != want {
+		t.Fatalf("Stripe.SecretKey = %q, want %q", got, want)
+	}
+	if got, want := cfg.Stripe.WebhookSecret, "whsec_test"; got != want {
+		t.Fatalf("Stripe.WebhookSecret = %q, want %q", got, want)
+	}
+	if got, want := cfg.Stripe.CheckoutSuccessURL, "https://run.example.test/billing?checkout=success"; got != want {
+		t.Fatalf("Stripe.CheckoutSuccessURL = %q, want %q", got, want)
+	}
+	if got, want := cfg.Stripe.CheckoutCancelURL, "https://run.example.test/billing?checkout=cancelled"; got != want {
+		t.Fatalf("Stripe.CheckoutCancelURL = %q, want %q", got, want)
+	}
+	if got, want := cfg.Stripe.PortalReturnURL, "https://run.example.test/billing"; got != want {
+		t.Fatalf("Stripe.PortalReturnURL = %q, want %q", got, want)
+	}
+}
+
+func TestLoadConfig_StripeBillingDefaultsAbsent(t *testing.T) {
+	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+	for _, key := range []string{
+		"STRIPE_SECRET_KEY",
+		"STRIPE_WEBHOOK_SECRET",
+		"STRIPE_CHECKOUT_SUCCESS_URL",
+		"STRIPE_CHECKOUT_CANCEL_URL",
+		"STRIPE_PORTAL_RETURN_URL",
+	} {
+		t.Setenv(key, "")
+	}
+	RegisterFlags(pflag.NewFlagSet("stripe-absent-test", pflag.ContinueOnError))
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Stripe != (StripeConfiguration{}) {
+		t.Fatalf("Stripe = %#v, want zero configuration", cfg.Stripe)
+	}
+}

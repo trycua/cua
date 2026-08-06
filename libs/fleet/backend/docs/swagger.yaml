@@ -1,5 +1,33 @@
 basePath: /
 definitions:
+  billing.CardSummary:
+    properties:
+      brand:
+        type: string
+      exp_month:
+        type: integer
+      exp_year:
+        type: integer
+      last4:
+        type: string
+    type: object
+  billing.Summary:
+    properties:
+      card:
+        allOf:
+        - $ref: '#/definitions/billing.CardSummary'
+        x-nullable: true
+      payment_method_present:
+        type: boolean
+    required:
+    - card
+    - payment_method_present
+    type: object
+  handlers.BillingSessionResponse:
+    properties:
+      url:
+        type: string
+    type: object
   handlers.ConfigResponse:
     properties:
       admin:
@@ -8,6 +36,8 @@ definitions:
           Non-admins get the customer view: infra-only nav (Nodes, Operator events)
           is hidden in the SPA and the corresponding kubectl-proxy paths are denied
           server-side by authz.rego.
+        type: boolean
+      billing:
         type: boolean
     type: object
   handlers.CreateKeyRequest:
@@ -308,6 +338,162 @@ paths:
       summary: Deprecated batch submission route
       tags:
       - batch
+  /api/billing/portal-session:
+    post:
+      description: Creates a Stripe-hosted Billing Portal Session for the customer
+        owned by the authenticated Cyclops subject.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BillingSessionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create Stripe Billing Portal Session
+      tags:
+      - billing
+  /api/billing/setup-session:
+    post:
+      description: Creates a Stripe-hosted Checkout Session in setup mode for reusable
+        off-session card collection.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BillingSessionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create Stripe card setup Session
+      tags:
+      - billing
+  /api/billing/summary:
+    get:
+      description: Returns a sanitized Stripe-backed billing summary for the authenticated
+        Cyclops subject.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/billing.Summary'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Billing summary
+      tags:
+      - billing
+  /api/billing/webhook:
+    post:
+      consumes:
+      - application/json
+      description: Verifies a Stripe-signed raw webhook body and configures the default
+        payment method for completed fleet setup intents.
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: Request Entity Too Large
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Receive Stripe webhook
+      tags:
+      - billing
   /api/config:
     get:
       description: Returns OPA-evaluated feature flags for the authenticated SPA user.

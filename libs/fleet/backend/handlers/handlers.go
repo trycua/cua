@@ -18,11 +18,13 @@ import (
 )
 
 type Handlers struct {
-	Admin      *keycloak.Admin
-	GatewayCfg config.GatewayConfiguration
-	AuthCfg    config.AuthConfiguration
-	KC         config.KeycloakConfiguration
-
+	Admin           *keycloak.Admin
+	GatewayCfg      config.GatewayConfiguration
+	AuthCfg         config.AuthConfiguration
+	KC              config.KeycloakConfiguration
+	Stripe          config.StripeConfiguration
+	Billing         BillingService
+	WebhookVerifier WebhookVerifier
 
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
@@ -40,6 +42,7 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		GatewayCfg: cfg.Gateway,
 		AuthCfg:    cfg.Auth,
 		KC:         cfg.Keycloak,
+		Stripe:     cfg.Stripe,
 	}
 }
 

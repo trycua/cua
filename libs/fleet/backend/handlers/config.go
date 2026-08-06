@@ -14,7 +14,8 @@ type ConfigResponse struct {
 	// Non-admins get the customer view: infra-only nav (Nodes, Operator events)
 	// is hidden in the SPA and the corresponding kubectl-proxy paths are denied
 	// server-side by authz.rego.
-	Admin bool `json:"admin"`
+	Admin   bool `json:"admin"`
+	Billing bool `json:"billing"`
 }
 
 // GetConfig returns per-user feature flags evaluated by OPA.
@@ -39,5 +40,11 @@ func (h Handlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 		isAdmin = false
 	}
 
-	writeJSON(w, http.StatusOK, ConfigResponse{Admin: isAdmin})
+	billingEnabled, err := auth.EvalBillingEnabled(ctx, user)
+	if err != nil {
+		slog.WarnContext(ctx, "billing flag eval failed; defaulting off", "err", err)
+		billingEnabled = false
+	}
+
+	writeJSON(w, http.StatusOK, ConfigResponse{Admin: isAdmin, Billing: billingEnabled})
 }

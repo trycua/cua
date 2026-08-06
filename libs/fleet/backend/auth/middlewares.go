@@ -295,6 +295,20 @@ func EvalIsAdmin(ctx context.Context, user *User) (bool, error) {
 	return v, nil
 }
 
+// EvalBillingEnabled resolves the billing UI flag for the authenticated user.
+// The flag defaults off so absent provider configuration never exposes billing.
+func EvalBillingEnabled(ctx context.Context, user *User) (bool, error) {
+	if user == nil || user.ID == "" {
+		return false, nil
+	}
+	ffClientOnce.Do(func() {
+		ffClient = openfeature.NewClient("cyclops-cs-auth")
+	})
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return ffClient.BooleanValue(callCtx, "/feature-flags/cyclops-cs/billing-enabled", false, openfeature.NewEvaluationContext(user.ID, nil))
+}
+
 func writeJSONErr(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

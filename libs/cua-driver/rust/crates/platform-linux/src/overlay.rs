@@ -997,6 +997,49 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         colormap
     };
 
+    // An ARGB visual is only worth having when a compositing manager will
+    // blend it; the compositor-less path renders pre-blended opaque pixels
+    // behind a shape mask and needs no alpha channel. It is also actively
+    // hazardous on servers that accept an ARGB32 window but cannot show it —
+    // xorgxrdp repaints shaped ARGB regions as solid black whenever its
+    // refresh re-renders them, and answers root reads inside them with black,
+    // which both blanks the cursor on screen and poisons every save-under
+    // comparison into compositing the shadow over black. Those servers are
+    // exactly the compositor-less ones, so the rule is simple: no compositor
+    // at startup, no ARGB. `software_only` pins the software-composited path
+    // for the session — a compositing manager appearing later blends the
+    // opaque shaped window correctly, whereas switching paths would hand this
+    // 24-bit window premultiplied translucent pixels it cannot represent.
+    let (visual_id, depth, colormap, software_only) =
+        if compositor_present || visual_id == screen.root_visual {
+            (visual_id, depth, colormap, false)
+        } else {
+            conn.free_colormap(colormap).ok();
+            tracing::debug!(
+                "X11 overlay: no compositor at startup; using the root visual \
+                 with software compositing"
+            );
+            (
+                screen.root_visual,
+                screen.root_depth,
+                screen.default_colormap,
+                true,
+            )
+        };
+    // Belt and braces for servers whose root reads are unreliable even for
+    // the visual chosen above: `resolve_backdrop` stops treating a readback
+    // mismatch as proof of a repaint.
+    let readback_untrusted = !x11_visual_readback_reliable(
+        &conn,
+        root,
+        visual_id,
+        depth,
+        colormap,
+        scr_w as u16,
+        scr_h as u16,
+    )
+    .unwrap_or(false);
+
     // Create the overlay window.
     let win = conn.generate_id().unwrap();
     let win_aux = CreateWindowAux::new()
@@ -1088,6 +1131,15 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // earlier can still be on screen; that resolves itself as soon as the
     // cursor vacates the rect and its owner repaints.)
     let mut backdrop = X11BackdropCache::default();
+    // Startup probe result; a property of the server, not of the compositor,
+    // so it is never re-sampled when a compositing manager comes or goes.
+    backdrop.readback_untrusted = readback_untrusted;
+    if readback_untrusted {
+        tracing::warn!(
+            "X11 overlay: root reads cannot see this window's own pixels; \
+             save-unders will be served without readback confirmation"
+        );
+    }
     // Arrivals resolve callers waiting for the destination frame to be visible,
     // so they are held back across a deferred paint instead of firing early.
     let mut pending_arrivals: Vec<CursorKey> = Vec::new();
@@ -1275,7 +1327,11 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                     &conn,
                     &paint_target,
                     &tiles,
-                    compositor_present,
+                    // A `software_only` window is 24-bit: handing the
+                    // compositor branch premultiplied translucent pixels would
+                    // display them as opaque dark artifacts, so the downgrade
+                    // pins the software-composited path for the session.
+                    compositor_present && !software_only,
                     screen_changed,
                     &mut backdrop,
                 ) {
@@ -1512,6 +1568,15 @@ struct X11BackdropCache {
     slow_reads: u8,
     unbacked_frames: u8,
     disabled: bool,
+    /// Set when the startup probe found that a root `GetImage` inside the
+    /// overlay's own shaped-in footprint does not return the pixels we
+    /// uploaded (xorgxrdp answers black there for a 32-bit ARGB child on a
+    /// 24-bit root). On such a server the readback comparison in
+    /// `resolve_backdrop` can never confirm our paint survived, so mismatches
+    /// inside a save-under serve the saved backdrop instead of adopting the
+    /// unreadable live pixels — compositing each frame over those drives a
+    /// translucent shadow geometrically to black.
+    readback_untrusted: bool,
 }
 
 /// After the cache is dropped wholesale — a display change, a compositing
@@ -1851,7 +1916,15 @@ impl X11BackdropCache {
                         let dst = index * 4;
                         // Compare colour only: the fourth byte is an unused pad
                         // in the root read and a forced 255 in what we upload.
-                        if fresh[dst..dst + 3] == saved.uploaded[src..src + 3] {
+                        // On a server whose root reads cannot see our own
+                        // window (`readback_untrusted`) the comparison carries
+                        // no information — the live pixel is unreadable, not
+                        // repainted — so the save-under is served regardless.
+                        // The cost is that a genuine repaint under the cursor
+                        // goes unnoticed until the save-under expires.
+                        if self.readback_untrusted
+                            || fresh[dst..dst + 3] == saved.uploaded[src..src + 3]
+                        {
                             out[dst..dst + 4].copy_from_slice(&saved.under[src..src + 4]);
                         }
                         decided[index] = true;
@@ -2025,6 +2098,147 @@ fn read_root_backdrops(
     reads
 }
 
+/// Whether this server can genuinely display a window of the given visual and
+/// fold it into root `GetImage` reads. Both halves of the compositor-less
+/// overlay ride on that: PutImage must reach the screen and *stay* there
+/// (xorgxrdp repaints a 32-bit ARGB child as solid black on its 24-bit root
+/// whenever the region is refreshed), and `resolve_backdrop` decides "still
+/// our paint" versus "someone repainted over us" by comparing a later root
+/// read against the uploaded bytes — a comparison that misfires on every
+/// pixel when the read returns black instead.
+///
+/// Probed once per candidate visual at startup with a throwaway window that
+/// mirrors the real overlay as closely as possible — full-screen,
+/// override-redirect, bounding-shaped down to a 4×1 strip at the origin —
+/// because the failure is not visible to a simpler probe: xorgxrdp serves a
+/// small unshaped ARGB window's pixels back faithfully and only blacks out
+/// shaped regions of a large one when its refresh re-renders them. Map,
+/// shape, upload the strip, read it back off the root twice (immediately,
+/// and again after the server has had time to reprocess the damage),
+/// destroy. The round trip through `get_image` orders the reply after the
+/// map and upload on this connection, so no separate sync is needed. Errors
+/// report as unreliable: a server that cannot service this exchange cannot
+/// service the per-frame paint either.
+#[cfg(target_os = "linux")]
+fn x11_visual_readback_reliable(
+    conn: &impl x11rb::connection::Connection,
+    root: u32,
+    visual_id: u32,
+    depth: u8,
+    colormap: u32,
+    scr_w: u16,
+    scr_h: u16,
+) -> anyhow::Result<bool> {
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::{
+        ClipOrdering, ConnectionExt as XprotoConnectionExt, CreateGCAux, CreateWindowAux,
+        EventMask, ImageFormat, Rectangle, WindowClass,
+    };
+
+    const PROBE_WIDTH: u16 = 4;
+    // Distinctive opaque colours a desktop corner is unlikely to hold.
+    let uploaded: Vec<u8> = (0..u32::from(PROBE_WIDTH))
+        .flat_map(|i| {
+            let i = i as u8;
+            [
+                0x35_u8.wrapping_add(i.wrapping_mul(7)),
+                0x8C_u8.wrapping_sub(i.wrapping_mul(11)),
+                0x5A_u8.wrapping_add(i.wrapping_mul(23)),
+                0xFF,
+            ]
+        })
+        .collect();
+
+    let win = conn.generate_id()?;
+    conn.create_window(
+        depth,
+        win,
+        root,
+        0,
+        0,
+        scr_w.max(PROBE_WIDTH),
+        scr_h.max(1),
+        0,
+        WindowClass::INPUT_OUTPUT,
+        visual_id,
+        &CreateWindowAux::new()
+            .background_pixel(0)
+            .border_pixel(0)
+            .colormap(colormap)
+            .override_redirect(1u32)
+            .event_mask(EventMask::NO_EVENT),
+    )?;
+    let probe = (|| -> anyhow::Result<bool> {
+        let gc = conn.generate_id()?;
+        conn.create_gc(gc, win, &CreateGCAux::new())?;
+        // Shape before mapping so only the probe strip ever shows, exactly as
+        // the real overlay exposes only its painted runs.
+        conn.shape_rectangles(
+            SO::SET,
+            SK::BOUNDING,
+            ClipOrdering::UNSORTED,
+            win,
+            0,
+            0,
+            &[Rectangle {
+                x: 0,
+                y: 0,
+                width: PROBE_WIDTH,
+                height: 1,
+            }],
+        )?;
+        conn.shape_rectangles(SO::SET, SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[])?;
+        conn.map_window(win)?;
+        conn.put_image(
+            ImageFormat::Z_PIXMAP,
+            win,
+            gc,
+            PROBE_WIDTH,
+            1,
+            0,
+            0,
+            0,
+            depth,
+            &uploaded,
+        )?;
+        // Two reads: the first is ordered right behind the upload on this
+        // connection and catches servers that never see the pixels at all;
+        // the second runs after a pause long enough for a deferred-refresh
+        // server to reprocess the damage. xorgxrdp passes the first read —
+        // the bytes are still in its shadow framebuffer — and only blacks
+        // the region out when its update timer re-renders it from the window
+        // tree, so an immediate-only probe would wrongly bless the visual.
+        let matches_upload = |reply: &x11rb::protocol::xproto::GetImageReply| {
+            // Colour only: the fourth byte is an unused pad in the root read.
+            matches!(reply.depth, 24 | 32)
+                && reply.data.len() == uploaded.len()
+                && uploaded
+                    .chunks_exact(4)
+                    .zip(reply.data.chunks_exact(4))
+                    .all(|(ours, live)| ours[..3] == live[..3])
+        };
+        for pause in [None, Some(Duration::from_millis(80))] {
+            if let Some(pause) = pause {
+                std::thread::sleep(pause);
+            }
+            let reply = conn
+                .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, PROBE_WIDTH, 1, !0u32)?
+                .reply()?;
+            if !matches_upload(&reply) {
+                conn.free_gc(gc)?;
+                return Ok(false);
+            }
+        }
+        conn.free_gc(gc)?;
+        Ok(true)
+    })();
+    // Destroy on every exit so a failed probe cannot leave a stray mapped
+    // window at the origin.
+    conn.destroy_window(win).ok();
+    conn.flush().ok();
+    probe
+}
+
 /// A composited tile: its bounds, the opaque pixels to upload, the tile-local
 /// visible shape, and the backdrop they were blended over.
 #[cfg(target_os = "linux")]
@@ -2190,7 +2404,32 @@ fn paint_x11_tiles(
         }
     }
 
-    // Phase C — upload. A composited buffer covers the whole tile rect; pixels
+    // Phase C — expose the new shape, then upload into it. The order matters
+    // and is the reverse of what it once was: output to a window is CLIPPED to
+    // its current bounding shape, so uploading first silently discards every
+    // pixel of the frame's frontier — the runs the new shape adds over the old
+    // one — and enlarging the shape afterwards exposes the window's zero
+    // backing there instead. On an ARGB window zero is transparent and the
+    // loss was invisible, but it left the frontier unreadable to the
+    // save-under readback (adopting black as backdrop, which composites the
+    // shadow into a hard black ring), and on a 24-bit window zero shows as
+    // literal black. Shaping first means the frontier briefly exposes zero
+    // backing server-side, but both requests travel in one batch ahead of a
+    // single flush, so no frame with the bare frontier is ever presented.
+    let shape_cookie = conn.shape_rectangles(
+        SO::SET,
+        SK::BOUNDING,
+        x11rb::protocol::xproto::ClipOrdering::UNSORTED,
+        target.win,
+        0,
+        0,
+        &visible_shape,
+    )?;
+    if checked_requests {
+        shape_cookie.check()?;
+    }
+
+    // Phase D — upload. A composited buffer covers the whole tile rect; pixels
     // outside the shape are the backdrop copied back and are never displayed.
     for (bounds, bgra) in payloads {
         let cookie = conn.put_image(
@@ -2208,23 +2447,6 @@ fn paint_x11_tiles(
         if checked_requests {
             cookie.check()?;
         }
-    }
-
-    // Phase D — keep the previous (or fail-closed empty) shape while uploading
-    // pixels, then expose only the freshly rendered alpha runs. This ordering
-    // prevents stale/zero-filled backing pixels from becoming visible during
-    // repair, and keeps a half-composited tile off screen.
-    let shape_cookie = conn.shape_rectangles(
-        SO::SET,
-        SK::BOUNDING,
-        x11rb::protocol::xproto::ClipOrdering::UNSORTED,
-        target.win,
-        0,
-        0,
-        &visible_shape,
-    )?;
-    if checked_requests {
-        shape_cookie.check()?;
     }
 
     conn.flush()?;
@@ -3723,6 +3945,33 @@ mod tests {
 
         assert_eq!(&out[0..4], &[0x77, 0x77, 0x77, 0xFF]);
         assert_eq!(&out[4..8], &[0x11; 4]);
+    }
+
+    /// The halo regression: on a server whose root reads return black inside
+    /// our own footprint (xorgxrdp + ARGB32 overlay), the mismatch must serve
+    /// the save-under, not adopt the unreadable black — compositing each frame
+    /// over the last otherwise drives a translucent shadow to solid black.
+    #[test]
+    fn untrusted_readback_serves_the_save_under_on_mismatch() {
+        let tile = tile_bounds(0, 0, 4, 1);
+        let mut cache = X11BackdropCache::default();
+        cache.readback_untrusted = true;
+        let now = Instant::now();
+        cache.record_frame(
+            now,
+            vec![painted_rect(0, 0, 2, 1)],
+            vec![saved_backdrop(tile, vec![0x11; 16], vec![0xAA; 16])],
+        );
+
+        // Live read is black where we painted — unreadable, not repainted.
+        let mut live = vec![0xAAu8; 16];
+        live[0..8].fill(0x00);
+        let out = cache.resolve_backdrop(now, tile, &live).unwrap();
+
+        // Both painted pixels come from the save-under; the unpainted rest of
+        // the tile keeps the live read.
+        assert_eq!(&out[0..8], &[0x11; 8]);
+        assert_eq!(&out[8..16], &[0xAA; 8]);
     }
 
     #[test]

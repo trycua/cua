@@ -82,7 +82,10 @@ Use the same one-line installer on every platform; it picks the right path for t
 
     ```powershell
     irm https://cua.ai/driver/install.ps1 | iex
+    cua-driver autostart kick
     ```
+
+    The installer registers Cua Driver to start automatically at sign-in. `kick` starts it immediately, so you do not need to sign out or restart Windows before continuing.
 
   </Tab>
   <Tab value="Linux">

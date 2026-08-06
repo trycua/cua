@@ -2522,9 +2522,8 @@ fn run_permissions_status(json: bool) {
     };
 
     #[cfg(target_os = "macos")]
-    if crate::direct_capture_verification::was_recorded() {
-        structured["direct_capture_verification"] =
-            serde_json::json!({ "source": "permissions_grant" });
+    if let Some(verification) = crate::direct_capture_verification::status_value() {
+        structured["direct_capture_verification"] = verification;
     }
 
     if json {
@@ -2567,8 +2566,22 @@ fn run_permissions_status(json: bool) {
             }
         }
         None => {
-            if direct_capture_verification.is_some() {
-                println!("Direct Capture:     ✅ previously verified (permissions grant)");
+            if let Some(verification) = direct_capture_verification {
+                let source = verification
+                    .get("source")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown source");
+                let verified_at = verification
+                    .get("verified_at")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown time");
+                let bundle_id = verification
+                    .get("bundle_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown identity");
+                println!(
+                    "Direct Capture:     ✅ previously verified ({source}, {verified_at}, {bundle_id})"
+                );
                 println!(
                     "  ℹ️  historical observation; this read-only status did not run a live probe."
                 );

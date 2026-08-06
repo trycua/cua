@@ -218,6 +218,8 @@ the second is intentionally prompt-capable and must be run by the human:
   and .screen_recording_capturable == null
   and .direct_capture_status == "not_checked"
   and .direct_capture_verification.source == "permissions_grant"
+  and (.direct_capture_verification.verified_at | endswith("Z"))
+  and .direct_capture_verification.bundle_id == "com.trycua.driver.local"
 '
 codesign -d -r- /Applications/CuaDriverLocal.app 2>&1 | grep 'certificate leaf'
 csrutil status

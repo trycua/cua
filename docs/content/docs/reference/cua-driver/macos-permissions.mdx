@@ -34,10 +34,11 @@ private-window-picker bypass dialog when ScreenCaptureKit is queried,
 `screen_recording_capturable: null` and
 `direct_capture_status: "not_checked"`. This preserves the command's read-only,
 no-prompt contract. After `permissions grant` completes a successful live
-probe, status also returns `direct_capture_verification` with
-`source: "permissions_grant"`. That object is a historical observation; it
-does not turn the read-only status call into a claim about current
-ScreenCaptureKit readiness.
+probe, status also returns `direct_capture_verification` with the
+`permissions_grant` source, the UTC verification time, and the macOS bundle ID
+whose probe succeeded. Status validates the stored schema, source, timestamp,
+and bundle ID before reporting that historical observation. It does not turn
+the read-only status call into a claim about current ScreenCaptureKit readiness.
 
 `permissions grant` never sends a prompt-capable request over the daemon
 socket. It launches a short-lived instance of the installed CuaDriver app
@@ -50,11 +51,11 @@ Cua Driver's current ScreenCaptureKit recorder captures screen video only and
 does not enable audio capture. The consent is limited to macOS capture; it does
 not authorize browser-profile access, browser data, or CDP attachment.
 
-Successful verification is stored separately for the release and local bundle
-identities. A failed explicit probe clears the matching prior record. If the
-record cannot be written, `permissions grant` reports the live success but
-exits with an error instead of claiming that later status calls can corroborate
-it.
+Successful verification records are stored separately for the release and
+local bundle identities and contain the matching bundle ID. A failed explicit
+probe clears the matching prior record. If the record cannot be written,
+`permissions grant` reports the live success but exits with an error instead of
+claiming that later status calls can corroborate it.
 
 If the installed app is not listed under **Screen & System Audio Recording**
 after the prompt, click **+**, add `/Applications/CuaDriver.app` (or

@@ -1,1 +1,12 @@
-{ "title": "Sandbox", "pages": ["lifecycle", "secrets", "scale-out", "tunneling", "images", "interactive-shell"] }
+{
+  "title": "Sandbox",
+  "pages": [
+    "lifecycle",
+    "use-a-sandbox-pool",
+    "secrets",
+    "scale-out",
+    "tunneling",
+    "images",
+    "interactive-shell"
+  ]
+}

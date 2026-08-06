@@ -1,6 +1,6 @@
 # Blending the best of computer and browser use, without a Chrome extension
 
-_Published on August 5, 2026 by Francesco Bonacci_
+_Published on August 6, 2026 by Francesco Bonacci_
 
 Today, we're launching what we believe is the first extension-free browser-use interface built into an agent-neutral computer-use driver. Cua Driver binds an exact Chromium tab to its native process and window, giving coding agents page-aware browser actions and full desktop control in the same session, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.18.0.
 

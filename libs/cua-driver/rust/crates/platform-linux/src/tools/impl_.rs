@@ -951,18 +951,171 @@ fn contains_remote_debugging_flag(value: &str) -> bool {
     lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
 }
 
+/// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
+/// `Exec=` value with field codes stripped) in the background and return the
+/// child pid.
+fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::Result<u32> {
+    let mut parts = cmd.split_whitespace();
+    let prog = parts.next().unwrap_or(cmd);
+    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+    rest.extend(additional_arguments.iter().cloned());
+    let mut launch = std::process::Command::new(prog);
+    launch
+        .args(&rest)
+        // Enable accessibility for this child without toggling GNOME's global
+        // ScreenReaderEnabled setting (which can launch Orca). Native
+        // toolkits ignore these when they do not need them.
+        .env("ACCESSIBILITY_ENABLED", "1")
+        .env("NO_AT_BRIDGE", "0");
+    if chromium_family_program(prog)
+        && !rest
+            .iter()
+            .any(|arg| arg == "--force-renderer-accessibility")
+    {
+        launch.arg("--force-renderer-accessibility");
+    }
+    Ok(launch.spawn()?.id())
+}
+
+/// Match a launch_app `name` that failed direct exec against installed XDG
+/// .desktop applications: exact display name, desktop-file id, or `Exec=`
+/// basename first, then a display-name substring when it is unambiguous.
+fn match_installed_app<'a>(
+    apps: &'a [crate::installed_apps::InstalledApp],
+    query: &str,
+) -> Option<&'a crate::installed_apps::InstalledApp> {
+    let q = query.to_ascii_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+    apps.iter()
+        .find(|a| {
+            a.name.to_ascii_lowercase() == q
+                || a.bundle_id.to_ascii_lowercase() == q
+                || exec_basename(&a.launch_path) == q
+        })
+        .or_else(|| {
+            let mut matches = apps
+                .iter()
+                .filter(|a| a.name.to_ascii_lowercase().contains(&q));
+            match (matches.next(), matches.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        })
+}
+
+/// Watch a just-spawned `xdg-open` long enough to catch a fast failure.
+/// xdg-open's generic fallback can `exec` the target app and stay alive for
+/// its whole lifetime, so a child still running after the grace period counts
+/// as success; a quick non-zero exit (2 = file not found, 3 = no handler
+/// tool, 4 = action failed) is the only reliable failure signal.
+fn xdg_open_failure(child: &mut std::process::Child) -> Option<String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return None,
+            Ok(Some(status)) => return Some(format!("xdg-open failed ({status})")),
+            Ok(None) if std::time::Instant::now() >= deadline => return None,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(e) => return Some(format!("could not observe xdg-open: {e}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod launch_app_tests {
+    use super::*;
+    use crate::installed_apps::InstalledApp;
+
+    fn app(name: &str, bundle_id: &str, launch_path: &str) -> InstalledApp {
+        InstalledApp {
+            name: name.to_owned(),
+            bundle_id: bundle_id.to_owned(),
+            launch_path: launch_path.to_owned(),
+            last_used: None,
+        }
+    }
+
+    fn fixture() -> Vec<InstalledApp> {
+        vec![
+            app("Galculator", "galculator", "galculator"),
+            app(
+                "Google Chrome",
+                "google-chrome",
+                "/usr/bin/google-chrome-stable",
+            ),
+            app("File Manager", "thunar", "thunar"),
+            app(
+                "File Manager Settings",
+                "thunar-settings",
+                "thunar-settings",
+            ),
+        ]
+    }
+
+    #[test]
+    fn matches_exact_display_name_case_insensitively() {
+        let apps = fixture();
+        let hit = match_installed_app(&apps, "google chrome").expect("should match");
+        assert_eq!(hit.bundle_id, "google-chrome");
+    }
+
+    #[test]
+    fn matches_desktop_file_id_and_exec_basename() {
+        let apps = fixture();
+        assert_eq!(
+            match_installed_app(&apps, "galculator").unwrap().name,
+            "Galculator"
+        );
+        assert_eq!(
+            match_installed_app(&apps, "google-chrome-stable")
+                .unwrap()
+                .name,
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn matches_unambiguous_display_name_substring() {
+        let apps = fixture();
+        assert_eq!(
+            match_installed_app(&apps, "chrome").unwrap().name,
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn refuses_ambiguous_substring_and_unknown_names() {
+        let apps = fixture();
+        // "file manager" is a substring of two entries — refuse to guess.
+        // ("File Manager" itself still resolves via the exact-name rung.)
+        assert!(match_installed_app(&apps, "file man").is_none());
+        assert_eq!(
+            match_installed_app(&apps, "file manager")
+                .unwrap()
+                .bundle_id,
+            "thunar"
+        );
+        assert!(match_installed_app(&apps, "gnome-calculator").is_none());
+        assert!(match_installed_app(&apps, "").is_none());
+    }
+}
+
 #[async_trait]
 impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
         LAUNCH_DEF.get_or_init(|| ToolDef {
             name: "launch_app".into(),
             description: "Launch a Linux app in the background. Provide launch_path (preferred — \
-                round-trip the value from list_apps), name (app name, launched via xdg-open or \
-                direct exec), bundle_id (ignored on Linux), or urls (list of URLs to open). \
-                Resolution precedence: launch_path > name > bundle_id.".into(),
+                round-trip the value from list_apps), name (tried as a direct command, then \
+                matched against installed .desktop applications, then handed to xdg-open if it \
+                is a URL or existing file path), bundle_id (ignored on Linux), or urls (list of \
+                URLs to open). Resolution precedence: launch_path > name > bundle_id. Errors \
+                when the name resolves to nothing launchable.".into(),
             input_schema: json!({"type":"object","properties":{
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
-                "name":{"type":"string","description":"App name or command to launch."},
+                "name":{"type":"string","description":"App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring)."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."}
@@ -1002,8 +1155,17 @@ impl Tool for LaunchAppTool {
             move || -> anyhow::Result<(String, Option<u32>, String)> {
                 // Open URLs via xdg-open.
                 if !urls.is_empty() {
+                    let mut children = Vec::new();
                     for url in &urls {
-                        std::process::Command::new("xdg-open").arg(url).spawn()?;
+                        children.push((
+                            url.clone(),
+                            std::process::Command::new("xdg-open").arg(url).spawn()?,
+                        ));
+                    }
+                    for (url, mut child) in children {
+                        if let Some(reason) = xdg_open_failure(&mut child) {
+                            anyhow::bail!("could not open '{url}': {reason}");
+                        }
                     }
                     return Ok((
                         format!("Opened {} URL(s) via xdg-open.", urls.len()),
@@ -1016,29 +1178,8 @@ impl Tool for LaunchAppTool {
                 // canonical form preferred by list_apps callers.
                 let command = launch_path_opt.as_deref().or(name_opt.as_deref());
                 if let Some(cmd) = command {
-                    let mut parts = cmd.split_whitespace();
-                    let prog = parts.next().unwrap_or(cmd);
-                    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
-                    rest.extend(additional_arguments);
-                    let mut launch = std::process::Command::new(prog);
-                    launch
-                        .args(&rest)
-                        // Enable accessibility for this child without toggling
-                        // GNOME's global ScreenReaderEnabled setting (which can
-                        // launch Orca). Native toolkits ignore these when they
-                        // do not need them.
-                        .env("ACCESSIBILITY_ENABLED", "1")
-                        .env("NO_AT_BRIDGE", "0");
-                    if chromium_family_program(prog)
-                        && !rest
-                            .iter()
-                            .any(|arg| arg == "--force-renderer-accessibility")
-                    {
-                        launch.arg("--force-renderer-accessibility");
-                    }
-                    match launch.spawn() {
-                        Ok(child) => {
-                            let pid = child.id();
+                    match spawn_launch_command(cmd, &additional_arguments) {
+                        Ok(pid) => {
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
                                 Some(pid),
@@ -1046,9 +1187,50 @@ impl Tool for LaunchAppTool {
                             ));
                         }
                         Err(_) => {
-                            // Fall back to xdg-open for .desktop app names. xdg-open may
-                            // spawn a helper and exit, so do not claim its pid is the app pid.
-                            std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            // Not an executable on PATH. Resolve the name against
+                            // installed XDG .desktop applications — the same
+                            // source list_apps reads — and run the match's Exec=.
+                            let installed = crate::installed_apps::list_installed_apps();
+                            if let Some(app) = match_installed_app(&installed, cmd) {
+                                let pid =
+                                    spawn_launch_command(&app.launch_path, &additional_arguments)
+                                        .map_err(|e| {
+                                        anyhow::anyhow!(
+                                            "'{cmd}' matched installed app '{}' but its launcher \
+                                         `{}` failed to start: {e}",
+                                            app.name,
+                                            app.launch_path
+                                        )
+                                    })?;
+                                return Ok((
+                                    format!(
+                                        "✅ Launched {} (`{}`, pid {pid}) in background — \
+                                         resolved '{cmd}' via its desktop entry.",
+                                        app.name, app.launch_path
+                                    ),
+                                    Some(pid),
+                                    app.name.clone(),
+                                ));
+                            }
+                            // xdg-open handles URLs and file paths, not app
+                            // names — only fall through for something it can
+                            // plausibly open, and surface its fast non-zero
+                            // exit instead of reporting a launch that never
+                            // happened.
+                            if !cmd.contains("://") && !std::path::Path::new(cmd).exists() {
+                                anyhow::bail!(
+                                    "'{cmd}' is not an executable on PATH and matches no \
+                                     installed .desktop application. Call list_apps and \
+                                     round-trip its launch_path."
+                                );
+                            }
+                            let mut child =
+                                std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            if let Some(reason) = xdg_open_failure(&mut child) {
+                                anyhow::bail!("could not open '{cmd}': {reason}");
+                            }
+                            // xdg-open may spawn a helper and exit, so do not
+                            // claim its pid is the app pid.
                             return Ok((
                                 format!("Opened '{cmd}' via xdg-open."),
                                 None,

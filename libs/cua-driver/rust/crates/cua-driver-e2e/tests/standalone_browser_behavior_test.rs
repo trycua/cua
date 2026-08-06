@@ -45,6 +45,23 @@ fn standalone_fixture_html() -> String {
     )
 }
 
+fn standalone_observable_click_html() -> String {
+    standalone_fixture_html()
+        .replace(
+            r#"<button id="btn-increment"  data-cua-id="btn-increment">Increment</button>"#,
+            r#"<button id="btn-increment"  data-cua-id="btn-increment">counter=0</button>"#,
+        )
+        .replace(
+            "</body>",
+            r#"<script>
+  document.getElementById('btn-increment').addEventListener('click', event => {
+    event.currentTarget.textContent = document.getElementById('lbl-counter').textContent;
+  });
+</script>
+</body>"#,
+        )
+}
+
 /// Synthetic control that records event delivery but deliberately rejects the
 /// application action unless the browser marks the click as trusted.
 fn standalone_trust_gated_click_html() -> String {
@@ -1861,7 +1878,8 @@ fn run_roundtrip(spec: &BrowserSpec) {
         spec.name
     );
     execute_case(case(&spec.name, "browser_tool_roundtrip"), |evidence| {
-        let mut fixture = launch_browser(spec, &scenario);
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_observable_click_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-roundtrip-{}", fixture.pid);
         prepare_same_space_attachment(&mut fixture, &session);
@@ -1878,7 +1896,13 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(click.action_effect(), Some("confirmed"), "{}", click.raw);
+            assert_eq!(
+                click.structured()["evidence"][0]["kind"],
+                "value_readback",
+                "{}",
+                click.raw
+            );
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
             let snapshot = fixture.driver.call(
@@ -1934,7 +1958,12 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 }),
             );
 
-            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(
+                click.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                click.raw
+            );
             assert_eq!(click.action_route(), Some("dom"), "{}", click.raw);
             assert_eq!(
                 click.action_delivery_mode(),
@@ -1950,16 +1979,18 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
             );
             assert_eq!(
                 click.structured()["escalation"]["reason"],
-                "effect_unconfirmed",
+                "suspected_noop",
                 "{}",
                 click.raw
             );
             assert!(
-                click.text().contains("application effect not verified")
-                    && click.text().contains("trust-gated controls"),
+                click
+                    .text()
+                    .contains("suspected no-op is advisory, not proof of failure"),
                 "{}",
                 click.raw
             );
+            assert_eq!(click.structured()["evidence"][0]["kind"], "value_readback");
             wait_for_text(
                 &fixture.server,
                 "standalone-trust-gated-state",

@@ -15,7 +15,6 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use serde_json::{json, Value};
 
-use crate::action_record::ActionExecutionRecord;
 use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
 
@@ -76,6 +75,9 @@ pub(super) struct FixtureState {
     omit_primary_target: bool,
     /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
     primary_window_error: Option<(i64, String)>,
+    dom_click_changes_readback: bool,
+    dom_click_readback_available: bool,
+    dom_click_generation: u64,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -109,6 +111,9 @@ impl Default for FixtureState {
             viewport_css_height: 600.0,
             tab_visible: true,
             select_outcome: Value::Null,
+            dom_click_changes_readback: true,
+            dom_click_readback_available: true,
+            dom_click_generation: 0,
             calls: Vec::new(),
         }
     }
@@ -706,7 +711,28 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             {
                 MockReply::ok(json!({ "result": { "value": st.select_outcome.clone() } }))
             }
-            "Runtime.callFunctionOn" => MockReply::ok(json!({ "result": { "value": true } })),
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| function.contains("ariaPressed")) =>
+            {
+                if !st.dom_click_readback_available {
+                    return MockReply::err(-32000, "semantic click readback unavailable");
+                }
+                MockReply::ok(json!({
+                    "result": {
+                        "value": {
+                            "innerText": format!("counter={}", st.dom_click_generation)
+                        }
+                    }
+                }))
+            }
+            "Runtime.callFunctionOn" => {
+                if st.dom_click_changes_readback {
+                    st.dom_click_generation += 1;
+                }
+                MockReply::ok(json!({ "result": { "value": true } }))
+            }
             other => MockReply::method_not_found(other),
         }
     })
@@ -2881,31 +2907,29 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         .invoke(synthetic_args.clone())
         .await;
     assert_eq!(structured(&synthetic)["status"], "ok");
-    assert_eq!(structured(&synthetic)["effect"], "unverifiable");
-    assert_eq!(structured(&synthetic)["escalation"]["recommended"], "page");
+    assert_eq!(structured(&synthetic)["effect"], "confirmed");
+    assert_eq!(
+        structured(&synthetic)["observed"]["innerText"],
+        json!(["counter=0", "counter=1"])
+    );
+    assert!(structured(&synthetic)["escalation"].is_null());
     assert!(synthetic.content.iter().any(|content| matches!(
         content,
         crate::protocol::Content::Text { text, .. }
-            if text.contains("application effect not verified")
-                && text.contains("trust-gated controls")
+            if text.contains("confirmed a target-state change")
     )));
-    let public = ActionExecutionRecord::from_legacy(
-        "browser_click",
-        &synthetic_args,
-        structured(&synthetic),
-    )
-    .expect("browser click action record")
-    .public_result()
-    .expect("public browser click result");
+    let public = synthetic
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
     let public = serde_json::to_value(public).expect("serialize public result");
-    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert_eq!(public["effect"], "confirmed", "{public}");
     assert_eq!(public["route"], "dom", "{public}");
     assert_eq!(public["delivery"]["mode"], "background", "{public}");
-    assert_eq!(public["escalation"]["target"], "page", "{public}");
-    assert_eq!(
-        public["escalation"]["reason"], "effect_unconfirmed",
-        "{public}"
-    );
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert!(public["escalation"].is_null(), "{public}");
     assert!(public.get("status").is_none(), "{public}");
     let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
     let click_sequence = dispatches
@@ -2941,6 +2965,84 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
     assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn dom_event_click_reports_suspected_noop_for_readable_unchanged_target_state() {
+    let f = fixture_with(|state| state.dom_click_changes_readback = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert_eq!(structured(&result)["effect"], "suspected_noop");
+    assert_eq!(structured(&result)["observed"], json!({}));
+    assert_eq!(structured(&result)["readback_available"], true);
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("suspected no-op is advisory, not proof of failure")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "suspected_noop", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert_eq!(public["escalation"]["target"], "page", "{public}");
+    assert_eq!(public["escalation"]["reason"], "suspected_noop", "{public}");
+}
+
+#[tokio::test]
+async fn dom_event_click_remains_unverifiable_when_semantic_readback_is_unavailable() {
+    let f = fixture_with(|state| state.dom_click_readback_available = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert_eq!(structured(&result)["effect"], "unverifiable");
+    assert!(structured(&result)["observed"].is_null());
+    assert_eq!(structured(&result)["readback_available"], false);
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("semantic target readback was unavailable")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert!(public["evidence"].is_null(), "{public}");
+    assert_eq!(
+        public["escalation"]["reason"], "effect_unconfirmed",
+        "{public}"
+    );
 }
 
 #[tokio::test]

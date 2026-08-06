@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.19.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.18.0...cua-driver-rs-v0.19.0) (2026-08-06)
+
+
+### Features
+
+* **cua-driver:** support Prime Agent skill onboarding ([#2944](https://github.com/trycua/cua/issues/2944)) ([0f796d0](https://github.com/trycua/cua/commit/0f796d0659877bee3404d11eef566cfbcbf8edf1))
+
+
+### Bug Fixes
+
+* **cua-driver:** Linux cursor overlay compositing, xrdp-family servers, and resting float ([#2940](https://github.com/trycua/cua/issues/2940)) ([997d6d8](https://github.com/trycua/cua/commit/997d6d86433254ccf12e5dbf1edcb46bf05eb5ac))
+* **cua-driver:** resolve SDK release from run artifacts ([#2926](https://github.com/trycua/cua/issues/2926)) ([3cd9de9](https://github.com/trycua/cua/commit/3cd9de9a32bf6b4a98a2186c1535054bd740bb21))
+
 ## [0.18.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.17.0...cua-driver-rs-v0.18.0) (2026-08-05)
 
 

@@ -26,6 +26,12 @@ runtime-neutral agent boundary.
 only the tools and resources in a reviewed manifest. `unrestricted` requires
 `--dangerously-bypass-approvals`.
 
+The mode belongs to the process that owns the runtime and is fixed at launch:
+`cua-driver serve` takes the flags, `cua-driver mcp` and embedding hosts use the
+matching `CUA_DRIVER_PERMISSION_MODE`, `CUA_DRIVER_SESSION_POLICY_FILE`, and
+`CUA_DRIVER_SESSION_POLICY_APPROVED` variables. Choose it before starting the
+daemon; a running daemon must be restarted to change it.
+
 Attaching to an existing logged-in Chromium profile remains explicit:
 
 ```bash

@@ -13,6 +13,12 @@ it running when you use those interfaces. Applications that import
 `CuaDriver.create()` execute through the same-process SDK and do not need this
 setup.
 
+Every entry below starts the daemon in the default `standard`
+[permission mode](/reference/cua-driver/permission-modes). The mode is fixed at
+launch, so a `bounded` or `unrestricted` daemon needs that configuration in the
+autostart entry itself — see [Pin a permission
+mode](#pin-a-permission-mode).
+
 <Tabs items={['macOS', 'Windows', 'Linux']}>
   <Tab value="macOS">
 
@@ -141,6 +147,93 @@ A headless box has no `graphical-session.target`, so on those machines also chan
 
   </Tab>
 </Tabs>
+
+## Pin a permission mode
+
+`--permission-mode`, `--session-policy`, `--approve-session-policy`, and
+`--dangerously-bypass-approvals` are read once, when the daemon starts. Put them
+in the autostart entry so an unattended restart comes back in the same mode
+instead of falling back to `standard`.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+Add each flag as its own `<string>` inside `ProgramArguments`, after `serve`:
+
+```xml
+<key>ProgramArguments</key>
+<array>
+  <string>/Applications/CuaDriver.app/Contents/MacOS/cua-driver</string>
+  <string>serve</string>
+  <string>--permission-mode</string>
+  <string>bounded</string>
+  <string>--session-policy</string>
+  <string>/Users/you/cua-session.yaml</string>
+  <string>--approve-session-policy</string>
+</array>
+```
+
+`launchd` does not expand `~` or run a shell, so the manifest path must be
+absolute. Reload the agent after editing:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+launchctl load  ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+`cua-driver autostart enable` always registers a bare `serve` command and has no
+mode flags, so configure the equivalent User-scope environment variables. The
+Scheduled Task inherits them at logon:
+
+```powershell
+setx CUA_DRIVER_PERMISSION_MODE bounded
+setx CUA_DRIVER_SESSION_POLICY_FILE "$env:USERPROFILE\cua-session.yaml"
+setx CUA_DRIVER_SESSION_POLICY_APPROVED 1
+```
+
+`setx` affects new processes only, so restart the daemon for the change to take
+effect:
+
+```powershell
+cua-driver stop
+cua-driver autostart kick
+```
+
+  </Tab>
+  <Tab value="Linux">
+
+Extend `ExecStart` in `~/.config/systemd/user/cua-driver.service`:
+
+```ini
+ExecStart=%h/.local/bin/cua-driver serve --permission-mode bounded --session-policy %h/cua-session.yaml --approve-session-policy
+```
+
+Then reload and restart the unit:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart cua-driver.service
+```
+
+  </Tab>
+</Tabs>
+
+Every form is trusted launch configuration: anyone who can edit the plist, the
+Scheduled Task, the systemd unit, or those environment variables can change the
+mode the daemon comes back in. Bad configuration fails startup rather than
+silently downgrading to `standard` — a bounded daemon with no approved manifest,
+or `unrestricted` without its acknowledgement, does not bind its action socket
+at all. Confirm the daemon is up, then make one call your manifest does not
+allow and check that it is refused:
+
+```bash
+cua-driver status
+cua-driver call <a tool outside allow.tools> '{}'
+# Error: ...
+```
 
 ## Verify it's running
 

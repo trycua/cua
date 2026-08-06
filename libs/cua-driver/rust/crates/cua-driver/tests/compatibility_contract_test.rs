@@ -84,6 +84,24 @@ fn released_cli_help_and_manifest_fields_remain_compatible() {
 }
 
 #[test]
+fn prime_agent_connection_guidance_uses_the_skill_and_cli_path() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["mcp-config", "--client", "prime-agent"])
+        .output()
+        .expect("run Prime Agent connection guidance");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 guidance");
+    assert!(stdout.contains("skills install"), "{stdout}");
+    assert!(stdout.contains("skills status"), "{stdout}");
+    assert!(
+        stdout.contains("No MCP registration is required"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("snapshot/action/verify"), "{stdout}");
+}
+
+#[test]
 fn released_mcp_initialize_tools_list_and_error_fields_remain_compatible() {
     let fixture: Value = serde_json::from_str(MCP_FIXTURE).expect("valid MCP fixture");
     let Some(mut driver) = RawDriver::spawn() else {

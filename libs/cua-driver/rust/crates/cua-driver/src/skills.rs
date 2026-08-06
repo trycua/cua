@@ -43,6 +43,7 @@
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
+//! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
 //!   `%APPDATA%\opencode\skills\` (Windows)
@@ -201,6 +202,10 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".agents/skills"),
     },
     Agent {
+        label: "Prime Agent",
+        parent: AgentParent::Home(".prime/agent/skills"),
+    },
+    Agent {
         label: "OpenClaw",
         parent: AgentParent::Home(".openclaw/skills"),
     },
@@ -331,7 +336,7 @@ fn install(flags: &[String], force: bool) -> Result<()> {
         }
     }
     if !linked_any {
-        println!("(No agent skills dirs present yet — install Claude Code / Codex / OpenClaw / OpenCode / Antigravity / Hermes then re-run.)");
+        println!("(No agent skills dirs present yet — install Claude Code / Codex / Prime Agent / OpenClaw / OpenCode / Antigravity / Hermes then re-run.)");
     }
     Ok(())
 }
@@ -776,9 +781,22 @@ fn print_path() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_tar_gz, SKILL_FILES};
+    use super::{extract_tar_gz, AgentParent, AGENTS, SKILL_FILES};
     use std::path::PathBuf;
     use tempfile::tempdir;
+
+    #[test]
+    fn prime_agent_target_matches_its_native_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Prime Agent")
+            .expect("Prime Agent must remain a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".prime/agent/skills")
+        ));
+    }
 
     /// Build a gzipped tarball with the entries given as
     /// `(path, contents)` pairs. Returns the raw `.tar.gz` bytes.

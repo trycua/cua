@@ -58,7 +58,8 @@ impl Tool for GetAccessibilitySurfacesTool {
             Ok(Ok(observation)) => observation,
             Ok(Err(failure)) => {
                 return ToolResult::error(format!(
-                    "accessibility surface observation failed for pid={pid}: {failure}"
+                    "accessibility surface observation failed for pid={pid} during {}",
+                    failure.operation
                 ))
                 .with_structured(json!({
                     "code": "ax_observation_failed",

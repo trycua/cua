@@ -3,21 +3,20 @@
 use super::bindings::*;
 use core_foundation::{
     array::{CFArray, CFArrayRef},
-    base::{CFGetTypeID, CFRelease, CFRetain, CFTypeRef, TCFType},
+    base::{CFType, CFTypeRef, TCFType},
     string::CFString,
 };
 use serde::Serialize;
-use std::fmt;
 
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
 
 fn is_surface_candidate(
     role: &str,
-    owner_pid: Option<i32>,
+    owner_pid: i32,
     requested_pid: i32,
     window_id: Option<u32>,
 ) -> bool {
-    role == "AXWindow" && owner_pid == Some(requested_pid) && window_id.is_none()
+    role == "AXWindow" && owner_pid == requested_pid && window_id.is_none()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -56,19 +55,6 @@ impl ObservationFailure {
     }
 }
 
-impl fmt::Display for ObservationFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}", self.operation)?;
-        if let Some(attribute) = self.attribute {
-            write!(formatter, "({attribute})")?;
-        }
-        if let Some(error) = &self.ax_error {
-            write!(formatter, " failed with {} ({})", error.name, error.code)?;
-        }
-        Ok(())
-    }
-}
-
 #[allow(non_upper_case_globals)]
 fn ax_error_name(error: AXError) -> &'static str {
     match error {
@@ -92,18 +78,8 @@ fn ax_error_name(error: AXError) -> &'static str {
     }
 }
 
-struct OwnedAxElement(AXUIElementRef);
-
-impl OwnedAxElement {
-    fn as_ptr(&self) -> AXUIElementRef {
-        self.0
-    }
-}
-
-impl Drop for OwnedAxElement {
-    fn drop(&mut self) {
-        unsafe { CFRelease(self.0 as CFTypeRef) };
-    }
+fn ax_ref(element: &CFType) -> AXUIElementRef {
+    element.as_CFTypeRef() as AXUIElementRef
 }
 
 #[allow(non_upper_case_globals)]
@@ -132,7 +108,7 @@ unsafe fn copy_element_at(
     element: AXUIElementRef,
     attribute: &'static str,
     index: usize,
-) -> Result<OwnedAxElement, ObservationFailure> {
+) -> Result<CFType, ObservationFailure> {
     let attribute_ref = CFString::new(attribute);
     let mut values: CFArrayRef = std::ptr::null();
     let error = AXUIElementCopyAttributeValues(
@@ -150,23 +126,19 @@ unsafe fn copy_element_at(
         ));
     }
     if values.is_null() {
+        return Err(ObservationFailure::unavailable("null_attribute_values"));
+    }
+    let array = CFArray::<CFType>::wrap_under_create_rule(values);
+    let value = array
+        .get(0)
+        .map(|value| (*value).clone())
+        .ok_or_else(|| ObservationFailure::unavailable("empty_attribute_values"))?;
+    if value.type_of() != AXUIElementGetTypeID() {
         return Err(ObservationFailure::unavailable(
-            "copy_attribute_values_returned_null",
+            "non_element_attribute_value",
         ));
     }
-    let array = CFArray::<CFTypeRef>::wrap_under_create_rule(values);
-    let Some(value) = array.get(0).map(|item| *item) else {
-        return Err(ObservationFailure::unavailable(
-            "copy_attribute_values_returned_empty",
-        ));
-    };
-    if CFGetTypeID(value) != AXUIElementGetTypeID() {
-        return Err(ObservationFailure::unavailable(
-            "copy_attribute_values_returned_non_element",
-        ));
-    }
-    CFRetain(value);
-    Ok(OwnedAxElement(value as AXUIElementRef))
+    Ok(value)
 }
 
 unsafe fn required_pid(
@@ -193,13 +165,13 @@ unsafe fn required_role(element: AXUIElementRef) -> Result<String, ObservationFa
             error,
         ));
     }
-    if value.is_null() || CFGetTypeID(value) != CFString::type_id() {
-        if !value.is_null() {
-            CFRelease(value);
-        }
+    if value.is_null() {
         return Err(ObservationFailure::unavailable("invalid_ax_role"));
     }
-    Ok(CFString::wrap_under_create_rule(value as _).to_string())
+    CFType::wrap_under_create_rule(value)
+        .downcast_into::<CFString>()
+        .map(|role| role.to_string())
+        .ok_or_else(|| ObservationFailure::unavailable("invalid_ax_role"))
 }
 
 #[allow(non_upper_case_globals)]
@@ -276,9 +248,9 @@ pub fn observe_surfaces(
         if application_ref.is_null() {
             return Err(ObservationFailure::unavailable("create_application"));
         }
-        let application = OwnedAxElement(application_ref);
+        let application = CFType::wrap_under_create_rule(application_ref as CFTypeRef);
         let timeout_error =
-            AXUIElementSetMessagingTimeout(application.as_ptr(), AX_MESSAGING_TIMEOUT_SECONDS);
+            AXUIElementSetMessagingTimeout(ax_ref(&application), AX_MESSAGING_TIMEOUT_SECONDS);
         if timeout_error != kAXErrorSuccess {
             return Err(ObservationFailure::ax(
                 "set_messaging_timeout",
@@ -286,12 +258,12 @@ pub fn observe_surfaces(
                 timeout_error,
             ));
         }
-        let window_count = attribute_count(application.as_ptr(), "AXWindows", false)?;
+        let window_count = attribute_count(ax_ref(&application), "AXWindows", false)?;
 
         for window_index in 0..window_count {
-            let window = copy_element_at(application.as_ptr(), "AXWindows", window_index)?;
+            let window = copy_element_at(ax_ref(&application), "AXWindows", window_index)?;
             let timeout_error =
-                AXUIElementSetMessagingTimeout(window.as_ptr(), AX_MESSAGING_TIMEOUT_SECONDS);
+                AXUIElementSetMessagingTimeout(ax_ref(&window), AX_MESSAGING_TIMEOUT_SECONDS);
             if timeout_error != kAXErrorSuccess {
                 return Err(ObservationFailure::ax(
                     "set_messaging_timeout",
@@ -299,10 +271,10 @@ pub fn observe_surfaces(
                     timeout_error,
                 ));
             }
-            let role = required_role(window.as_ptr())?;
-            let owner_pid = required_pid(window.as_ptr(), Some("AXWindows"))?;
-            let window_id = window_id_or_absent(window.as_ptr())?;
-            if !is_surface_candidate(&role, Some(owner_pid), pid, window_id) {
+            let role = required_role(ax_ref(&window))?;
+            let owner_pid = required_pid(ax_ref(&window), Some("AXWindows"))?;
+            let window_id = window_id_or_absent(ax_ref(&window))?;
+            if !is_surface_candidate(&role, owner_pid, pid, window_id) {
                 continue;
             }
 
@@ -311,16 +283,27 @@ pub fn observe_surfaces(
                 result.truncated = true;
                 break;
             }
-            let (nodes, truncated) = observe_tree(window.as_ptr(), pid, remaining, max_depth)?;
+            let mut nodes = Vec::new();
+            let mut truncated = false;
+            walk_observation(
+                ax_ref(&window),
+                pid,
+                0,
+                None,
+                remaining,
+                max_depth,
+                &mut nodes,
+                &mut truncated,
+            )?;
             result.node_count += nodes.len();
             result.truncated |= truncated;
             result.surfaces.push(SurfaceObservation {
                 kind: "ax_window",
                 role,
-                subrole: copy_string_attr(window.as_ptr(), "AXSubrole"),
-                title: nonempty_attr(window.as_ptr(), "AXTitle"),
-                identifier: nonempty_attr(window.as_ptr(), "AXIdentifier"),
-                frame: element_screen_rect(window.as_ptr()),
+                subrole: copy_string_attr(ax_ref(&window), "AXSubrole"),
+                title: nonempty_attr(ax_ref(&window), "AXTitle"),
+                identifier: nonempty_attr(ax_ref(&window), "AXIdentifier"),
+                frame: element_screen_rect(ax_ref(&window)),
                 nodes,
                 truncated,
             });
@@ -331,27 +314,6 @@ pub fn observe_surfaces(
 
 unsafe fn nonempty_attr(element: AXUIElementRef, name: &str) -> Option<String> {
     copy_string_attr(element, name).filter(|value| !value.trim().is_empty())
-}
-
-unsafe fn observe_tree(
-    root: AXUIElementRef,
-    pid: i32,
-    max_elements: usize,
-    max_depth: usize,
-) -> Result<(Vec<ObservationNode>, bool), ObservationFailure> {
-    let mut nodes = Vec::new();
-    let mut truncated = false;
-    walk_observation(
-        root,
-        pid,
-        0,
-        None,
-        max_elements,
-        max_depth,
-        &mut nodes,
-        &mut truncated,
-    )?;
-    Ok((nodes, truncated))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -410,7 +372,7 @@ unsafe fn walk_observation(
         }
         let child = copy_element_at(element, "AXChildren", child_index)?;
         walk_observation(
-            child.as_ptr(),
+            ax_ref(&child),
             pid,
             depth + 1,
             Some(index),
@@ -448,11 +410,10 @@ mod tests {
 
     #[test]
     fn discovery_selects_only_same_pid_ax_windows_without_cg_identity() {
-        assert!(is_surface_candidate("AXWindow", Some(7), 7, None));
-        assert!(!is_surface_candidate("AXWindow", Some(8), 7, None));
-        assert!(!is_surface_candidate("AXWindow", Some(7), 7, Some(42)));
-        assert!(!is_surface_candidate("AXGroup", Some(7), 7, None));
-        assert!(!is_surface_candidate("AXWindow", None, 7, None));
+        assert!(is_surface_candidate("AXWindow", 7, 7, None));
+        assert!(!is_surface_candidate("AXWindow", 8, 7, None));
+        assert!(!is_surface_candidate("AXWindow", 7, 7, Some(42)));
+        assert!(!is_surface_candidate("AXGroup", 7, 7, None));
     }
 
     #[test]

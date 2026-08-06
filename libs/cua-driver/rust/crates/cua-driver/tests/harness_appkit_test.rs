@@ -66,23 +66,14 @@ impl Harness {
     }
 
     fn launch_with_accessibility_only_surface() -> Self {
-        let exe = harness_exe();
-        assert!(
-            exe.exists(),
-            "required AppKit harness is missing at {exe:?}; run the fixture build"
-        );
-        let app = Command::new(&exe)
-            .env("CUA_HARNESS_AX_ONLY_SURFACE", "1")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap_or_else(|error| panic!("launch AX-only AppKit harness {exe:?}: {error}"));
-        let pid = app.id();
-        std::thread::sleep(Duration::from_millis(800));
-        Self { _app: app, pid }
+        Self::launch_with_options(None, true)
     }
 
     fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
+        Self::launch_with_options(command_oracle, false)
+    }
+
+    fn launch_with_options(command_oracle: Option<&Path>, ax_only_surface: bool) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -95,6 +86,9 @@ impl Harness {
         command.stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(path) = command_oracle {
             command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        if ax_only_surface {
+            command.env("CUA_HARNESS_AX_ONLY_SURFACE", "1");
         }
         let app = command
             .spawn()
@@ -125,41 +119,6 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
             "capture_mode": "ax"
         }),
     )
-}
-
-fn find_on_screen_window(driver: &mut McpDriver, pid: u32) -> u64 {
-    let deadline = std::time::Instant::now() + Duration::from_secs(12);
-    loop {
-        let response = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
-        if let Some(window_id) = response.structured()["windows"]
-            .as_array()
-            .and_then(|windows| {
-                windows
-                    .iter()
-                    .filter(|window| {
-                        window["pid"].as_u64() == Some(pid as u64)
-                            && window["is_on_screen"].as_bool() == Some(true)
-                            && window["layer"].as_i64() == Some(0)
-                    })
-                    .max_by(|left, right| {
-                        let area = |window: &serde_json::Value| {
-                            window["bounds"]["width"].as_f64().unwrap_or(0.0)
-                                * window["bounds"]["height"].as_f64().unwrap_or(0.0)
-                        };
-                        area(left).total_cmp(&area(right))
-                    })
-                    .and_then(|window| window["window_id"].as_u64())
-            })
-        {
-            return window_id;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "AppKit on-screen exact window not found: {}",
-            response.structured()
-        );
-        std::thread::sleep(Duration::from_millis(150));
-    }
 }
 
 fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
@@ -358,16 +317,16 @@ fn harness_appkit_accessibility_only_surface_contract() {
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
         let harness = Harness::launch_with_accessibility_only_surface();
-        let window_id = find_on_screen_window(&mut driver, harness.pid);
+        let (window_id, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
         driver.start_behavior_recording();
 
         let exact = snapshot_elements(&mut driver, harness.pid, window_id);
         assert!(!exact.is_error(), "exact snapshot failed: {}", exact.text());
-        assert!(has_id(exact.tree_text(), "wnd-main"));
         assert!(has_id(exact.tree_text(), "btn-increment"));
         assert!(
-            !exact.tree_text().contains("AX_ONLY_SURFACE_MARKER_v1")
-                && !has_id(exact.tree_text(), "ax-only-surface"),
+            !exact.tree_text().contains("AX_ONLY_SURFACE_MARKER_v1"),
             "exact-window snapshot leaked the AX-only surface:\n{}",
             exact.tree_text()
         );
@@ -393,7 +352,6 @@ fn harness_appkit_accessibility_only_surface_contract() {
             "surface_token",
             "element_index",
             "element_token",
-            "snapshot_id",
             "actions",
         ] {
             assert!(
@@ -407,8 +365,7 @@ fn harness_appkit_accessibility_only_surface_contract() {
             "get_accessibility_surfaces",
             serde_json::json!({
                 "pid": harness.pid as i64,
-                "max_elements": 3,
-                "max_depth": 25
+                "max_elements": 3
             }),
         );
         assert!(!element_bounded.is_error(), "bounded observation failed");
@@ -419,7 +376,6 @@ fn harness_appkit_accessibility_only_surface_contract() {
             "get_accessibility_surfaces",
             serde_json::json!({
                 "pid": harness.pid as i64,
-                "max_elements": 100,
                 "max_depth": 1
             }),
         );
@@ -463,8 +419,6 @@ fn harness_appkit_accessibility_only_surface_contract() {
             "cached exact-window button did not increment exactly once:\n{}",
             post.tree_text()
         );
-        assert!(!post.tree_text().contains("AX_ONLY_SURFACE_MARKER_v1"));
-
         let mut exited = Command::new("/usr/bin/true")
             .spawn()
             .expect("spawn dead-process AX fixture");

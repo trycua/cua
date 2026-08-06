@@ -560,40 +560,17 @@ final class AccessibilityOnlySurfaceFixture {
         root.setAccessibilityFrame(NSRect(x: 40, y: 40, width: 360, height: 260))
         root.setAccessibilityParent(application)
 
-        let marker = element(
-            role: .staticText,
-            identifier: "ax-only-marker",
-            label: kAxOnlySurfaceMarker,
-            parent: root)
-
-        var directChildren: [NSAccessibilityElement] = [marker]
-        for index in 0..<8 {
-            directChildren.append(element(
-                role: .staticText,
-                identifier: "ax-only-wide-\(index)",
-                label: "ax-only-wide-value-\(index)",
-                parent: root))
+        let marker = element(.staticText, "ax-only-marker", kAxOnlySurfaceMarker, root)
+        let wide = (0..<8).map { index in
+            element(.staticText, "ax-only-wide-\(index)", "ax-only-wide-value-\(index)", root)
         }
-
-        let depthOne = element(
-            role: .group,
-            identifier: "ax-only-depth-1",
-            label: "depth-one",
-            parent: root)
-        let depthTwo = element(
-            role: .group,
-            identifier: "ax-only-depth-2",
-            label: "depth-two",
-            parent: depthOne)
+        let depthOne = element(.group, "ax-only-depth-1", "depth-one", root)
+        let depthTwo = element(.group, "ax-only-depth-2", "depth-two", depthOne)
         let depthThree = element(
-            role: .staticText,
-            identifier: "ax-only-depth-3",
-            label: "AX_ONLY_DEEP_MARKER_v1",
-            parent: depthTwo)
+            .staticText, "ax-only-depth-3", "AX_ONLY_DEEP_MARKER_v1", depthTwo)
         depthTwo.setAccessibilityChildren([depthThree])
         depthOne.setAccessibilityChildren([depthTwo])
-        directChildren.append(depthOne)
-        root.setAccessibilityChildren(directChildren)
+        root.setAccessibilityChildren([marker] + wide + [depthOne])
 
         // Put the synthetic surface first so a small global query budget can
         // observe and truncate it without scanning unrelated native windows.
@@ -601,10 +578,10 @@ final class AccessibilityOnlySurfaceFixture {
     }
 
     private func element(
-        role: NSAccessibility.Role,
-        identifier: String,
-        label: String,
-        parent: Any
+        _ role: NSAccessibility.Role,
+        _ identifier: String,
+        _ label: String,
+        _ parent: Any
     ) -> NSAccessibilityElement {
         let element = NSAccessibilityElement()
         element.setAccessibilityRole(role)

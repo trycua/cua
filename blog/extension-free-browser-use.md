@@ -2,27 +2,32 @@
 
 _Published on August 6, 2026 by Francesco Bonacci_
 
-Today, we're launching what we believe is the first extension-free browser-use interface built into an agent-neutral computer-use driver. Cua Driver binds an exact Chromium tab to its native process and window, giving coding agents page-aware browser actions and full desktop control in the same session, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.19.0.
+Browser agents usually ask you to make a choice. Give the agent a separate browser, or install an extension into the browser where you already work. Both approaches can be useful, but both turn the browser into a special environment.
+
+Today, we are launching what we believe is the first extension-free browser-use interface built into an agent-neutral computer-use driver. Cua Driver connects an exact Chromium tab to its native process and window, giving agents page-aware browser actions and full desktop control in the same session. It is stable and available in Cua Driver 0.19.0.
 
 ![Cua Driver: extension-free browser use across Chromium tabs and native desktop applications](https://github.com/user-attachments/assets/c5f489b6-a9b8-4c0a-9cd8-e52b5f4f4f01)
 
-_Cua Driver combines page-aware browser actions with native desktop control in one named session._
+_Page-aware browser actions and native desktop control, inside one named session._
 
-Cua Driver began as a CLI for coding agents to operate desktop apps. Its operating-system plumbing also offered a path to browser use: connect an exact native browser window to its page context while keeping the desktop in reach.
+This started as a practical realization. Cua Driver already knew how to identify native windows, inspect accessibility state, deliver input, preserve focus, and verify what changed. The browser was not a separate world. It was another native application, with an unusually rich page interface behind it.
 
-Existing approaches make a different tradeoff. [Claude Code connects to a Chrome extension](https://code.claude.com/docs/en/chrome) that shares the user's signed-in browser state and exposes page and browser tools. [Codex offers an in-app browser](https://learn.chatgpt.com/docs/browser?surface=app) with a separate profile and optional full CDP access, plus [a Chrome extension](https://learn.chatgpt.com/docs/chrome-extension) for existing tabs and the regular Chrome profile.
+The opportunity was to connect those two views precisely. If the driver could prove that one operating-system window and one browser tab were the same surface, an agent could use semantic browser actions inside the page and return to native controls whenever the workflow left it.
 
-Cua Driver instead puts the bridge in an agent-neutral computer-use driver. It binds an operating-system process and native window to an exact Chrome or Edge tab, then keeps page-aware CDP actions and native desktop control in one named session. An agent can move among the document, browser chrome, permission UI, file pickers, terminals, editors, and other apps without an extension or embedded browser.
+That is the product we wanted: not a browser agent trapped inside a browser, but a computer-use agent that becomes much better at the web.
 
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/63ea24a8-7c6c-41b0-8d82-2bb672d6cbc6" poster="https://github.com/user-attachments/assets/b01007af-ed8a-4ebd-b305-81594c8e9df1" width="760" controls></video>
-</div>
+## The browser is part of the computer
 
-_Cua Driver launches an isolated Edge profile, binds its exact native window to loopback CDP, and verifies the result without a browser extension._
+A real workflow rarely stays inside a document. It can begin in a terminal, continue across several authenticated tabs, open a native file picker, trigger a permission prompt, and end in an editor or desktop app. The source data and the final confirmation may live somewhere else entirely.
 
-## From coding agents to agents that can do work
+Cua Driver keeps that work inside one session. The harness can choose the best interface at each step:
 
-Cua Driver started with coding agents, but I now use it from general agent harnesses, including [the Codex app](https://openai.com/index/introducing-the-codex-app/) and [Claude Cowork](https://www.anthropic.com/product/claude-cowork). I use the setup for forms, payroll portals, and repetitive Slack and Discord tasks. Their source data, authenticated page, native confirmation, and follow-up often span several interfaces. I keep consequential decisions and submissions behind an approval.
+- local files and shell commands;
+- typed browser state and actions;
+- native accessibility and input;
+- window and page screenshots.
+
+I now use this from coding and general agent harnesses, including [the Codex app](https://openai.com/index/introducing-the-codex-app/) and [Claude Cowork](https://www.anthropic.com/product/claude-cowork). The same setup can work through forms, internal tools, payroll portals, Slack, Discord, terminals, and editors. I keep consequential decisions and submissions behind an approval, but I do not want to take over every time the task crosses an interface boundary.
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/4c155fba-2e8f-492f-a40e-e142199edd42" poster="https://github.com/user-attachments/assets/a52997f7-b854-46b2-a00b-e34f436a47e8" width="760" controls></video>
@@ -30,36 +35,55 @@ Cua Driver started with coding agents, but I now use it from general agent harne
 
 _Cua Driver operates Chrome while Terminal remains foreground and the physical mouse remains untouched._
 
-Cua Driver lets the harness choose among local files and shell commands, semantic page state, typed browser actions, native accessibility and input, and window screenshots. The same session can handle navigation, dialogs, uploads, approved downloads, browser chrome, permission UI, file pickers, and other desktop apps.
+Existing browser integrations make different tradeoffs. [Claude Code connects to a Chrome extension](https://code.claude.com/docs/en/chrome) that shares the signed-in browser state and exposes browser tools. [Codex offers an in-app browser](https://learn.chatgpt.com/docs/browser?surface=app) with a separate profile and optional full CDP access, plus [a Chrome extension](https://learn.chatgpt.com/docs/chrome-extension) for existing tabs and the regular Chrome profile.
 
-It carries work across these boundaries without handing it back at every transition.
+Cua Driver puts the bridge below the agent, inside an agent-neutral computer-use driver. It works through CLI, MCP, Python, and TypeScript without requiring the agent host to own a browser integration.
 
-## No extension, one exact browser connection
+## One exact connection
 
-Cua Driver uses the Chrome DevTools Protocol, or CDP, for page-aware browser operations. CDP can inspect a document, address a specific tab, and perform declared actions without borrowing the user's keyboard or physical pointer.
+Under the hood, Cua Driver uses the Chrome DevTools Protocol, or CDP, for page-aware operations. CDP can inspect a document, address an exact tab, and perform declared actions without borrowing the user's keyboard or physical pointer.
 
-Using CDP safely requires more than opening a debugging port. A browser has two identities:
-
-- the operating system sees a process and a native window;
-- the browser runtime sees DevTools targets and tabs.
-
-Before a page mutation, Cua Driver proves that both identities describe the same surface.
+The hard part is not opening a debugging port. A browser has two identities: the operating system sees a process and native window, while the browser runtime sees DevTools targets and tabs. Before mutating a page, Cua Driver proves that both identities describe the same surface.
 
 ![Cua Driver: MCP, CLI, and SDK routes converge on an exact process, window, and Chromium tab](https://github.com/user-attachments/assets/5fefe69b-9670-4e04-9063-dffce4106c39)
 
-_Cua Driver keeps native OS actions and page-aware CDP actions inside one exact, session-scoped browser binding._
+_Every integration route converges on one session-scoped browser binding._
 
-Starting from a process id and native window id, Cua Driver verifies that the loopback DevTools endpoint belongs to that process, correlates the browser and native window, and returns opaque capabilities for the target and tabs. Capabilities belong to one named session, while element references belong to one semantic snapshot. Navigation, a newer snapshot, reconnection, or session end invalidates old references, forcing the agent to inspect fresh state. When work leaves page content, the session continues through native controls.
+Starting from a process id and window id, the driver verifies that the loopback DevTools endpoint belongs to that process, correlates the native window with the browser, and returns opaque capabilities for its target and tabs. Capabilities belong to one named session. Element references belong to one semantic snapshot. Navigation, reconnection, a newer snapshot, or session end invalidates old references, so the agent must inspect fresh state instead of acting on stale assumptions.
 
-## Remote debugging is an explicit boundary
+The public loop stays simple:
 
-CDP has broad authority over a Chromium profile, so Cua Driver never enables remote debugging as a side effect of inspection. Setup requires a separate approved `browser_prepare` operation. The recommended route launches a driver-owned isolated profile, never copies the user's normal profile, and removes an `isolated_new` profile when its session ends.
+```text
+start_session
+list_windows
+get_browser_state(pid, window_id, session)
+get_browser_state(target_id, tab_id, session, semantic_v2)
+browser_navigate / browser_click / browser_type / browser_pointer
+get_browser_state(target_id, tab_id, session, semantic_v2)
+end_session
+```
 
-Browser access uses a session-scoped permission model that an agent cannot promote while running. Standard mode allows routine observation, input, file transfer, and isolated browser use without Cua prompts. Attaching an existing signed-in profile is protected: a standalone runtime needs an explicit launch policy such as `--grant existing-profile`, or an embedding app must authorize the exact resource through its host callback.
+The first browser-state call binds the native window. The next returns a semantic outline and short-lived action references. A fresh snapshot verifies the result.
 
-For unattended work, [bounded mode](https://cua.ai/docs/how-to-guides/driver/write-a-bounded-manifest) is the recommended scoped path. A reviewed manifest can allow `kind: existing_profile` while restricting tools, apps, origins, and files. Users who explicitly accept the risk can choose [unrestricted mode](https://cua.ai/docs/reference/cua-driver/permission-modes) with `cua-driver serve --dangerously-bypass-approvals`. It bypasses Cua approval checks after launch-time acknowledgement, so it should not be the default for a personal browser.
+Cua Driver can address an exact inactive tab without foregrounding the browser. It does not guess which tab is active from list order, and it does not silently replace a trusted pointer action with a JavaScript click. Proven routes act. Ambiguous or unsupported routes return structured refusals.
 
-For example, this bounded policy lets one session use an existing signed-in Chromium profile only through typed browser tools and only at `https://app.example.com`:
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/56de26d9-3433-46e3-b907-8b1aef6f12bf" poster="https://github.com/user-attachments/assets/cc42349c-2cbb-4c3a-afd4-f5f62919ee8b" width="760" controls></video>
+</div>
+
+_One coding-agent loop crosses three Chrome tabs, patches the component, and returns to two passing browser checks._
+
+Typed actions also drive a session-colored cursor overlay on macOS and Windows. Each session can have a stable color, while background work in inactive tabs stays visually quiet. The cursor is feedback, not the delivery mechanism. CDP performs the page action.
+
+## More power needs an explicit boundary
+
+CDP has broad authority over a Chromium profile. Cua Driver therefore never enables remote debugging as a side effect of inspection. Setup requires a separate `browser_prepare` operation.
+
+The recommended route launches a driver-owned isolated profile. It never copies the user's normal profile, and the profile is removed when its session ends.
+
+Attaching an existing signed-in Chrome or Edge profile is more sensitive. A standalone runtime needs an explicit launch grant such as `--grant existing-profile`, or an embedding application must authorize the exact resource through its host callback. An agent cannot promote its own permission mode while it is running.
+
+For unattended work, [bounded mode](https://cua.ai/docs/how-to-guides/driver/write-a-bounded-manifest) is the recommended path. A reviewed manifest can allow an existing profile while restricting tools, apps, origins, and files. For example:
 
 ```yaml
 version: 2
@@ -93,64 +117,25 @@ resources:
     display: false
 ```
 
-This uses Chrome's macOS bundle id; on Windows and Linux, use its canonical absolute executable path. Start it with `cua-driver serve --permission-mode bounded --session-policy ./cua-session.yaml --approve-session-policy`. Generic desktop input is omitted because it could bypass the origin check.
+Start it with `cua-driver serve --permission-mode bounded --session-policy ./cua-session.yaml --approve-session-policy`. The example uses Chrome's macOS bundle id; Windows and Linux use its canonical absolute executable path. Generic desktop input is deliberately omitted because it could bypass the origin restriction.
 
-The launch grant, host callback, bounded manifest, or unrestricted acknowledgement authorizes existing-profile attachment; Cua Driver adds no confirmation modal or persistent banner. The browser may show its own consent prompt. On supported Chrome and Edge configurations, Cua Driver can open the fixed debugging page, toggle the per-instance setting, verify its process, handle browser-owned consent, and close the setup tab. It does not edit or copy profiles, restart the browser, or terminate it.
+Users who explicitly accept the risk can choose [unrestricted mode](https://cua.ai/docs/reference/cua-driver/permission-modes) with `cua-driver serve --dangerously-bypass-approvals`. That bypasses Cua approval checks after launch-time acknowledgement, so it should not be the default for a personal browser.
 
-The grant is scoped to the daemon, session, process, window, and browser generation; restart or session end revokes it. Loopback blocks remote connections but not same-user software, so isolated profiles are the default and existing profiles require higher trust. No extension does not mean no consent. It means explicit, inspectable setup through the browser's debugging interface.
-
-## Exact tabs, including inactive ones
-
-After binding the native window and browser target, `get_browser_state` returns tabs and selection state. An agent can inspect and operate an exact inactive tab without foregrounding the browser or disturbing the user.
-
-Cua Driver does not infer the active tab from list order. If the native window title proves one selected tab, it reports `active: true`. With duplicate or empty titles, candidates report `active: null`. They remain addressable, but the agent cannot claim an ambiguous tab is selected.
-
-Tools can snapshot or optionally screenshot an inactive tab without showing it. Navigation, ref-bound text, and explicit DOM clicks can address an occluded tab. Windows Chrome and Edge support validated trusted background pointer delivery. Standalone Chromium on macOS and Linux would activate, so Cua Driver refuses before dispatch and lets callers explicitly choose DOM event semantics. It never substitutes a synthetic JavaScript click for a trusted click.
-
-## Multiple sessions you can actually follow
-
-On macOS and Windows, typed browser actions drive the session-scoped cursor overlay. Clicks and typing pulse a synthetic cursor at the live target without moving the physical pointer. Each tab can have a session and stable cursor color; inactive-tab cursors stay hidden during background actions.
+Cua Driver adds no confirmation modal or persistent banner. The launch policy is the authorization boundary, and the browser may show its own debugging consent. No extension does not mean no consent. It means setup and authority are explicit and inspectable.
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/56de26d9-3433-46e3-b907-8b1aef6f12bf" poster="https://github.com/user-attachments/assets/cc42349c-2cbb-4c3a-afd4-f5f62919ee8b" width="760" controls></video>
+  <video src="https://github.com/user-attachments/assets/63ea24a8-7c6c-41b0-8d82-2bb672d6cbc6" poster="https://github.com/user-attachments/assets/b01007af-ed8a-4ebd-b305-81594c8e9df1" width="760" controls></video>
 </div>
 
-_One coding-agent loop crosses three real Chrome tabs, patches the component, and returns to two passing browser checks._
+_Cua Driver launches an isolated Edge profile, binds its exact native window to loopback CDP, and verifies the result without a browser extension._
 
-Concurrent sessions remain recordable and auditable: inactive tabs are addressable, but only the active tab's colored pointer appears. Navigation does not invent pointer motion, so recordings can explain it with text. The pointer is feedback; CDP delivers the action.
+## Early results, and what they do not prove
 
-## The browser loop
+We are testing on [OSWorld 2.0](https://arxiv.org/abs/2606.29537), 108 long-horizon workflows across websites, desktop apps, and local artifacts. [OpenAI reports a 62.6% aggregate score for GPT-5.6 Sol](https://openai.com/index/gpt-5-6/). Our smaller paired ablation is not a reproduction. It asks a narrower question: what changes when an agent gets typed CDP state and actions alongside screenshots and native accessibility?
 
-The public browser interface follows the same snapshot, action, verification pattern as the rest of Cua Driver:
+We prespecified 46 Chrome-related tasks with a $590 campaign cap and $35 cap per pair. Each pair used GPT-5.6 Sol at medium reasoning for at most 80 steps per arm on OSWorld 2.0 `v2026.06.24`. Both arms ran on the same fresh 2-vCPU, 8-GiB Linux VM. The treatment added exact-tab CDP snapshots and typed actions. The experiment used a source-pinned development build based on Cua Driver 0.12.6, not the public release binary.
 
-```text
-start_session
-list_windows
-get_browser_state(pid, window_id, session)
-get_browser_state(target_id, tab_id, session, semantic_v2)
-browser_navigate / browser_click / browser_type / browser_pointer
-get_browser_state(target_id, tab_id, session, semantic_v2)
-end_session
-```
-
-The initial browser-state call binds the native window. The next returns a semantic outline and short-lived action references for the selected tab. A fresh snapshot verifies the result and refreshes the controls.
-
-The current typed surface includes:
-
-- exact tab discovery, semantic snapshots, and opt-in inactive-tab screenshots;
-- navigation, ref-bound clicks and text, pointer actions, scroll, and drag;
-- page-owned dialogs, proven file inputs, and approval-gated downloads;
-- same-process frames, open shadow roots, and capability-tested out-of-process frames.
-
-Unsupported or ambiguous routes return structured refusals. Safari and Firefox remain available through native desktop fallbacks, without advertised typed browser mutation.
-
-## What an OSWorld 2.0 ablation is telling us
-
-We are testing on [OSWorld 2.0](https://arxiv.org/abs/2606.29537), 108 long-horizon workflows across websites, desktop apps, and local artifacts. [OpenAI reports a 62.6% aggregate score for GPT-5.6 Sol](https://openai.com/index/gpt-5-6/). Our narrower paired ablation is not a reproduction. It isolates the effect of adding typed CDP state and actions to screenshots and native accessibility.
-
-We prespecified 46 Chrome-related tasks with a $590 campaign cap and $35 cap per pair. Each pair runs GPT-5.6 Sol at medium reasoning for at most 80 steps per arm on official OSWorld 2.0 `v2026.06.24`. Both arms use the same fresh 2-vCPU, 8-GiB Linux VM, with an official reset between them. The control receives screenshots and native accessibility; treatment adds exact-tab CDP snapshots and typed actions. The experiment uses a source-pinned development build based on Cua Driver 0.12.6, not the public release binary. Infrastructure-invalid attempts are excluded from the treatment estimate rather than counted as failures.
-
-The capped July 29 snapshot has 37 valid pairs. Nine prespecified tasks were deferred rather than counted as model failures. The result is positive but inconclusive:
+The capped July 29 snapshot contains 37 valid pairs. Nine tasks were deferred rather than counted as model failures.
 
 | Paired OSWorld 2.0 result | Screenshot + accessibility | Screenshot + accessibility + CDP |
 | --- | ---: | ---: |
@@ -158,66 +143,43 @@ The capped July 29 snapshot has 37 valid pairs. Nine prespecified tasks were def
 | Mean model cost per task | $4.49 | $7.57 |
 | Mean wall time per task | 9.0 min | 10.2 min |
 
-The paired mean difference is **+0.0255**, or 2.55 percentage points. The 95% task-cluster bootstrap interval is **-0.0054 to +0.0766**; the exact paired sign-flip test gives **p = 0.5**. Treatment has two wins, 34 ties, and one loss. This positive direction is not statistically significant.
+The paired mean difference is **+0.0255**, or 2.55 percentage points. The 95% task-cluster bootstrap interval is **-0.0054 to +0.0766**; the exact paired sign-flip test gives **p = 0.5**. Treatment recorded two wins, 34 ties, and one loss. The direction is positive, but it is not statistically significant.
 
-Individual tasks show the interface's potential. On a route-planning task using local registration guidance and Google Maps, the combined arm scored 0.2857 versus 0. On a reviewer-assignment task spanning TeamChat, MailHub, and ReviewSphere, it scored 0.7583 in 73 steps versus 0 after 80. It used 64 typed browser clicks and six typed text actions; control used 69 native clicks and 11 hotkeys. In the one loss, native-only control scored 0.1 on phone-plan checkout while the combined arm scored 0.
+The useful signal is qualitative. Typed tools helped most when a task required dense state across tabs. They did not solve planning. In one browser-to-Writer workflow, the agent spent 79 of 80 actions clicking semantic references, never produced the document, tied control at zero, and cost more. Exact actions solve grounding, not orchestration.
 
-Semantic tools help most with dense page state across tabs, but screenshots and native controls still cover files, browser chrome, permission UI, and transitions outside the document. The bridge must also fail soft: when a browser-owned surface temporarily leaves the selected page without a normal CDP window, Cua Driver keeps the visible native window actionable and retries typed binding later.
-
-A richer action surface costs more tokens and time today. The combined agent selected typed browser actions in 26 of 37 valid pairs. In one browser-to-Writer workflow it spent 79 of 80 actions clicking semantic refs, never produced the document, tied control at zero, and cost more. State compression and tool selection remain product work. Exact actions solve grounding, not planning or orchestration.
+That is the work ahead: compress state, improve tool selection, and make the richer interface fail soft when a task moves between page content and the operating system.
 
 ## Use it today
 
-Browser use is stable and available today in Cua Driver 0.19.0 on macOS, Windows, and validated Linux configurations.
+Browser use is stable in Cua Driver 0.19.0 on macOS, Windows, and validated Linux configurations.
 
-Install Cua Driver on macOS or Linux:
+Install on macOS or Linux:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
-Install it on Windows:
+Install on Windows:
 
 ```powershell
 irm https://cua.ai/driver/install.ps1 | iex
 ```
 
-Verify the installation:
+Then verify the installation and connect your agent:
 
 ```bash
 cua-driver --version
 cua-driver doctor
-```
-
-On macOS, grant Accessibility and Screen Recording to the signed Cua Driver app:
-
-```bash
-open -n -g -a CuaDriver --args serve
-cua-driver permissions grant
-cua-driver permissions status
-```
-
-Then connect your agent. Cua Driver can print the current registration command for Codex, Claude Code, Cursor, and other MCP clients:
-
-```bash
 cua-driver mcp-config --client codex
 cua-driver mcp-config --client claude
-```
-
-Install the agent skill so the model follows the exact browser binding, consent, and verification workflow:
-
-```bash
 cua-driver skills install
-cua-driver skills status
 ```
 
-Now give the agent an end-to-end task. For example:
+On macOS, grant Accessibility and Screen Recording to the signed Cua Driver app with `cua-driver permissions grant`.
 
-> Use Cua Driver to open a driver-owned isolated Chrome profile, test the app at the preview URL printed by the development server, complete the onboarding flow, and verify each page change from a fresh semantic snapshot. Keep the browser in the background where the supported route allows it.
+For the complete setup and contracts, read [Drive a Web Page](https://cua.ai/docs/how-to-guides/driver/drive-a-web-page), [Browser Targeting and Background Delivery](https://cua.ai/docs/concepts/browser-targeting-and-background-delivery), and [Browser Profile Attachment](https://cua.ai/docs/reference/cua-driver/browser-profile-attachment).
 
-For the complete setup and tool contracts, read [Drive a Web Page](https://cua.ai/docs/how-to-guides/driver/drive-a-web-page), [Browser Targeting and Background Delivery](https://cua.ai/docs/concepts/browser-targeting-and-background-delivery), and [Browser Profile Attachment](https://cua.ai/docs/reference/cua-driver/browser-profile-attachment).
-
-The boundaries are part of the stable interface: an exact route acts, and an unproven route refuses. Coding agents can use the browser without being trapped inside it, return to the operating system when needed, and leave evidence of what happened.
+The boundary is the product: an exact route acts, and an unproven route refuses. Agents can use the browser without being trapped inside it, return to the operating system when needed, and leave evidence of what happened.
 
 Source: [github.com/trycua/cua](https://github.com/trycua/cua)
 

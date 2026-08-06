@@ -1040,9 +1040,17 @@ mod launch_app_tests {
     fn fixture() -> Vec<InstalledApp> {
         vec![
             app("Galculator", "galculator", "galculator"),
-            app("Google Chrome", "google-chrome", "/usr/bin/google-chrome-stable"),
+            app(
+                "Google Chrome",
+                "google-chrome",
+                "/usr/bin/google-chrome-stable",
+            ),
             app("File Manager", "thunar", "thunar"),
-            app("File Manager Settings", "thunar-settings", "thunar-settings"),
+            app(
+                "File Manager Settings",
+                "thunar-settings",
+                "thunar-settings",
+            ),
         ]
     }
 
@@ -1084,7 +1092,9 @@ mod launch_app_tests {
         // ("File Manager" itself still resolves via the exact-name rung.)
         assert!(match_installed_app(&apps, "file man").is_none());
         assert_eq!(
-            match_installed_app(&apps, "file manager").unwrap().bundle_id,
+            match_installed_app(&apps, "file manager")
+                .unwrap()
+                .bundle_id,
             "thunar"
         );
         assert!(match_installed_app(&apps, "gnome-calculator").is_none());
@@ -1185,13 +1195,13 @@ impl Tool for LaunchAppTool {
                                 let pid =
                                     spawn_launch_command(&app.launch_path, &additional_arguments)
                                         .map_err(|e| {
-                                            anyhow::anyhow!(
-                                        "'{cmd}' matched installed app '{}' but its launcher \
+                                        anyhow::anyhow!(
+                                            "'{cmd}' matched installed app '{}' but its launcher \
                                          `{}` failed to start: {e}",
-                                        app.name,
-                                        app.launch_path
-                                    )
-                                        })?;
+                                            app.name,
+                                            app.launch_path
+                                        )
+                                    })?;
                                 return Ok((
                                     format!(
                                         "✅ Launched {} (`{}`, pid {pid}) in background — \

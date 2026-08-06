@@ -677,11 +677,20 @@ def cmd_vnc(args: argparse.Namespace) -> int:
             if not local:
                 kwargs["api_key"] = await get_access_token()
             sb = await Sandbox.connect(args.name, local=local, **kwargs)
+        except Exception as e:
+            print_error(f"Failed to connect to sandbox: {e}")
+            return 1
+
+        try:
             vnc_url = await sb.get_display_url(share=True)
-            await sb.disconnect()
+        except ValueError as e:
+            print_error(f"VNC not available for this sandbox: {e}")
+            return 1
         except Exception as e:
             print_error(f"Failed to get VNC URL: {e}")
             return 1
+        finally:
+            await sb.disconnect()
 
         print_info(f"Opening VNC: {vnc_url}")
         webbrowser.open(vnc_url)

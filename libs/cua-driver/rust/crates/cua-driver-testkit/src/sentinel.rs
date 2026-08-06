@@ -504,20 +504,20 @@ fn try_activate_native_foreground(
 #[cfg(target_os = "macos")]
 fn focus_macos_sentinel_contents(
     driver: &mut impl Driver,
-    target: TargetWindow,
+    _target: TargetWindow,
 ) -> Result<(), String> {
     // A native app activation can leave Electron's renderer without keyboard
     // focus even though WindowServer reports its window at the front. This
-    // bounded setup click lands well inside every canonical sentinel window
-    // and is cleared from the journal before any behavioral action begins.
+    // bounded desktop-HID setup click lands in the already-proven foreground
+    // window and is cleared from the journal before any behavioral action
+    // begins. Do not use the pid-routed path here: reaching foreground
+    // Chromium WebContents is the setup condition, not the behavior under test.
     let response = driver.call(
         "click",
         serde_json::json!({
-            "pid": target.pid,
-            "window_id": target.native_id,
             "x": 320.0,
             "y": 240.0,
-            "delivery_mode": "background",
+            "scope": "desktop",
         }),
     );
     if response.is_error() {

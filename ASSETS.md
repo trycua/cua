@@ -53,9 +53,9 @@ does not. That is why assets are minted here rather than in the destination page
 | `accessibility-settings.png` | [`d149fe5a…`](https://github.com/user-attachments/assets/d149fe5a-28cb-460c-8868-4eda80d540a4) | `tutorials/drive-your-first-app, how-to-guides/driver/install` |
 | `screen-recording-prompt.png` | [`69efc964…`](https://github.com/user-attachments/assets/69efc964-a375-495e-8a27-400c9dd08e17) | `tutorials/drive-your-first-app, how-to-guides/driver/install` |
 | `screen-recording-settings.png` | [`469308b5…`](https://github.com/user-attachments/assets/469308b5-84d7-4fd6-a580-e62925120337) | `tutorials/drive-your-first-app, how-to-guides/driver/install` |
-| `browser-use-launch.gif` | [`c5f489b6…`](https://github.com/user-attachments/assets/c5f489b6-a9b8-4c0a-9cd8-e52b5f4f4f01) | `blog/cua-driver-browser-use.md` |
-| `browser-use-architecture.png` | [`859586cd…`](https://github.com/user-attachments/assets/859586cd-6cc6-4205-a7a2-652998aef977) | `blog/cua-driver-browser-use.md` |
-| `browser-use-architecture-dark.png` | [`5fefe69b…`](https://github.com/user-attachments/assets/5fefe69b-9670-4e04-9063-dffce4106c39) | `blog/cua-driver-browser-use.md` |
-| `browser-background-control-demo.mp4` | [`4c155fba…`](https://github.com/user-attachments/assets/4c155fba-2e8f-492f-a40e-e142199edd42) | `blog/cua-driver-browser-use.md` |
-| `browser-isolated-profile-demo.mp4` | [`63ea24a8…`](https://github.com/user-attachments/assets/63ea24a8-7c6c-41b0-8d82-2bb672d6cbc6) | `blog/cua-driver-browser-use.md` |
-| `browser-multi-tab-demo.mp4` | [`56de26d9…`](https://github.com/user-attachments/assets/56de26d9-3433-46e3-b907-8b1aef6f12bf) | `blog/cua-driver-browser-use.md` |
+| `browser-use-launch.gif` | [`c5f489b6…`](https://github.com/user-attachments/assets/c5f489b6-a9b8-4c0a-9cd8-e52b5f4f4f01) | `blog/extension-free-browser-use.md` |
+| `browser-use-architecture.png` | [`859586cd…`](https://github.com/user-attachments/assets/859586cd-6cc6-4205-a7a2-652998aef977) | `blog/extension-free-browser-use.md` |
+| `browser-use-architecture-dark.png` | [`5fefe69b…`](https://github.com/user-attachments/assets/5fefe69b-9670-4e04-9063-dffce4106c39) | `blog/extension-free-browser-use.md` |
+| `browser-background-control-demo.mp4` | [`4c155fba…`](https://github.com/user-attachments/assets/4c155fba-2e8f-492f-a40e-e142199edd42) | `blog/extension-free-browser-use.md` |
+| `browser-isolated-profile-demo.mp4` | [`63ea24a8…`](https://github.com/user-attachments/assets/63ea24a8-7c6c-41b0-8d82-2bb672d6cbc6) | `blog/extension-free-browser-use.md` |
+| `browser-multi-tab-demo.mp4` | [`56de26d9…`](https://github.com/user-attachments/assets/56de26d9-3433-46e3-b907-8b1aef6f12bf) | `blog/extension-free-browser-use.md` |

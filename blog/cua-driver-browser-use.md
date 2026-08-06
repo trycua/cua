@@ -75,6 +75,37 @@ Standard mode is the default. It lets routine observation, input, file transfer,
 
 For unattended work, [bounded mode](https://cua.ai/docs/how-to-guides/driver/write-a-bounded-manifest) is the recommended scoped path: a reviewed session manifest can allow `kind: existing_profile` and restrict the agent to named tools, applications, browser origins, and files. Users who explicitly accept the risk can instead choose [unrestricted mode](https://cua.ai/docs/reference/cua-driver/permission-modes) through `cua-driver serve --dangerously-bypass-approvals`. It bypasses Cua approval checks after that launch-time acknowledgement, so it should not be the default for a personal browser.
 
+For example, this bounded policy lets one session use an existing signed-in Chromium profile only through typed browser tools and only at `https://app.example.com`:
+
+```yaml
+version: 2
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - list_windows
+    - browser_prepare
+    - get_browser_state
+    - browser_navigate
+    - browser_click
+    - browser_type
+
+resources:
+  browser:
+    profiles:
+      - kind: existing_profile
+    origins:
+      - https://app.example.com
+  desktop:
+    display: false
+```
+
+Start the reviewed policy with `cua-driver serve --permission-mode bounded --session-policy ./cua-session.yaml --approve-session-policy`. The manifest intentionally omits generic desktop input, which could bypass the browser-origin check.
+
 Cua Driver does not show its own confirmation modal or persistent banner for existing-profile attachment. The launch grant, host callback, bounded manifest, or unrestricted dangerous acknowledgement supplies the authorization. The browser may still show its own remote-debugging consent prompt.
 
 An existing authenticated profile has a stronger boundary. On supported Chrome and Edge configurations, Cua Driver can open the browser's fixed remote-debugging page in the approved native window, toggle the exact per-instance setting, prove that the resulting endpoint belongs to the approved process, handle the browser-owned consent action, and close the temporary setup tab. It does not edit profile files, copy the profile, restart the browser, or terminate it.

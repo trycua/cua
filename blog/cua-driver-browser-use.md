@@ -4,7 +4,7 @@ _Published on August 5, 2026 by Francesco Bonacci_
 
 Today, we're launching what we believe is the first extension-free browser-use interface built into an agent-neutral computer-use driver. Cua Driver binds an exact Chromium tab to its native process and window, giving coding agents page-aware browser actions and full desktop control in the same session, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.18.0.
 
-When we started working on Cua Driver, we saw it as a CLI that would let coding agents operate desktop apps. As we worked through window discovery, accessibility, capture, input delivery, focus, and session isolation, we realized the larger opportunity. Low-level operating-system plumbing could give agents a much wider action surface.
+When we started working on Cua Driver, we saw it as a CLI that would let coding agents operate desktop apps. As we worked through window discovery, accessibility, capture, input delivery, focus, and session isolation, we realized that this low-level operating-system plumbing could also give us a path to more frictionless browser use. Agents that need page-aware access to an existing browser commonly add a Chrome extension or move the task into a separate embedded browser. Cua Driver could instead connect an exact native browser window to its page context while keeping the rest of the desktop in reach.
 
 That plumbing lets an agent move between a terminal and the native applications involved in a development workflow. It can run commands, inspect windows, handle a permission prompt, and verify what changed without turning every step into a screenshot and a coordinate.
 

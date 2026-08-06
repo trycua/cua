@@ -1,6 +1,7 @@
 """Tests for sandbox command module."""
 
 import argparse
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from cua_cli.commands import sandbox
@@ -546,11 +547,7 @@ class TestCmdExec:
         assert args.exec_command == ["echo", "hello"]
 
     def test_exec_with_json_flag(self):
-        """Test exec command with --json flag.
-
-        --json must come before name due to argparse REMAINDER behavior.
-        Usage: cua sb exec --json mybox <command...>
-        """
+        """Test exec command with --json before the remainder arguments."""
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers()
         sandbox.register_parser(subparsers)
@@ -560,112 +557,163 @@ class TestCmdExec:
         assert args.name == "my-sandbox"
         assert args.exec_command == ["echo", "hello"]
 
-    def test_exec_no_command_error(self, args_namespace, mock_api_key):
-        """Test exec with no command returns error."""
-        args = args_namespace(
-            name="test-sandbox",
-            exec_command=[],
-            json=False,
-        )
+    def test_exec_no_command_error(self, args_namespace):
+        """Test exec with no command returns an error."""
+        args = args_namespace(name="test-sandbox", exec_command=[], json=False, local=False)
 
         with patch.object(sandbox, "print_error") as mock_error:
             result = sandbox.cmd_exec(args)
 
         assert result == 1
-        mock_error.assert_called_with("No command provided")
+        mock_error.assert_called_once_with("No command provided")
 
-    def test_exec_sandbox_not_found(self, args_namespace, mock_api_key):
-        """Test exec with nonexistent sandbox."""
-        args = args_namespace(
-            name="nonexistent",
-            exec_command=["echo", "hello"],
-            json=False,
-        )
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.get_vm = AsyncMock(return_value={"status": "not_found"})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_error") as mock_error:
-                result = sandbox.cmd_exec(args)
-
-        assert result == 1
-        mock_error.assert_called()
-
-    def test_exec_success(self, args_namespace, mock_api_key, capsys):
-        """Test successful command execution."""
+    def test_exec_success_uses_sandbox_shell(self, args_namespace, mock_api_key, capsys):
+        """Test successful execution uses the Fleet-backed shell interface."""
         args = args_namespace(
             name="test-sandbox",
             exec_command=["echo", "hello"],
             json=False,
+            local=False,
         )
+        command_result = SimpleNamespace(stdout="hello\n", stderr="", returncode=0)
+        mock_sandbox = MagicMock()
+        mock_sandbox.shell.run = AsyncMock(return_value=command_result)
+        mock_sandbox.disconnect = AsyncMock()
+        mock_connect = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = mock_connect
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.get_vm = AsyncMock(
-            return_value={"status": "running", "api_url": "https://sandbox.example.com:8443"}
-        )
-
-        async def mock_exec(*a, **kw):
-            return {"success": True, "stdout": "hello\n", "stderr": "", "returncode": 0}
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "_exec_noninteractive", side_effect=mock_exec):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(
+                sandbox,
+                "_get_sandbox_api_url",
+                side_effect=AssertionError("legacy resolver must not be used"),
+            ) as mock_legacy_resolver:
                 result = sandbox.cmd_exec(args)
 
         assert result == 0
-        captured = capsys.readouterr()
-        assert "hello" in captured.out
+        mock_connect.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
+        mock_sandbox.shell.run.assert_awaited_once_with("echo hello", timeout=120)
+        mock_sandbox.disconnect.assert_awaited_once_with()
+        mock_legacy_resolver.assert_not_called()
+        assert capsys.readouterr().out == "hello\n"
 
     def test_exec_json_output(self, args_namespace, mock_api_key):
-        """Test exec with JSON output."""
+        """Test JSON output uses CommandResult fields."""
         args = args_namespace(
             name="test-sandbox",
             exec_command=["echo", "hello"],
             json=True,
+            local=False,
         )
+        command_result = SimpleNamespace(stdout="hello\n", stderr="", returncode=0)
+        mock_sandbox = MagicMock()
+        mock_sandbox.shell.run = AsyncMock(return_value=command_result)
+        mock_sandbox.disconnect = AsyncMock()
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = AsyncMock(return_value=mock_sandbox)
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.get_vm = AsyncMock(
-            return_value={"status": "running", "api_url": "https://sandbox.example.com:8443"}
-        )
-
-        async def mock_exec(*a, **kw):
-            return {"success": True, "stdout": "hello\n", "stderr": "", "returncode": 0}
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "_exec_noninteractive", side_effect=mock_exec):
-                with patch.object(sandbox, "print_json") as mock_json:
-                    result = sandbox.cmd_exec(args)
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "print_json") as mock_json:
+                result = sandbox.cmd_exec(args)
 
         assert result == 0
-        mock_json.assert_called_once()
+        mock_json.assert_called_once_with({"stdout": "hello\n", "stderr": "", "returncode": 0})
+        mock_sandbox.disconnect.assert_awaited_once_with()
 
     def test_exec_command_failure(self, args_namespace, mock_api_key, capsys):
-        """Test exec when command returns non-zero exit code."""
+        """Test a non-zero command result returns a clear failure."""
         args = args_namespace(
             name="test-sandbox",
             exec_command=["false"],
             json=False,
+            local=False,
         )
+        command_result = SimpleNamespace(stdout="", stderr="command failed\n", returncode=7)
+        mock_sandbox = MagicMock()
+        mock_sandbox.shell.run = AsyncMock(return_value=command_result)
+        mock_sandbox.disconnect = AsyncMock()
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = AsyncMock(return_value=mock_sandbox)
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.get_vm = AsyncMock(
-            return_value={"status": "running", "api_url": "https://sandbox.example.com:8443"}
-        )
-
-        async def mock_exec(*a, **kw):
-            return {"success": True, "stdout": "", "stderr": "error", "returncode": 1}
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "_exec_noninteractive", side_effect=mock_exec):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
                 result = sandbox.cmd_exec(args)
 
         assert result == 1
+        mock_error.assert_called_once_with("Command failed with exit code 7")
+        assert capsys.readouterr().err == "command failed\n"
+        mock_sandbox.disconnect.assert_awaited_once_with()
+
+    def test_exec_sandbox_not_found(self, args_namespace, mock_api_key):
+        """Test a nonexistent sandbox returns a connection error."""
+        args = args_namespace(
+            name="missing-sandbox",
+            exec_command=["echo", "hello"],
+            json=False,
+            local=False,
+        )
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = AsyncMock(
+            side_effect=ValueError("Sandbox 'missing-sandbox' not found")
+        )
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
+                result = sandbox.cmd_exec(args)
+
+        assert result == 1
+        mock_error.assert_called_once_with(
+            "Failed to connect to sandbox: Sandbox 'missing-sandbox' not found"
+        )
+
+    def test_exec_connection_failure(self, args_namespace, mock_api_key):
+        """Test a transport connection failure returns a clear error."""
+        args = args_namespace(
+            name="test-sandbox",
+            exec_command=["echo", "hello"],
+            json=False,
+            local=False,
+        )
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = AsyncMock(
+            side_effect=RuntimeError("Fleet service unavailable")
+        )
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
+                result = sandbox.cmd_exec(args)
+
+        assert result == 1
+        mock_error.assert_called_once_with(
+            "Failed to connect to sandbox: Fleet service unavailable"
+        )
+
+    def test_exec_local_mode(self, args_namespace, capsys):
+        """Test local mode connects without requesting cloud authentication."""
+        args = args_namespace(
+            name="local-sandbox",
+            exec_command=["pwd"],
+            json=False,
+            local=True,
+        )
+        command_result = SimpleNamespace(stdout="/workspace\n", stderr="", returncode=0)
+        mock_sandbox = MagicMock()
+        mock_sandbox.shell.run = AsyncMock(return_value=command_result)
+        mock_sandbox.disconnect = AsyncMock()
+        mock_connect = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = mock_connect
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "get_access_token", new_callable=AsyncMock) as mock_token:
+                result = sandbox.cmd_exec(args)
+
+        assert result == 0
+        mock_token.assert_not_awaited()
+        mock_connect.assert_awaited_once_with("local-sandbox", local=True)
+        mock_sandbox.shell.run.assert_awaited_once_with("pwd", timeout=120)
+        mock_sandbox.disconnect.assert_awaited_once_with()
+        assert capsys.readouterr().out == "/workspace\n"

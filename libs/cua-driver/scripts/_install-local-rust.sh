@@ -501,12 +501,24 @@ INSTALLED_BIN="$BIN_DIR/cua-driver-local"
 # so the next invocation picks up this build. Best-effort, never
 # fails the install. Survivors (rare on Unix — `pkill` reaches all
 # user-owned procs without elevation) get a yellow hint.
+#
+# NOTE: do not use `pkill -x cua-driver-local`. `-x` compares against the
+# kernel's truncated process name — 15 chars on Linux (`comm`) — and
+# `cua-driver-local` is 16, so on Linux it silently matched nothing and
+# every pre-swap daemon survived the install. Match argv[0] instead, and
+# anchor it: an unanchored `-f` pattern also matches the launcher shells
+# whose script *text* contains the daemon path, killing the surrounding
+# session rather than the daemon.
 if [ "$OS" = "Darwin" ]; then
     launchctl unload "$HOME/Library/LaunchAgents/com.trycua.cua-driver-local.plist" 2>/dev/null || true
 elif [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
     systemctl --user stop cua-driver-local.service >/dev/null 2>&1 || true
 fi
-pkill -x cua-driver-local >/dev/null 2>&1 || true
+for _daemon_bin in "$INSTALLED_BIN" "$BIN_TARGET"; do
+    [ -n "$_daemon_bin" ] || continue
+    pkill -f "^${_daemon_bin}([[:space:]]|\$)" >/dev/null 2>&1 || true
+done
+unset _daemon_bin
 
 # Agent skill pack symlinks: NOT auto-created. Run
 # `cua-driver skills install --local` to symlink agent dirs to the

@@ -1,3 +1,11 @@
+## Browser-use dark architecture asset
+
+| Source file | Attachment | Used by |
+| --- | --- | --- |
+| `browser-use-architecture-dark.png` | [`e9791fc6…`](https://github.com/user-attachments/assets/e9791fc6-22d0-41ad-8bb5-c01eef3b7537) | `blog/cua-driver-browser-use.md` |
+
+<img width="1200" height="675" alt="browser-use-architecture-dark" src="https://github.com/user-attachments/assets/e9791fc6-22d0-41ad-8bb5-c01eef3b7537" />
+
 ## Browser-use blog assets
 
 | Source file | Attachment | Used by |

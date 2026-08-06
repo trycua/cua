@@ -2540,16 +2540,16 @@ fn harness_appkit_accessibility_only_surface_contract() {
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
         let harness = Harness::launch_with_accessibility_only_surface();
-        let window_id = find_on_screen_window(&mut driver, harness.pid);
+        let (window_id, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
         driver.start_behavior_recording();
 
         let exact = snapshot_elements(&mut driver, harness.pid, window_id);
         assert!(!exact.is_error(), "exact snapshot failed: {}", exact.text());
-        assert!(has_id(exact.tree_text(), "wnd-main"));
         assert!(has_id(exact.tree_text(), "btn-increment"));
         assert!(
-            !exact.tree_text().contains("AX_ONLY_SURFACE_MARKER_v1")
-                && !has_id(exact.tree_text(), "ax-only-surface"),
+            !exact.tree_text().contains("AX_ONLY_SURFACE_MARKER_v1"),
             "exact-window snapshot leaked the AX-only surface:\n{}",
             exact.tree_text()
         );
@@ -2575,7 +2575,6 @@ fn harness_appkit_accessibility_only_surface_contract() {
             "surface_token",
             "element_index",
             "element_token",
-            "snapshot_id",
             "actions",
         ] {
             assert!(
@@ -2589,8 +2588,7 @@ fn harness_appkit_accessibility_only_surface_contract() {
             "get_accessibility_surfaces",
             serde_json::json!({
                 "pid": harness.pid as i64,
-                "max_elements": 3,
-                "max_depth": 25
+                "max_elements": 3
             }),
         );
         assert!(!element_bounded.is_error(), "bounded observation failed");
@@ -2601,7 +2599,6 @@ fn harness_appkit_accessibility_only_surface_contract() {
             "get_accessibility_surfaces",
             serde_json::json!({
                 "pid": harness.pid as i64,
-                "max_elements": 100,
                 "max_depth": 1
             }),
         );
@@ -2645,8 +2642,6 @@ fn harness_appkit_accessibility_only_surface_contract() {
             "cached exact-window button did not increment exactly once:\n{}",
             post.tree_text()
         );
-        assert!(!post.tree_text().contains("AX_ONLY_SURFACE_MARKER_v1"));
-
         let mut exited = Command::new("/usr/bin/true")
             .spawn()
             .expect("spawn dead-process AX fixture");

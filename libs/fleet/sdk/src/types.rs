@@ -242,11 +242,19 @@ impl PartialEq for CreateTemplateRequest {
 pub struct CreateClaimRequest {
     pub pool: Pool,
     pub spec: Option<ClaimSpec>,
+    /// Explicit claim name. A client-supplied name is used verbatim (after
+    /// DNS-label validation); left unset, the client generates a random
+    /// `claim-<petname>` so concurrent leases and retries cannot collide.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub name: Option<String>,
 }
 
 impl PartialEq for CreateClaimRequest {
     fn eq(&self, other: &Self) -> bool {
-        self.pool == other.pool && schema_values_equal(&self.spec, &other.spec)
+        self.pool == other.pool
+            && schema_values_equal(&self.spec, &other.spec)
+            && self.name == other.name
     }
 }
 

@@ -51,13 +51,20 @@ impl CyclopsClient {
                 reason: "sandbox template name must not be empty".into(),
             });
         }
+        let name = match request.name {
+            Some(name) => {
+                routes::validate_dns_label_for("claim name", &name)?;
+                name
+            }
+            None => claim_name()?,
+        };
 
         let claim = Claim {
             api_version: "osgym.cua.ai/v1alpha1".into(),
             kind: "OSGymSandboxClaim".into(),
             metadata: ResourceMetadata {
                 namespace: pool.metadata.namespace.clone(),
-                name: claim_name()?,
+                name,
                 labels: None,
                 creation_timestamp: None,
             },
@@ -104,6 +111,35 @@ impl CyclopsClient {
             "delete claim",
             json_request("DELETE", item_url, None),
             &[200, 202, 204, 404],
+        )
+        .await
+    }
+
+    /// Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+    /// expiry is the only liveness input the pool operator's claim reaper
+    /// honors, so a holder that outlives its current lease must renew before
+    /// the deadline passes or the bound sandbox is deleted underneath it.
+    /// Deliberately narrower than a claim update: nothing else on the claim
+    /// can be mutated through the SDK.
+    pub async fn renew_claim(
+        self: Arc<Self>,
+        claim: Claim,
+        shutdown_time: String,
+    ) -> Result<Claim, SdkError> {
+        if shutdown_time.trim().is_empty() {
+            return Err(SdkError::Configuration {
+                reason: "shutdown time must not be empty".into(),
+            });
+        }
+        let item_url = self.claim_item_url(&claim)?;
+        let body = to_json(&serde_json::json!({
+            "spec": { "lifecycle": { "shutdownTime": shutdown_time } }
+        }))?;
+        send_json(
+            self.as_ref(),
+            "renew claim",
+            merge_patch_request(item_url, Some(body)),
+            &[200],
         )
         .await
     }
@@ -219,6 +255,12 @@ fn serialized_status<T: Serialize>(status: Option<&T>) -> Result<String, SdkErro
     serde_json::to_string(&status).map_err(|error| SdkError::Body {
         reason: error.to_string(),
     })
+}
+
+fn merge_patch_request(url: Url, body: Option<Vec<u8>>) -> HttpRequest {
+    let mut request = json_request("PATCH", url, body);
+    request.headers[1].value = "application/merge-patch+json".into();
+    request
 }
 
 fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {

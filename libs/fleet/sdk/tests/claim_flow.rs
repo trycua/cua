@@ -33,6 +33,7 @@ async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
             .create_claim(CreateClaimRequest {
                 pool: unavailable_pool,
                 spec: Some(spec.clone()),
+                name: None,
             })
             .await
             .unwrap(),
@@ -57,6 +58,7 @@ async fn zero_and_nonzero_pools_post_a_single_claim_create() {
             .create_claim(CreateClaimRequest {
                 pool: pool(replicas),
                 spec: None,
+                name: None,
             })
             .await
             .unwrap();
@@ -95,6 +97,100 @@ async fn claim_crud_uses_prefixed_routes_and_expected_statuses() {
     assert_request(&requests[0], "GET", CLAIM_COLLECTION, None);
     assert_request(&requests[1], "GET", &item, None);
     assert_request(&requests[2], "DELETE", &item, None);
+}
+
+#[tokio::test]
+async fn renew_claim_merge_patches_only_the_lifecycle_shutdown_time() {
+    let current = claim("named-claim", claim_spec("example-pool-template"), None);
+    let item = format!("{CLAIM_COLLECTION}/named-claim");
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &current)),
+    ]));
+
+    assert_eq!(
+        client(Arc::clone(&http), 1, 1)
+            .renew_claim(current.clone(), "2026-01-01T00:10:00Z".into())
+            .await
+            .unwrap(),
+        current
+    );
+
+    let requests = http.authenticated_requests().await;
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.method, "PATCH");
+    assert_eq!(request.url, item);
+    assert_eq!(
+        request
+            .headers
+            .iter()
+            .find(|header| header.name == "content-type")
+            .map(|header| header.value.as_str()),
+        Some("application/merge-patch+json")
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(request.body.as_deref().unwrap()).unwrap(),
+        serde_json::json!({ "spec": { "lifecycle": { "shutdownTime": "2026-01-01T00:10:00Z" } } })
+    );
+}
+
+#[tokio::test]
+async fn renew_claim_rejects_an_empty_shutdown_time_before_any_request() {
+    let http = Arc::new(ScriptedHttpClient::new([]));
+    let current = claim("named-claim", claim_spec("example-pool-template"), None);
+
+    assert!(matches!(
+        client(Arc::clone(&http), 1, 1)
+            .renew_claim(current, "  ".into())
+            .await,
+        Err(SdkError::Configuration { .. })
+    ));
+
+    assert!(http.authenticated_requests().await.is_empty());
+}
+
+#[tokio::test]
+async fn create_claim_uses_a_client_supplied_name_verbatim() {
+    let spec = claim_spec("example-pool-template");
+    let created = claim("claim-1", spec.clone(), None);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(201, &created)),
+    ]));
+
+    let result = client(Arc::clone(&http), 2, 2)
+        .create_claim(CreateClaimRequest {
+            pool: pool(1),
+            spec: Some(spec.clone()),
+            name: Some("claim-1".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(result, created);
+
+    let requests = http.authenticated_requests().await;
+    assert_eq!(requests.len(), 1);
+    let body: Claim = serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+    assert_eq!(body.metadata.name, "claim-1");
+}
+
+#[tokio::test]
+async fn create_claim_rejects_an_invalid_client_supplied_name_before_any_request() {
+    let http = Arc::new(ScriptedHttpClient::new([]));
+
+    assert!(matches!(
+        client(Arc::clone(&http), 1, 1)
+            .create_claim(CreateClaimRequest {
+                pool: pool(1),
+                spec: None,
+                name: Some("Not A DNS Label".into()),
+            })
+            .await,
+        Err(SdkError::InvalidResourceName { .. })
+    ));
+
+    assert!(http.authenticated_requests().await.is_empty());
 }
 
 #[tokio::test]
@@ -185,11 +281,13 @@ async fn generated_claim_names_are_unique_under_concurrency_and_fit_dns_labels()
     let (first, second) = tokio::join!(
         client.clone().create_claim(CreateClaimRequest {
             pool: pool.clone(),
-            spec: Some(claim_spec("short-template"))
+            spec: Some(claim_spec("short-template")),
+            name: None,
         }),
         client.create_claim(CreateClaimRequest {
             pool,
-            spec: Some(claim_spec("short-template"))
+            spec: Some(claim_spec("short-template")),
+            name: None,
         }),
     );
     assert!(first.is_ok());
@@ -227,7 +325,8 @@ async fn validation_and_malformed_responses_fail_without_unexpected_http() {
         client(Arc::clone(&invalid_http), 1, 1)
             .create_claim(CreateClaimRequest {
                 pool: invalid_pool,
-                spec: None
+                spec: None,
+                name: None,
             })
             .await,
         Err(SdkError::InvalidResourceName { .. })
@@ -427,7 +526,11 @@ async fn default_template_ref_for_a_63_byte_pool_passes_through_without_dns_vali
     ]));
 
     client(Arc::clone(&http), 1, 1)
-        .create_claim(CreateClaimRequest { pool, spec: None })
+        .create_claim(CreateClaimRequest {
+            pool,
+            spec: None,
+            name: None,
+        })
         .await
         .unwrap();
 
@@ -452,6 +555,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
         .create_claim(CreateClaimRequest {
             pool: pool(0),
             spec: Some(claim_spec(template_name)),
+            name: None,
         })
         .await
         .unwrap();
@@ -466,6 +570,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
             .create_claim(CreateClaimRequest {
                 pool: pool(0),
                 spec: Some(claim_spec("")),
+                name: None,
             })
             .await,
         Err(SdkError::Configuration { .. })

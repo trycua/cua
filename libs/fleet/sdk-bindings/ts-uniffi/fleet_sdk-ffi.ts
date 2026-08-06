@@ -443,6 +443,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -604,6 +609,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -795,6 +805,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(uniffiSelf: bigint): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(uniffiSelf: bigint, request: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(uniffiSelf: bigint, claim: Uint8Array, shutdownTime: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(uniffiSelf: bigint, sandbox: Uint8Array, service: Uint8Array, path: Uint8Array, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(uniffiSelf: bigint, pool: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(uniffiSelf: bigint, template: Uint8Array): bigint;
@@ -828,6 +839,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template(): number;

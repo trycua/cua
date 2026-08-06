@@ -780,6 +780,16 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func listClaims(namespace: String) async throws  -> [Claim]
 
+    /**
+     * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+     * expiry is the only liveness input the pool operator's claim reaper
+     * honors, so a holder that outlives its current lease must renew before
+     * the deadline passes or the bound sandbox is deleted underneath it.
+     * Deliberately narrower than a claim update: nothing else on the claim
+     * can be mutated through the SDK.
+     */
+    func renewClaim(claim: Claim, shutdownTime: String) async throws  -> Claim
+
     func waitClaim(claim: Claim) async throws  -> Sandbox
 
     func listNamespaces() async throws  -> [Namespace]
@@ -998,6 +1008,31 @@ open func listClaims(namespace: String)async throws  -> [Claim]  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeClaim.lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+    /**
+     * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+     * expiry is the only liveness input the pool operator's claim reaper
+     * honors, so a holder that outlives its current lease must renew before
+     * the deadline passes or the bound sandbox is deleted underneath it.
+     * Deliberately narrower than a claim update: nothing else on the claim
+     * can be mutated through the SDK.
+     */
+open func renewClaim(claim: Claim, shutdownTime: String)async throws  -> Claim  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeClaim_lower(claim),FfiConverterString.lower(shutdownTime)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClaim_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -1754,12 +1789,24 @@ public func FfiConverterTypeClaim_lower(_ value: Claim) -> RustBuffer {
 public struct CreateClaimRequest: Equatable, Hashable {
     public var pool: Pool
     public var spec: ClaimSpec?
+    /**
+     * Explicit claim name. A client-supplied name is used verbatim (after
+     * DNS-label validation); left unset, the client generates a random
+     * `claim-<petname>` so concurrent leases and retries cannot collide.
+     */
+    public var name: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(pool: Pool, spec: ClaimSpec?) {
+    public init(pool: Pool, spec: ClaimSpec?,
+        /**
+         * Explicit claim name. A client-supplied name is used verbatim (after
+         * DNS-label validation); left unset, the client generates a random
+         * `claim-<petname>` so concurrent leases and retries cannot collide.
+         */name: String? = nil) {
         self.pool = pool
         self.spec = spec
+        self.name = name
     }
 
 
@@ -1779,13 +1826,15 @@ public struct FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer {
         return
             try CreateClaimRequest(
                 pool: FfiConverterTypePool.read(from: &buf),
-                spec: FfiConverterOptionTypeClaimSpec.read(from: &buf)
+                spec: FfiConverterOptionTypeClaimSpec.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf)
         )
     }
 
     public static func write(_ value: CreateClaimRequest, into buf: inout [UInt8]) {
         FfiConverterTypePool.write(value.pool, into: &buf)
         FfiConverterOptionTypeClaimSpec.write(value.spec, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
     }
 }
 
@@ -3567,6 +3616,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() != 7802) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() != 17505) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984) {

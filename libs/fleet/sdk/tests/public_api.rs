@@ -251,9 +251,10 @@ fn resources_use_canonical_schema_specs_and_statuses() {
     }
 
     fn assert_create_claim_request(request: CreateClaimRequest) {
-        let CreateClaimRequest { pool, spec } = request;
+        let CreateClaimRequest { pool, spec, name } = request;
         assert_pool_types(pool);
         let _: Option<ClaimSpec> = spec;
+        let _: Option<String> = name;
     }
 
     let _: fn(Claim) = assert_claim_types;
@@ -278,6 +279,7 @@ fn resources_support_equality_and_kubernetes_camel_case_json() {
     let create_claim = CreateClaimRequest {
         pool: pool.clone(),
         spec: Some(claim.spec.clone()),
+        name: None,
     };
 
     assert_eq!(pool, pool.clone());

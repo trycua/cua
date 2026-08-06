@@ -532,6 +532,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() != 36469:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() != 17505:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() != 17695:
@@ -1023,6 +1025,12 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template.argtype
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1138,6 +1146,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool.resty
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.restype = ctypes.c_uint16
@@ -1652,19 +1663,25 @@ class _UniffiFfiConverterOptionalTypeClaimSpec(_UniffiConverterRustBuffer):
 
 @dataclass
 class CreateClaimRequest:
-    def __init__(self, *, pool:Pool, spec:typing.Optional[fleet_sdk.ClaimSpec]):
+    def __init__(self, *, pool:Pool, spec:typing.Optional[fleet_sdk.ClaimSpec], name:typing.Optional[str] = _DEFAULT):
         self.pool = pool
         self.spec = spec
+        if name is _DEFAULT:
+            self.name = None
+        else:
+            self.name = name
 
 
 
 
     def __str__(self):
-        return "CreateClaimRequest(pool={}, spec={})".format(self.pool, self.spec)
+        return "CreateClaimRequest(pool={}, spec={}, name={})".format(self.pool, self.spec, self.name)
     def __eq__(self, other):
         if self.pool != other.pool:
             return False
         if self.spec != other.spec:
+            return False
+        if self.name != other.name:
             return False
         return True
 
@@ -1674,17 +1691,20 @@ class _UniffiFfiConverterTypeCreateClaimRequest(_UniffiConverterRustBuffer):
         return CreateClaimRequest(
             pool=_UniffiFfiConverterTypePool.read(buf),
             spec=_UniffiFfiConverterOptionalTypeClaimSpec.read(buf),
+            name=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterTypePool.check_lower(value.pool)
         _UniffiFfiConverterOptionalTypeClaimSpec.check_lower(value.spec)
+        _UniffiFfiConverterOptionalString.check_lower(value.name)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterTypePool.write(value.pool, buf)
         _UniffiFfiConverterOptionalTypeClaimSpec.write(value.spec, buf)
+        _UniffiFfiConverterOptionalString.write(value.name, buf)
 
 @dataclass
 class CreatePoolRequest:
@@ -3198,6 +3218,16 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def reconcile_template(self, request: CreateTemplateRequest) -> Template:
         raise NotImplementedError
+    async def renew_claim(self, claim: Claim,shutdown_time: str) -> Claim:
+        """
+        Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+        expiry is the only liveness input the pool operator's claim reaper
+        honors, so a holder that outlives its current lease must renew before
+        the deadline passes or the bound sandbox is deleted underneath it.
+        Deliberately narrower than a claim update: nothing else on the claim
+        can be mutated through the SDK.
+"""
+        raise NotImplementedError
     async def service_request(self, sandbox: Sandbox,service: str,path: str,request: HttpRequest) -> HttpResponse:
         raise NotImplementedError
     async def update_pool(self, pool: Pool) -> Pool:
@@ -3657,6 +3687,34 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def renew_claim(self, claim: Claim,shutdown_time: str) -> Claim:
+        """
+        Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+        expiry is the only liveness input the pool operator's claim reaper
+        honors, so a holder that outlives its current lease must renew before
+        the deadline passes or the bound sandbox is deleted underneath it.
+        Deliberately narrower than a claim update: nothing else on the claim
+        can be mutated through the SDK.
+"""
+
+        _UniffiFfiConverterTypeClaim.check_lower(claim)
+
+        _UniffiFfiConverterString.check_lower(shutdown_time)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeClaim.lower(claim),
+            _UniffiFfiConverterString.lower(shutdown_time),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeClaim.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(*_uniffi_lowered_args),
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,

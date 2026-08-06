@@ -710,6 +710,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces(
@@ -812,6 +814,8 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(`ptr`: Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(`ptr`: Long,`namespace`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,`shutdownTime`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
 ): Long
@@ -1000,6 +1004,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() != 7802.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() != 17505.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984.toShort()) {
@@ -2013,6 +2020,16 @@ public interface CyclopsClientInterface {
 
     suspend fun `listClaims`(`namespace`: kotlin.String): List<Claim>
 
+    /**
+     * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+     * expiry is the only liveness input the pool operator's claim reaper
+     * honors, so a holder that outlives its current lease must renew before
+     * the deadline passes or the bound sandbox is deleted underneath it.
+     * Deliberately narrower than a claim update: nothing else on the claim
+     * can be mutated through the SDK.
+     */
+    suspend fun `renewClaim`(`claim`: Claim, `shutdownTime`: kotlin.String): Claim
+
     suspend fun `waitClaim`(`claim`: Claim): Sandbox
 
     suspend fun `listNamespaces`(): List<Namespace>
@@ -2228,6 +2245,35 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceTypeClaim.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+     * expiry is the only liveness input the pool operator's claim reaper
+     * honors, so a holder that outlives its current lease must renew before
+     * the deadline passes or the bound sandbox is deleted underneath it.
+     * Deliberately narrower than a claim update: nothing else on the claim
+     * can be mutated through the SDK.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `renewClaim`(`claim`: Claim, `shutdownTime`: kotlin.String) : Claim {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(
+                uniffiHandle,
+                FfiConverterTypeClaim.lower(`claim`),FfiConverterString.lower(`shutdownTime`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeClaim.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -3372,6 +3418,13 @@ data class CreateClaimRequest (
     var `pool`: Pool
     ,
     var `spec`: ClaimSpec?
+    ,
+    /**
+     * Explicit claim name. A client-supplied name is used verbatim (after
+     * DNS-label validation); left unset, the client generates a random
+     * `claim-<petname>` so concurrent leases and retries cannot collide.
+     */
+    var `name`: kotlin.String? = null
 
 ){
 
@@ -3390,17 +3443,20 @@ public object FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer<CreateC
         return CreateClaimRequest(
             FfiConverterTypePool.read(buf),
             FfiConverterOptionalTypeClaimSpec.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: CreateClaimRequest) = (
             FfiConverterTypePool.allocationSize(value.`pool`) +
-            FfiConverterOptionalTypeClaimSpec.allocationSize(value.`spec`)
+            FfiConverterOptionalTypeClaimSpec.allocationSize(value.`spec`) +
+            FfiConverterOptionalString.allocationSize(value.`name`)
     )
 
     override fun write(value: CreateClaimRequest, buf: ByteBuffer) {
             FfiConverterTypePool.write(value.`pool`, buf)
             FfiConverterOptionalTypeClaimSpec.write(value.`spec`, buf)
+            FfiConverterOptionalString.write(value.`name`, buf)
     }
 }
 

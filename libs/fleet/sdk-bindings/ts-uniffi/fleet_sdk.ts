@@ -216,7 +216,13 @@ const FfiConverterTypePool = (() => {
 
 export type CreateClaimRequest = {
     pool: Pool,
-    spec?: ClaimSpec
+    spec?: ClaimSpec,
+    /**
+     * Explicit claim name. A client-supplied name is used verbatim (after
+     * DNS-label validation); left unset, the client generates a random
+     * `claim-<petname>` so concurrent leases and retries cannot collide.
+     */
+    name?: string
 }
 
 /**
@@ -224,6 +230,7 @@ export type CreateClaimRequest = {
  */
 export const CreateClaimRequest = (() => {
     const defaults = () => ({
+        name: undefined,
     });
     const create = (() => {
         return uniffiCreateRecord<CreateClaimRequest, ReturnType<typeof defaults>>(defaults);
@@ -241,16 +248,19 @@ const FfiConverterTypeCreateClaimRequest = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 pool: FfiConverterTypePool.read(from), 
-                spec: FfiConverterOptionalTypeClaimSpec.read(from)
+                spec: FfiConverterOptionalTypeClaimSpec.read(from), 
+                name: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterTypePool.write(value.pool, into);
             FfiConverterOptionalTypeClaimSpec.write(value.spec, into);
+            FfiConverterOptionalString.write(value.name, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypePool.allocationSize(value.pool) +
-             FfiConverterOptionalTypeClaimSpec.allocationSize(value.spec);
+             FfiConverterOptionalTypeClaimSpec.allocationSize(value.spec) +
+             FfiConverterOptionalString.allocationSize(value.name);
             
         }
     };
@@ -2022,6 +2032,15 @@ export interface CyclopsClientLike {
     listUserApiKeys(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<UserApiKey>>;
     reconcilePool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
     reconcileTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
+    /**
+     * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+     * expiry is the only liveness input the pool operator's claim reaper
+     * honors, so a holder that outlives its current lease must renew before
+     * the deadline passes or the bound sandbox is deleted underneath it.
+     * Deliberately narrower than a claim update: nothing else on the claim
+     * can be mutated through the SDK.
+     */
+    renewClaim(claim: Claim, shutdownTime: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
     serviceRequest(sandbox: Sandbox, service: string, path: string, request: HttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
     updatePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
     updateTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
@@ -2696,6 +2715,46 @@ private constructor(pointer: UniffiHandle) {
     }
     }
     
+    /**
+     * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+     * expiry is the only liveness input the pool operator's claim reaper
+     * honors, so a holder that outlives its current lease must renew before
+     * the deadline passes or the bound sandbox is deleted underneath it.
+     * Deliberately narrower than a claim update: nothing else on the claim
+     * can be mutated through the SDK.
+     */
+    async renewClaim(claim: Claim, shutdownTime: string, asyncOpts_?: { signal: AbortSignal }): Promise<Claim> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc),FfiConverterString.lower(shutdownTime, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+    
     async serviceRequest(sandbox: Sandbox, service: string, path: string, request: HttpRequest, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -3241,6 +3300,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() !== 36469) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() !== 17505) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() !== 46699) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request");

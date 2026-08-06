@@ -197,6 +197,7 @@ private_constant :UniffiHandleMap
   def self.check_lower_TypeCreateClaimRequest(v)
     RustBuffer.check_lower_TypePool(v.pool)
     RustBuffer.check_lower_OptionalTypeClaimSpec(v.spec)
+    RustBuffer.check_lower_Optionalstring(v.name)
   end
 
   def self.alloc_from_TypeCreateClaimRequest(v)
@@ -967,7 +968,8 @@ class RustBufferStream
   def readTypeCreateClaimRequest
     CreateClaimRequest.new(
       pool: readTypePool,
-      spec: readOptionalTypeClaimSpec
+      spec: readOptionalTypeClaimSpec,
+      name: readOptionalstring
     )
   end
 
@@ -1569,6 +1571,7 @@ class RustBufferBuilder
   def write_TypeCreateClaimRequest(v)
     self.write_TypePool(v.pool)
     self.write_OptionalTypeClaimSpec(v.spec)
+    self.write_Optionalstring(v.name)
   end
 
   # The Record type CreatePoolRequest.
@@ -2335,6 +2338,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -2474,6 +2480,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim,
     [RustCallStatus.by_ref],
     :uint16
@@ -2605,11 +2614,12 @@ end
 
   # Record type CreateClaimRequest
 class CreateClaimRequest
-  attr_reader :pool, :spec
+  attr_reader :pool, :spec, :name
 
-  def initialize(pool:, spec:)
+  def initialize(pool:, spec:, name: nil)
     @pool = pool
     @spec = spec
+    @name = name
   end
 
   def ==(other)
@@ -2617,6 +2627,9 @@ class CreateClaimRequest
       return false
     end
     if @spec != other.spec
+      return false
+    end
+    if @name != other.name
       return false
     end
 
@@ -3210,6 +3223,20 @@ end
 
     )
     return result.consumeIntoSequenceTypeClaim
+  end
+  def renew_claim(claim, shutdown_time)
+        claim = claim
+        RustBuffer.check_lower_TypeClaim(claim)
+        shutdown_time = FleetSdk::uniffi_utf8(shutdown_time)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim),RustBuffer.allocFromString(shutdown_time),RustCallStatus.new),
+
+    )
+    return result.consumeIntoTypeClaim
   end
   def wait_claim(claim)
         claim = claim

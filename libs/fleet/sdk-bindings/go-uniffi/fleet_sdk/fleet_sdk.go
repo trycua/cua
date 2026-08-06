@@ -414,6 +414,15 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim()
+		})
+		if checksum != 17505 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim()
 		})
 		if checksum != 18984 {
@@ -1192,6 +1201,13 @@ type CyclopsClientInterface interface {
 	DeleteClaim(claim Claim) error
 	GetClaim(claim Claim) (Claim, error)
 	ListClaims(namespace string) ([]Claim, error)
+	// Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+	// expiry is the only liveness input the pool operator's claim reaper
+	// honors, so a holder that outlives its current lease must renew before
+	// the deadline passes or the bound sandbox is deleted underneath it.
+	// Deliberately narrower than a claim update: nothing else on the claim
+	// can be mutated through the SDK.
+	RenewClaim(claim Claim, shutdownTime string) (Claim, error)
 	WaitClaim(claim Claim) (Sandbox, error)
 	ListNamespaces() ([]Namespace, error)
 	CreatePool(request CreatePoolRequest) (Pool, error)
@@ -1418,6 +1434,47 @@ func (_self *CyclopsClient) ListClaims(namespace string) ([]Claim, error) {
 		},
 		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(
 			_pointer, FfiConverterStringINSTANCE.Lower(namespace)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+// Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+// expiry is the only liveness input the pool operator's claim reaper
+// honors, so a holder that outlives its current lease must renew before
+// the deadline passes or the bound sandbox is deleted underneath it.
+// Deliberately narrower than a claim update: nothing else on the claim
+// can be mutated through the SDK.
+func (_self *CyclopsClient) RenewClaim(claim Claim, shutdownTime string) (Claim, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Claim {
+			return FfiConverterClaimINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(
+			_pointer, FfiConverterClaimINSTANCE.Lower(claim), FfiConverterStringINSTANCE.Lower(shutdownTime)),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
@@ -2439,11 +2496,16 @@ func (_ FfiDestroyerClaim) Destroy(value Claim) {
 type CreateClaimRequest struct {
 	Pool Pool
 	Spec *cyclops_sdk_schema.ClaimSpec
+	// Explicit claim name. A client-supplied name is used verbatim (after
+	// DNS-label validation); left unset, the client generates a random
+	// `claim-<petname>` so concurrent leases and retries cannot collide.
+	Name *string
 }
 
 func (r *CreateClaimRequest) Destroy() {
 	FfiDestroyerPool{}.Destroy(r.Pool)
 	FfiDestroyerOptionalClaimSpec{}.Destroy(r.Spec)
+	FfiDestroyerOptionalString{}.Destroy(r.Name)
 }
 
 type FfiConverterCreateClaimRequest struct{}
@@ -2458,6 +2520,7 @@ func (c FfiConverterCreateClaimRequest) Read(reader io.Reader) CreateClaimReques
 	return CreateClaimRequest{
 		FfiConverterPoolINSTANCE.Read(reader),
 		FfiConverterOptionalClaimSpecINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
 	}
 }
 
@@ -2472,6 +2535,7 @@ func (c FfiConverterCreateClaimRequest) LowerExternal(value CreateClaimRequest) 
 func (c FfiConverterCreateClaimRequest) Write(writer io.Writer, value CreateClaimRequest) {
 	FfiConverterPoolINSTANCE.Write(writer, value.Pool)
 	FfiConverterOptionalClaimSpecINSTANCE.Write(writer, value.Spec)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.Name)
 }
 
 type FfiDestroyerCreateClaimRequest struct{}

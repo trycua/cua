@@ -80,6 +80,11 @@ and installed with the local CLI; SDK and MCP tools select only an installed
 theme ID. The built-in cursor shows the sanitized public session name in a
 badge below the pointer.
 
+For a complete Electron main-process integration with a sandboxed renderer,
+session-mode selection, an allowlisted IPC bridge, and macOS packaging, see the
+[`electron-sdk-workbench`](../../../samples/driver/electron-sdk-workbench)
+sample.
+
 ## Authorization integrations
 
 `standard` is promptless for normal automation. An application that needs to

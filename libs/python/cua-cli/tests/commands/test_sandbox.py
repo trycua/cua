@@ -87,6 +87,15 @@ class TestExecute:
 
         mock_cmd.assert_called_once_with(args)
 
+    def test_dispatch_to_vnc_open_alias(self, args_namespace):
+        args = args_namespace(command="sb", sandbox_command="open", name="my-sandbox")
+
+        with patch.object(sandbox, "cmd_vnc", return_value=0) as mock_cmd:
+            result = sandbox.execute(args)
+
+        mock_cmd.assert_called_once_with(args)
+        assert result == 0
+
     def test_unknown_command_returns_error(self, args_namespace):
         """Test that unknown command returns error."""
         args = args_namespace(command="sandbox", sandbox_command=None)
@@ -378,6 +387,16 @@ class TestCmdDelete:
 
 class TestCmdVnc:
     """Tests for cmd_vnc function."""
+
+    def test_open_alias_parses_as_vnc(self):
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers()
+        sandbox.register_parser(subparsers)
+
+        args = parser.parse_args(["sb", "open", "my-sandbox"])
+
+        assert args.sandbox_command == "open"
+        assert args.name == "my-sandbox"
 
     def test_vnc_opens_browser(self, args_namespace, mock_api_key, mock_webbrowser):
         """Test VNC opens browser with correct URL."""

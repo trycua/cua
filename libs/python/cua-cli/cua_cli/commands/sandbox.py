@@ -313,6 +313,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         # -- vnc -------------------------------------------------------------
         vnc_parser = sb_subparsers.add_parser(
             "vnc",
+            aliases=["open"],
             help="Open sandbox in browser via VNC",
         )
         vnc_parser.add_argument("name", help="Sandbox name")
@@ -393,7 +394,7 @@ def execute(args: argparse.Namespace) -> int:
         return cmd_restart(args)
     elif cmd == "delete":
         return cmd_delete(args)
-    elif cmd == "vnc":
+    elif cmd in ("vnc", "open"):
         return cmd_vnc(args)
     elif cmd == "shell":
         return cmd_shell(args)

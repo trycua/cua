@@ -630,6 +630,29 @@ fn fixture_marker_number(fixture: &Fixture, id: &str, prefix: &str) -> Option<u6
         .and_then(|value| value.parse().ok())
 }
 
+fn drag_event_was_observed(events: &str, required: &str) -> bool {
+    events
+        .strip_prefix("drag_events=")
+        .is_some_and(|observed| observed.split(',').any(|event| event == required))
+}
+
+#[test]
+fn drag_event_evidence_matches_complete_event_names_only() {
+    let events = "drag_events=pointerdown,pointermove,dragstart,dragover,drop,pointerup";
+    for required in [
+        "pointerdown",
+        "pointermove",
+        "pointerup",
+        "dragstart",
+        "dragover",
+        "drop",
+    ] {
+        assert!(drag_event_was_observed(events, required));
+    }
+    assert!(!drag_event_was_observed(events, "drag"));
+    assert!(!drag_event_was_observed("pointerdown,drop", "drop"));
+}
+
 fn action_target_args(
     fixture: &Fixture,
     state: &ToolResponse,
@@ -1047,12 +1070,11 @@ fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
     let target = require_element(&pre, "drop-target");
     let origin = window_origin(fixture, &pre);
     let scale = screenshot_scale(&pre);
-    let point = |index: u64| {
-        let (x, y) = element_center(&pre, index);
-        ((x - origin.0) * scale, (y - origin.1) * scale)
-    };
-    let (from_x, from_y) = point(source);
-    let (to_x, to_y) = point(target);
+    let from_screen = element_center(&pre, source);
+    let to_screen = element_center(&pre, target);
+    let point = |(x, y): (f64, f64)| ((x - origin.0) * scale, (y - origin.1) * scale);
+    let (from_x, from_y) = point(from_screen);
+    let (to_x, to_y) = point(to_screen);
     let response = fixture.driver.call(
         "drag",
         serde_json::json!({
@@ -1078,6 +1100,33 @@ fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
         response.raw
     );
     assert_fixture_contains(fixture, "drag_status=dropped");
+    if cfg!(target_os = "macos") && fixture.name == "electron" && delivery == "foreground" {
+        let events = fixture
+            .journal
+            .text("drag-events")
+            .unwrap_or_else(|| "drag_events=".to_owned());
+        for required in [
+            "pointerdown",
+            "pointermove",
+            "pointerup",
+            "dragstart",
+            "dragover",
+            "drop",
+        ] {
+            assert!(
+                drag_event_was_observed(&events, required),
+                "{}: foreground pixel drag did not emit {required}; events={events}; \
+                 window_local=({from_x:.1},{from_y:.1})->({to_x:.1},{to_y:.1}); \
+                 screen=({:.1},{:.1})->({:.1},{:.1}); route={}",
+                fixture.name,
+                from_screen.0,
+                from_screen.1,
+                to_screen.0,
+                to_screen.1,
+                response.structured()["path"].as_str().unwrap_or("unknown"),
+            );
+        }
+    }
     delivered_observation()
 }
 

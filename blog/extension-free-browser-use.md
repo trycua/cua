@@ -2,7 +2,7 @@
 
 _Published on August 6, 2026 by Francesco Bonacci_
 
-Today, we're launching what we believe is the first extension-free browser-use interface built into an agent-neutral computer-use driver. Cua Driver binds an exact Chromium tab to its native process and window, giving coding agents page-aware browser actions and full desktop control in the same session, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.18.0.
+Today, we're launching what we believe is the first extension-free browser-use interface built into an agent-neutral computer-use driver. Cua Driver binds an exact Chromium tab to its native process and window, giving coding agents page-aware browser actions and full desktop control in the same session, **without requiring a Chrome extension**. It is stable and available today in Cua Driver 0.19.0.
 
 ![Cua Driver: extension-free browser use across Chromium tabs and native desktop applications](https://github.com/user-attachments/assets/c5f489b6-a9b8-4c0a-9cd8-e52b5f4f4f01)
 
@@ -216,7 +216,7 @@ Finally, a richer action surface is not free. It costs more tokens and time toda
 
 ## Use it today
 
-Browser use is stable and available today in Cua Driver 0.18.0 on macOS, Windows, and validated Linux configurations.
+Browser use is stable and available today in Cua Driver 0.19.0 on macOS, Windows, and validated Linux configurations.
 
 Install Cua Driver on macOS or Linux:
 
@@ -271,6 +271,6 @@ That is the foundation we want for coding agents. They can use the browser witho
 
 Source: [github.com/trycua/cua](https://github.com/trycua/cua)
 
-Release: [Cua Driver 0.18.0](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.18.0)
+Release: [Cua Driver 0.19.0](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.19.0)
 
 This browser-use capability was made possible thanks to contributions from [Gabriel Handford](https://github.com/gabriel), [Haoqing Wang](https://github.com/hqhq1025), [Manfred](https://github.com/ai-ag2026), [HsiangNianian](https://github.com/HsiangNianian), and [injaneity](https://github.com/injaneity). Their work spans exact Chromium window targeting and page actions, dialogs and uploads, inactive-tab capture, field replacement, browser-chrome certification, and honest verification of web input.

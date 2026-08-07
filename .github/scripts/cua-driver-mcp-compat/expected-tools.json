@@ -1,7 +1,7 @@
 {
   "serverName": "cua-driver",
   "outputSchemaCount": 30,
-  "tools": [
+  "baseTools": [
     "bring_to_front",
     "browser_click",
     "browser_dialog",
@@ -56,5 +56,13 @@
     "type_text",
     "verify_state",
     "zoom"
-  ]
+  ],
+  "platformTools": {
+    "linux": [
+      "mouse_button_down",
+      "mouse_button_up",
+      "mouse_drag",
+      "parallel_mouse_drag"
+    ]
+  }
 }

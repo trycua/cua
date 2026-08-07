@@ -18,6 +18,10 @@ const DRIVER = process.env.CUA_DRIVER_BINARY
   ? resolve(process.env.CUA_DRIVER_BINARY)
   : null;
 const EXPECTED_VERSION = process.env.CUA_DRIVER_EXPECTED_VERSION;
+const EXPECTED_TOOLS = sorted([
+  ...EXPECTED.baseTools,
+  ...(EXPECTED.platformTools[process.platform] ?? []),
+]);
 const DRIVER_ARGS = [
   "mcp",
   "--direct",
@@ -59,7 +63,7 @@ function assertExactTools(label, tools) {
   const names = sorted(tools.map((tool) => tool.name));
   assert.deepEqual(
     names,
-    EXPECTED.tools,
+    EXPECTED_TOOLS,
     `${label} did not load the exact expected Cua Driver tool roster`,
   );
 }

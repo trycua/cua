@@ -600,9 +600,24 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
                 "@openai/codex": "0.146.1",
             },
         )
-        self.assertEqual(expected["tools"], sorted(expected["tools"]))
-        self.assertEqual(len(expected["tools"]), len(set(expected["tools"])))
-        self.assertEqual(len(expected["tools"]), 54)
+        self.assertEqual(
+            expected["baseTools"], sorted(expected["baseTools"])
+        )
+        self.assertEqual(
+            len(expected["baseTools"]), len(set(expected["baseTools"]))
+        )
+        self.assertEqual(len(expected["baseTools"]), 54)
+        self.assertEqual(
+            expected["platformTools"],
+            {
+                "linux": [
+                    "mouse_button_down",
+                    "mouse_button_up",
+                    "mouse_drag",
+                    "parallel_mouse_drag",
+                ]
+            },
+        )
 
     def test_installer_compatibility_runs_current_installers_on_releases(
         self,

@@ -6,17 +6,20 @@ import pytest
 from cua_sandbox import (
     ClaimSpec,
     CreatePoolRequest,
+    CreatePoolRequestBuilder,
     CreateTemplateRequest,
+    CreateTemplateRequestBuilder,
     Firmware,
-    OsGymSandboxTemplateSpec,
-    OsGymSandboxWarmPoolSpec,
+    OsGymSandboxTemplateSpecBuilder,
+    OsGymSandboxWarmPoolSpecBuilder,
     Pool,
     RuntimeKind,
-    SandboxService,
-    SandboxTemplateRef,
+    SandboxServiceBuilder,
+    SandboxTemplateRefBuilder,
     ServiceProtocol,
     Template,
     VmTemplate,
+    VmTemplateBuilder,
 )
 from cua_sandbox.sync import Pool as SyncPool
 from cua_sandbox.sync import Template as SyncTemplate
@@ -28,20 +31,51 @@ def test_public_pool_schema_exports_runtime_kind() -> None:
     assert RuntimeKind.KUBEVIRT.value == 0
 
 
+def test_public_pool_schema_exports_generated_builders() -> None:
+    service = SandboxServiceBuilder().name("server").target_port(8000).build()
+    vm_template = (
+        VmTemplateBuilder()
+        .container_disk_image("registry.example/workspace:latest")
+        .services([service])
+        .build()
+    )
+    template_request = (
+        CreateTemplateRequestBuilder()
+        .namespace("default")
+        .name("workspace")
+        .spec(OsGymSandboxTemplateSpecBuilder().vm_template(vm_template).build())
+        .build()
+    )
+    pool_request = (
+        CreatePoolRequestBuilder()
+        .namespace("default")
+        .spec(
+            OsGymSandboxWarmPoolSpecBuilder()
+            .replicas(1)
+            .sandbox_template_ref(SandboxTemplateRefBuilder().name("workspace").build())
+            .build()
+        )
+        .build()
+    )
+
+    assert template_request.spec.vm_template.services == [service]
+    assert pool_request.spec.sandbox_template_ref.name == "workspace"
+
+
 def pool_request(
     *,
     name: str = "foo",
     template_name: str | None = None,
     replicas: int = 1,
 ) -> CreatePoolRequest:
-    return CreatePoolRequest(
-        namespace=name,
-        spec=OsGymSandboxWarmPoolSpec(
-            replicas=replicas,
-            sandbox_template_ref=SandboxTemplateRef(name=template_name or name),
-            autoscaling=None,
-        ),
+    template_ref = SandboxTemplateRefBuilder().name(template_name or name).build()
+    spec = (
+        OsGymSandboxWarmPoolSpecBuilder()
+        .replicas(replicas)
+        .sandbox_template_ref(template_ref)
+        .build()
     )
+    return CreatePoolRequestBuilder().namespace(name).spec(spec).build()
 
 
 def template_request(
@@ -51,34 +85,25 @@ def template_request(
     services: dict[str, int] | None = None,
     vm_template: VmTemplate | None = None,
 ) -> CreateTemplateRequest:
-    return CreateTemplateRequest(
-        namespace=name,
-        name=name,
-        spec=OsGymSandboxTemplateSpec(
-            vm_template=vm_template
-            or VmTemplate(
-                container_disk_image=image,
-                command=None,
-                runtime=None,
-                runtime_class_name=None,
-                node_selector=None,
-                tolerations=None,
-                image_pull_policy=None,
-                image_pull_secret="ecr-credentials",
-                cpu_cores=None,
-                memory=None,
-                firmware=None,
-                probes=None,
-                services=[
-                    SandboxService(
-                        name=service_name, target_port=port, protocol=ServiceProtocol.TCP
-                    )
-                    for service_name, port in (services or {"server": 8000}).items()
-                ],
-                oidc=None,
-            ),
-        ),
-    )
+    if vm_template is None:
+        built_services = [
+            SandboxServiceBuilder()
+            .name(service_name)
+            .target_port(port)
+            .protocol(ServiceProtocol.TCP)
+            .build()
+            for service_name, port in (services or {"server": 8000}).items()
+        ]
+        vm_template = (
+            VmTemplateBuilder()
+            .container_disk_image(image)
+            .image_pull_secret("ecr-credentials")
+            .services(built_services)
+            .build()
+        )
+
+    spec = OsGymSandboxTemplateSpecBuilder().vm_template(vm_template).build()
+    return CreateTemplateRequestBuilder().namespace(name).name(name).spec(spec).build()
 
 
 def fleet_pool(name: str = "foo") -> SimpleNamespace:
@@ -364,7 +389,7 @@ def test_sync_pool_matches_blocking_context_manager(monkeypatch):
 
     pool = SyncPool.reconcile(pool_request())
     spec = ClaimSpec(
-        sandbox_template_ref=SandboxTemplateRef(name=pool.name),
+        sandbox_template_ref=SandboxTemplateRefBuilder().name(pool.name).build(),
         warmpool=None,
         bind_deadline=900,
         lifecycle=None,
@@ -424,23 +449,24 @@ async def test_template_reconcile_forwards_native_request_unchanged(monkeypatch)
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
     request = template_request(
-        vm_template=VmTemplate(
-            container_disk_image="registry.example/workspace:latest",
-            command=None,
-            runtime=RuntimeKind.KUBEVIRT,
-            runtime_class_name=None,
-            node_selector=None,
-            tolerations=None,
-            image_pull_policy=None,
-            image_pull_secret="workspace-pull",
-            cpu_cores=10,
-            memory="20Gi",
-            firmware=Firmware.EFI,
-            probes=None,
-            services=[
-                SandboxService(name="server", target_port=8000, protocol=ServiceProtocol.TCP)
-            ],
-            oidc=None,
+        vm_template=(
+            VmTemplateBuilder()
+            .container_disk_image("registry.example/workspace:latest")
+            .runtime(RuntimeKind.KUBEVIRT)
+            .image_pull_secret("workspace-pull")
+            .cpu_cores(10)
+            .memory("20Gi")
+            .firmware(Firmware.EFI)
+            .services(
+                [
+                    SandboxServiceBuilder()
+                    .name("server")
+                    .target_port(8000)
+                    .protocol(ServiceProtocol.TCP)
+                    .build()
+                ]
+            )
+            .build()
         ),
     )
 
@@ -480,7 +506,7 @@ async def test_claim_forwards_native_claim_spec_unchanged(monkeypatch):
     pool = await Pool.reconcile(pool_request())
 
     spec = ClaimSpec(
-        sandbox_template_ref=SandboxTemplateRef(name=pool.name),
+        sandbox_template_ref=SandboxTemplateRefBuilder().name(pool.name).build(),
         warmpool=None,
         bind_deadline=900,
         lifecycle=None,

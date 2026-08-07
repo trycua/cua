@@ -20,18 +20,20 @@ from cua_sandbox.transport.fleet import FleetTransport
 from fleet_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
+    CreatePoolRequestBuilder,
     CreateTemplateRequest,
+    CreateTemplateRequestBuilder,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
     HttpRequest,
-    OsGymSandboxTemplateSpec,
-    OsGymSandboxWarmPoolSpec,
+    OsGymSandboxTemplateSpecBuilder,
+    OsGymSandboxWarmPoolSpecBuilder,
     PreservedJson,
-    SandboxService,
-    SandboxTemplateRef,
+    SandboxServiceBuilder,
+    SandboxTemplateRefBuilder,
     ServiceProtocol,
-    VmTemplate,
+    VmTemplateBuilder,
 )
 
 if TYPE_CHECKING:
@@ -375,43 +377,49 @@ class FleetCloudTransport(FleetTransport):
             **{f"port-{port}": port for port in self._image._ports if port != 8000},
         }
         services = [
-            SandboxService(name=name, target_port=port, protocol=ServiceProtocol.TCP)
+            SandboxServiceBuilder()
+            .name(name)
+            .target_port(port)
+            .protocol(ServiceProtocol.TCP)
+            .build()
             for name, port in service_ports.items()
         ]
-        return CreateTemplateRequest(
-            namespace=self._name,
-            name=self._name,
-            spec=OsGymSandboxTemplateSpec(
-                vm_template=VmTemplate(
-                    container_disk_image=self._image._registry,
-                    command=None,
-                    runtime=None,
-                    runtime_class_name=None,
-                    node_selector=None,
-                    tolerations=None,
-                    image_pull_policy=None,
-                    image_pull_secret="ecr-credentials",
-                    cpu_cores=self._cpu,
-                    memory=None if self._memory_mb is None else f"{self._memory_mb}Mi",
-                    firmware=None,
-                    probes=PreservedJson.from_json(
-                        json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
-                    ),
-                    services=services,
-                    oidc=None,
-                ),
-            ),
+        vm_template_builder = (
+            VmTemplateBuilder()
+            .container_disk_image(self._image._registry)
+            .image_pull_secret("ecr-credentials")
+            .probes(
+                PreservedJson.from_json(
+                    json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
+                )
+            )
+            .services(services)
+        )
+        if self._cpu is not None:
+            vm_template_builder = vm_template_builder.cpu_cores(self._cpu)
+        if self._memory_mb is not None:
+            vm_template_builder = vm_template_builder.memory(f"{self._memory_mb}Mi")
+
+        template_spec = (
+            OsGymSandboxTemplateSpecBuilder().vm_template(vm_template_builder.build()).build()
+        )
+        return (
+            CreateTemplateRequestBuilder()
+            .namespace(self._name)
+            .name(self._name)
+            .spec(template_spec)
+            .build()
         )
 
     def _pool_request(self) -> CreatePoolRequest:
-        return CreatePoolRequest(
-            namespace=self._name,
-            spec=OsGymSandboxWarmPoolSpec(
-                replicas=self._replicas,
-                sandbox_template_ref=SandboxTemplateRef(name=self._name),
-                autoscaling=None,
-            ),
+        template_ref = SandboxTemplateRefBuilder().name(self._name).build()
+        pool_spec = (
+            OsGymSandboxWarmPoolSpecBuilder()
+            .replicas(self._replicas)
+            .sandbox_template_ref(template_ref)
+            .build()
         )
+        return CreatePoolRequestBuilder().namespace(self._name).spec(pool_spec).build()
 
     @staticmethod
     def _service_names(template: Any) -> list[str]:

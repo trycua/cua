@@ -17,9 +17,8 @@ class FleetSdkPackagingTests(unittest.TestCase):
         with PYPROJECT_PATH.open("rb") as pyproject_file:
             project = tomllib.load(pyproject_file)
 
-        self.assertEqual(project["project"]["version"], "0.1.25")
         dependencies = project["project"]["dependencies"]
-        self.assertIn("cua-fleet==0.0.10", dependencies)
+        self.assertIn("cua-fleet==0.1.7", dependencies)
         self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))
         self.assertNotIn("cua-fleet", project["tool"]["uv"]["sources"])
         self.assertNotIn("cua-train", project["tool"]["uv"]["sources"])
@@ -44,14 +43,14 @@ class FleetSdkPackagingTests(unittest.TestCase):
             for requirement in packages["cua-sandbox"]["metadata"]["requires-dist"]
         }
         fleet_dependencies = {
-            dependency["name"] for dependency in packages["cua-fleet"]["dependencies"]
+            dependency["name"] for dependency in packages["cua-fleet"].get("dependencies", [])
         }
         self.assertIn("cua-fleet", sandbox_dependencies)
         self.assertNotIn("cua-train", sandbox_dependencies)
         self.assertIn("cua-fleet", sandbox_requires_dist)
         self.assertNotIn("cua-train", sandbox_requires_dist)
-        self.assertEqual(packages["cua-fleet"]["version"], "0.0.10")
-        self.assertEqual(packages["cua-fleet"]["source"], {"registry": "https://pypi.org/simple"})
+        self.assertEqual(packages["cua-fleet"]["version"], "0.1.7")
+        self.assertEqual(packages["cua-fleet"]["source"], {"registry": "https://wheels.cua.ai/simple"})
         self.assertNotIn("cua-train", fleet_dependencies)
         self.assertNotIn("cua-train", packages)
 

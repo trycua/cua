@@ -33,18 +33,25 @@ from cua_sandbox.transport.cloud import CloudTransport
 from fleet_sdk import (
     ClaimSpec,
     CreatePoolRequest,
+    CreatePoolRequestBuilder,
     CreateTemplateRequest,
+    CreateTemplateRequestBuilder,
     Firmware,
     OsGymSandboxTemplateSpec,
+    OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpec,
+    OsGymSandboxWarmPoolSpecBuilder,
     RuntimeKind,
     SandboxService,
+    SandboxServiceBuilder,
     SandboxTemplateRef,
+    SandboxTemplateRefBuilder,
     ServiceProtocol,
 )
 from fleet_sdk import Template as TemplateResource
 from fleet_sdk import (
     VmTemplate,
+    VmTemplateBuilder,
 )
 
 __all__ = [
@@ -56,14 +63,21 @@ __all__ = [
     "Template",
     "TemplateResource",
     "CreatePoolRequest",
+    "CreatePoolRequestBuilder",
     "CreateTemplateRequest",
+    "CreateTemplateRequestBuilder",
     "ClaimSpec",
     "SandboxTemplateRef",
+    "SandboxTemplateRefBuilder",
     "OsGymSandboxWarmPoolSpec",
+    "OsGymSandboxWarmPoolSpecBuilder",
     "OsGymSandboxTemplateSpec",
+    "OsGymSandboxTemplateSpecBuilder",
     "RuntimeKind",
     "VmTemplate",
+    "VmTemplateBuilder",
     "SandboxService",
+    "SandboxServiceBuilder",
     "ServiceProtocol",
     "Firmware",
     "Sandbox",

@@ -198,7 +198,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
     def test_distro_compat_downloads_release_asset_once_per_run(self) -> None:
         workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
 
-        self.assertEqual(workflow.count('curl -fsSL "$BINARY_URL"'), 1)
+        self.assertEqual(
+            workflow.count('"$BINARY_URL" -o cua-driver-release.tar.gz'),
+            1,
+        )
         self.assertIn("actions/upload-artifact@v4", workflow)
         self.assertIn("actions/download-artifact@v4", workflow)
         self.assertIn("cua-driver-release-${{ steps.pick.outputs.version }}", workflow)
@@ -213,7 +216,14 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow.count('      - ".github/workflows/ci-distro-compat-cua-driver.yml"'),
             2,
         )
-        self.assertIn('      - "cua-driver-rs-v*"', workflow)
+        self.assertIn("  release:\n", workflow)
+        self.assertIn("    types: [published]", workflow)
+        self.assertIn(
+            "startsWith(github.event.release.tag_name, 'cua-driver-rs-v')",
+            workflow,
+        )
+        self.assertIn('VERSION="${RELEASE_TAG#cua-driver-rs-v}"', workflow)
+        self.assertNotIn('      - "cua-driver-rs-v*"', workflow)
         self.assertIn("  workflow_dispatch:", workflow)
 
     def test_expensive_rust_workflows_do_not_watch_the_entire_tree(self) -> None:
@@ -614,11 +624,12 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn(".stdout(Stdio::null())", telemetry)
         self.assertIn(".stderr(Stdio::null())", telemetry)
 
-    def test_released_linux_smoke_waits_for_assets_and_installs_xkbcommon(self) -> None:
+    def test_released_linux_smoke_follows_publication_and_installs_xkbcommon(self) -> None:
         workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
 
-        self.assertIn("for attempt in $(seq 1 90)", workflow)
-        self.assertIn("release asset was still unavailable after 15 minutes", workflow)
+        self.assertIn("--retry 5 --retry-delay 2 --retry-all-errors", workflow)
+        self.assertNotIn("for attempt in $(seq 1 90)", workflow)
+        self.assertNotIn("release asset was still unavailable after 15 minutes", workflow)
         self.assertEqual(workflow.count("libxkbcommon0"), 4)
         self.assertEqual(workflow.count('libxkbcommon"'), 2)
 

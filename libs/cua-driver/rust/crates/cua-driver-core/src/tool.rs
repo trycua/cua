@@ -187,10 +187,17 @@ impl ToolDef {
             cua_driver_contract::tool_success_output_schema(&self.name)
         };
         if let Some(output_schema) = output_schema {
+            // Advertise the refusal envelope alongside the success shape. MCP
+            // holds every `structuredContent` we emit — refusals included — to
+            // the advertised schema, and a success-only schema made strict
+            // clients discard our refusal message in favour of a schema error.
             entry
                 .as_object_mut()
                 .expect("tool list entry is an object")
-                .insert("outputSchema".into(), output_schema);
+                .insert(
+                    "outputSchema".into(),
+                    cua_driver_contract::advertised_output_schema(output_schema),
+                );
         }
         entry
     }
@@ -4603,27 +4610,81 @@ mod capability_tests {
         assert!(entry["capabilities"].is_array());
     }
 
+    fn action_tool_entry(name: &str) -> serde_json::Value {
+        ToolDef {
+            name: name.into(),
+            description: "Action.".into(),
+            input_schema: serde_json::json!({"type":"object","properties":{}}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        }
+        .to_list_entry()
+    }
+
     #[test]
     fn action_tools_advertise_the_same_closed_output_schema() {
         let expected =
             <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema();
         for name in ["click", "browser_click", "browser_pointer", "browser_type"] {
-            let def = ToolDef {
-                name: name.into(),
-                description: "Action.".into(),
-                input_schema: serde_json::json!({"type":"object","properties":{}}),
-                read_only: false,
-                destructive: false,
-                idempotent: false,
-                open_world: true,
-            };
-            let entry = def.to_list_entry();
-            assert_eq!(entry["outputSchema"], expected, "{name}");
-            assert_eq!(
-                entry["outputSchema"]["additionalProperties"], false,
-                "{name}"
+            let entry = action_tool_entry(name);
+            // The success variant is unchanged and still closed; it now sits
+            // beside the refusal envelope instead of standing alone.
+            let success = &entry["outputSchema"]["anyOf"][0];
+            assert_eq!(success, &expected, "{name}");
+            assert_eq!(success["additionalProperties"], false, "{name}");
+        }
+    }
+
+    /// Regression: refusals must validate against the advertised schema.
+    ///
+    /// Both payloads below are verbatim captures from a live `cua-driver mcp`
+    /// stdio session. Advertising only the success shape made strict MCP
+    /// clients reject them with `-32602`, which discarded the refusal message
+    /// the driver had put in `content` and left agents with no signal to
+    /// re-snapshot.
+    #[test]
+    fn advertised_output_schema_accepts_live_refusal_payloads() {
+        let schema = &action_tool_entry("click")["outputSchema"];
+        let compiled = jsonschema::validator_for(schema).expect("advertised schema compiles");
+
+        let stale_element_token = serde_json::json!({
+            "refusal": {
+                "code": "stale_element_token",
+                "message": "element_token is stale; call get_window_state again to refresh"
+            },
+            "status": "refused"
+        });
+        let window_target_not_found = serde_json::json!({
+            "candidates": [],
+            "code": "window_target_not_found",
+            "effect": "refused",
+            "pid": 999_999
+        });
+        let success = serde_json::json!({
+            "delivery": {"mode": "background"},
+            "effect": "unverifiable",
+            "route": "accessibility"
+        });
+
+        for payload in [&stale_element_token, &window_target_not_found, &success] {
+            assert!(
+                compiled.is_valid(payload),
+                "advertised schema rejected {payload}"
             );
         }
+
+        // The success variant stays strict: an unknown key is still a bug, and
+        // must not be laundered through the permissive refusal variant.
+        assert!(
+            !compiled.is_valid(&serde_json::json!({
+                "effect": "confirmed",
+                "route": "accessibility",
+                "bogus_key": true
+            })),
+            "a malformed success payload must not validate"
+        );
     }
 
     #[test]
@@ -4665,8 +4726,9 @@ mod capability_tests {
             open_world: false,
         }
         .to_list_entry();
-        let z_index =
-            &entry["outputSchema"]["properties"]["windows"]["items"]["properties"]["z_index"];
+        // anyOf[0] is the success variant; anyOf[1] is the refusal envelope.
+        let z_index = &entry["outputSchema"]["anyOf"][0]["properties"]["windows"]["items"]
+            ["properties"]["z_index"];
         assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
         assert!(z_index["description"]
             .as_str()

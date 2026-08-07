@@ -568,6 +568,36 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow,
         )
 
+    def test_driver_release_signs_and_verifies_every_windows_binary(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn("environment: cua-driver-release-signing", workflow)
+        self.assertIn("id-token: write", workflow)
+        self.assertIn("azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca", workflow)
+        self.assertIn(
+            "azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82",
+            workflow,
+        )
+        self.assertIn("AZURE_ARTIFACT_SIGNING_ENDPOINT", workflow)
+        self.assertIn("AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME", workflow)
+        self.assertIn("AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME", workflow)
+        for name in (
+            "cua-driver.exe",
+            "cua-cursor-theme.exe",
+            "cua-driver-uia.exe",
+            "cua_driver_sdk.dll",
+            "cua_driver_node_runtime.node",
+        ):
+            self.assertGreaterEqual(workflow.count(name), 3, name)
+        self.assertIn("timestamp-rfc3161: http://timestamp.acs.microsoft.com", workflow)
+        self.assertIn('if ($signature.Status -ne "Valid")', workflow)
+        self.assertIn("TimeStamperCertificate", workflow)
+        self.assertLess(
+            workflow.index("name: Sign Windows release binaries"),
+            workflow.index("name: Package", workflow.index("build-windows:")),
+        )
+        self.assertNotIn("currently shipped UNSIGNED", workflow)
+
     def test_installer_compatibility_runs_current_installers_on_releases(
         self,
     ) -> None:

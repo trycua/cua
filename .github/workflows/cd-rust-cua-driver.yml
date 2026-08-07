@@ -221,6 +221,10 @@ jobs:
     name: windows-${{ matrix.arch }}
     needs: release-attribution-preflight
     runs-on: windows-latest
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -285,6 +289,66 @@ jobs:
           node scripts/build-node-runtime.mjs \
             --target "${{ matrix.target }}" \
             --output "rust/target/${{ matrix.target }}/release/cua_driver_node_runtime.node"
+      - name: Azure login for release signing
+        if: >-
+          startsWith(github.ref, 'refs/tags/cua-driver-rs-v') ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign Windows release binaries
+        if: >-
+          startsWith(github.ref, 'refs/tags/cua-driver-rs-v') ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files: |
+            ${{ github.workspace }}\libs\cua-driver\rust\target\${{ matrix.target }}\release\cua-driver.exe
+            ${{ github.workspace }}\libs\cua-driver\rust\target\${{ matrix.target }}\release\cua-cursor-theme.exe
+            ${{ github.workspace }}\libs\cua-driver\rust\target\${{ matrix.target }}\release\cua-driver-uia.exe
+            ${{ github.workspace }}\libs\cua-driver\rust\target\${{ matrix.target }}\release\cua_driver_sdk.dll
+            ${{ github.workspace }}\libs\cua-driver\rust\target\${{ matrix.target }}\release\cua_driver_node_runtime.node
+          description: Cua Driver
+          description-url: https://github.com/trycua/cua
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify Windows release signatures
+        if: >-
+          startsWith(github.ref, 'refs/tags/cua-driver-rs-v') ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+        working-directory: libs/cua-driver/rust
+        shell: pwsh
+        run: |
+          $target = "${{ matrix.target }}"
+          $release = Join-Path "target/$target" "release"
+          $files = @(
+            "cua-driver.exe",
+            "cua-cursor-theme.exe",
+            "cua-driver-uia.exe",
+            "cua_driver_sdk.dll",
+            "cua_driver_node_runtime.node"
+          )
+
+          foreach ($name in $files) {
+            $path = Join-Path $release $name
+            $signature = Get-AuthenticodeSignature -LiteralPath $path
+            if ($signature.Status -ne "Valid") {
+              throw "$name Authenticode signature is $($signature.Status): $($signature.StatusMessage)"
+            }
+            if ($null -eq $signature.SignerCertificate) {
+              throw "$name has no signer certificate"
+            }
+            if ($null -eq $signature.TimeStamperCertificate) {
+              throw "$name has no RFC 3161 timestamp certificate"
+            }
+            Write-Host "$name signed by $($signature.SignerCertificate.Subject)"
+          }
       - name: Package
         working-directory: libs/cua-driver/rust
         shell: pwsh
@@ -308,12 +372,9 @@ jobs:
           # wrapper and dumps the files at the archive root, which breaks
           # the installer's path lookup.
           Compress-Archive -Path "release/$stage" -DestinationPath "release/$stage.zip" -Force
-          # Bare-binaries zip: both exes side-by-side (no wrapper dir).
-          # `cua-driver-uia.exe` is currently shipped UNSIGNED in this archive
-          # — until #1602 wires an EV cert into CD, the worker won't elevate
-          # to UIAccess integrity on a default-policy machine. The main CLI/MCP
-          # binary stays fully functional regardless; uia is opt-in dead-weight
-          # until signed.
+          # Bare runtime zip: signed executables and SDK artifacts side-by-side
+          # with no wrapper directory. Signing happens before either archive is
+          # assembled so the UIAccess worker retains its production signature.
           Compress-Archive -Path "release/$stage/cua-driver.exe","release/$stage/cua-cursor-theme.exe","release/$stage/cua-driver-uia.exe","release/$stage/cua_driver_sdk.dll","release/$stage/cua_driver_node_runtime.node","release/$stage/cua_driver_abi.h" -DestinationPath "release/$stage-binary.zip" -Force
           Get-ChildItem "release/$stage*.zip"
       - uses: actions/upload-artifact@v4

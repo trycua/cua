@@ -202,6 +202,7 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
         }
         OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
             if map.ended.contains(&key) {
+                tracing::debug!(key = %key, cmd = ?cmd, "overlay: command dropped — key was ended");
                 return None;
             }
             let template = map.template.clone();
@@ -293,6 +294,13 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         cmd: cmd.clone(),
     });
     let x11_queued = try_send_x11_message(CMD_TX.get(), msg.clone());
+    if !x11_queued {
+        tracing::warn!(
+            key = %key,
+            sender_missing = CMD_TX.get().is_none(),
+            "overlay: X11 channel rejected command (no sender or queue full)"
+        );
+    }
     // Also forward to the native-Wayland layer-shell overlay when Wayland
     // is opted in. The wayland overlay's `forward` is a no-op when its
     // owner thread isn't started yet (which is the normal X11-only case).
@@ -763,8 +771,16 @@ fn wait_for_overlay_work(
 
 #[cfg(target_os = "linux")]
 fn recoverable_x11_z_order_error(error: &x11rb::x11_utils::X11Error, overlay_win: u32) -> bool {
-    error.error_kind == x11rb::protocol::ErrorKind::Window
-        && error.major_opcode == x11rb::protocol::xproto::CONFIGURE_WINDOW_REQUEST
+    // BadWindow: the sibling died between the liveness probe and the server
+    // processing the restack. BadMatch: the sibling is not a sibling — a
+    // reparenting WM moved the target under a frame window (or reparented it
+    // between our ancestor resolution and the restack), so it no longer
+    // shares the overlay's parent. Both mean only "this z-order nudge did
+    // not land"; the next eligible reassertion retries with fresh state.
+    matches!(
+        error.error_kind,
+        x11rb::protocol::ErrorKind::Window | x11rb::protocol::ErrorKind::Match
+    ) && error.major_opcode == x11rb::protocol::xproto::CONFIGURE_WINDOW_REQUEST
         && error.extension_name.is_none()
         && error.bad_value != overlay_win
 }
@@ -777,19 +793,20 @@ fn classify_x11_overlay_event(
     overlay_win: u32,
 ) -> anyhow::Result<bool> {
     match event {
-        // The pinned target can disappear after the synchronous liveness probe
-        // in X11ZOrderEnforcer::reassert but before its unchecked ConfigureWindow
-        // request reaches the server. x11rb then delivers BadWindow here after
+        // The pinned target can disappear (BadWindow) or be reparented under a
+        // WM frame (BadMatch) after the synchronous probe in
+        // X11ZOrderEnforcer::reassert but before its unchecked ConfigureWindow
+        // request reaches the server; x11rb then delivers the error here after
         // the VoidCookie is dropped. This owner connection's only other
         // ConfigureWindow path is checked synchronously, so a non-overlay bad
-        // window is the stale sibling and is safe to retry without a sibling on
+        // value is the stale sibling and is safe to retry with fresh state on
         // the next eligible z-order reassertion.
         x11rb::protocol::Event::Error(error)
             if recoverable_x11_z_order_error(error, overlay_win) =>
         {
             tracing::debug!(
                 stale_target = error.bad_value,
-                "X11 overlay target disappeared during z-order reassertion"
+                "X11 overlay z-order sibling went stale during reassertion"
             );
             Ok(false)
         }
@@ -1154,7 +1171,11 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // Arrivals resolve callers waiting for the destination frame to be visible,
     // so they are held back across a deferred paint instead of firing early.
     let mut pending_arrivals: Vec<CursorKey> = Vec::new();
-    let z_enforcer = X11ZOrderEnforcer { conn: &conn, win };
+    let z_enforcer = X11ZOrderEnforcer {
+        conn: &conn,
+        win,
+        root,
+    };
 
     loop {
         // Idle fast path: no Pixmap allocation, RGBA→BGRA copy, XShape update,
@@ -1402,6 +1423,40 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 struct X11ZOrderEnforcer<'a, C: x11rb::connection::Connection> {
     conn: &'a C,
     win: u32,
+    root: u32,
+}
+
+/// Resolve an arbitrary X11 window to its top-level ancestor — the member of
+/// its parent chain that is a direct child of `root`.
+///
+/// `ConfigureWindow` with a `sibling` requires the sibling to share the
+/// configured window's parent. The overlay is an override-redirect child of
+/// the root, but under a reparenting WM (xfwm4, Mutter, KWin, …) the pinned
+/// client window sits inside a WM frame window; restacking against the client
+/// XID directly draws BadMatch. The frame — its root-child ancestor — is the
+/// window that actually occupies a stacking slot, so it is the correct
+/// sibling. Returns `None` for a dead window or a chain that never reaches
+/// the root (also proving liveness, replacing a separate attribute probe).
+#[cfg(target_os = "linux")]
+fn resolve_x11_root_child(
+    conn: &impl x11rb::connection::Connection,
+    root: u32,
+    xid: u32,
+) -> Option<u32> {
+    use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
+    let mut current = xid;
+    // A parent chain deeper than this is not a plausible WM frame tree.
+    for _ in 0..32 {
+        let tree = conn.query_tree(current).ok()?.reply().ok()?;
+        if tree.root != root {
+            return None;
+        }
+        if tree.parent == root || tree.parent == x11rb::NONE {
+            return Some(current);
+        }
+        current = tree.parent;
+    }
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -1416,19 +1471,15 @@ impl<'a, C: x11rb::connection::Connection> ZOrderEnforcer for X11ZOrderEnforcer<
         // normal stack, no sibling. Using a stale XID as a `sibling` here
         // triggers BadWindow on every tick of the overlay-enforcer loop
         // (~125 Hz), spamming the X server and silently skipping the
-        // intended z-reassertion. Probe liveness via get_window_attributes
-        // before committing to the sibling path.
-        let target_live = target.and_then(|xid| {
-            self.conn
-                .get_window_attributes(xid as u32)
-                .ok()
-                .and_then(|c| c.reply().ok())
-                .map(|_| xid)
-        });
+        // intended z-reassertion. Resolving the root-child ancestor both
+        // probes liveness and yields the only sibling the server will
+        // accept under a reparenting WM (see resolve_x11_root_child).
+        let target_live =
+            target.and_then(|xid| resolve_x11_root_child(self.conn, self.root, xid as u32));
         let aux = if let Some(target_xid) = target_live {
-            // Place overlay just above the pinned X11 window.
+            // Place overlay just above the pinned window's top-level frame.
             ConfigureWindowAux::new()
-                .sibling(target_xid as u32)
+                .sibling(target_xid)
                 .stack_mode(StackMode::ABOVE)
         } else {
             // No pin (or stale target XID) → raise to the top of the
@@ -3288,12 +3339,35 @@ mod tests {
     }
 
     #[test]
-    fn non_badwindow_configure_error_remains_fatal() {
+    fn z_order_sibling_badmatch_is_recoverable() {
+        // A reparenting WM can move the sibling under a frame window between
+        // the ancestor resolution and the restack; the server answers with
+        // BadMatch. That only means the z-order nudge missed — it must not
+        // kill the overlay (it used to: the first PinAbove under xfwm4
+        // silently disabled the cursor for the daemon's lifetime).
         let error = x11rb::protocol::Event::Error(x11rb::x11_utils::X11Error {
             error_kind: x11rb::protocol::ErrorKind::Match,
             error_code: 8,
             sequence: 1,
             bad_value: 42,
+            minor_opcode: 0,
+            major_opcode: x11rb::protocol::xproto::CONFIGURE_WINDOW_REQUEST,
+            extension_name: None,
+            request_name: Some("ConfigureWindow"),
+        });
+
+        assert!(!classify_x11_overlay_event(&error, 7).unwrap());
+    }
+
+    #[test]
+    fn overlay_badmatch_remains_fatal() {
+        // A Match error naming the overlay window itself is not a stale
+        // sibling — something is structurally wrong with our own window.
+        let error = x11rb::protocol::Event::Error(x11rb::x11_utils::X11Error {
+            error_kind: x11rb::protocol::ErrorKind::Match,
+            error_code: 8,
+            sequence: 1,
+            bad_value: 7,
             minor_opcode: 0,
             major_opcode: x11rb::protocol::xproto::CONFIGURE_WINDOW_REQUEST,
             extension_name: None,

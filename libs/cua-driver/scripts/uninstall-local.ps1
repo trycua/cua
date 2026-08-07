@@ -97,7 +97,8 @@ $SkillLinks = @(
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver"),
     (Join-Path $env:APPDATA "opencode\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver"),
-    (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver")
+    (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".minimax\skills\cua-driver")
 )
 foreach ($link in $SkillLinks) {
     if (Test-LocalLinkTarget $link) {

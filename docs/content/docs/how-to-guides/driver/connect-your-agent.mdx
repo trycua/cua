@@ -134,6 +134,31 @@ Print the same current guidance from the installed binary:
 cua-driver mcp-config --client prime-agent
 ```
 
+## MiniMax Code
+
+Download and launch [MiniMax Code](https://agent.minimax.io/download) once so
+it creates its local `~/.minimax/` directory. Then generate its Cua Driver MCP
+configuration:
+
+```bash
+cua-driver mcp-config --client minimax
+```
+
+Create `~/.minimax/mcp.json` if it does not exist, or merge the generated
+`cua-driver` entry into the existing top-level `mcpServers` object. Install the
+agent skill for the snapshot/action/verify workflow:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+The installer links the skill at `~/.minimax/skills/cua-driver` when MiniMax
+Code's skills directory exists. Fully restart MiniMax Code, start a fresh
+conversation, and ask it to use the Cua Driver skill to list the open apps. A
+successful `list_apps` result verifies the MCP connection without changing the
+desktop.
+
 ## Cursor
 
 Generate the Cursor snippet:

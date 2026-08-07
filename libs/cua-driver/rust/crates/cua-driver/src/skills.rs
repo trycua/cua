@@ -55,6 +55,8 @@
 //!   repo-bundled `hermes-agent/skills/` tree, which is read-only and
 //!   version-controlled). Hermes' own `computer-use` skill teaches its wrapper
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
+//! - MiniMax Code: `~/.minimax/skills/` — the local skill registry used by
+//!   MiniMax Code alongside its `~/.minimax/mcp.json` MCP configuration.
 //!
 //! Only acts on a given agent when its parent skills dir already
 //! exists (i.e. the agent itself is installed). Never clobbers an
@@ -238,6 +240,10 @@ const AGENTS: &[Agent] = &[
         label: "Hermes",
         parent: AgentParent::Home(".hermes/skills"),
     },
+    Agent {
+        label: "MiniMax Code",
+        parent: AgentParent::Home(".minimax/skills"),
+    },
 ];
 
 impl Agent {
@@ -336,7 +342,7 @@ fn install(flags: &[String], force: bool) -> Result<()> {
         }
     }
     if !linked_any {
-        println!("(No agent skills dirs present yet — install Claude Code / Codex / Prime Agent / OpenClaw / OpenCode / Antigravity / Hermes then re-run.)");
+        println!("(No agent skills dirs present yet — install Claude Code / Codex / Prime Agent / OpenClaw / OpenCode / Antigravity / Hermes / MiniMax Code then re-run.)");
     }
     Ok(())
 }
@@ -795,6 +801,19 @@ mod tests {
         assert!(matches!(
             target.parent,
             AgentParent::Home(".prime/agent/skills")
+        ));
+    }
+
+    #[test]
+    fn minimax_code_target_matches_its_local_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "MiniMax Code")
+            .expect("MiniMax Code must remain a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".minimax/skills")
         ));
     }
 

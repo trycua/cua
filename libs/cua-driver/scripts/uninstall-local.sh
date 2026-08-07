@@ -136,7 +136,8 @@ for skill_link in \
     "$HOME/.openclaw/skills/cua-driver" \
     "$HOME/.config/opencode/skills/cua-driver" \
     "$HOME/.gemini/skills/cua-driver" \
-    "$HOME/.hermes/skills/cua-driver"; do
+    "$HOME/.hermes/skills/cua-driver" \
+    "$HOME/.minimax/skills/cua-driver"; do
     if [[ -L "$skill_link" ]]; then
         target="$(resolve_link "$skill_link")"
         if is_local_target "$target"; then

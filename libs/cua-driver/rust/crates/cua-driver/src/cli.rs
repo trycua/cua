@@ -158,7 +158,8 @@ pub enum Command {
     /// `cua-driver skills {install|update|uninstall|status|path}` —
     /// agent skill-pack management. The verb is the ONLY way a user
     /// installs or updates the cua-driver skill pack into their agent
-    /// dirs (Claude Code / Codex / Prime Agent / OpenClaw / OpenCode); the install
+    /// dirs (Claude Code / Codex / Prime Agent / OpenClaw / OpenCode /
+    /// MiniMax Code); the install
     /// scripts never touch ~/.claude/skills/ etc. directly. `install`
     /// fetches the matching versioned release asset
     /// (`cua-driver-rs-v<v>-skills.tar.gz` — the asset filename keeps
@@ -397,6 +398,7 @@ fn finite_client_kind_from_args(args: &[String]) -> &'static str {
         "antigravity" | "gemini" => "antigravity",
         "qwen" | "qwen-code" => "qwen_code",
         "droid" | "factory" => "factory_droid",
+        "minimax" | "minimax-code" => "minimax_code",
         "zcode" => "zcode",
         _ => "other",
     }
@@ -463,7 +465,7 @@ pub fn parse_command() -> Command {
         println!("skills options (agent skill-pack management, opt-in):");
         println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
         println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, Prime Agent,");
-        println!("                                  OpenClaw, OpenCode). Idempotent. Never overwrites existing user links.");
+        println!("                                  OpenClaw, OpenCode, MiniMax Code). Idempotent. Never overwrites user links.");
         println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
         println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
@@ -1512,7 +1514,7 @@ pub fn build_manifest() -> serde_json::Value {
               ] },
             { "name": "mcp-config",
               "description": "Print client-specific connection guidance (MCP config where supported).",
-              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode. Omit for the generic snippet." } ] },
+              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode, minimax. Omit for the generic snippet." } ] },
             { "name": "manifest",
               "description": "Emit this machine-readable description of the CLI surface.",
               "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
@@ -1580,7 +1582,8 @@ pub fn build_manifest() -> serde_json::Value {
 /// Print client-specific connection guidance (MCP config where supported).
 ///
 /// `--client <name>` selects one of: claude, codex, cursor, hermes,
-/// antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode.
+/// antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode,
+/// minimax.
 /// Omit for the generic JSON snippet.
 pub fn run_mcp_config(client: Option<&str>) {
     let binary = std::env::current_exe()
@@ -1664,6 +1667,28 @@ pub fn run_mcp_config(client: Option<&str>) {
     }}
   }}
 }}"#
+            );
+        }
+        Some("minimax") | Some("minimax-code") => {
+            let normalised = binary.replace('\\', "/");
+            let full = serde_json::json!({
+                "mcpServers": {
+                    "cua-driver": {
+                        "command": normalised,
+                        "args": ["mcp"],
+                        "type": "stdio",
+                    }
+                }
+            });
+            let pretty = serde_json::to_string_pretty(&full).unwrap_or_else(|_| full.to_string());
+            println!(
+                "# MiniMax Code reads local MCP server configuration from:\n\
+                 #   ~/.minimax/mcp.json   (macOS / Linux)\n\
+                 #   %USERPROFILE%\\.minimax\\mcp.json   (Windows)\n\
+                 #\n\
+                 # Create the file if needed, or merge the server below into its existing\n\
+                 # top-level \"mcpServers\" object. Fully restart MiniMax Code afterward.\n\
+                 {pretty}",
             );
         }
         Some("openclaw") => {
@@ -1808,7 +1833,7 @@ pub fn run_mcp_config(client: Option<&str>) {
             );
         }
         Some(other) => {
-            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode.");
+            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode, minimax.");
             process::exit(2);
         }
     }
@@ -3109,7 +3134,7 @@ fn cli_docs_json() -> serde_json::Value {
             {
                 "name": "mcp-config",
                 "abstract": "Print client-specific connection guidance (MCP config where supported).",
-                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode.",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode, and minimax.",
                 "arguments": no_args,
                 "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
                 "flags": no_flags,
@@ -3968,6 +3993,10 @@ mod tests {
         assert_eq!(
             finite_client_kind_from_args(&args(&["mcp-config", "--client", "prime-agent"])),
             "prime_agent"
+        );
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["mcp-config", "--client", "minimax-code"])),
+            "minimax_code"
         );
         assert_eq!(
             finite_client_kind_from_args(&args(&["mcp-config", "--client", "/private/client"])),

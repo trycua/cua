@@ -88,8 +88,8 @@ pub struct UiaNode {
     /// `element_index` of the nearest actionable ancestor, if any.
     /// Mirrors the markdown's parent-of-this-row.
     pub parent_element_index: Option<usize>,
-    /// True when this node is below a UIA Document control. Browser-owned
-    /// consent chrome must never match renderer-controlled descendants.
+    /// True when this node is a UIA Document control or one of its descendants.
+    /// Browser-owned consent chrome must never match renderer-controlled nodes.
     pub in_web_content: bool,
 }
 
@@ -667,6 +667,7 @@ unsafe fn walk_cached_bounded(
     *total += 1;
 
     let control_type = read_cached_control_type(element);
+    let in_web_content = node_is_in_web_content(in_web_content, &control_type);
     let name = read_cached_bstr_name(element);
     let value = read_cached_bstr_value(element);
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
@@ -677,7 +678,12 @@ unsafe fn walk_cached_bounded(
     let is_enabled = enabled.unwrap_or(true);
     let selected = read_cached_selected(element);
     let actions = detect_cached_actions(element, &control_type, is_enabled);
-    let is_actionable = !actions.is_empty() && is_enabled;
+    let is_indexable = should_index_node(
+        &actions,
+        is_enabled,
+        automation_id.as_deref(),
+        in_web_content,
+    );
     let has_content = name
         .as_deref()
         .map(|s| !s.trim().is_empty())
@@ -688,12 +694,12 @@ unsafe fn walk_cached_bounded(
             .unwrap_or(false);
 
     let mut emitted_parent: Option<usize> = parent_index;
-    if is_actionable || has_content {
+    if is_indexable || has_content {
         let retained: IUIAutomationElement = element.clone();
         let ptr = retained.as_raw() as usize;
         std::mem::forget(retained);
 
-        let node = if is_actionable {
+        let node = if is_indexable {
             let idx = *counter;
             *counter += 1;
             let (center_x, center_y, rect) = read_cached_bounding_rect_full(element);
@@ -752,7 +758,7 @@ unsafe fn walk_cached_bounded(
                     &child,
                     depth + 1,
                     emitted_parent,
-                    in_web_content || control_type.eq_ignore_ascii_case("Document"),
+                    in_web_content,
                     nodes,
                     lines,
                     counter,
@@ -763,6 +769,20 @@ unsafe fn walk_cached_bounded(
             }
         }
     }
+}
+
+fn node_is_in_web_content(parent_in_web_content: bool, control_type: &str) -> bool {
+    parent_in_web_content || control_type.eq_ignore_ascii_case("Document")
+}
+
+fn should_index_node(
+    actions: &[String],
+    is_enabled: bool,
+    automation_id: Option<&str>,
+    in_web_content: bool,
+) -> bool {
+    (!actions.is_empty() && is_enabled)
+        || (!in_web_content && automation_id.is_some_and(|id| !id.trim().is_empty()))
 }
 
 fn read_cached_control_type(element: &IUIAutomationElement) -> String {
@@ -1054,4 +1074,31 @@ fn filter_tree(markdown: &str, query: &str) -> String {
     let mut r = output.join("\n");
     r.push('\n');
     r
+}
+
+#[cfg(test)]
+mod developer_assigned_id_index_tests {
+    use super::{node_is_in_web_content, should_index_node};
+
+    #[test]
+    fn document_nodes_and_descendants_are_web_content() {
+        assert!(node_is_in_web_content(false, "Document"));
+        assert!(node_is_in_web_content(true, "Button"));
+        assert!(!node_is_in_web_content(false, "Button"));
+    }
+
+    #[test]
+    fn native_ids_keep_patternless_controls_indexed() {
+        assert!(should_index_node(
+            &[],
+            true,
+            Some("app.terms-accept"),
+            false
+        ));
+        assert!(should_index_node(&[], false, Some("app.disabled"), false));
+        assert!(!should_index_node(&[], true, Some("dom-node"), true));
+        assert!(!should_index_node(&[], true, Some("  "), false));
+        assert!(!should_index_node(&[], true, None, false));
+        assert!(should_index_node(&["invoke".into()], true, None, true));
+    }
 }

@@ -625,6 +625,66 @@ jobs:
             --artifacts artifacts \
             --version "${{ steps.version.outputs.version }}"
 
+  # Exercise the exact Linux x86_64 archive through consumers that users run.
+  # The raw and official-SDK checks enforce the complete roster and strict
+  # object-root schema contract. Claude Code and Codex then prove their real
+  # discovery paths without invoking a model or reading an account session.
+  verify-mcp-client-discovery:
+    name: packaged MCP client discovery
+    needs: build-linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: .github/scripts/cua-driver-mcp-compat/package-lock.json
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download Linux x86_64 candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: cua-driver-rs-linux-x86_64
+          path: artifacts
+
+      - name: Extract the exact packaged binary
+        id: candidate
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCHIVE="artifacts/cua-driver-rs-${VERSION}-linux-x86_64-binary.tar.gz"
+          test -f "$ARCHIVE"
+          mkdir -p "$RUNNER_TEMP/cua-driver-candidate"
+          tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP/cua-driver-candidate"
+          BINARY="$RUNNER_TEMP/cua-driver-candidate/cua-driver"
+          test -x "$BINARY"
+          "$BINARY" --version | grep -F "$VERSION"
+          echo "binary=$BINARY" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned MCP clients
+        working-directory: .github/scripts/cua-driver-mcp-compat
+        run: npm ci --ignore-scripts
+
+      - name: Verify packaged MCP discovery
+        working-directory: .github/scripts/cua-driver-mcp-compat
+        env:
+          CUA_DRIVER_BINARY: ${{ steps.candidate.outputs.binary }}
+          CUA_DRIVER_EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: npm run verify
+
   # ── Release ──────────────────────────────────────────────────────────────────
   # Tag pushes build immutable candidate artifacts only. Publishing is an
   # explicit second step after the exact tag SHA passes the interactive E2E
@@ -633,7 +693,7 @@ jobs:
   # evidence exists.
   release:
     needs:
-      [build-linux, build-windows, build-macos-universal, verify-release-artifacts]
+      [build-linux, build-windows, build-macos-universal, verify-release-artifacts, verify-mcp-client-discovery]
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
     steps:

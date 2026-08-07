@@ -564,8 +564,63 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
             "[build-linux, build-windows, build-macos-universal, "
-            "verify-release-artifacts]",
+            "verify-release-artifacts, verify-mcp-client-discovery]",
             workflow,
+        )
+
+    def test_driver_release_blocks_on_packaged_mcp_client_discovery(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        ci_workflow = self.read(
+            ".github/workflows/ci-cua-driver-contract-clients.yml"
+        )
+        package = json.loads(
+            self.read(
+                ".github/scripts/cua-driver-mcp-compat/package.json"
+            )
+        )
+        expected = json.loads(
+            self.read(
+                ".github/scripts/cua-driver-mcp-compat/expected-tools.json"
+            )
+        )
+
+        self.assertIn("verify-mcp-client-discovery:", workflow)
+        self.assertIn("name: packaged MCP client discovery", workflow)
+        self.assertIn("name: cua-driver-rs-linux-x86_64", workflow)
+        self.assertIn("-binary.tar.gz", workflow)
+        self.assertIn("CUA_DRIVER_BINARY", workflow)
+        self.assertIn("npm run verify", workflow)
+        self.assertIn("MCP discovery in pinned clients", ci_workflow)
+        self.assertIn("Verify discovery without model or account calls", ci_workflow)
+        self.assertEqual(
+            package["dependencies"],
+            {
+                "@anthropic-ai/claude-code": "2.1.224",
+                "@modelcontextprotocol/sdk": "1.30.0",
+                "@openai/codex": "0.146.1",
+            },
+        )
+        self.assertEqual(
+            expected["baseTools"], sorted(expected["baseTools"])
+        )
+        self.assertEqual(
+            len(expected["baseTools"]), len(set(expected["baseTools"]))
+        )
+        self.assertEqual(len(expected["baseTools"]), 54)
+        self.assertEqual(
+            expected["outputSchemaCountByPlatform"],
+            {"darwin": 30, "linux": 34, "win32": 30},
+        )
+        self.assertEqual(
+            expected["platformTools"],
+            {
+                "linux": [
+                    "mouse_button_down",
+                    "mouse_button_up",
+                    "mouse_drag",
+                    "parallel_mouse_drag",
+                ]
+            },
         )
 
     def test_installer_compatibility_runs_current_installers_on_releases(

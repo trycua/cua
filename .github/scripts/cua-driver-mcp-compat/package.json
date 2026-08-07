@@ -1,0 +1,15 @@
+{
+  "name": "@trycua/cua-driver-mcp-release-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Release-blocking MCP discovery checks for packaged Cua Driver candidates.",
+  "scripts": {
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.224",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@openai/codex": "0.146.1"
+  }
+}

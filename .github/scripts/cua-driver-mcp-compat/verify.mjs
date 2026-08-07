@@ -22,6 +22,8 @@ const EXPECTED_TOOLS = sorted([
   ...EXPECTED.baseTools,
   ...(EXPECTED.platformTools[process.platform] ?? []),
 ]);
+const EXPECTED_OUTPUT_SCHEMA_COUNT =
+  EXPECTED.outputSchemaCountByPlatform[process.platform];
 const DRIVER_ARGS = [
   "mcp",
   "--direct",
@@ -54,6 +56,11 @@ const CLAUDE = claudeBinary();
 
 assert(DRIVER, "CUA_DRIVER_BINARY must name the extracted release candidate");
 assert(EXPECTED_VERSION, "CUA_DRIVER_EXPECTED_VERSION must be set");
+assert.equal(
+  typeof EXPECTED_OUTPUT_SCHEMA_COUNT,
+  "number",
+  `no output schema contract is defined for ${process.platform}`,
+);
 
 function sorted(values) {
   return [...values].sort();
@@ -87,7 +94,7 @@ function assertWireSchemas(label, tools) {
   }
   assert.equal(
     outputSchemaCount,
-    EXPECTED.outputSchemaCount,
+    EXPECTED_OUTPUT_SCHEMA_COUNT,
     `${label}: outputSchema coverage changed without updating the compatibility manifest`,
   );
 }

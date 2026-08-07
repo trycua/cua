@@ -52,7 +52,7 @@ pub fn refusal_envelope_schema() -> Value {
 /// payloads stay strictly checked — and the refusal envelope joins it as a
 /// sibling variant.
 pub fn advertised_output_schema(success: Value) -> Value {
-    serde_json::json!({ "anyOf": [success, refusal_envelope_schema()] })
+    serde_json::json!({ "type": "object", "anyOf": [success, refusal_envelope_schema()] })
 }
 
 fn output_schema_with_additional_properties<T: JsonSchema>(additional_properties: bool) -> Value {

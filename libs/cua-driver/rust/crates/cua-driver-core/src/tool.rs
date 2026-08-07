@@ -4632,6 +4632,7 @@ mod capability_tests {
             // The success variant is unchanged and still closed; it now sits
             // beside the refusal envelope instead of standing alone.
             let success = &entry["outputSchema"]["anyOf"][0];
+            assert_eq!(entry["outputSchema"]["type"], "object", "{name}");
             assert_eq!(success, &expected, "{name}");
             assert_eq!(success["additionalProperties"], false, "{name}");
         }

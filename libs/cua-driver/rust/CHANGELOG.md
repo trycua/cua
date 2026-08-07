@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.19.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.19.0...cua-driver-rs-v0.19.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** advertise refusals in the MCP outputSchema ([#2968](https://github.com/trycua/cua/issues/2968)) ([dc6f32c](https://github.com/trycua/cua/commit/dc6f32cd4d32bb0a60e18674086f443f9d9d8288))
+* **cua-driver:** record launch provenance for sessionless launch_app so kill_app can reprove it ([#2966](https://github.com/trycua/cua/issues/2966)) ([b065550](https://github.com/trycua/cua/commit/b06555075fc0ccc14df7e17d33b7eb27d97c9c53)), closes [#2965](https://github.com/trycua/cua/issues/2965)
+* **cua-driver:** resolve Linux launch_app names via .desktop entries and surface xdg-open failures ([#2954](https://github.com/trycua/cua/issues/2954)) ([fb4b492](https://github.com/trycua/cua/commit/fb4b492cd997dd3e8659298adfd98825974ebb7e))
+* **cua-driver:** survive z-order BadMatch under reparenting WMs so the Linux agent cursor can paint ([#2957](https://github.com/trycua/cua/issues/2957)) ([9522358](https://github.com/trycua/cua/commit/9522358294f34aba138221e87d3dbb79486b199a)), closes [#2955](https://github.com/trycua/cua/issues/2955)
+
 ## [0.19.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.18.0...cua-driver-rs-v0.19.0) (2026-08-06)
 
 

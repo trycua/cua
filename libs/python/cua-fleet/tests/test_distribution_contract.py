@@ -11,7 +11,7 @@ def test_release_metadata_matches_the_uniffi_distribution() -> None:
     project = tomllib.loads((PACKAGE_ROOT / "pyproject.toml").read_text())["project"]
 
     assert project["name"] == "cua-fleet"
-    assert project["version"] == "0.1.6"
+    assert project["version"] == "0.1.7"
     assert project["description"] == "Cua Fleet UniFFI SDK"
     assert project["requires-python"] == ">=3.10"
     assert project.get("dependencies", []) == []

@@ -16,11 +16,11 @@ PYPROJECT = REPO_ROOT / "libs/python/cua-fleet/pyproject.toml"
 
 
 class TestCuaFleetReleaseWiring(unittest.TestCase):
-    def test_manifest_pins_the_complete_0_1_6_release(self) -> None:
+    def test_manifest_pins_the_complete_0_1_7_release(self) -> None:
         manifest = json.loads(MANIFEST.read_text())
         project = tomllib.loads(PYPROJECT.read_text())["project"]
 
-        self.assertEqual(manifest["version"], "0.1.6")
+        self.assertEqual(manifest["version"], "0.1.7")
         self.assertEqual(project["version"], manifest["version"])
         expected_platforms = {
             "manylinux_2_34_x86_64",
@@ -32,7 +32,7 @@ class TestCuaFleetReleaseWiring(unittest.TestCase):
         self.assertEqual(
             set(manifest["wheels"]),
             {
-                f"cua_fleet-0.1.6-py3-none-{platform}.whl"
+                f"cua_fleet-0.1.7-py3-none-{platform}.whl"
                 for platform in expected_platforms
             },
         )

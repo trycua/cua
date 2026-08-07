@@ -9,7 +9,7 @@ on:
       version:
         description: "Canonical cua-fleet version to mirror"
         required: true
-        default: "0.1.6"
+        default: "0.1.7"
   workflow_call:
     inputs:
       version:

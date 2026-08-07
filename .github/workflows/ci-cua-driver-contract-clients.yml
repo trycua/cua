@@ -24,6 +24,7 @@ on:
       - "libs/cua-driver/scripts/generate-uniffi-bindings.mjs"
       - "libs/cua-driver/scripts/stage-uniffi-library.mjs"
       - "libs/cua-driver/scripts/build-npm-packages.mjs"
+      - ".github/scripts/cua-driver-mcp-compat/**"
       - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-contract-clients.yml"
   push:
@@ -50,6 +51,7 @@ on:
       - "libs/cua-driver/scripts/generate-uniffi-bindings.mjs"
       - "libs/cua-driver/scripts/stage-uniffi-library.mjs"
       - "libs/cua-driver/scripts/build-npm-packages.mjs"
+      - ".github/scripts/cua-driver-mcp-compat/**"
       - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-contract-clients.yml"
   workflow_dispatch:
@@ -62,6 +64,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mcp-client-discovery:
+    name: MCP discovery in pinned clients
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: .github/scripts/cua-driver-mcp-compat/package-lock.json
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Build the release-mode MCP server
+        working-directory: libs/cua-driver/rust
+        run: cargo build --locked --release -p cua-driver --features cua-driver/portal-input
+      - name: Install pinned MCP clients
+        working-directory: .github/scripts/cua-driver-mcp-compat
+        run: npm ci --ignore-scripts
+      - name: Verify discovery without model or account calls
+        working-directory: .github/scripts/cua-driver-mcp-compat
+        run: |
+          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("../../../libs/cua-driver/rust/Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          CUA_DRIVER_BINARY="$GITHUB_WORKSPACE/libs/cua-driver/rust/target/release/cua-driver" \
+          CUA_DRIVER_EXPECTED_VERSION="$VERSION" \
+            npm run verify
+
   runtime-parity:
     name: Portable contract parity (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

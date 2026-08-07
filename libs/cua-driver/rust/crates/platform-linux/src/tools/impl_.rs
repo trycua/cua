@@ -594,7 +594,10 @@ impl Tool for GetWindowStateTool {
                 modality at ACTION time: an element ax action \
                 (element_index/element_token → accessibility rung) or an element px \
                 action (x,y → pixel rung off this screenshot). capture_mode is \
-                deprecated and ignored.\n\n\
+                deprecated and ignored. On Wayland, where output capture cannot prove \
+                the requested surface's identity, the truthful tree is returned without \
+                a screenshot and `screenshot_error.code` is \
+                `surface_identity_unproven`.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees. When applied, BOTH \
@@ -713,6 +716,7 @@ impl Tool for GetWindowStateTool {
             // of embedding base64; otherwise embed base64. Skipped only when
             // include_screenshot:false and no disk path was requested.
             // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
+            let mut screenshot_error = None;
             let screenshot = if should_capture {
                 match crate::wayland::screenshot_dispatch(xid) {
                     Ok(raw) => {
@@ -730,6 +734,10 @@ impl Tool for GetWindowStateTool {
                             Some((Some(B64.encode(&png)), None, w, h, original_w))
                         }
                     }
+                    Err(error) if crate::wayland::is_surface_identity_unproven(&error) => {
+                        screenshot_error = Some(error.to_string());
+                        None
+                    }
                     Err(error) => {
                         return Err(anyhow::anyhow!(
                             "window screenshot failed for window {xid}: {error}"
@@ -739,12 +747,12 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
-            Ok((tree_result, screenshot, bounds))
+            Ok((tree_result, screenshot, bounds, screenshot_error))
         })
         .await;
 
         match result {
-            Ok(Ok((tree_opt, shot_opt, bounds))) => {
+            Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": xid, "pid": pid });
 
@@ -927,6 +935,10 @@ impl Tool for GetWindowStateTool {
                         structured["screenshot_file_path"] = json!(fp);
                     }
                 }
+                if let Some(reason) = screenshot_error {
+                    structured["screenshot_frame_valid"] = json!(false);
+                    structured["screenshot_error"] = surface_identity_unproven_error(xid, reason);
+                }
 
                 ToolResult {
                     content,
@@ -941,7 +953,35 @@ impl Tool for GetWindowStateTool {
     }
 }
 
+fn surface_identity_unproven_error(xid: u64, reason: String) -> Value {
+    json!({
+        "code": "surface_identity_unproven",
+        "window_id": xid,
+        "reason": reason,
+        "suggestion": "capture the full output explicitly, or retry on a compositor backend that supports identified per-window capture"
+    })
+}
+
 // ── launch_app ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod get_window_state_capture_tests {
+    use super::*;
+
+    #[test]
+    fn surface_identity_failure_is_a_typed_screenshot_error() {
+        let error = surface_identity_unproven_error(
+            0x2962,
+            "surface_identity_unproven: fixture".to_owned(),
+        );
+
+        assert_eq!(error["code"], "surface_identity_unproven");
+        assert_eq!(error["window_id"], 0x2962);
+        assert!(error["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("surface_identity_unproven")));
+    }
+}
 
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();

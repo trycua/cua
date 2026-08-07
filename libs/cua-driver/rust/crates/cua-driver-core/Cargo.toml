@@ -25,6 +25,10 @@ regorus = { version = "0.10.1", optional = true }
 # helpers extracted from `platform-{macos,windows,linux}/src/capture.rs` so
 # all three platforms call the same code path.
 image = { workspace = true }
+# Compatibility constraint for image's zune-jpeg decoder. This dependency is
+# intentionally direct so SDK consumers without this workspace lockfile cannot
+# resolve the incompatible zune-core 0.5.2 release.
+zune-core = { workspace = true }
 # Used by the `browser` module's pooled CDP browser-endpoint WebSocket.
 # Same versions platform-macos already depends on, to avoid duplicate
 # crate versions in the workspace graph. No TLS features: the endpoint

@@ -844,8 +844,8 @@ def replace_buffer(match):
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
 if buffer_replacements != 21:
     raise SystemExit(f"expected 21 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
-if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 2:
-    raise SystemExit("expected two synchronous Ruby SDK builder build calls")
+if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 6:
+    raise SystemExit("expected six synchronous Ruby SDK builder build calls")
 
 void_pattern = r"(?m)^(\s*)FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_void(match):

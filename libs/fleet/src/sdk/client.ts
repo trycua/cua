@@ -1,10 +1,25 @@
 import { getToken } from "../auth/keycloak"
-import { CyclopsClient, uniffiInitAsync } from "./generated"
+import {
+  CyclopsClient,
+  CyclopsTokenProviderConfigurationBuilder,
+  uniffiInitAsync,
+  type CyclopsTokenProviderConfiguration,
+} from "./generated"
 
 const sdkInitialization = uniffiInitAsync()
 
 function baseUrl(): string {
   return window.location.origin
+}
+
+export function buildClientConfiguration(): CyclopsTokenProviderConfiguration {
+  return new CyclopsTokenProviderConfigurationBuilder()
+    .baseUrl(baseUrl())
+    .poolPollIntervalMs(5_000n)
+    .poolPollLimit(120)
+    .claimPollIntervalMs(5_000n)
+    .claimPollLimit(120)
+    .build()
 }
 
 export async function withClient<T>(
@@ -15,13 +30,7 @@ export async function withClient<T>(
   if (!token) throw new Error("Authentication token is unavailable")
 
   const client = CyclopsClient.connectBrowserWithAccessToken(
-    {
-      baseUrl: baseUrl(),
-      poolPollIntervalMs: 5_000n,
-      poolPollLimit: 120,
-      claimPollIntervalMs: 5_000n,
-      claimPollLimit: 120,
-    },
+    buildClientConfiguration(),
     token,
   ) as CyclopsClient
   try {

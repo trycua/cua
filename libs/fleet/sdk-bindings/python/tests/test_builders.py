@@ -60,6 +60,38 @@ class GeneratedBuilderTest(unittest.TestCase):
         self.assertIs(type(reference), fleet_sdk.SandboxTemplateRef)
         self.assertEqual(reference.name, "legacy")
 
+    def test_remaining_frontend_builders_are_generated(self):
+        configuration = (
+            fleet_sdk.CyclopsTokenProviderConfigurationBuilder()
+            .base_url("https://api.example.test")
+            .pool_poll_interval_ms(5000)
+            .pool_poll_limit(120)
+            .claim_poll_interval_ms(5000)
+            .claim_poll_limit(120)
+            .build()
+        )
+        user_key = (
+            fleet_sdk.CreateUserApiKeyRequestBuilder()
+            .name("automation")
+            .scope([])
+            .build()
+        )
+        autoscaling = (
+            fleet_sdk.WarmPoolAutoscalingBuilder()
+            .min_pool_size(1)
+            .initial_pool_size(2)
+            .max_pool_size(5)
+            .build()
+        )
+
+        self.assertEqual(configuration.pool_poll_interval_ms, 5000)
+        self.assertEqual(user_key.scope, [])
+        self.assertEqual(autoscaling.max_pool_size, 5)
+        with self.assertRaises(fleet_sdk.SdkBuildError.MissingRequiredField):
+            fleet_sdk.TemplateBuilder().build()
+        with self.assertRaises(fleet_sdk.SdkBuildError.MissingRequiredField):
+            fleet_sdk.CreateClaimRequestBuilder().build()
+
 
 if __name__ == "__main__":
     unittest.main()

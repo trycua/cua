@@ -347,14 +347,28 @@ ruby_sdk_source="$bindings_dir/ruby/cyclops_sdk/sdk.rb"
 ruby_schema_source="$bindings_dir/ruby/cyclops_sdk/schema.rb"
 node_sdk_source="$bindings_dir/ts-uniffi/fleet_sdk.ts"
 browser_sdk_source="$bindings_dir/ts-uniffi-browser/ts/fleet_sdk.ts"
+browser_schema_source="$bindings_dir/ts-uniffi-browser/ts/cyclops_sdk_schema.ts"
 go_sdk_source="$bindings_dir/go-uniffi/fleet_sdk/fleet_sdk.go"
 
-for separate_binding in "$node_sdk_source" "$browser_sdk_source" "$go_sdk_source"; do
+for separate_binding in "$node_sdk_source" "$go_sdk_source"; do
   if grep -Fq -- "VmTemplateBuilder" "$separate_binding" || grep -Fq -- "CreatePoolRequestBuilder" "$separate_binding"; then
-    fail "separately generated Go/TypeScript binding unexpectedly contains authoritative builders: $separate_binding"
+    fail "separately generated Go/Node binding unexpectedly contains authoritative builders: $separate_binding"
   fi
 done
 
+for browser_builder in \
+  VmTemplateBuilder \
+  WarmPoolAutoscalingBuilder \
+  CreatePoolRequestBuilder \
+  CyclopsTokenProviderConfigurationBuilder \
+  CreateClaimRequestBuilder \
+  CreateUserApiKeyRequestBuilder \
+  TemplateBuilder; do
+  if ! grep -Fq -- "class $browser_builder" "$browser_schema_source" && \
+    ! grep -Fq -- "class $browser_builder" "$browser_sdk_source"; then
+    fail "Browser/WASM bindings omit $browser_builder"
+  fi
+done
 grep -Fq -- "class VmTemplateBuilder" "$python_schema_source" || fail "Python bindings omit VmTemplateBuilder"
 grep -Fq -- "class CreatePoolRequestBuilder" "$python_sdk_source" || fail "Python bindings omit CreatePoolRequestBuilder"
 grep -Fq -- "open class VmTemplateBuilder" "$kotlin_schema_source" || fail "Kotlin bindings omit VmTemplateBuilder"

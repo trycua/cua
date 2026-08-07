@@ -546,6 +546,16 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations() != 1632:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new() != 25769:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build() != 17132:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size() != 56913:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size() != 18359:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size() != 46153:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
 
 # A ctypes library to expose the extern-C FFI definitions.
 # This is an implementation detail which will be called internally by the public API.
@@ -869,6 +879,16 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder.restype = None
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder.restype = None
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1056,6 +1076,33 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations.arg
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size.restype = ctypes.c_uint64
 _UniffiLib.ffi_cyclops_sdk_schema_uniffi_contract_version.argtypes = (
 )
 _UniffiLib.ffi_cyclops_sdk_schema_uniffi_contract_version.restype = ctypes.c_uint32
@@ -1161,6 +1208,21 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services.
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size.restype = ctypes.c_uint16
 
 _uniffi_check_contract_api_version(_UniffiLib)
 # _uniffi_check_api_checksums(_UniffiLib)
@@ -3659,6 +3721,137 @@ class _UniffiFfiConverterTypeVmTemplateBuilder:
     def write(cls, value: VmTemplateBuilder, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+
+class WarmPoolAutoscalingBuilderProtocol(typing.Protocol):
+
+    def build(self, ) -> WarmPoolAutoscaling:
+        raise NotImplementedError
+    def initial_pool_size(self, value: int) -> WarmPoolAutoscalingBuilder:
+        raise NotImplementedError
+    def max_pool_size(self, value: int) -> WarmPoolAutoscalingBuilder:
+        raise NotImplementedError
+    def min_pool_size(self, value: int) -> WarmPoolAutoscalingBuilder:
+        raise NotImplementedError
+
+class WarmPoolAutoscalingBuilder(WarmPoolAutoscalingBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeWarmPoolAutoscalingBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def build(self, ) -> WarmPoolAutoscaling:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeWarmPoolAutoscaling.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSchemaBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def initial_pool_size(self, value: int) -> WarmPoolAutoscalingBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeWarmPoolAutoscalingBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def max_pool_size(self, value: int) -> WarmPoolAutoscalingBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeWarmPoolAutoscalingBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def min_pool_size(self, value: int) -> WarmPoolAutoscalingBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeWarmPoolAutoscalingBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeWarmPoolAutoscalingBuilder:
+    @staticmethod
+    def lift(value: int) -> WarmPoolAutoscalingBuilder:
+        return WarmPoolAutoscalingBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: WarmPoolAutoscalingBuilder):
+        if not isinstance(value, WarmPoolAutoscalingBuilder):
+            raise TypeError("Expected WarmPoolAutoscalingBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: WarmPoolAutoscalingBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> WarmPoolAutoscalingBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: WarmPoolAutoscalingBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
 class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u8"
     VALUE_MIN = 0
@@ -3707,4 +3900,6 @@ __all__ = [
     "SandboxTemplateRefBuilderProtocol",
     "VmTemplateBuilder",
     "VmTemplateBuilderProtocol",
+    "WarmPoolAutoscalingBuilder",
+    "WarmPoolAutoscalingBuilderProtocol",
 ]

@@ -70,7 +70,8 @@ impl CyclopsConfiguration {
     }
 }
 
-#[derive(Clone, Debug, uniffi::Record)]
+#[derive(Clone, Debug, uniffi::Record, uniffi_builder_derive::UniffiBuilder)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CyclopsTokenProviderConfiguration {
     pub base_url: String,
     pub pool_poll_interval_ms: u64,
@@ -165,7 +166,17 @@ where
     Option::<Vec<String>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreateUserApiKeyRequest {
     pub name: String,
     pub scope: Vec<String>,
@@ -208,7 +219,10 @@ impl PartialEq for CreatePoolRequest {
 
 /// The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
 /// and claims reference one by name via `spec.sandboxTemplateRef.name`.
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct Template {
     pub api_version: String,
@@ -244,7 +258,10 @@ impl PartialEq for CreateTemplateRequest {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreateClaimRequest {
     pub pool: Pool,
     pub spec: Option<ClaimSpec>,

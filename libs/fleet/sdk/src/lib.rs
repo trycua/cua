@@ -18,10 +18,12 @@ pub use error::{
 pub use routes::validate_dns_label;
 pub use transport::{AccessTokenProvider, HttpClient};
 pub use types::{
-    Claim, CreateClaimRequest, CreatePoolRequest, CreatePoolRequestBuilder, CreateTemplateRequest,
-    CreateTemplateRequestBuilder, CreateUserApiKeyRequest, CyclopsConfiguration,
-    CyclopsCredentials, CyclopsTokenProviderConfiguration, HttpHeader, HttpRequest, HttpResponse,
-    Namespace, NewUserApiKey, Pool, ResourceMetadata, Sandbox, Template, UserApiKey,
+    Claim, CreateClaimRequest, CreateClaimRequestBuilder, CreatePoolRequest,
+    CreatePoolRequestBuilder, CreateTemplateRequest, CreateTemplateRequestBuilder,
+    CreateUserApiKeyRequest, CreateUserApiKeyRequestBuilder, CyclopsConfiguration,
+    CyclopsCredentials, CyclopsTokenProviderConfiguration,
+    CyclopsTokenProviderConfigurationBuilder, HttpHeader, HttpRequest, HttpResponse, Namespace,
+    NewUserApiKey, Pool, ResourceMetadata, Sandbox, Template, TemplateBuilder, UserApiKey,
 };
 
 uniffi::setup_scaffolding!("fleet_sdk");

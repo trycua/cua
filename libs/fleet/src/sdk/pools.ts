@@ -1,11 +1,28 @@
 import {
+  CreatePoolRequestBuilder,
+  CreateTemplateRequestBuilder,
   Firmware,
+  OsGymSandboxTemplateSpecBuilder,
+  OsGymSandboxWarmPoolSpecBuilder,
   PreservedJson,
+  SandboxServiceBuilder,
+  SandboxTemplateRefBuilder,
   ServiceProtocol,
+  TemplateBuilder,
+  VmTemplateBuilder,
+  WarmPoolAutoscalingBuilder,
+  type CreatePoolRequest,
+  type CreateTemplateRequest,
   type CyclopsClient,
   type Namespace,
+  type OsGymSandboxWarmPoolSpecBuilderLike,
   type Pool,
+  type SandboxService,
   type Template,
+  type VmTemplate,
+  type VmTemplateBuilderLike,
+  type WarmPoolAutoscaling,
+  type WarmPoolAutoscalingBuilderLike,
 } from "./generated"
 import { withClient } from "./client"
 import { deriveWarmPoolPhase } from "./status"
@@ -112,12 +129,130 @@ export async function getPool(namespace: string, name: string): Promise<PoolData
   })
 }
 
-function sdkServices(services: PoolService[] | undefined) {
-  return services?.map(service => ({
-    name: service.name,
-    targetPort: service.targetPort,
-    protocol: sdkProtocol(service.protocol),
-  }))
+export function buildSdkServices(
+  services: PoolService[] | undefined,
+): SandboxService[] | undefined {
+  return services?.map(service =>
+    new SandboxServiceBuilder()
+      .name(service.name)
+      .targetPort(service.targetPort)
+      .protocol(sdkProtocol(service.protocol))
+      .build(),
+  )
+}
+
+function buildAutoscaling(
+  values: PoolTemplateConfig["autoscaling"],
+): WarmPoolAutoscaling | undefined {
+  if (!values) return undefined
+
+  let builder: WarmPoolAutoscalingBuilderLike =
+    new WarmPoolAutoscalingBuilder()
+  if (values.minPoolSize !== undefined) {
+    builder = builder.minPoolSize(values.minPoolSize)
+  }
+  if (values.initialPoolSize !== undefined) {
+    builder = builder.initialPoolSize(values.initialPoolSize)
+  }
+  if (values.maxPoolSize !== undefined) {
+    builder = builder.maxPoolSize(values.maxPoolSize)
+  }
+  return builder.build()
+}
+
+export function buildPoolRequest(
+  namespace: string,
+  templateName: string,
+  values: PoolTemplateConfig,
+): CreatePoolRequest {
+  const reference = new SandboxTemplateRefBuilder()
+    .name(templateName)
+    .build()
+  let specBuilder: OsGymSandboxWarmPoolSpecBuilderLike =
+    new OsGymSandboxWarmPoolSpecBuilder()
+      .replicas(values.replicas)
+      .sandboxTemplateRef(reference)
+  const autoscaling = buildAutoscaling(values.autoscaling)
+  if (autoscaling) specBuilder = specBuilder.autoscaling(autoscaling)
+
+  return new CreatePoolRequestBuilder()
+    .namespace(namespace)
+    .spec(specBuilder.build())
+    .build()
+}
+
+export function buildTemplateRequest(
+  namespace: string,
+  templateName: string,
+  values: PoolTemplateConfig,
+): CreateTemplateRequest {
+  let vmBuilder: VmTemplateBuilderLike = new VmTemplateBuilder()
+    .containerDiskImage(values.ociImage)
+    .imagePullSecret("ecr-credentials")
+    .cpuCores(values.cpu)
+    .memory(values.ram)
+  if (values.firmware === "efi") vmBuilder = vmBuilder.firmware(Firmware.Efi)
+  if (values.probes) {
+    vmBuilder = vmBuilder.probes(
+      PreservedJson.fromJson(JSON.stringify(values.probes)),
+    )
+  }
+  const services = buildSdkServices(values.services)
+  if (services) vmBuilder = vmBuilder.services(services)
+
+  const spec = new OsGymSandboxTemplateSpecBuilder()
+    .vmTemplate(vmBuilder.build())
+    .build()
+  return new CreateTemplateRequestBuilder()
+    .namespace(namespace)
+    .name(templateName)
+    .spec(spec)
+    .build()
+}
+
+function seedVmTemplateBuilder(vm: VmTemplate): VmTemplateBuilderLike {
+  let builder: VmTemplateBuilderLike = new VmTemplateBuilder()
+    .containerDiskImage(vm.containerDiskImage)
+  if (vm.command !== undefined) builder = builder.command(vm.command)
+  if (vm.runtime !== undefined) builder = builder.runtime(vm.runtime)
+  if (vm.runtimeClassName !== undefined) {
+    builder = builder.runtimeClassName(vm.runtimeClassName)
+  }
+  if (vm.nodeSelector !== undefined) {
+    builder = builder.nodeSelector(vm.nodeSelector)
+  }
+  if (vm.tolerations !== undefined) builder = builder.tolerations(vm.tolerations)
+  if (vm.imagePullPolicy !== undefined) {
+    builder = builder.imagePullPolicy(vm.imagePullPolicy)
+  }
+  if (vm.imagePullSecret !== undefined) {
+    builder = builder.imagePullSecret(vm.imagePullSecret)
+  }
+  if (vm.cpuCores !== undefined) builder = builder.cpuCores(vm.cpuCores)
+  if (vm.memory !== undefined) builder = builder.memory(vm.memory)
+  if (vm.firmware !== undefined) builder = builder.firmware(vm.firmware)
+  if (vm.probes !== undefined) builder = builder.probes(vm.probes)
+  if (vm.services !== undefined) builder = builder.services(vm.services)
+  if (vm.oidc !== undefined) builder = builder.oidc(vm.oidc)
+  return builder
+}
+
+export function rebuildTemplateWithServices(
+  template: Template,
+  services: PoolService[],
+): Template {
+  const vmTemplate = seedVmTemplateBuilder(template.spec.vmTemplate)
+    .services(buildSdkServices(services) ?? [])
+    .build()
+  const spec = new OsGymSandboxTemplateSpecBuilder()
+    .vmTemplate(vmTemplate)
+    .build()
+  return new TemplateBuilder()
+    .apiVersion(template.apiVersion)
+    .kind(template.kind)
+    .metadata(template.metadata)
+    .spec(spec)
+    .build()
 }
 
 export async function createPool(
@@ -126,32 +261,13 @@ export async function createPool(
 ): Promise<PoolData> {
   return withClient(async client => {
     const templateName = `${name}-template`
-    const pool = await client.createPool({
-      namespace: name,
-      spec: {
-        replicas: values.replicas,
-        sandboxTemplateRef: { name: templateName },
-        autoscaling: values.autoscaling,
-      },
-    })
+    const pool = await client.createPool(
+      buildPoolRequest(name, templateName, values),
+    )
     try {
-      const template = await client.createTemplate({
-        namespace: name,
-        name: templateName,
-        spec: {
-          vmTemplate: {
-            containerDiskImage: values.ociImage,
-            imagePullSecret: "ecr-credentials",
-            cpuCores: values.cpu,
-            memory: values.ram,
-            firmware: values.firmware === "efi" ? Firmware.Efi : undefined,
-            probes: values.probes
-              ? PreservedJson.fromJson(JSON.stringify(values.probes))
-              : undefined,
-            services: sdkServices(values.services),
-          },
-        },
-      })
+      const template = await client.createTemplate(
+        buildTemplateRequest(name, templateName, values),
+      )
       return poolData(pool, template)
     } catch (error) {
       await client.deletePool(pool).catch(() => undefined)
@@ -167,8 +283,7 @@ export async function updatePoolServices(
 ): Promise<void> {
   await withClient(async client => {
     const { template } = await getPoolWith(client, namespace, name)
-    template.spec.vmTemplate.services = sdkServices(services)
-    await client.updateTemplate(template)
+    await client.updateTemplate(rebuildTemplateWithServices(template, services))
   })
 }
 

@@ -9,25 +9,20 @@ four-language binding surface; separate UniFFI snapshots are described below.
 
 ### Separately generated targets
 
-`go-uniffi`, `ts-uniffi` (Node.js), and `ts-uniffi-browser` are checked-in
-compatibility snapshots produced by `uniffi-bindgen-go` and
-`uniffi-bindgen-react-native`, not outputs of `generate-sdk-bindings.sh`. They
-consume the same Rust cdylib, whose UniFFI metadata includes the builder
-objects, but their checked-in sources are not owned or drift-checked by this
-testbed. The Go and Node.js snapshots are not regenerated here. Browser/WASM
-packaging runs UBRN generation during its build, but no committed-source drift
-or builder contract verifies that generated surface. The checked-in separate
-snapshots therefore retain direct record constructors and do not currently
-advertise `UniffiBuilder` companions.
+`go-uniffi` and `ts-uniffi` (Node.js) are checked-in compatibility snapshots
+produced by `uniffi-bindgen-go` and `uniffi-bindgen-react-native`, not outputs
+of `generate-sdk-bindings.sh`. They retain direct record constructors and do
+not advertise builders.
 
-This is a binding-pipeline adoption gap, not a Rust or UniFFI metadata
-limitation. Adding builders to the Go, Node.js, or browser/WASM public
-contracts requires separately regenerating where applicable and
-validating each third-party generator, cross-component converter layer,
-packaging path, checked-in scope, and runtime API. Until that work lands,
-"authoritative generated builder targets" in this document means only Python,
-Kotlin, Swift, and Ruby; do not infer builder availability for the separate
-snapshots or from browser build-time generation alone.
+`ts-uniffi-browser` (Browser/WASM) regenerates from Rust metadata during its
+build, commits its TypeScript record modules, and verifies that generated
+surface with an executable WASM builder artifact contract. Browser/WASM is an
+advertised generated builder target alongside Python, Kotlin, Swift, and Ruby.
+
+Go and Node.js remain separate compatibility snapshots. Adding builders to
+their public contracts requires separately regenerating and validating each
+third-party generator, cross-component converter layer, packaging path,
+checked-in scope, and runtime API.
 
 ## Source of truth and compatibility
 

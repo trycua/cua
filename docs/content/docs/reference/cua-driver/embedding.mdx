@@ -16,6 +16,33 @@ stdio MCP traffic to that daemon; it never executes tools itself.
 
 A complete macOS reference host and demo live in the repo at `libs/cua-driver/rust/examples/embedded-host-macos`.
 
+## Target forms
+
+Cua Driver integrations have three target forms. Each form has a distinct
+owner and lifecycle:
+
+| Target | Connection contract | Owner |
+| --- | --- | --- |
+| Existing MCP configuration | Launch its configured `command`, `args`, and environment unchanged | The MCP client or user configuration |
+| Existing daemon | `CuaDriver.connect(socketPath)` or `cua-driver mcp --socket <path>` | The process that started the daemon |
+| App-hosted daemon | Start `EmbeddedCuaDriverHost` with an absolute binary path and use the returned `connection` | The permission-owning host app |
+
+The SDK does not scan `PATH`, search installation directories, or choose among
+these targets. The embedding application must select an explicit target. An
+app that starts an embedded host must use the `connection.mcp.command`,
+`connection.mcp.args`, and `connection.mcp.environment` values returned by that
+host instead of reconstructing the proxy invocation.
+
+`EmbeddedDriverHostOptions.binaryPath` / `binary_path` may point to any absolute
+executable path. The path does not determine macOS permission ownership. The
+process that calls `start()` determines the responsibility chain. Packaged
+applications normally keep the executable in their signed resources so the
+nested binary is covered by packaging, signing, and notarization.
+
+An embedded connection belongs to one host generation. After `restart()`, the
+host must replace every SDK client, MCP proxy, and copied MCP configuration
+with values from the new connection.
+
 ## Launch embedded
 
 The supported SDK host generates a private endpoint, clears unsafe ambient
@@ -132,6 +159,11 @@ gateway / node daemon                           YourApp.app
   └─ cua-driver serve --embedded                  ├─ cua-driver serve --embedded
                                                   └─ cua-driver mcp --socket <private>
 ```
+
+An Electron app may pass the returned MCP configuration to a separate backend
+over its existing bootstrap or IPC channel. That backend may launch the MCP
+proxy, but it must not construct `EmbeddedCuaDriverHost` or start the embedded
+daemon on the app's behalf.
 
 ## What changes
 

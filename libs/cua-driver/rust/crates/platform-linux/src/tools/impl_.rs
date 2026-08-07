@@ -1111,7 +1111,10 @@ mod launch_app_tests {
         // reaper every launch leaked a pid slot for the daemon's lifetime and
         // left "does this pid exist" liveness checks reporting a terminated
         // app as still running.
-        let pid = spawn_launch_command("/bin/true", &[]).expect("/bin/true should spawn");
+        // `/bin/sh` rather than a richer coreutils binary: it is the one
+        // executable POSIX and the Nix build sandbox both guarantee, and the
+        // sandbox has no `/bin/true`.
+        let pid = spawn_launch_command("/bin/sh -c exit", &[]).expect("/bin/sh should spawn");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             match proc_state(pid) {

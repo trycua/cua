@@ -974,7 +974,39 @@ fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::
     {
         launch.arg("--force-renderer-accessibility");
     }
-    Ok(launch.spawn()?.id())
+    let child = launch.spawn()?;
+    let pid = child.id();
+    reap_in_background(child);
+    Ok(pid)
+}
+
+/// Collect a launched child's exit status in the background.
+///
+/// `std::process::Child` does not reap on drop and the driver never waits on
+/// an app it launches, so every launched app used to linger as a zombie for
+/// the daemon's lifetime: it held a pid slot, and — because the pid stays
+/// present — made "does this pid exist" liveness checks report a terminated
+/// app as still running.
+///
+/// Reaping is scoped to one thread per child rather than setting
+/// `SIGCHLD` to `SIG_IGN`, which is process-global and would break every
+/// caller that needs an exit status, including the `xdg-open` check below
+/// and any `Command::status()`/`output()` elsewhere in the daemon. The
+/// thread blocks in `wait` until the app exits, so it costs nothing while
+/// the app runs and never delays the launch itself.
+fn reap_in_background(mut child: std::process::Child) {
+    let pid = child.id();
+    let reaper = std::thread::Builder::new()
+        .name(format!("cua-reap-{pid}"))
+        .stack_size(64 * 1024)
+        .spawn(move || {
+            if let Err(e) = child.wait() {
+                tracing::debug!(pid, "launched app could not be reaped: {e}");
+            }
+        });
+    if let Err(e) = reaper {
+        tracing::debug!(pid, "could not start reaper thread for launched app: {e}");
+    }
 }
 
 /// Match a launch_app `name` that failed direct exec against installed XDG
@@ -1010,15 +1042,24 @@ fn match_installed_app<'a>(
 /// its whole lifetime, so a child still running after the grace period counts
 /// as success; a quick non-zero exit (2 = file not found, 3 = no handler
 /// tool, 4 = action failed) is the only reliable failure signal.
-fn xdg_open_failure(child: &mut std::process::Child) -> Option<String> {
+fn xdg_open_failure(mut child: std::process::Child) -> Option<String> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     loop {
+        // A branch that observes an exit status has already reaped the child;
+        // one that gives up on it still owes that, so hand it to the reaper
+        // instead of dropping it and leaving a zombie behind.
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return None,
             Ok(Some(status)) => return Some(format!("xdg-open failed ({status})")),
-            Ok(None) if std::time::Instant::now() >= deadline => return None,
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                reap_in_background(child);
+                return None;
+            }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
-            Err(e) => return Some(format!("could not observe xdg-open: {e}")),
+            Err(e) => {
+                reap_in_background(child);
+                return Some(format!("could not observe xdg-open: {e}"));
+            }
         }
     }
 }
@@ -1052,6 +1093,43 @@ mod launch_app_tests {
                 "thunar-settings",
             ),
         ]
+    }
+
+    /// Process state letter from `/proc/<pid>/stat`, or `None` once the entry
+    /// is gone. `comm` may itself contain spaces and parentheses, so the state
+    /// is read after the final `)` rather than by splitting from the left.
+    fn proc_state(pid: u32) -> Option<char> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let after_comm = stat.rsplit_once(')')?.1;
+        after_comm.split_whitespace().next()?.chars().next()
+    }
+
+    #[test]
+    fn launched_children_are_reaped_instead_of_lingering_as_zombies() {
+        // A launched app that exits must not stay in the process table. The
+        // driver never waits on what it launches, so without an explicit
+        // reaper every launch leaked a pid slot for the daemon's lifetime and
+        // left "does this pid exist" liveness checks reporting a terminated
+        // app as still running.
+        let pid = spawn_launch_command("/bin/true", &[]).expect("/bin/true should spawn");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match proc_state(pid) {
+                None => break,                    // reaped, entry gone
+                Some(state) if state != 'Z' => {} // still running or exiting
+                Some(_) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "pid {pid} was still a zombie after the reaper deadline"
+                    );
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pid {pid} was never reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
     }
 
     #[test]
@@ -1162,8 +1240,8 @@ impl Tool for LaunchAppTool {
                             std::process::Command::new("xdg-open").arg(url).spawn()?,
                         ));
                     }
-                    for (url, mut child) in children {
-                        if let Some(reason) = xdg_open_failure(&mut child) {
+                    for (url, child) in children {
+                        if let Some(reason) = xdg_open_failure(child) {
                             anyhow::bail!("could not open '{url}': {reason}");
                         }
                     }
@@ -1224,9 +1302,8 @@ impl Tool for LaunchAppTool {
                                      round-trip its launch_path."
                                 );
                             }
-                            let mut child =
-                                std::process::Command::new("xdg-open").arg(cmd).spawn()?;
-                            if let Some(reason) = xdg_open_failure(&mut child) {
+                            let child = std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            if let Some(reason) = xdg_open_failure(child) {
                                 anyhow::bail!("could not open '{cmd}': {reason}");
                             }
                             // xdg-open may spawn a helper and exit, so do not

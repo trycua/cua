@@ -547,6 +547,8 @@ private_constant :UniffiHandleMap
 
 
 
+
+
   # The Optional<T> type for string.
 
   def self.check_lower_Optionalstring(v)
@@ -930,6 +932,20 @@ class RustBufferStream
     return AccessTokenProvider.uniffi_allocate(handle)
   end
 
+  # The Object type CreatePoolRequestBuilder.
+
+  def readTypeCreatePoolRequestBuilder
+    handle = unpack_from 8, 'Q>'
+    return CreatePoolRequestBuilder.uniffi_allocate(handle)
+  end
+
+  # The Object type CreateTemplateRequestBuilder.
+
+  def readTypeCreateTemplateRequestBuilder
+    handle = unpack_from 8, 'Q>'
+    return CreateTemplateRequestBuilder.uniffi_allocate(handle)
+  end
+
   # The Object type CyclopsClient.
 
   def readTypeCyclopsClient
@@ -1171,6 +1187,26 @@ class RustBufferStream
     end
 
     raise InternalError, 'Unexpected variant tag for TypeHttpError'
+  end
+
+
+
+
+
+
+  # The Error type SdkBuildError
+
+  def readTypeSdkBuildError
+    variant = unpack_from 4, 'l>'
+
+    if variant == 1
+        return SdkBuildError::MissingRequiredField.new(
+            readString(),
+            readString()
+        )
+    end
+
+    raise InternalError, 'Unexpected variant tag for TypeSdkBuildError'
   end
 
 
@@ -1535,6 +1571,20 @@ class RustBufferBuilder
     pack_into(8, 'Q>', handle)
   end
 
+  # The Object type CreatePoolRequestBuilder.
+
+  def write_TypeCreatePoolRequestBuilder(obj)
+    handle = CreatePoolRequestBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
+  # The Object type CreateTemplateRequestBuilder.
+
+  def write_TypeCreateTemplateRequestBuilder(obj)
+    handle = CreateTemplateRequestBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
   # The Object type CyclopsClient.
 
   def write_TypeCyclopsClient(obj)
@@ -1706,6 +1756,8 @@ class RustBufferBuilder
     self.write_String(v.name)
     self.write_Sequencestring(v.scope)
   end
+
+
 
 
 
@@ -1943,6 +1995,26 @@ end
 
 
 
+module SdkBuildError
+  class MissingRequiredField < StandardError
+    def initialize(record_type, field)
+        @record_type = record_type
+        @field = field
+        super()
+      end
+
+    attr_reader :record_type, :field
+
+
+    def to_s
+     "#{self.class.name}(record_type=#{@record_type.inspect}, field=#{@field.inspect})"
+    end
+  end
+
+end
+
+
+
 module SdkError
   class Configuration < StandardError
     def initialize(reason)
@@ -2087,6 +2159,9 @@ ERROR_MODULE_TO_READER_METHOD = {
 
 
   HttpError => :readTypeHttpError,
+
+
+  SdkBuildError => :readTypeSdkBuildError,
 
 
   SdkError => :readTypeSdkError,
@@ -2447,6 +2522,45 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_httpclient_execute,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_clone_cyclopscredentials,
     [:uint64, RustCallStatus.by_ref],
     :uint64
@@ -2543,6 +2657,27 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_httpclient_execute,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect,
     [RustCallStatus.by_ref],
     :uint16
@@ -2564,6 +2699,12 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new,
     [RustCallStatus.by_ref],
     :uint16
@@ -2574,6 +2715,7 @@ module UniFFILib
 end
 
   # Public interface members begin here.
+
 
 
 
@@ -3542,6 +3684,150 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_httpclient_execute(uniffi_clone_handle(),RustBuffer.alloc_from_TypeHttpRequest(request),RustCallStatus.new),
     )
     return result.consumeIntoTypeHttpResponse
+  end
+
+end
+
+  class CreatePoolRequestBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      FleetSdk.rust_call(
+        :uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a CreatePoolRequestBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return FleetSdk.rust_call(
+      :uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = FleetSdk.rust_call_with_error(SdkBuildError,:uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeCreatePoolRequest
+  end
+  def namespace(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreatePoolRequestBuilder.uniffi_allocate(result)
+  end
+  def spec(value)
+        value = value
+        RustBuffer.check_lower_TypeOSGymSandboxWarmPoolSpec(value)
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec,uniffi_clone_handle(),RustBuffer.alloc_from_TypeOSGymSandboxWarmPoolSpec(value))
+    return CreatePoolRequestBuilder.uniffi_allocate(result)
+  end
+
+end
+
+  class CreateTemplateRequestBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      FleetSdk.rust_call(
+        :uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a CreateTemplateRequestBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return FleetSdk.rust_call(
+      :uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = FleetSdk.rust_call_with_error(SdkBuildError,:uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeCreateTemplateRequest
+  end
+  def name(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateTemplateRequestBuilder.uniffi_allocate(result)
+  end
+  def namespace(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateTemplateRequestBuilder.uniffi_allocate(result)
+  end
+  def spec(value)
+        value = value
+        RustBuffer.check_lower_TypeOSGymSandboxTemplateSpec(value)
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec,uniffi_clone_handle(),RustBuffer.alloc_from_TypeOSGymSandboxTemplateSpec(value))
+    return CreateTemplateRequestBuilder.uniffi_allocate(result)
   end
 
 end

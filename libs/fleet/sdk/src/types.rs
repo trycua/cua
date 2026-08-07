@@ -191,7 +191,10 @@ pub struct Sandbox {
     pub services: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreatePoolRequest {
     pub namespace: String,
     pub spec: OSGymSandboxWarmPoolSpec,
@@ -223,7 +226,10 @@ impl PartialEq for Template {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreateTemplateRequest {
     pub namespace: String,
     pub name: String,

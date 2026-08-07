@@ -1,10 +1,33 @@
 # Cyclops UniFFI SDK bindings
 
-This directory contains the checked-in, generated source for the official
-Cyclops SDK bindings: **Python, Kotlin, Swift, and Ruby**. Rust is the native
-`cyclops-sdk` API and owns the canonical implementation. JavaScript/OpenAPI
-clients, arbitrary community-language wrappers, and native-library packaging
-are outside this binding surface.
+This directory contains the checked-in generated sources for several Cyclops
+SDK targets. Rust is the native `cyclops-sdk` API and owns the canonical
+implementation. The authoritative deterministic generation and drift pipeline
+in `generate-sdk-bindings.sh` owns **Python, Kotlin, Swift, and Ruby**.
+The OpenAPI JavaScript client and native-library packaging are outside that
+four-language binding surface; separate UniFFI snapshots are described below.
+
+### Separately generated targets
+
+`go-uniffi`, `ts-uniffi` (Node.js), and `ts-uniffi-browser` are checked-in
+compatibility snapshots produced by `uniffi-bindgen-go` and
+`uniffi-bindgen-react-native`, not outputs of `generate-sdk-bindings.sh`. They
+consume the same Rust cdylib, whose UniFFI metadata includes the builder
+objects, but their checked-in sources are not owned or drift-checked by this
+testbed. The Go and Node.js snapshots are not regenerated here. Browser/WASM
+packaging runs UBRN generation during its build, but no committed-source drift
+or builder contract verifies that generated surface. The checked-in separate
+snapshots therefore retain direct record constructors and do not currently
+advertise `UniffiBuilder` companions.
+
+This is a binding-pipeline adoption gap, not a Rust or UniFFI metadata
+limitation. Adding builders to the Go, Node.js, or browser/WASM public
+contracts requires separately regenerating where applicable and
+validating each third-party generator, cross-component converter layer,
+packaging path, checked-in scope, and runtime API. Until that work lands,
+"authoritative generated builder targets" in this document means only Python,
+Kotlin, Swift, and Ruby; do not infer builder availability for the separate
+snapshots or from browser build-time generation alone.
 
 ## Source of truth and compatibility
 
@@ -61,7 +84,7 @@ cargo run --locked --manifest-path "$REPO_ROOT/cyclops-cs/Cargo.toml" \
 ```
 
 Generate or check all four UniFFI language roots with the pinned workspace
-wrapper around UniFFI `0.32.0`:
+wrapper around UniFFI `0.31.0`:
 
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh"
@@ -96,6 +119,8 @@ Run the Python contract and deterministic lifecycle example:
 
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
+  "$REPO_ROOT/cyclops-cs/sdk-bindings/python/tests/test_builders.py" -v
+"$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/python/tests/test_async_client.py" -v
 "$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/examples/python/app_controlled.py"
@@ -105,6 +130,7 @@ Run the Kotlin contract and example after staging the Linux cdylib:
 
 ```sh
 export CYCLOPS_SDK_NATIVE_DIR="$(dirname "$CYCLOPS_SDK_NATIVE_TARGET_DIR/debug/libcyclops_sdk.so")"
+gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" builderContract
 gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" contract
 gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" example
 ```
@@ -112,6 +138,8 @@ gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" example
 Run the Ruby contract and example:
 
 ```sh
+"$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
+  "$REPO_ROOT/cyclops-cs/sdk-bindings/ruby/tests/test_builders.rb"
 "$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/ruby/tests/test_async_client.rb"
 "$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
@@ -125,12 +153,65 @@ an rpath to the host `libcyclops_sdk.dylib`.
 
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
+  "$REPO_ROOT/cyclops-cs/sdk-bindings/swift/tests/TestBuilders.swift"
+"$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/swift/tests/TestAsyncClient.swift"
 "$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/examples/swift/AppControlled.swift"
 ```
 
 ## Typed lifecycle shape
+
+### Generated record builders
+
+The seven sandbox-pool records `VmTemplate`, `SandboxService`,
+`OSGymSandboxTemplateSpec`, `CreateTemplateRequest`, `SandboxTemplateRef`,
+`OSGymSandboxWarmPoolSpec`, and `CreatePoolRequest` expose generated builders.
+Each setter returns a new immutable builder object; it does not mutate the
+receiver. Keep the returned value, either by chaining calls or assigning it.
+This `&self -> Arc<Self>` Rust receiver shape is portable across the four
+official UniFFI targets and avoids foreign-language interior mutability.
+
+Python:
+
+```python
+vm = (fleet_sdk.VmTemplateBuilder().container_disk_image(image)
+      .image_pull_secret(secret).cpu_cores(4).memory("8Gi")
+      .services([service]).build())
+```
+
+Kotlin:
+
+```kotlin
+val vm: VmTemplate = VmTemplateBuilder().containerDiskImage(image)
+    .imagePullSecret(secret).cpuCores(4u).memory("8Gi")
+    .services(listOf(service)).build()
+```
+
+Swift:
+
+```swift
+let vm: VmTemplate = try VmTemplateBuilder().containerDiskImage(value: image)
+    .imagePullSecret(value: secret).cpuCores(value: 4).memory(value: "8Gi")
+    .services(value: [service]).build()
+```
+
+Ruby:
+
+```ruby
+vm = FleetSdk::VmTemplateBuilder.new.container_disk_image(image)
+  .image_pull_secret(secret).cpu_cores(4).memory('8Gi')
+  .services([service]).build
+```
+
+Optional setters may be omitted; their record fields remain `None`, `null`, or
+`nil` as appropriate. `build()` returns the exact existing record type and
+reports an omitted required field through stable `SchemaBuildError` or
+`SdkBuildError` variants (generated as `SchemaBuildException` and
+`SdkBuildException` in Kotlin). Existing direct record constructors remain
+available and unchanged. At the syntax-only derive boundary, optional record
+fields must be spelled `Option<T>`, `std::option::Option<T>`, or
+`core::option::Option<T>`; type aliases are not inferred.
 
 Use the generated constructors and schema records rather than ad-hoc JSON.
 The exact optional fields and language naming are generated, so consult the

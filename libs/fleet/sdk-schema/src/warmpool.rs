@@ -57,7 +57,17 @@ pub struct WarmPoolAutoscaling {
 }
 
 #[allow(clippy::duplicated_attributes)]
-#[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema, uniffi::Record)]
+#[derive(
+    CustomResource,
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[kube(
     group = "osgym.cua.ai",
     version = "v1alpha1",

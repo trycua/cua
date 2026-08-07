@@ -770,6 +770,307 @@ public func FfiConverterTypeAccessTokenProvider_lower(_ value: AccessTokenProvid
 
 
 
+public protocol CreatePoolRequestBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> CreatePoolRequest
+
+    func namespace(value: String)  -> CreatePoolRequestBuilder
+
+    func spec(value: OsGymSandboxWarmPoolSpec)  -> CreatePoolRequestBuilder
+
+}
+open class CreatePoolRequestBuilder: CreatePoolRequestBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> CreatePoolRequest  {
+    return try  FfiConverterTypeCreatePoolRequest_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func namespace(value: String) -> CreatePoolRequestBuilder  {
+    return try!  FfiConverterTypeCreatePoolRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func spec(value: OsGymSandboxWarmPoolSpec) -> CreatePoolRequestBuilder  {
+    return try!  FfiConverterTypeCreatePoolRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeOSGymSandboxWarmPoolSpec_lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreatePoolRequestBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CreatePoolRequestBuilder
+
+    public static func lift(_ handle: UInt64) throws -> CreatePoolRequestBuilder {
+        return CreatePoolRequestBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CreatePoolRequestBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreatePoolRequestBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CreatePoolRequestBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreatePoolRequestBuilder_lift(_ handle: UInt64) throws -> CreatePoolRequestBuilder {
+    return try FfiConverterTypeCreatePoolRequestBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreatePoolRequestBuilder_lower(_ value: CreatePoolRequestBuilder) -> UInt64 {
+    return FfiConverterTypeCreatePoolRequestBuilder.lower(value)
+}
+
+
+
+
+
+
+public protocol CreateTemplateRequestBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> CreateTemplateRequest
+
+    func name(value: String)  -> CreateTemplateRequestBuilder
+
+    func namespace(value: String)  -> CreateTemplateRequestBuilder
+
+    func spec(value: OsGymSandboxTemplateSpec)  -> CreateTemplateRequestBuilder
+
+}
+open class CreateTemplateRequestBuilder: CreateTemplateRequestBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> CreateTemplateRequest  {
+    return try  FfiConverterTypeCreateTemplateRequest_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func name(value: String) -> CreateTemplateRequestBuilder  {
+    return try!  FfiConverterTypeCreateTemplateRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func namespace(value: String) -> CreateTemplateRequestBuilder  {
+    return try!  FfiConverterTypeCreateTemplateRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func spec(value: OsGymSandboxTemplateSpec) -> CreateTemplateRequestBuilder  {
+    return try!  FfiConverterTypeCreateTemplateRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeOSGymSandboxTemplateSpec_lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateTemplateRequestBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CreateTemplateRequestBuilder
+
+    public static func lift(_ handle: UInt64) throws -> CreateTemplateRequestBuilder {
+        return CreateTemplateRequestBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CreateTemplateRequestBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateTemplateRequestBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CreateTemplateRequestBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateTemplateRequestBuilder_lift(_ handle: UInt64) throws -> CreateTemplateRequestBuilder {
+    return try FfiConverterTypeCreateTemplateRequestBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateTemplateRequestBuilder_lower(_ value: CreateTemplateRequestBuilder) -> UInt64 {
+    return FfiConverterTypeCreateTemplateRequestBuilder.lower(value)
+}
+
+
+
+
+
+
 public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func createClaim(request: CreateClaimRequest) async throws  -> Claim
@@ -2937,6 +3238,82 @@ public func FfiConverterTypeHttpError_lower(_ value: HttpError) -> RustBuffer {
 }
 
 
+public enum SdkBuildError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    case MissingRequiredField(recordType: String, field: String
+    )
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension SdkBuildError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSdkBuildError: FfiConverterRustBuffer {
+    typealias SwiftType = SdkBuildError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SdkBuildError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .MissingRequiredField(
+            recordType: try FfiConverterString.read(from: &buf),
+            field: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SdkBuildError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case let .MissingRequiredField(recordType,field):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(recordType, into: &buf)
+            FfiConverterString.write(field, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSdkBuildError_lift(_ buf: RustBuffer) throws -> SdkBuildError {
+    return try FfiConverterTypeSdkBuildError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSdkBuildError_lower(_ value: SdkBuildError) -> RustBuffer {
+    return FfiConverterTypeSdkBuildError.lower(value)
+}
+
+
 public enum SdkError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
 
@@ -3681,6 +4058,27 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 38803) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build() != 60558) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace() != 18934) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() != 7566) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build() != 46749) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name() != 38970) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace() != 38181) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec() != 29902) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect() != 54404) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3700,6 +4098,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() != 49301) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new() != 33658) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new() != 6787) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() != 25746) {

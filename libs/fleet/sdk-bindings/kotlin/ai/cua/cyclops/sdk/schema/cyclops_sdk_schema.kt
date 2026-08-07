@@ -636,9 +636,73 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations(
+    ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json(
     ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new(
+    ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new(
     ): Short
     external fun ffi_cyclops_sdk_schema_uniffi_contract_version(
     ): Int
@@ -658,118 +722,202 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "cyclops_sdk_schema"))
 
     }
-    external fun uniffi_cyclops_sdk_schema_fn_clone_preservedjson(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_schema_fn_free_preservedjson(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-    external fun uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json(`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_schema_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_schema_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_schema_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Short
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Short
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Float
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Double
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_cyclops_sdk_schema_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_cancel_void(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_free_void(`handle`: Long,
-    ): Unit
-    external fun ffi_cyclops_sdk_schema_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
+    external fun uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new(uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port(`ptr`: Long,`value`: Short,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new(uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(`ptr`: Long,`value`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_clone_preservedjson(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_free_preservedjson(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json(`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new(uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new(uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun ffi_cyclops_sdk_schema_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_cyclops_sdk_schema_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_cyclops_sdk_schema_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun ffi_cyclops_sdk_schema_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_cyclops_sdk_schema_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_u8(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_u8(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Byte
+external fun ffi_cyclops_sdk_schema_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_i8(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_i8(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Byte
+external fun ffi_cyclops_sdk_schema_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_u16(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_u16(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Short
+external fun ffi_cyclops_sdk_schema_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_i16(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_i16(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Short
+external fun ffi_cyclops_sdk_schema_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_u32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_u32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Int
+external fun ffi_cyclops_sdk_schema_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_i32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_i32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Int
+external fun ffi_cyclops_sdk_schema_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_u64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_u64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun ffi_cyclops_sdk_schema_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_i64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_i64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun ffi_cyclops_sdk_schema_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_f32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_f32(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Float
+external fun ffi_cyclops_sdk_schema_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_f64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_f64(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Double
+external fun ffi_cyclops_sdk_schema_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_cyclops_sdk_schema_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_cancel_void(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_free_void(`handle`: Long,
+): Unit
+external fun ffi_cyclops_sdk_schema_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
 
 
 }
@@ -785,10 +933,106 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build() != 62919.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name() != 62417.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol() != 10309.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port() != 61462.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build() != 46569.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name() != 1803.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() != 20371.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image() != 49021.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() != 25645.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() != 33926.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy() != 41828.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret() != 40154.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory() != 55615.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector() != 45280.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc() != 27280.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() != 40623.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() != 63375.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name() != 25466.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services() != 14113.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations() != 1632.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() != 8252.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build() != 53928.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template() != 6610.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling() != 44912.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() != 5682.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() != 50438.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new() != 21082.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new() != 4748.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new() != 27302.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() != 24064.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new() != 22071.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new() != 26063.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1170,6 +1414,584 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
 //
 
 
+public interface OsGymSandboxTemplateSpecBuilderInterface {
+
+    fun `build`(): OsGymSandboxTemplateSpec
+
+    fun `vmTemplate`(`value`: VmTemplate): OsGymSandboxTemplateSpecBuilder
+
+    companion object
+}
+
+open class OsGymSandboxTemplateSpecBuilder: Disposable, AutoCloseable, OsGymSandboxTemplateSpecBuilderInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle,
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new(
+
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder(handle, status)
+        }
+    }
+
+
+    @Throws(SchemaBuildException::class)override fun `build`(): OsGymSandboxTemplateSpec {
+            return FfiConverterTypeOSGymSandboxTemplateSpec.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SchemaBuildException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build(
+        it,
+        _status)
+}
+    }
+    )
+    }
+
+
+    override fun `vmTemplate`(`value`: VmTemplate): OsGymSandboxTemplateSpecBuilder {
+            return FfiConverterTypeOSGymSandboxTemplateSpecBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template(
+        it,
+        FfiConverterTypeVmTemplate.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeOSGymSandboxTemplateSpecBuilder: FfiConverter<OsGymSandboxTemplateSpecBuilder, Long> {
+    override fun lower(value: OsGymSandboxTemplateSpecBuilder): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): OsGymSandboxTemplateSpecBuilder {
+        return OsGymSandboxTemplateSpecBuilder(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): OsGymSandboxTemplateSpecBuilder {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: OsGymSandboxTemplateSpecBuilder) = 8UL
+
+    override fun write(value: OsGymSandboxTemplateSpecBuilder, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+public interface OsGymSandboxWarmPoolSpecBuilderInterface {
+
+    fun `autoscaling`(`value`: WarmPoolAutoscaling): OsGymSandboxWarmPoolSpecBuilder
+
+    fun `build`(): OsGymSandboxWarmPoolSpec
+
+    fun `replicas`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder
+
+    fun `sandboxTemplateRef`(`value`: SandboxTemplateRef): OsGymSandboxWarmPoolSpecBuilder
+
+    companion object
+}
+
+open class OsGymSandboxWarmPoolSpecBuilder: Disposable, AutoCloseable, OsGymSandboxWarmPoolSpecBuilderInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle,
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new(
+
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder(handle, status)
+        }
+    }
+
+    override fun `autoscaling`(`value`: WarmPoolAutoscaling): OsGymSandboxWarmPoolSpecBuilder {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling(
+        it,
+        FfiConverterTypeWarmPoolAutoscaling.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+
+    @Throws(SchemaBuildException::class)override fun `build`(): OsGymSandboxWarmPoolSpec {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpec.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SchemaBuildException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(
+        it,
+        _status)
+}
+    }
+    )
+    }
+
+
+    override fun `replicas`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(
+        it,
+        FfiConverterUInt.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `sandboxTemplateRef`(`value`: SandboxTemplateRef): OsGymSandboxWarmPoolSpecBuilder {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+        it,
+        FfiConverterTypeSandboxTemplateRef.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder: FfiConverter<OsGymSandboxWarmPoolSpecBuilder, Long> {
+    override fun lower(value: OsGymSandboxWarmPoolSpecBuilder): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): OsGymSandboxWarmPoolSpecBuilder {
+        return OsGymSandboxWarmPoolSpecBuilder(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): OsGymSandboxWarmPoolSpecBuilder {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: OsGymSandboxWarmPoolSpecBuilder) = 8UL
+
+    override fun write(value: OsGymSandboxWarmPoolSpecBuilder, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
 public interface PreservedJsonInterface {
 
     fun `toJson`(): kotlin.String
@@ -1330,6 +2152,1053 @@ public object FfiConverterTypePreservedJson: FfiConverter<PreservedJson, Long> {
     override fun allocationSize(value: PreservedJson) = 8UL
 
     override fun write(value: PreservedJson, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+public interface SandboxServiceBuilderInterface {
+
+    fun `build`(): SandboxService
+
+    fun `name`(`value`: kotlin.String): SandboxServiceBuilder
+
+    fun `protocol`(`value`: ServiceProtocol): SandboxServiceBuilder
+
+    fun `targetPort`(`value`: kotlin.UShort): SandboxServiceBuilder
+
+    companion object
+}
+
+open class SandboxServiceBuilder: Disposable, AutoCloseable, SandboxServiceBuilderInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle,
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new(
+
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder(handle, status)
+        }
+    }
+
+
+    @Throws(SchemaBuildException::class)override fun `build`(): SandboxService {
+            return FfiConverterTypeSandboxService.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SchemaBuildException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build(
+        it,
+        _status)
+}
+    }
+    )
+    }
+
+
+    override fun `name`(`value`: kotlin.String): SandboxServiceBuilder {
+            return FfiConverterTypeSandboxServiceBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `protocol`(`value`: ServiceProtocol): SandboxServiceBuilder {
+            return FfiConverterTypeSandboxServiceBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol(
+        it,
+        FfiConverterTypeServiceProtocol.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `targetPort`(`value`: kotlin.UShort): SandboxServiceBuilder {
+            return FfiConverterTypeSandboxServiceBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port(
+        it,
+        FfiConverterUShort.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSandboxServiceBuilder: FfiConverter<SandboxServiceBuilder, Long> {
+    override fun lower(value: SandboxServiceBuilder): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): SandboxServiceBuilder {
+        return SandboxServiceBuilder(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): SandboxServiceBuilder {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: SandboxServiceBuilder) = 8UL
+
+    override fun write(value: SandboxServiceBuilder, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+public interface SandboxTemplateRefBuilderInterface {
+
+    fun `build`(): SandboxTemplateRef
+
+    fun `name`(`value`: kotlin.String): SandboxTemplateRefBuilder
+
+    companion object
+}
+
+open class SandboxTemplateRefBuilder: Disposable, AutoCloseable, SandboxTemplateRefBuilderInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle,
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new(
+
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder(handle, status)
+        }
+    }
+
+
+    @Throws(SchemaBuildException::class)override fun `build`(): SandboxTemplateRef {
+            return FfiConverterTypeSandboxTemplateRef.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SchemaBuildException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build(
+        it,
+        _status)
+}
+    }
+    )
+    }
+
+
+    override fun `name`(`value`: kotlin.String): SandboxTemplateRefBuilder {
+            return FfiConverterTypeSandboxTemplateRefBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSandboxTemplateRefBuilder: FfiConverter<SandboxTemplateRefBuilder, Long> {
+    override fun lower(value: SandboxTemplateRefBuilder): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): SandboxTemplateRefBuilder {
+        return SandboxTemplateRefBuilder(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): SandboxTemplateRefBuilder {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: SandboxTemplateRefBuilder) = 8UL
+
+    override fun write(value: SandboxTemplateRefBuilder, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+public interface VmTemplateBuilderInterface {
+
+    fun `build`(): VmTemplate
+
+    fun `command`(`value`: List<kotlin.String>): VmTemplateBuilder
+
+    fun `containerDiskImage`(`value`: kotlin.String): VmTemplateBuilder
+
+    fun `cpuCores`(`value`: kotlin.UInt): VmTemplateBuilder
+
+    fun `firmware`(`value`: Firmware): VmTemplateBuilder
+
+    fun `imagePullPolicy`(`value`: ImagePullPolicy): VmTemplateBuilder
+
+    fun `imagePullSecret`(`value`: kotlin.String): VmTemplateBuilder
+
+    fun `memory`(`value`: kotlin.String): VmTemplateBuilder
+
+    fun `nodeSelector`(`value`: Map<kotlin.String, kotlin.String>): VmTemplateBuilder
+
+    fun `oidc`(`value`: OidcConfig): VmTemplateBuilder
+
+    fun `probes`(`value`: PreservedJson): VmTemplateBuilder
+
+    fun `runtime`(`value`: RuntimeKind): VmTemplateBuilder
+
+    fun `runtimeClassName`(`value`: kotlin.String): VmTemplateBuilder
+
+    fun `services`(`value`: List<SandboxService>): VmTemplateBuilder
+
+    fun `tolerations`(`value`: List<PreservedJson>): VmTemplateBuilder
+
+    companion object
+}
+
+open class VmTemplateBuilder: Disposable, AutoCloseable, VmTemplateBuilderInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle,
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(
+
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder(handle, status)
+        }
+    }
+
+
+    @Throws(SchemaBuildException::class)override fun `build`(): VmTemplate {
+            return FfiConverterTypeVmTemplate.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SchemaBuildException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
+        it,
+        _status)
+}
+    }
+    )
+    }
+
+
+    override fun `command`(`value`: List<kotlin.String>): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(
+        it,
+        FfiConverterSequenceString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `containerDiskImage`(`value`: kotlin.String): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `cpuCores`(`value`: kotlin.UInt): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(
+        it,
+        FfiConverterUInt.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `firmware`(`value`: Firmware): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(
+        it,
+        FfiConverterTypeFirmware.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `imagePullPolicy`(`value`: ImagePullPolicy): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy(
+        it,
+        FfiConverterTypeImagePullPolicy.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `imagePullSecret`(`value`: kotlin.String): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `memory`(`value`: kotlin.String): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `nodeSelector`(`value`: Map<kotlin.String, kotlin.String>): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(
+        it,
+        FfiConverterMapStringString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `oidc`(`value`: OidcConfig): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(
+        it,
+        FfiConverterTypeOidcConfig.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `probes`(`value`: PreservedJson): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(
+        it,
+        FfiConverterTypePreservedJson.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `runtime`(`value`: RuntimeKind): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(
+        it,
+        FfiConverterTypeRuntimeKind.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `runtimeClassName`(`value`: kotlin.String): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `services`(`value`: List<SandboxService>): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services(
+        it,
+        FfiConverterSequenceTypeSandboxService.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `tolerations`(`value`: List<PreservedJson>): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations(
+        it,
+        FfiConverterSequenceTypePreservedJson.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVmTemplateBuilder: FfiConverter<VmTemplateBuilder, Long> {
+    override fun lower(value: VmTemplateBuilder): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): VmTemplateBuilder {
+        return VmTemplateBuilder(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): VmTemplateBuilder {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: VmTemplateBuilder) = 8UL
+
+    override fun write(value: VmTemplateBuilder, buf: ByteBuffer) {
         buf.putLong(lower(value))
     }
 }
@@ -2251,6 +4120,73 @@ public object FfiConverterTypeRuntimeKind: FfiConverterRustBuffer<RuntimeKind> {
 }
 
 
+
+
+
+
+
+sealed class SchemaBuildException: kotlin.Exception() {
+
+    class MissingRequiredField(
+
+        val `recordType`: kotlin.String,
+
+        val `field`: kotlin.String
+        ) : SchemaBuildException() {
+        override val message
+            get() = "recordType=${ `recordType` }, field=${ `field` }"
+    }
+
+
+
+
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<SchemaBuildException> {
+        override fun lift(error_buf: RustBuffer.ByValue): SchemaBuildException = FfiConverterTypeSchemaBuildError.lift(error_buf)
+    }
+
+
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSchemaBuildError : FfiConverterRustBuffer<SchemaBuildException> {
+    override fun read(buf: ByteBuffer): SchemaBuildException {
+
+
+        return when(buf.getInt()) {
+            1 -> SchemaBuildException.MissingRequiredField(
+                FfiConverterString.read(buf),
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: SchemaBuildException): ULong {
+        return when(value) {
+            is SchemaBuildException.MissingRequiredField -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`recordType`)
+                + FfiConverterString.allocationSize(value.`field`)
+            )
+        }
+    }
+
+    override fun write(value: SchemaBuildException, buf: ByteBuffer) {
+        when(value) {
+            is SchemaBuildException.MissingRequiredField -> {
+                buf.putInt(1)
+                FfiConverterString.write(value.`recordType`, buf)
+                FfiConverterString.write(value.`field`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
 
 
 

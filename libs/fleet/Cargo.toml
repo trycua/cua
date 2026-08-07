@@ -1,5 +1,5 @@
 [workspace]
-members = ["sdk-schema", "sdk", "bindgen-cli"]
+members = ["sdk-schema", "sdk", "bindgen-cli", "uniffi-builder-derive"]
 resolver = "2"
 
 [workspace.package]

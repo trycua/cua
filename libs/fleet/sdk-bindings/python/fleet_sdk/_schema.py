@@ -478,9 +478,73 @@ def _uniffi_check_contract_api_version(lib):
         raise InternalError("UniFFI contract version mismatch: try cleaning and rebuilding your project")
 
 def _uniffi_check_api_checksums(lib):
+    if lib.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new() != 22071:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build() != 53928:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template() != 6610:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new() != 26063:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling() != 44912:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() != 5682:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() != 50438:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() != 24064:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() != 8252:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new() != 21082:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build() != 62919:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name() != 62417:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol() != 10309:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port() != 61462:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new() != 4748:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build() != 46569:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name() != 1803:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new() != 27302:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() != 20371:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image() != 49021:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() != 25645:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() != 33926:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy() != 41828:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret() != 40154:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory() != 55615:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector() != 45280:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc() != 27280:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() != 40623:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() != 63375:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name() != 25466:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services() != 14113:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations() != 1632:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
 
 # A ctypes library to expose the extern-C FFI definitions.
@@ -745,6 +809,26 @@ _UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_void.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_void.restype = None
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder.restype = None
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder.restype = None
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_preservedjson.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -755,6 +839,78 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_free_preservedjson.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_free_preservedjson.restype = None
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder.restype = None
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder.restype = None
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder.restype = None
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json.argtypes = (
     _UniffiRustBuffer,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -765,15 +921,246 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json.argtypes = 
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint16,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations.restype = ctypes.c_uint64
 _UniffiLib.ffi_cyclops_sdk_schema_uniffi_contract_version.argtypes = (
 )
 _UniffiLib.ffi_cyclops_sdk_schema_uniffi_contract_version.restype = ctypes.c_uint32
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations.restype = ctypes.c_uint16
 
 _uniffi_check_contract_api_version(_UniffiLib)
 # _uniffi_check_api_checksums(_UniffiLib)
@@ -2440,6 +2827,838 @@ class _UniffiFfiConverterTypeJsonValueError(_UniffiConverterRustBuffer):
             buf.write_i32(1)
             _UniffiFfiConverterString.write(value.reason, buf)
 
+
+
+# SchemaBuildError
+# We want to define each variant as a nested class that's also a subclass,
+# which is tricky in Python.  To accomplish this we're going to create each
+# class separately, then manually add the child classes to the base class's
+# __dict__.  All of this happens in dummy class to avoid polluting the module
+# namespace.
+class SchemaBuildError(Exception):
+    pass
+
+_UniffiTempSchemaBuildError = SchemaBuildError
+
+class SchemaBuildError:  # type: ignore
+
+    class MissingRequiredField(_UniffiTempSchemaBuildError):
+
+        def __init__(self, record_type, field):
+            super().__init__(", ".join([
+                "record_type={!r}".format(record_type),
+                "field={!r}".format(field),
+            ]))
+            self.record_type = record_type
+            self.field = field
+
+        def __repr__(self):
+            return "SchemaBuildError.MissingRequiredField({})".format(str(self))
+    _UniffiTempSchemaBuildError.MissingRequiredField = MissingRequiredField # type: ignore
+
+SchemaBuildError = _UniffiTempSchemaBuildError # type: ignore
+del _UniffiTempSchemaBuildError
+
+
+class _UniffiFfiConverterTypeSchemaBuildError(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return SchemaBuildError.MissingRequiredField(
+                _UniffiFfiConverterString.read(buf),
+                _UniffiFfiConverterString.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if isinstance(value, SchemaBuildError.MissingRequiredField):
+            _UniffiFfiConverterString.check_lower(value.record_type)
+            _UniffiFfiConverterString.check_lower(value.field)
+            return
+
+    @staticmethod
+    def write(value, buf):
+        if isinstance(value, SchemaBuildError.MissingRequiredField):
+            buf.write_i32(1)
+            _UniffiFfiConverterString.write(value.record_type, buf)
+            _UniffiFfiConverterString.write(value.field, buf)
+
+
+class OsGymSandboxTemplateSpecBuilderProtocol(typing.Protocol):
+
+    def build(self, ) -> OsGymSandboxTemplateSpec:
+        raise NotImplementedError
+    def vm_template(self, value: VmTemplate) -> OsGymSandboxTemplateSpecBuilder:
+        raise NotImplementedError
+
+class OsGymSandboxTemplateSpecBuilder(OsGymSandboxTemplateSpecBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxTemplateSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def build(self, ) -> OsGymSandboxTemplateSpec:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxTemplateSpec.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSchemaBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def vm_template(self, value: VmTemplate) -> OsGymSandboxTemplateSpecBuilder:
+
+        _UniffiFfiConverterTypeVmTemplate.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeVmTemplate.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxTemplateSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeOSGymSandboxTemplateSpecBuilder:
+    @staticmethod
+    def lift(value: int) -> OsGymSandboxTemplateSpecBuilder:
+        return OsGymSandboxTemplateSpecBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: OsGymSandboxTemplateSpecBuilder):
+        if not isinstance(value, OsGymSandboxTemplateSpecBuilder):
+            raise TypeError("Expected OsGymSandboxTemplateSpecBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: OsGymSandboxTemplateSpecBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> OsGymSandboxTemplateSpecBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: OsGymSandboxTemplateSpecBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
+class OsGymSandboxWarmPoolSpecBuilderProtocol(typing.Protocol):
+
+    def autoscaling(self, value: WarmPoolAutoscaling) -> OsGymSandboxWarmPoolSpecBuilder:
+        raise NotImplementedError
+    def build(self, ) -> OsGymSandboxWarmPoolSpec:
+        raise NotImplementedError
+    def replicas(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+        raise NotImplementedError
+    def sandbox_template_ref(self, value: SandboxTemplateRef) -> OsGymSandboxWarmPoolSpecBuilder:
+        raise NotImplementedError
+
+class OsGymSandboxWarmPoolSpecBuilder(OsGymSandboxWarmPoolSpecBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def autoscaling(self, value: WarmPoolAutoscaling) -> OsGymSandboxWarmPoolSpecBuilder:
+
+        _UniffiFfiConverterTypeWarmPoolAutoscaling.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeWarmPoolAutoscaling.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def build(self, ) -> OsGymSandboxWarmPoolSpec:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSchemaBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def replicas(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def sandbox_template_ref(self, value: SandboxTemplateRef) -> OsGymSandboxWarmPoolSpecBuilder:
+
+        _UniffiFfiConverterTypeSandboxTemplateRef.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeSandboxTemplateRef.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder:
+    @staticmethod
+    def lift(value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+        return OsGymSandboxWarmPoolSpecBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: OsGymSandboxWarmPoolSpecBuilder):
+        if not isinstance(value, OsGymSandboxWarmPoolSpecBuilder):
+            raise TypeError("Expected OsGymSandboxWarmPoolSpecBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: OsGymSandboxWarmPoolSpecBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> OsGymSandboxWarmPoolSpecBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: OsGymSandboxWarmPoolSpecBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
+class SandboxServiceBuilderProtocol(typing.Protocol):
+
+    def build(self, ) -> SandboxService:
+        raise NotImplementedError
+    def name(self, value: str) -> SandboxServiceBuilder:
+        raise NotImplementedError
+    def protocol(self, value: ServiceProtocol) -> SandboxServiceBuilder:
+        raise NotImplementedError
+    def target_port(self, value: int) -> SandboxServiceBuilder:
+        raise NotImplementedError
+
+class SandboxServiceBuilder(SandboxServiceBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandboxServiceBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def build(self, ) -> SandboxService:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandboxService.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSchemaBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def name(self, value: str) -> SandboxServiceBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandboxServiceBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def protocol(self, value: ServiceProtocol) -> SandboxServiceBuilder:
+
+        _UniffiFfiConverterTypeServiceProtocol.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeServiceProtocol.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandboxServiceBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def target_port(self, value: int) -> SandboxServiceBuilder:
+
+        _UniffiFfiConverterUInt16.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt16.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandboxServiceBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeSandboxServiceBuilder:
+    @staticmethod
+    def lift(value: int) -> SandboxServiceBuilder:
+        return SandboxServiceBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: SandboxServiceBuilder):
+        if not isinstance(value, SandboxServiceBuilder):
+            raise TypeError("Expected SandboxServiceBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: SandboxServiceBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> SandboxServiceBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: SandboxServiceBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
+class SandboxTemplateRefBuilderProtocol(typing.Protocol):
+
+    def build(self, ) -> SandboxTemplateRef:
+        raise NotImplementedError
+    def name(self, value: str) -> SandboxTemplateRefBuilder:
+        raise NotImplementedError
+
+class SandboxTemplateRefBuilder(SandboxTemplateRefBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandboxTemplateRefBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def build(self, ) -> SandboxTemplateRef:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandboxTemplateRef.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSchemaBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def name(self, value: str) -> SandboxTemplateRefBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandboxTemplateRefBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeSandboxTemplateRefBuilder:
+    @staticmethod
+    def lift(value: int) -> SandboxTemplateRefBuilder:
+        return SandboxTemplateRefBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: SandboxTemplateRefBuilder):
+        if not isinstance(value, SandboxTemplateRefBuilder):
+            raise TypeError("Expected SandboxTemplateRefBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: SandboxTemplateRefBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> SandboxTemplateRefBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: SandboxTemplateRefBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
+class VmTemplateBuilderProtocol(typing.Protocol):
+
+    def build(self, ) -> VmTemplate:
+        raise NotImplementedError
+    def command(self, value: typing.List[str]) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def container_disk_image(self, value: str) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def cpu_cores(self, value: int) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def firmware(self, value: Firmware) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def image_pull_policy(self, value: ImagePullPolicy) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def image_pull_secret(self, value: str) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def memory(self, value: str) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def node_selector(self, value: dict[str, str]) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def oidc(self, value: OidcConfig) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def probes(self, value: PreservedJson) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def runtime(self, value: RuntimeKind) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def runtime_class_name(self, value: str) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def services(self, value: typing.List[SandboxService]) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def tolerations(self, value: typing.List[PreservedJson]) -> VmTemplateBuilder:
+        raise NotImplementedError
+
+class VmTemplateBuilder(VmTemplateBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def build(self, ) -> VmTemplate:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplate.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSchemaBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def command(self, value: typing.List[str]) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterSequenceString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def container_disk_image(self, value: str) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def cpu_cores(self, value: int) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def firmware(self, value: Firmware) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterTypeFirmware.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeFirmware.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def image_pull_policy(self, value: ImagePullPolicy) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterTypeImagePullPolicy.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeImagePullPolicy.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def image_pull_secret(self, value: str) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def memory(self, value: str) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def node_selector(self, value: dict[str, str]) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterMapStringString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterMapStringString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def oidc(self, value: OidcConfig) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterTypeOidcConfig.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeOidcConfig.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def probes(self, value: PreservedJson) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterTypePreservedJson.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypePreservedJson.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def runtime(self, value: RuntimeKind) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterTypeRuntimeKind.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeRuntimeKind.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def runtime_class_name(self, value: str) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def services(self, value: typing.List[SandboxService]) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterSequenceTypeSandboxService.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceTypeSandboxService.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def tolerations(self, value: typing.List[PreservedJson]) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterSequenceTypePreservedJson.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceTypePreservedJson.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeVmTemplateBuilder:
+    @staticmethod
+    def lift(value: int) -> VmTemplateBuilder:
+        return VmTemplateBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: VmTemplateBuilder):
+        if not isinstance(value, VmTemplateBuilder):
+            raise TypeError("Expected VmTemplateBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: VmTemplateBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> VmTemplateBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: VmTemplateBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
 class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u8"
     VALUE_MIN = 0
@@ -2460,6 +3679,7 @@ __all__ = [
     "Firmware",
     "ServiceProtocol",
     "JsonValueError",
+    "SchemaBuildError",
     "ClaimLifecycle",
     "SandboxTemplateRef",
     "ClaimSpec",
@@ -2477,4 +3697,14 @@ __all__ = [
     "OsGymSandboxWarmPoolStatus",
     "PreservedJson",
     "PreservedJsonProtocol",
+    "OsGymSandboxTemplateSpecBuilder",
+    "OsGymSandboxTemplateSpecBuilderProtocol",
+    "OsGymSandboxWarmPoolSpecBuilder",
+    "OsGymSandboxWarmPoolSpecBuilderProtocol",
+    "SandboxServiceBuilder",
+    "SandboxServiceBuilderProtocol",
+    "SandboxTemplateRefBuilder",
+    "SandboxTemplateRefBuilderProtocol",
+    "VmTemplateBuilder",
+    "VmTemplateBuilderProtocol",
 ]

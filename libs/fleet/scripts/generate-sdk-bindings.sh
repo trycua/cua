@@ -120,6 +120,7 @@ ruby_method_names() {
   source_file="$1"
   method_prefix="$2"
   case "$method_prefix" in
+    alloc) pattern='alloc_from_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     check_lower) pattern='check_lower_[A-Za-z0-9_]+' ;;
     read) pattern='read(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     write) pattern='write_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
@@ -131,6 +132,7 @@ ruby_defined_method_names() {
   source_file="$1"
   method_prefix="$2"
   case "$method_prefix" in
+    alloc) pattern='alloc_from_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     check_lower) pattern='check_lower_[A-Za-z0-9_]+' ;;
     read) pattern='read(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     write) pattern='write_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
@@ -154,7 +156,7 @@ write_ruby_facade() {
   sdk_file="$1"
   schema_file="$2"
   facade_file="$3"
-  for method_prefix in check_lower read write; do
+  for method_prefix in alloc check_lower read write; do
     references="$temporary_output/ruby-$method_prefix-references"
     definitions="$temporary_output/ruby-$method_prefix-definitions"
     schema_definitions="$temporary_output/ruby-schema-$method_prefix-definitions"
@@ -185,6 +187,7 @@ module FleetSdk
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end
 RUBY_FACADE_HEADER
+  write_ruby_method_array "SCHEMA_ALLOC_METHODS" "$temporary_output/ruby-alloc-external" "$facade_file"
   write_ruby_method_array "SCHEMA_CHECK_LOWER_METHODS" "$temporary_output/ruby-check_lower-external" "$facade_file"
   write_ruby_method_array "SCHEMA_READ_METHODS" "$temporary_output/ruby-read-external" "$facade_file"
   write_ruby_method_array "SCHEMA_WRITE_METHODS" "$temporary_output/ruby-write-external" "$facade_file"
@@ -192,6 +195,20 @@ RUBY_FACADE_HEADER
 
   schema_rust_buffer = CyclopsSdkSchema::RustBuffer
   schema_stream = CyclopsSdkSchema.const_get(:RustBufferStream, false)
+
+  SCHEMA_ALLOC_METHODS.each do |method_name|
+    RustBuffer.define_singleton_method(method_name) do |value|
+      buffer = schema_rust_buffer.public_send(method_name, value)
+      begin
+        RustBuffer.allocWithBuilder do |builder|
+          builder.write(buffer.data.read_bytes(buffer.len))
+          builder.finalize
+        end
+      ensure
+        buffer.free
+      end
+    end
+  end
 
   SCHEMA_CHECK_LOWER_METHODS.each do |method_name|
     RustBuffer.define_singleton_method(method_name) do |value|
@@ -221,7 +238,8 @@ RUBY_FACADE_HEADER
     end
   end
 
-  private_constant :SCHEMA_CHECK_LOWER_METHODS, :SCHEMA_READ_METHODS, :SCHEMA_WRITE_METHODS
+  private_constant :SCHEMA_ALLOC_METHODS, :SCHEMA_CHECK_LOWER_METHODS,
+                   :SCHEMA_READ_METHODS, :SCHEMA_WRITE_METHODS
 end
 RUBY_FACADE_FOOTER
 }
@@ -231,9 +249,11 @@ write_python_facade() {
   schema_file="$2"
   facade_file="$3"
   private_exports="$temporary_output/python-schema-private-exports"
+  converter_adapters="$temporary_output/python-schema-converter-adapters"
 
   grep_matches_or_empty 'fleet_sdk\._[A-Za-z_][A-Za-z0-9_]*' "$sdk_file" \
     | sed 's/^fleet_sdk\.//' | LC_ALL=C sort -u > "$private_exports"
+  : > "$converter_adapters"
 
   cat > "$facade_file" <<'PYTHON_FACADE_HEADER'
 from . import _schema as _schema_component
@@ -245,18 +265,33 @@ PYTHON_FACADE_HEADER
       echo "error: generated Python SDK references missing schema symbol: $symbol" >&2
       return 1
     fi
-    printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$facade_file"
+    case "$symbol" in
+      _UniffiFfiConverterType*)
+        cat >> "$converter_adapters" <<PYTHON_CONVERTER_ADAPTER
+class $symbol(_sdk_component._UniffiConverterRustBuffer):
+    check_lower = staticmethod(_schema_component.$symbol.check_lower)
+    read = staticmethod(_schema_component.$symbol.read)
+    write = staticmethod(_schema_component.$symbol.write)
+
+PYTHON_CONVERTER_ADAPTER
+        ;;
+      *) printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$facade_file" ;;
+    esac
   done < "$private_exports"
-  cat >> "$facade_file" <<'PYTHON_FACADE_FOOTER'
+  {
+    cat <<'PYTHON_SDK_IMPORT'
 
 from . import _sdk as _sdk_component
 from ._sdk import *
-
+PYTHON_SDK_IMPORT
+    cat "$converter_adapters"
+    cat <<'PYTHON_FACADE_FOOTER'
 __all__ = [*_schema_component.__all__, *_sdk_component.__all__]
 
 del _schema_component
 del _sdk_component
 PYTHON_FACADE_FOOTER
+  } >> "$facade_file"
 }
 
 normalize_generated_text() {
@@ -796,7 +831,7 @@ if future_runtime_anchor not in text:
     raise SystemExit("expected Ruby error helper declaration not found")
 text = text.replace(future_runtime_anchor, future_runtime, 1)
 
-buffer_pattern = r"(?m)^(\s*)result = FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
+buffer_pattern = r"(?m)^(\s*)result = FleetSdk\.rust_call_with_error\(([^,]+),:((?![a-z0-9_]*builder_build\b)[a-z0-9_]+),(.*)\)$"
 def replace_buffer(match):
     indent, error_module, function, arguments = match.groups()
     arguments = arguments.rstrip().removesuffix(",")
@@ -809,6 +844,8 @@ def replace_buffer(match):
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
 if buffer_replacements != 21:
     raise SystemExit(f"expected 21 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 2:
+    raise SystemExit("expected two synchronous Ruby SDK builder build calls")
 
 void_pattern = r"(?m)^(\s*)FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_void(match):

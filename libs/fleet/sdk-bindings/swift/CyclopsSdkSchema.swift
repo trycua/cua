@@ -516,6 +516,296 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 
+public protocol OsGymSandboxTemplateSpecBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> OsGymSandboxTemplateSpec
+
+    func vmTemplate(value: VmTemplate)  -> OsGymSandboxTemplateSpecBuilder
+
+}
+open class OsGymSandboxTemplateSpecBuilder: OsGymSandboxTemplateSpecBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> OsGymSandboxTemplateSpec  {
+    return try  FfiConverterTypeOSGymSandboxTemplateSpec_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func vmTemplate(value: VmTemplate) -> OsGymSandboxTemplateSpecBuilder  {
+    return try!  FfiConverterTypeOSGymSandboxTemplateSpecBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeVmTemplate_lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOSGymSandboxTemplateSpecBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = OsGymSandboxTemplateSpecBuilder
+
+    public static func lift(_ handle: UInt64) throws -> OsGymSandboxTemplateSpecBuilder {
+        return OsGymSandboxTemplateSpecBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: OsGymSandboxTemplateSpecBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OsGymSandboxTemplateSpecBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: OsGymSandboxTemplateSpecBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOSGymSandboxTemplateSpecBuilder_lift(_ handle: UInt64) throws -> OsGymSandboxTemplateSpecBuilder {
+    return try FfiConverterTypeOSGymSandboxTemplateSpecBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOSGymSandboxTemplateSpecBuilder_lower(_ value: OsGymSandboxTemplateSpecBuilder) -> UInt64 {
+    return FfiConverterTypeOSGymSandboxTemplateSpecBuilder.lower(value)
+}
+
+
+
+
+
+
+public protocol OsGymSandboxWarmPoolSpecBuilderProtocol: AnyObject, Sendable {
+
+    func autoscaling(value: WarmPoolAutoscaling)  -> OsGymSandboxWarmPoolSpecBuilder
+
+    func build() throws  -> OsGymSandboxWarmPoolSpec
+
+    func replicas(value: UInt32)  -> OsGymSandboxWarmPoolSpecBuilder
+
+    func sandboxTemplateRef(value: SandboxTemplateRef)  -> OsGymSandboxWarmPoolSpecBuilder
+
+}
+open class OsGymSandboxWarmPoolSpecBuilder: OsGymSandboxWarmPoolSpecBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder(handle, $0) }
+    }
+
+
+
+
+open func autoscaling(value: WarmPoolAutoscaling) -> OsGymSandboxWarmPoolSpecBuilder  {
+    return try!  FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeWarmPoolAutoscaling_lower(value),$0
+    )
+})
+}
+
+open func build()throws  -> OsGymSandboxWarmPoolSpec  {
+    return try  FfiConverterTypeOSGymSandboxWarmPoolSpec_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func replicas(value: UInt32) -> OsGymSandboxWarmPoolSpecBuilder  {
+    return try!  FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
+open func sandboxTemplateRef(value: SandboxTemplateRef) -> OsGymSandboxWarmPoolSpecBuilder  {
+    return try!  FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeSandboxTemplateRef_lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = OsGymSandboxWarmPoolSpecBuilder
+
+    public static func lift(_ handle: UInt64) throws -> OsGymSandboxWarmPoolSpecBuilder {
+        return OsGymSandboxWarmPoolSpecBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: OsGymSandboxWarmPoolSpecBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OsGymSandboxWarmPoolSpecBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: OsGymSandboxWarmPoolSpecBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lift(_ handle: UInt64) throws -> OsGymSandboxWarmPoolSpecBuilder {
+    return try FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lower(_ value: OsGymSandboxWarmPoolSpecBuilder) -> UInt64 {
+    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lower(value)
+}
+
+
+
+
+
+
 public protocol PreservedJsonProtocol: AnyObject, Sendable {
 
     func toJson()  -> String
@@ -633,6 +923,573 @@ public func FfiConverterTypePreservedJson_lift(_ handle: UInt64) throws -> Prese
 #endif
 public func FfiConverterTypePreservedJson_lower(_ value: PreservedJson) -> UInt64 {
     return FfiConverterTypePreservedJson.lower(value)
+}
+
+
+
+
+
+
+public protocol SandboxServiceBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> SandboxService
+
+    func name(value: String)  -> SandboxServiceBuilder
+
+    func `protocol`(value: ServiceProtocol)  -> SandboxServiceBuilder
+
+    func targetPort(value: UInt16)  -> SandboxServiceBuilder
+
+}
+open class SandboxServiceBuilder: SandboxServiceBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> SandboxService  {
+    return try  FfiConverterTypeSandboxService_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
+    uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func name(value: String) -> SandboxServiceBuilder  {
+    return try!  FfiConverterTypeSandboxServiceBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func `protocol`(value: ServiceProtocol) -> SandboxServiceBuilder  {
+    return try!  FfiConverterTypeSandboxServiceBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeServiceProtocol_lower(value),$0
+    )
+})
+}
+
+open func targetPort(value: UInt16) -> SandboxServiceBuilder  {
+    return try!  FfiConverterTypeSandboxServiceBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt16.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSandboxServiceBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = SandboxServiceBuilder
+
+    public static func lift(_ handle: UInt64) throws -> SandboxServiceBuilder {
+        return SandboxServiceBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: SandboxServiceBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SandboxServiceBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SandboxServiceBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSandboxServiceBuilder_lift(_ handle: UInt64) throws -> SandboxServiceBuilder {
+    return try FfiConverterTypeSandboxServiceBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSandboxServiceBuilder_lower(_ value: SandboxServiceBuilder) -> UInt64 {
+    return FfiConverterTypeSandboxServiceBuilder.lower(value)
+}
+
+
+
+
+
+
+public protocol SandboxTemplateRefBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> SandboxTemplateRef
+
+    func name(value: String)  -> SandboxTemplateRefBuilder
+
+}
+open class SandboxTemplateRefBuilder: SandboxTemplateRefBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> SandboxTemplateRef  {
+    return try  FfiConverterTypeSandboxTemplateRef_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
+    uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func name(value: String) -> SandboxTemplateRefBuilder  {
+    return try!  FfiConverterTypeSandboxTemplateRefBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSandboxTemplateRefBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = SandboxTemplateRefBuilder
+
+    public static func lift(_ handle: UInt64) throws -> SandboxTemplateRefBuilder {
+        return SandboxTemplateRefBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: SandboxTemplateRefBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SandboxTemplateRefBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SandboxTemplateRefBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSandboxTemplateRefBuilder_lift(_ handle: UInt64) throws -> SandboxTemplateRefBuilder {
+    return try FfiConverterTypeSandboxTemplateRefBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSandboxTemplateRefBuilder_lower(_ value: SandboxTemplateRefBuilder) -> UInt64 {
+    return FfiConverterTypeSandboxTemplateRefBuilder.lower(value)
+}
+
+
+
+
+
+
+public protocol VmTemplateBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> VmTemplate
+
+    func command(value: [String])  -> VmTemplateBuilder
+
+    func containerDiskImage(value: String)  -> VmTemplateBuilder
+
+    func cpuCores(value: UInt32)  -> VmTemplateBuilder
+
+    func firmware(value: Firmware)  -> VmTemplateBuilder
+
+    func imagePullPolicy(value: ImagePullPolicy)  -> VmTemplateBuilder
+
+    func imagePullSecret(value: String)  -> VmTemplateBuilder
+
+    func memory(value: String)  -> VmTemplateBuilder
+
+    func nodeSelector(value: [String: String])  -> VmTemplateBuilder
+
+    func oidc(value: OidcConfig)  -> VmTemplateBuilder
+
+    func probes(value: PreservedJson)  -> VmTemplateBuilder
+
+    func runtime(value: RuntimeKind)  -> VmTemplateBuilder
+
+    func runtimeClassName(value: String)  -> VmTemplateBuilder
+
+    func services(value: [SandboxService])  -> VmTemplateBuilder
+
+    func tolerations(value: [PreservedJson])  -> VmTemplateBuilder
+
+}
+open class VmTemplateBuilder: VmTemplateBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> VmTemplate  {
+    return try  FfiConverterTypeVmTemplate_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func command(value: [String]) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(value),$0
+    )
+})
+}
+
+open func containerDiskImage(value: String) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func cpuCores(value: UInt32) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
+open func firmware(value: Firmware) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFirmware_lower(value),$0
+    )
+})
+}
+
+open func imagePullPolicy(value: ImagePullPolicy) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeImagePullPolicy_lower(value),$0
+    )
+})
+}
+
+open func imagePullSecret(value: String) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func memory(value: String) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func nodeSelector(value: [String: String]) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(
+            self.uniffiCloneHandle(),
+        FfiConverterDictionaryStringString.lower(value),$0
+    )
+})
+}
+
+open func oidc(value: OidcConfig) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeOidcConfig_lower(value),$0
+    )
+})
+}
+
+open func probes(value: PreservedJson) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(
+            self.uniffiCloneHandle(),
+        FfiConverterTypePreservedJson_lower(value),$0
+    )
+})
+}
+
+open func runtime(value: RuntimeKind) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeRuntimeKind_lower(value),$0
+    )
+})
+}
+
+open func runtimeClassName(value: String) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func services(value: [SandboxService]) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeSandboxService.lower(value),$0
+    )
+})
+}
+
+open func tolerations(value: [PreservedJson]) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypePreservedJson.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVmTemplateBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = VmTemplateBuilder
+
+    public static func lift(_ handle: UInt64) throws -> VmTemplateBuilder {
+        return VmTemplateBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: VmTemplateBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VmTemplateBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: VmTemplateBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVmTemplateBuilder_lift(_ handle: UInt64) throws -> VmTemplateBuilder {
+    return try FfiConverterTypeVmTemplateBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVmTemplateBuilder_lower(_ value: VmTemplateBuilder) -> UInt64 {
+    return FfiConverterTypeVmTemplateBuilder.lower(value)
 }
 
 
@@ -1852,6 +2709,82 @@ public func FfiConverterTypeRuntimeKind_lower(_ value: RuntimeKind) -> RustBuffe
 }
 
 
+
+public enum SchemaBuildError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    case MissingRequiredField(recordType: String, field: String
+    )
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension SchemaBuildError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSchemaBuildError: FfiConverterRustBuffer {
+    typealias SwiftType = SchemaBuildError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SchemaBuildError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .MissingRequiredField(
+            recordType: try FfiConverterString.read(from: &buf),
+            field: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SchemaBuildError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case let .MissingRequiredField(recordType,field):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(recordType, into: &buf)
+            FfiConverterString.write(field, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSchemaBuildError_lift(_ buf: RustBuffer) throws -> SchemaBuildError {
+    return try FfiConverterTypeSchemaBuildError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSchemaBuildError_lower(_ value: SchemaBuildError) -> RustBuffer {
+    return FfiConverterTypeSchemaBuildError.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
@@ -2468,10 +3401,106 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build() != 62919) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name() != 62417) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol() != 10309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port() != 61462) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build() != 46569) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name() != 1803) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() != 20371) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image() != 49021) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() != 25645) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() != 33926) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy() != 41828) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret() != 40154) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory() != 55615) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector() != 45280) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc() != 27280) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() != 40623) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() != 63375) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name() != 25466) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services() != 14113) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations() != 1632) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() != 8252) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build() != 53928) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template() != 6610) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling() != 44912) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() != 5682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() != 50438) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new() != 21082) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new() != 4748) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new() != 27302) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() != 24064) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new() != 22071) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new() != 26063) {
         return InitializationResult.apiChecksumMismatch
     }
 

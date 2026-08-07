@@ -499,6 +499,8 @@ end
   end
 
 
+
+
   # The Enum type ServiceProtocol.
 
   def self.check_lower_TypeServiceProtocol(v)
@@ -1050,11 +1052,46 @@ class RustBufferStream
     read(size).force_encoding(Encoding::UTF_8)
   end
 
+  # The Object type OSGymSandboxTemplateSpecBuilder.
+
+  def readTypeOSGymSandboxTemplateSpecBuilder
+    handle = unpack_from 8, 'Q>'
+    return OSGymSandboxTemplateSpecBuilder.uniffi_allocate(handle)
+  end
+
+  # The Object type OSGymSandboxWarmPoolSpecBuilder.
+
+  def readTypeOSGymSandboxWarmPoolSpecBuilder
+    handle = unpack_from 8, 'Q>'
+    return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(handle)
+  end
+
   # The Object type PreservedJson.
 
   def readTypePreservedJson
     handle = unpack_from 8, 'Q>'
     return PreservedJson.uniffi_allocate(handle)
+  end
+
+  # The Object type SandboxServiceBuilder.
+
+  def readTypeSandboxServiceBuilder
+    handle = unpack_from 8, 'Q>'
+    return SandboxServiceBuilder.uniffi_allocate(handle)
+  end
+
+  # The Object type SandboxTemplateRefBuilder.
+
+  def readTypeSandboxTemplateRefBuilder
+    handle = unpack_from 8, 'Q>'
+    return SandboxTemplateRefBuilder.uniffi_allocate(handle)
+  end
+
+  # The Object type VmTemplateBuilder.
+
+  def readTypeVmTemplateBuilder
+    handle = unpack_from 8, 'Q>'
+    return VmTemplateBuilder.uniffi_allocate(handle)
   end
 
   # The Record type ClaimLifecycle.
@@ -1301,6 +1338,26 @@ class RustBufferStream
     raise InternalError, 'Unexpected variant tag for TypeRuntimeKind'
   end
 
+
+
+
+
+
+
+  # The Error type SchemaBuildError
+
+  def readTypeSchemaBuildError
+    variant = unpack_from 4, 'l>'
+
+    if variant == 1
+        return SchemaBuildError::MissingRequiredField.new(
+            readString(),
+            readString()
+        )
+    end
+
+    raise InternalError, 'Unexpected variant tag for TypeSchemaBuildError'
+  end
 
 
 
@@ -1703,10 +1760,45 @@ class RustBufferBuilder
     write v
   end
 
+  # The Object type OSGymSandboxTemplateSpecBuilder.
+
+  def write_TypeOSGymSandboxTemplateSpecBuilder(obj)
+    handle = OSGymSandboxTemplateSpecBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
+  # The Object type OSGymSandboxWarmPoolSpecBuilder.
+
+  def write_TypeOSGymSandboxWarmPoolSpecBuilder(obj)
+    handle = OSGymSandboxWarmPoolSpecBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
   # The Object type PreservedJson.
 
   def write_TypePreservedJson(obj)
     handle = PreservedJson.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
+  # The Object type SandboxServiceBuilder.
+
+  def write_TypeSandboxServiceBuilder(obj)
+    handle = SandboxServiceBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
+  # The Object type SandboxTemplateRefBuilder.
+
+  def write_TypeSandboxTemplateRefBuilder(obj)
+    handle = SandboxTemplateRefBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
+  # The Object type VmTemplateBuilder.
+
+  def write_TypeVmTemplateBuilder(obj)
+    handle = VmTemplateBuilder.uniffi_lower obj
     pack_into(8, 'Q>', handle)
   end
 
@@ -1865,6 +1957,8 @@ class RustBufferBuilder
   def write_TypeRuntimeKind(v)
     pack_into(4, 'l>', v)
  end
+
+
 
 
   # The Enum type ServiceProtocol.
@@ -2157,6 +2251,26 @@ CALL_ERROR = 1
 CALL_PANIC = 2
 
 
+module SchemaBuildError
+  class MissingRequiredField < StandardError
+    def initialize(record_type, field)
+        @record_type = record_type
+        @field = field
+        super()
+      end
+
+    attr_reader :record_type, :field
+
+
+    def to_s
+     "#{self.class.name}(record_type=#{@record_type.inspect}, field=#{@field.inspect})"
+    end
+  end
+
+end
+
+
+
 
 
 
@@ -2181,6 +2295,9 @@ end
 
 # Map error modules to the RustBuffer method name that reads them
 ERROR_MODULE_TO_READER_METHOD = {
+
+  SchemaBuildError => :readTypeSchemaBuildError,
+
 
 
 
@@ -2257,6 +2374,96 @@ module UniFFILib
   ffi_lib 'cyclops_sdk'
 
 
+  attach_function :uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port,
+    [:uint64, :uint16, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores,
+    [:uint64, :uint32, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes,
+    [:uint64, :uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_clone_preservedjson,
     [:uint64, RustCallStatus.by_ref],
     :uint64
@@ -2269,6 +2476,42 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas,
+    [:uint64, :uint32, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_alloc,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -2281,10 +2524,106 @@ module UniFFILib
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_reserve,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :ffi_cyclops_sdk_schema_uniffi_contract_version,
@@ -2294,6 +2633,7 @@ module UniFFILib
 end
 
   # Public interface members begin here.
+
 
 
 
@@ -2778,6 +3118,285 @@ end
 
 
 
+  class SandboxServiceBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      CyclopsSdkSchema.rust_call(
+        :uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a SandboxServiceBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return CyclopsSdkSchema.rust_call(
+      :uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeSandboxService
+  end
+  def name(value)
+        value = CyclopsSdkSchema::uniffi_utf8(value)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return SandboxServiceBuilder.uniffi_allocate(result)
+  end
+  def protocol(value)
+        value = value
+        RustBuffer.check_lower_TypeServiceProtocol(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol,uniffi_clone_handle(),RustBuffer.alloc_from_TypeServiceProtocol(value))
+    return SandboxServiceBuilder.uniffi_allocate(result)
+  end
+  def target_port(value)
+        value = CyclopsSdkSchema::uniffi_in_range(value, "u16", 0, 2**16)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port,uniffi_clone_handle(),value)
+    return SandboxServiceBuilder.uniffi_allocate(result)
+  end
+
+end
+
+  class SandboxTemplateRefBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      CyclopsSdkSchema.rust_call(
+        :uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a SandboxTemplateRefBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return CyclopsSdkSchema.rust_call(
+      :uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeSandboxTemplateRef
+  end
+  def name(value)
+        value = CyclopsSdkSchema::uniffi_utf8(value)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return SandboxTemplateRefBuilder.uniffi_allocate(result)
+  end
+
+end
+
+  class VmTemplateBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      CyclopsSdkSchema.rust_call(
+        :uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a VmTemplateBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return CyclopsSdkSchema.rust_call(
+      :uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeVmTemplate
+  end
+  def command(value)
+        value = value.map { |v| CyclopsSdkSchema::uniffi_utf8(v) }
+        RustBuffer.check_lower_Sequencestring(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command,uniffi_clone_handle(),RustBuffer.alloc_from_Sequencestring(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def container_disk_image(value)
+        value = CyclopsSdkSchema::uniffi_utf8(value)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def cpu_cores(value)
+        value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores,uniffi_clone_handle(),value)
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def firmware(value)
+        value = value
+        RustBuffer.check_lower_TypeFirmware(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware,uniffi_clone_handle(),RustBuffer.alloc_from_TypeFirmware(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def image_pull_policy(value)
+        value = value
+        RustBuffer.check_lower_TypeImagePullPolicy(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy,uniffi_clone_handle(),RustBuffer.alloc_from_TypeImagePullPolicy(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def image_pull_secret(value)
+        value = CyclopsSdkSchema::uniffi_utf8(value)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def memory(value)
+        value = CyclopsSdkSchema::uniffi_utf8(value)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def node_selector(value)
+        value = value.each.with_object({}) { |(k, v), res| res[CyclopsSdkSchema::uniffi_utf8(k)] = CyclopsSdkSchema::uniffi_utf8(v) }
+        RustBuffer.check_lower_MapStringString(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector,uniffi_clone_handle(),RustBuffer.alloc_from_MapStringString(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def oidc(value)
+        value = value
+        RustBuffer.check_lower_TypeOidcConfig(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc,uniffi_clone_handle(),RustBuffer.alloc_from_TypeOidcConfig(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def probes(value)
+        value = value
+        (PreservedJson.uniffi_check_lower value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes,uniffi_clone_handle(),(PreservedJson.uniffi_lower value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def runtime(value)
+        value = value
+        RustBuffer.check_lower_TypeRuntimeKind(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime,uniffi_clone_handle(),RustBuffer.alloc_from_TypeRuntimeKind(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def runtime_class_name(value)
+        value = CyclopsSdkSchema::uniffi_utf8(value)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def services(value)
+        value = value
+        RustBuffer.check_lower_SequenceTypeSandboxService(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services,uniffi_clone_handle(),RustBuffer.alloc_from_SequenceTypeSandboxService(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def tolerations(value)
+        value = value
+        RustBuffer.check_lower_SequenceTypePreservedJson(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations,uniffi_clone_handle(),RustBuffer.alloc_from_SequenceTypePreservedJson(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+
+end
+
   class PreservedJson
 
   # A private helper for initializing instances of the class from a raw handle,
@@ -2834,6 +3453,144 @@ end
   def to_json()
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json,uniffi_clone_handle(),)
     return result.consumeIntoString
+  end
+
+end
+
+  class OSGymSandboxTemplateSpecBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      CyclopsSdkSchema.rust_call(
+        :uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a OSGymSandboxTemplateSpecBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return CyclopsSdkSchema.rust_call(
+      :uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeOSGymSandboxTemplateSpec
+  end
+  def vm_template(value)
+        value = value
+        RustBuffer.check_lower_TypeVmTemplate(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template,uniffi_clone_handle(),RustBuffer.alloc_from_TypeVmTemplate(value))
+    return OSGymSandboxTemplateSpecBuilder.uniffi_allocate(result)
+  end
+
+end
+
+  class OSGymSandboxWarmPoolSpecBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      CyclopsSdkSchema.rust_call(
+        :uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a OSGymSandboxWarmPoolSpecBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return CyclopsSdkSchema.rust_call(
+      :uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def autoscaling(value)
+        value = value
+        RustBuffer.check_lower_TypeWarmPoolAutoscaling(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling,uniffi_clone_handle(),RustBuffer.alloc_from_TypeWarmPoolAutoscaling(value))
+    return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
+  end
+  def build()
+    result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeOSGymSandboxWarmPoolSpec
+  end
+  def replicas(value)
+        value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas,uniffi_clone_handle(),value)
+    return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
+  end
+  def sandbox_template_ref(value)
+        value = value
+        RustBuffer.check_lower_TypeSandboxTemplateRef(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandboxTemplateRef(value))
+    return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
   end
 
 end

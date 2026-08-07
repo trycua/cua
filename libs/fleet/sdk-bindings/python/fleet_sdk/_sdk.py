@@ -482,6 +482,24 @@ def _uniffi_check_contract_api_version(lib):
 def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new() != 33658:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build() != 60558:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace() != 18934:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() != 7566:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new() != 6787:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build() != 46749:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name() != 38970:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace() != 38181:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec() != 29902:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect() != 54404:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token() != 55589:
@@ -819,6 +837,26 @@ _UniffiLib.uniffi_cyclops_sdk_fn_free_accesstokenprovider.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_free_accesstokenprovider.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder.restype = None
 _UniffiLib.uniffi_cyclops_sdk_fn_clone_cyclopsclient.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -893,6 +931,54 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token.arg
     ctypes.c_int8,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect.argtypes = (
     _UniffiRustBuffer,
     ctypes.c_uint64,
@@ -1071,6 +1157,33 @@ _UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.restype = ctypes.c_uint32
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect.restype = ctypes.c_uint16
@@ -2629,6 +2742,64 @@ class _UniffiFfiConverterTypeHttpError(_UniffiConverterRustBuffer):
 
 
 
+# SdkBuildError
+# We want to define each variant as a nested class that's also a subclass,
+# which is tricky in Python.  To accomplish this we're going to create each
+# class separately, then manually add the child classes to the base class's
+# __dict__.  All of this happens in dummy class to avoid polluting the module
+# namespace.
+class SdkBuildError(Exception):
+    pass
+
+_UniffiTempSdkBuildError = SdkBuildError
+
+class SdkBuildError:  # type: ignore
+
+    class MissingRequiredField(_UniffiTempSdkBuildError):
+
+        def __init__(self, record_type, field):
+            super().__init__(", ".join([
+                "record_type={!r}".format(record_type),
+                "field={!r}".format(field),
+            ]))
+            self.record_type = record_type
+            self.field = field
+
+        def __repr__(self):
+            return "SdkBuildError.MissingRequiredField({})".format(str(self))
+    _UniffiTempSdkBuildError.MissingRequiredField = MissingRequiredField # type: ignore
+
+SdkBuildError = _UniffiTempSdkBuildError # type: ignore
+del _UniffiTempSdkBuildError
+
+
+class _UniffiFfiConverterTypeSdkBuildError(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return SdkBuildError.MissingRequiredField(
+                _UniffiFfiConverterString.read(buf),
+                _UniffiFfiConverterString.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if isinstance(value, SdkBuildError.MissingRequiredField):
+            _UniffiFfiConverterString.check_lower(value.record_type)
+            _UniffiFfiConverterString.check_lower(value.field)
+            return
+
+    @staticmethod
+    def write(value, buf):
+        if isinstance(value, SdkBuildError.MissingRequiredField):
+            buf.write_i32(1)
+            _UniffiFfiConverterString.write(value.record_type, buf)
+            _UniffiFfiConverterString.write(value.field, buf)
+
+
+
 # SdkError
 # We want to define each variant as a nested class that's also a subclass,
 # which is tricky in Python.  To accomplish this we're going to create each
@@ -3062,6 +3233,251 @@ class _UniffiFfiConverterTypeAccessTokenProvider:
 
     @classmethod
     def write(cls, value: AccessTokenProvider, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
+class CreatePoolRequestBuilderProtocol(typing.Protocol):
+
+    def build(self, ) -> CreatePoolRequest:
+        raise NotImplementedError
+    def namespace(self, value: str) -> CreatePoolRequestBuilder:
+        raise NotImplementedError
+    def spec(self, value: fleet_sdk.OsGymSandboxWarmPoolSpec) -> CreatePoolRequestBuilder:
+        raise NotImplementedError
+
+class CreatePoolRequestBuilder(CreatePoolRequestBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreatePoolRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def build(self, ) -> CreatePoolRequest:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreatePoolRequest.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def namespace(self, value: str) -> CreatePoolRequestBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreatePoolRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def spec(self, value: fleet_sdk.OsGymSandboxWarmPoolSpec) -> CreatePoolRequestBuilder:
+
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreatePoolRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeCreatePoolRequestBuilder:
+    @staticmethod
+    def lift(value: int) -> CreatePoolRequestBuilder:
+        return CreatePoolRequestBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: CreatePoolRequestBuilder):
+        if not isinstance(value, CreatePoolRequestBuilder):
+            raise TypeError("Expected CreatePoolRequestBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: CreatePoolRequestBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> CreatePoolRequestBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: CreatePoolRequestBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
+class CreateTemplateRequestBuilderProtocol(typing.Protocol):
+
+    def build(self, ) -> CreateTemplateRequest:
+        raise NotImplementedError
+    def name(self, value: str) -> CreateTemplateRequestBuilder:
+        raise NotImplementedError
+    def namespace(self, value: str) -> CreateTemplateRequestBuilder:
+        raise NotImplementedError
+    def spec(self, value: fleet_sdk.OsGymSandboxTemplateSpec) -> CreateTemplateRequestBuilder:
+        raise NotImplementedError
+
+class CreateTemplateRequestBuilder(CreateTemplateRequestBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateTemplateRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def build(self, ) -> CreateTemplateRequest:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateTemplateRequest.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def name(self, value: str) -> CreateTemplateRequestBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateTemplateRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def namespace(self, value: str) -> CreateTemplateRequestBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateTemplateRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def spec(self, value: fleet_sdk.OsGymSandboxTemplateSpec) -> CreateTemplateRequestBuilder:
+
+        fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateTemplateRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeCreateTemplateRequestBuilder:
+    @staticmethod
+    def lift(value: int) -> CreateTemplateRequestBuilder:
+        return CreateTemplateRequestBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: CreateTemplateRequestBuilder):
+        if not isinstance(value, CreateTemplateRequestBuilder):
+            raise TypeError("Expected CreateTemplateRequestBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: CreateTemplateRequestBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> CreateTemplateRequestBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: CreateTemplateRequestBuilder, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
 class _UniffiFfiConverterSequenceTypeClaim(_UniffiConverterRustBuffer):
@@ -3995,6 +4411,7 @@ __all__ = [
     "InternalError",
     "AccessTokenProviderError",
     "HttpError",
+    "SdkBuildError",
     "SdkError",
     "ResourceMetadata",
     "Claim",
@@ -4017,6 +4434,10 @@ __all__ = [
     "CyclopsCredentialsProtocol",
     "AccessTokenProviderImpl",
     "AccessTokenProvider",
+    "CreatePoolRequestBuilder",
+    "CreatePoolRequestBuilderProtocol",
+    "CreateTemplateRequestBuilder",
+    "CreateTemplateRequestBuilderProtocol",
     "CyclopsClient",
     "CyclopsClientProtocol",
     "HttpClientImpl",

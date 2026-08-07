@@ -5,6 +5,10 @@ module FleetSdk
   CyclopsSdkSchema.constants(false).each do |name|
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end
+  SCHEMA_ALLOC_METHODS = %i[
+    alloc_from_TypeOSGymSandboxTemplateSpec
+    alloc_from_TypeOSGymSandboxWarmPoolSpec
+  ].freeze
   SCHEMA_CHECK_LOWER_METHODS = %i[
     check_lower_TypeClaimSpec
     check_lower_TypeOSGymSandboxClaimStatus
@@ -29,6 +33,20 @@ module FleetSdk
 
   schema_rust_buffer = CyclopsSdkSchema::RustBuffer
   schema_stream = CyclopsSdkSchema.const_get(:RustBufferStream, false)
+
+  SCHEMA_ALLOC_METHODS.each do |method_name|
+    RustBuffer.define_singleton_method(method_name) do |value|
+      buffer = schema_rust_buffer.public_send(method_name, value)
+      begin
+        RustBuffer.allocWithBuilder do |builder|
+          builder.write(buffer.data.read_bytes(buffer.len))
+          builder.finalize
+        end
+      ensure
+        buffer.free
+      end
+    end
+  end
 
   SCHEMA_CHECK_LOWER_METHODS.each do |method_name|
     RustBuffer.define_singleton_method(method_name) do |value|
@@ -58,5 +76,6 @@ module FleetSdk
     end
   end
 
-  private_constant :SCHEMA_CHECK_LOWER_METHODS, :SCHEMA_READ_METHODS, :SCHEMA_WRITE_METHODS
+  private_constant :SCHEMA_ALLOC_METHODS, :SCHEMA_CHECK_LOWER_METHODS,
+                   :SCHEMA_READ_METHODS, :SCHEMA_WRITE_METHODS
 end

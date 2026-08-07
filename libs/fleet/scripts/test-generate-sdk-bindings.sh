@@ -321,12 +321,14 @@ async def smoke_create_pool():
         ),
         transport,
     )
-    spec = fleet_sdk.OsGymSandboxWarmPoolSpec(
-        replicas=1,
-        sandbox_template_ref=fleet_sdk.SandboxTemplateRef(name="default"),
-        autoscaling=None,
-    )
-    pool = await client.create_pool(fleet_sdk.CreatePoolRequest(namespace="default", spec=spec))
+    spec = fleet_sdk.OsGymSandboxWarmPoolSpecBuilder().replicas(1).sandbox_template_ref(
+        fleet_sdk.SandboxTemplateRefBuilder().name("default").build()
+    ).build()
+    request = fleet_sdk.CreatePoolRequestBuilder().namespace("default").spec(spec).build()
+    assert type(spec) is fleet_sdk.OsGymSandboxWarmPoolSpec
+    assert type(request) is fleet_sdk.CreatePoolRequest
+    assert spec.autoscaling is None
+    pool = await client.create_pool(request)
     assert pool.metadata.name == "offline-pool"
     assert any(request.url.endswith("/osgymsandboxwarmpools") for request in transport.requests)
 
@@ -336,11 +338,33 @@ rm "$runtime_copy"
 runtime_copy=""
 "$generator" --check
 python_sdk_source="$bindings_dir/python/fleet_sdk/_sdk.py"
+python_schema_source="$bindings_dir/python/fleet_sdk/_schema.py"
 kotlin_sdk_source="$bindings_dir/kotlin/ai/cua/cyclops/sdk/fleet_sdk.kt"
+kotlin_schema_source="$bindings_dir/kotlin/ai/cua/cyclops/sdk/schema/cyclops_sdk_schema.kt"
 swift_sdk_source="$bindings_dir/swift/CyclopsSdk.swift"
+swift_schema_source="$bindings_dir/swift/CyclopsSdkSchema.swift"
 ruby_sdk_source="$bindings_dir/ruby/cyclops_sdk/sdk.rb"
+ruby_schema_source="$bindings_dir/ruby/cyclops_sdk/schema.rb"
 node_sdk_source="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+browser_sdk_source="$bindings_dir/ts-uniffi-browser/ts/fleet_sdk.ts"
 go_sdk_source="$bindings_dir/go-uniffi/fleet_sdk/fleet_sdk.go"
+
+for separate_binding in "$node_sdk_source" "$browser_sdk_source" "$go_sdk_source"; do
+  if grep -Fq -- "VmTemplateBuilder" "$separate_binding" || grep -Fq -- "CreatePoolRequestBuilder" "$separate_binding"; then
+    fail "separately generated Go/TypeScript binding unexpectedly contains authoritative builders: $separate_binding"
+  fi
+done
+
+grep -Fq -- "class VmTemplateBuilder" "$python_schema_source" || fail "Python bindings omit VmTemplateBuilder"
+grep -Fq -- "class CreatePoolRequestBuilder" "$python_sdk_source" || fail "Python bindings omit CreatePoolRequestBuilder"
+grep -Fq -- "open class VmTemplateBuilder" "$kotlin_schema_source" || fail "Kotlin bindings omit VmTemplateBuilder"
+grep -Fq -- "open class CreatePoolRequestBuilder" "$kotlin_sdk_source" || fail "Kotlin bindings omit CreatePoolRequestBuilder"
+grep -Fq -- "open class VmTemplateBuilder" "$swift_schema_source" || fail "Swift bindings omit VmTemplateBuilder"
+grep -Fq -- "open class CreatePoolRequestBuilder" "$swift_sdk_source" || fail "Swift bindings omit CreatePoolRequestBuilder"
+grep -Fq -- "class VmTemplateBuilder" "$ruby_schema_source" || fail "Ruby bindings omit VmTemplateBuilder"
+grep -Fq -- "class CreatePoolRequestBuilder" "$ruby_sdk_source" || fail "Ruby bindings omit CreatePoolRequestBuilder"
+grep -Fq -- "alloc_from_TypeOSGymSandboxTemplateSpec" "$bindings_dir/ruby/cyclops_sdk.rb" || \
+  fail "Ruby facade omits cross-component record allocation adapter"
 if grep -Fq -- "execute_authenticated" "$python_sdk_source"; then fail "Python bindings export execute_authenticated"; fi
 if grep -Fq -- "executeAuthenticated" "$kotlin_sdk_source"; then fail "Kotlin bindings export executeAuthenticated"; fi
 if grep -Fq -- "executeAuthenticated" "$swift_sdk_source"; then fail "Swift bindings export executeAuthenticated"; fi

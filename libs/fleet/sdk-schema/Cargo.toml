@@ -22,6 +22,7 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 thiserror.workspace = true
 uniffi.workspace = true
+uniffi-builder-derive = { path = "../uniffi-builder-derive" }
 
 [dev-dependencies]
 tempfile = "3"

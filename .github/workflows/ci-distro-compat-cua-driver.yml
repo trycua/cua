@@ -21,13 +21,14 @@ name: "CI: cua-driver distro-compat matrix"
 #     behavior stays in the canonical Rust X11 and Wayland E2E workflows.
 #   - Non-blocking by default (continue-on-error: true) — the released binary
 #     may not exist yet on a fresh branch; the job is informational until the
-#     first linux release tag exists.
+#     first Linux release exists.
 #
 # Trigger workflow changes in PRs and on main so edits to this matrix validate
 # against the current release. Source changes do not run this workflow because
 # it downloads a published binary rather than building the proposed commit.
-# Release tags always run the matrix against the matching artifact, and
-# workflow_dispatch remains available for maintainer-requested validation.
+# The Cua Driver release finalizer dispatches the matrix against the matching
+# public artifact after publication. workflow_dispatch also remains available
+# for maintainer-requested validation.
 #
 # Companion to the Rust desktop E2E workflows; it validates released binaries,
 # not source-built harness behavior.
@@ -37,11 +38,8 @@ on:
     paths:
       - ".github/workflows/ci-distro-compat-cua-driver.yml"
   push:
-    # Path filters do not apply to tag pushes, so every release tag still runs.
     # Main-branch pushes run only when the matrix itself changes.
     branches: [main]
-    tags:
-      - "cua-driver-rs-v*"
     paths:
       - ".github/workflows/ci-distro-compat-cua-driver.yml"
   workflow_dispatch:
@@ -74,8 +72,6 @@ jobs:
         run: |
           if [[ -n "$INPUT_VERSION" ]]; then
             VERSION="$INPUT_VERSION"
-          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             # Fetch the latest release that matches the cua-driver-rs-v* pattern.
             # The releases are marked prerelease=true so we use /releases instead
@@ -104,20 +100,19 @@ jobs:
         env:
           BINARY_URL: ${{ steps.pick.outputs.binary_url }}
         run: |
-          # The tag and desktop CD workflows start at the same time. Building,
-          # notarizing, and publishing every platform can take several minutes,
-          # so a tag-triggered compatibility run must wait for the release asset
-          # instead of treating the initial 404 as a broken release.
-          for attempt in $(seq 1 90); do
+          # The release finalizer dispatches only after it verifies the assets
+          # are public. Keep a short retry window for public CDN propagation,
+          # not candidate build or certification time.
+          for attempt in $(seq 1 12); do
             if curl -fsSL "$BINARY_URL" -o cua-driver-release.tar.gz; then
               exit 0
             fi
-            if [[ "$attempt" -eq 90 ]]; then
-              echo "ERROR: release asset was still unavailable after 15 minutes"
+            if [[ "$attempt" -eq 12 ]]; then
+              echo "ERROR: published release asset was still unavailable after 1 minute"
               exit 1
             fi
-            echo "Release asset not available yet (attempt ${attempt}/90); retrying in 10s..."
-            sleep 10
+            echo "Published release asset not available yet (attempt ${attempt}/12); retrying in 5s..."
+            sleep 5
           done
 
       - name: Cache released binary for matrix

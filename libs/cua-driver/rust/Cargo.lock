@@ -1043,6 +1043,7 @@ dependencies = [
  "cua-driver-contract",
  "futures-util",
  "image",
+ "jsonschema",
  "libc",
  "regex",
  "regorus",

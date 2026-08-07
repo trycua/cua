@@ -121,6 +121,42 @@ The rejected combinations are enforced. Desktop scope is foreground and pixel-on
 
 ---
 
+## What a tool returns
+
+An action tool answers with one of two payloads, and MCP holds **both** to the tool's advertised `outputSchema` — the schema covers every `structuredContent` a tool emits, refusals included. So `outputSchema` is an `anyOf` of two variants.
+
+**Success variant.** Closed: exactly these keys, nothing else.
+
+| Field | Required | Values |
+|---|---|---|
+| `effect` | ✅ | `confirmed`, `partial`, `unverifiable`, `suspected_noop`, `refused` |
+| `route` | ✅ | `accessibility`, `synthetic_events`, `global_input`, `system_api`, `dom`, `trusted_input` |
+| `delivery` | — | `{mode: background \| foreground \| not_applicable \| unknown}` |
+| `evidence` | — | what was read back to justify `effect` |
+| `escalation` | — | which rung to try next, and why this one fell short |
+
+**Refusal variant.** Accompanies `isError: true` and carries diagnostics instead of an effect. Two shapes are in service:
+
+```json
+{"status": "refused",
+ "refusal": {"code": "stale_element_token",
+             "message": "element_token is stale; call get_window_state again to refresh"}}
+```
+
+```json
+{"code": "window_target_not_found", "effect": "refused", "candidates": [], "pid": 4711}
+```
+
+This variant is deliberately open — refusals carry tool-specific diagnostic keys (`candidates`, `detail`, `pid`) that help a caller recover. The marker keys `refusal`, `status`, and `code` are what identify a payload as a refusal rather than a malformed success.
+
+<Callout type="warn">
+Branch on the refusal `code`, and surface the `content` text — it states the recovery step in plain language. `stale_element_token` means re-run `get_window_state` and retry with fresh indices; it does **not** mean the accessibility route is unavailable. Agents that treat a refusal as a dead route tend to abandon the element path and fall back to blind pixel clicking, which is both slower and unverifiable.
+</Callout>
+
+Success payloads stay strictly validated: an unknown key on the success shape is still a contract violation and will not be quietly accepted through the refusal variant.
+
+---
+
 ## Platform support
 
 | Capability | Windows | macOS | Linux |

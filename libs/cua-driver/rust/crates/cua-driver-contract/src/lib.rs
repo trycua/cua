@@ -35,13 +35,14 @@ pub use inputs::{
     SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
 };
 pub use outputs::{
-    ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation, ActionEscalationReason,
-    ActionEscalationTarget, ActionEvidence, ActionEvidenceKind, ActionResult,
-    ActionResultValidationError, ActionRoute, ClipboardReadOutput, ClipboardWriteOutput,
-    CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
-    CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
-    GetAgentCursorStateOutput, ScreenSizeOutput, SessionStateOutput, SetAgentCursorEnabledOutput,
-    SetAgentCursorMotionOutput, SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
+    advertised_output_schema, refusal_envelope_schema, ActionDelivery, ActionDeliveryMode,
+    ActionEffect, ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
+    ActionEvidenceKind, ActionResult, ActionResultValidationError, ActionRoute,
+    ClipboardReadOutput, ClipboardWriteOutput, CursorMotionOutput, CursorPointOutput,
+    CursorPositionOutput, CursorThemeOutput, CursorVisualOutput, DesktopStateOutput,
+    EffectiveScope, EndSessionOutput, GetAgentCursorStateOutput, ScreenSizeOutput,
+    SessionStateOutput, SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput,
+    SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
 };
 pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,

@@ -67,6 +67,12 @@ fn registered_tool_contracts_match_on_active_backend() {
             .unwrap_or_else(|| json!({}));
         violations.extend(shared_schema_violations(name, &schema));
 
+        if let Some(output_schema) = tool.get("outputSchema") {
+            if output_schema.get("type") != Some(&json!("object")) {
+                violations.push(format!("{name}: outputSchema root must have type=object"));
+            }
+        }
+
         let schema_accepts_delivery_mode = schema
             .pointer("/properties/delivery_mode")
             .is_some_and(Value::is_object);

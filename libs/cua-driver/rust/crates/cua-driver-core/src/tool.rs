@@ -1034,13 +1034,15 @@ impl ToolRegistry {
         } else {
             None
         };
-        let runtime_proves_driver_owned = runtime_session
-            .as_deref()
-            .zip(current_process_fingerprint.as_ref())
-            .is_some_and(|(session, fingerprint)| {
-                self.protected_resource_ownership
-                    .reprove_driver_owned_process(session, fingerprint)
-            });
+        let process_ownership_key =
+            process_ownership_key(runtime_session.as_deref(), &runtime_prefix);
+        let runtime_proves_driver_owned =
+            current_process_fingerprint
+                .as_ref()
+                .is_some_and(|fingerprint| {
+                    self.protected_resource_ownership
+                        .reprove_driver_owned_process(&process_ownership_key, fingerprint)
+                });
 
         if context.mode() == crate::authorization::PermissionMode::Standard
             && has_adapter("process_control")
@@ -1284,7 +1286,7 @@ impl ToolRegistry {
         }
 
         // Capture start time for recording timestamps only after validation.
-        let launch_snapshot = if resolved_name == "launch_app" && runtime_session.is_some() {
+        let launch_snapshot = if resolved_name == "launch_app" {
             self.snapshot_running_pids().await
         } else {
             None
@@ -1350,8 +1352,7 @@ impl ToolRegistry {
             }
         }
         if resolved_name == "launch_app" && result.is_error != Some(true) {
-            if let (Some(session), Some(before), Some(pid)) = (
-                runtime_session.as_deref(),
+            if let (Some(before), Some(pid)) = (
                 launch_snapshot.as_ref(),
                 result
                     .structured_content
@@ -1362,7 +1363,7 @@ impl ToolRegistry {
                 if pid > 0 && !before.contains(&pid) {
                     if let Some(fingerprint) = self.attest_process_fingerprint(pid).await {
                         self.protected_resource_ownership
-                            .mark_driver_owned_process(session, fingerprint);
+                            .mark_driver_owned_process(&process_ownership_key, fingerprint);
                     }
                 }
             }
@@ -2290,6 +2291,27 @@ fn is_physical_desktop_action(tool: &str) -> bool {
             | "bring_to_front"
             | "set_window_frame"
     )
+}
+
+/// Bucket that owns the processes a call is allowed to terminate.
+///
+/// A call that declares a session keys its launches to that session, so
+/// concurrent agents sharing a runtime cannot kill each other's processes. A
+/// sessionless call carries no such identity: bucketing its launches per
+/// runtime scope keeps exactly the guarantee the refusal states — "launched
+/// by this Cua runtime" — instead of recording no ownership at all, which
+/// left a sessionless `launch_app` followed by `kill_app` permanently
+/// refused in standard mode.
+///
+/// The bucket is namespaced like a session but named with a NUL, which no
+/// namespaced public session label contains, so it cannot be selected by
+/// passing a crafted `session` argument. Even a collision would only reach
+/// processes this same runtime scope launched.
+fn process_ownership_key(runtime_session: Option<&str>, runtime_prefix: &str) -> String {
+    match runtime_session {
+        Some(session) => session.to_owned(),
+        None => format!("{runtime_prefix}\u{0}anonymous-launch"),
+    }
 }
 
 fn namespace_runtime_args(
@@ -3312,6 +3334,104 @@ resources:
             .await;
         assert_ne!(result.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn standard_sessionless_owned_process_termination_reproves_the_fingerprint() {
+        // A sessionless launch_app records provenance in the runtime-scoped
+        // anonymous bucket, so the matching sessionless kill_app can reprove
+        // it. Ownership used to be recorded only for calls carrying a
+        // session, which left launch-then-kill without one permanently
+        // refused even though this runtime had just started the process.
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("kill_app", None, hits.clone(), false);
+        let context = standard_context();
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(
+                &context.runtime_session_key("\u{0}anonymous-launch"),
+                crate::browser::ProcessFingerprint {
+                    pid: 424242,
+                    start_time: Some(7),
+                    executable: Some("/synthetic/fixture".to_owned()),
+                },
+            );
+
+        let result = registry
+            .invoke_with_context("kill_app", serde_json::json!({"pid": 424242}), context)
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn standard_sessionless_foreign_process_termination_still_denies() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = attested_registry("kill_app", Some(provider.clone()), hits.clone(), true);
+        let result = registry
+            .invoke_with_context(
+                "kill_app",
+                serde_json::json!({"pid": 424242}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("foreign_process_termination_denied")
+        );
+    }
+
+    #[tokio::test]
+    async fn sessionless_termination_cannot_reach_a_session_scoped_launch() {
+        // The anonymous bucket must not become a backdoor into another
+        // agent's processes: a launch attributed to a session stays killable
+        // only through that session.
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("kill_app", None, hits.clone(), false);
+        let context = standard_context();
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(
+                &context.runtime_session_key("process"),
+                crate::browser::ProcessFingerprint {
+                    pid: 424242,
+                    start_time: Some(7),
+                    executable: Some("/synthetic/fixture".to_owned()),
+                },
+            );
+
+        let result = registry
+            .invoke_with_context("kill_app", serde_json::json!({"pid": 424242}), context)
+            .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("foreign_process_termination_denied")
+        );
+    }
+
+    #[test]
+    fn anonymous_process_ownership_key_cannot_be_selected_by_a_session_argument() {
+        let prefix = "__cua_runtime_scope:";
+        let anonymous = super::process_ownership_key(None, prefix);
+        assert_eq!(super::process_ownership_key(Some("s"), prefix), "s");
+        assert!(anonymous.starts_with(prefix));
+        // A namespaced public session label is prefix + the caller's string;
+        // the NUL keeps the anonymous bucket outside that space.
+        assert!(anonymous.contains('\u{0}'));
     }
 
     #[tokio::test]

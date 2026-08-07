@@ -1059,6 +1059,7 @@ dependencies = [
  "url",
  "uuid",
  "windows 0.58.0",
+ "zune-core",
 ]
 
 [[package]]

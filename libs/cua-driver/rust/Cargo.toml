@@ -34,6 +34,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# zune-jpeg 0.5.15 accepts zune-core ^0.5, but zune-core 0.5.2 changed its
+# disabled logging macros in a source-incompatible way. Keep fresh downstream
+# resolution on the last compatible pair until zune-jpeg publishes its fix.
+zune-core = "=0.5.1"
 uniffi = "=0.31.0"
 postcard = { version = "1", features = ["alloc"] }
 sha2 = "0.10"

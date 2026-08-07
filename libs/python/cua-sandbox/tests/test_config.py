@@ -8,6 +8,7 @@ from cua_sandbox._config import (
     get_client_id,
     get_client_secret,
     get_fleet_base_url,
+    get_fleet_request_timeout,
     get_token_url,
 )
 
@@ -22,6 +23,7 @@ class TestConfig:
         )
         _global_config.client_id = None
         _global_config.client_secret = None
+        _global_config.fleet_request_timeout = None
 
     def test_configure_client_credentials_uses_fleet_defaults(self):
         configure(client_id="client-id", client_secret="client-secret")
@@ -54,3 +56,15 @@ class TestConfig:
         monkeypatch.setenv("CUA_API_KEY", "sk-env")
         configure(api_key="sk-configured")
         assert get_api_key() == "sk-configured"
+
+    def test_fleet_request_timeout_defaults_to_thirty_seconds(self):
+        assert get_fleet_request_timeout() == 30.0
+
+    def test_configure_fleet_request_timeout(self):
+        configure(fleet_request_timeout=600.0)
+        assert get_fleet_request_timeout() == 600.0
+
+    def test_fleet_request_timeout_env_overrides_configure(self, monkeypatch):
+        configure(fleet_request_timeout=600.0)
+        monkeypatch.setenv("CUA_FLEET_REQUEST_TIMEOUT", "120")
+        assert get_fleet_request_timeout() == 120.0

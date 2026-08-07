@@ -29,12 +29,14 @@ class FleetTransport(Transport):
         bound: Any,
         service_name: str = "api",
         timeout: float = 30.0,
+        owns_sdk: bool = False,
         **_: Any,
     ) -> None:
         self._sdk = sdk
         self._bound = bound
         self._service_name = service_name
         self._timeout = timeout
+        self._owns_sdk = owns_sdk
         self._connected = False
 
     async def connect(self) -> None:
@@ -44,6 +46,11 @@ class FleetTransport(Transport):
 
     async def disconnect(self) -> None:
         self._connected = False
+        # A transport constructed with owns_sdk=True (e.g. by Lease.wait) is the
+        # sole holder of its Fleet client, so disconnect is where that client's
+        # HTTP resources are returned.
+        if self._owns_sdk:
+            await self._sdk.close()
 
     async def request_service(
         self,

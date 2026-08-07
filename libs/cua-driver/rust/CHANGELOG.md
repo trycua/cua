@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.19.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.19.1...cua-driver-rs-v0.19.2) (2026-08-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** constrain incompatible zune-core resolution ([#2984](https://github.com/trycua/cua/issues/2984)) ([1979ab7](https://github.com/trycua/cua/commit/1979ab73fdcdba130a54467ca7072c447011f7ab))
+* **cua-driver:** make MCP output schemas object-rooted ([96d87ad](https://github.com/trycua/cua/commit/96d87adb248d746aed2a5427b1a256dbd3f1ae1a))
+* **cua-driver:** reap Linux launch_app children instead of leaking zombies ([#2974](https://github.com/trycua/cua/issues/2974)) ([f91d78e](https://github.com/trycua/cua/commit/f91d78e49a74fd7a690100957886e93e185655e2))
+
 ## [0.19.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.19.0...cua-driver-rs-v0.19.1) (2026-08-07)
 
 

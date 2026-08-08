@@ -85,7 +85,7 @@ pub fn wayland_enabled() -> bool {
             let v = v.trim();
             !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
         }
-        Err(_) => false,
+        Err(_) => shell_helper::available(),
     }
 }
 

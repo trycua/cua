@@ -307,6 +307,38 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     parse_window_origin(&raw, pid)
 }
 
+pub fn window_origin_for_pid_and_xid(pid: u32, xid: u64) -> Option<(i32, i32)> {
+    let raw = gdbus_call("GetRects", &[])?;
+    parse_window_origin_with_xid(&raw, pid, xid)
+}
+
+fn parse_window_origin_with_xid(raw: &str, pid: u32, xid: u64) -> Option<(i32, i32)> {
+    if xid == 0 {
+        return parse_window_origin(raw, pid);
+    }
+    let start = raw.find('[')?;
+    let end = raw.rfind(']')?;
+    let json = &raw[start..=end];
+    let arr: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    for w in &arr {
+        let match_pid = w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64);
+        let match_id = w.get("id").and_then(|id| id.as_u64()) == Some(xid);
+        if match_pid && match_id {
+            let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
+            let y = w.get("y").and_then(serde_json::Value::as_i64)? as i32;
+            return Some((x, y));
+        }
+    }
+    for w in &arr {
+        if w.get("id").and_then(|id| id.as_u64()) == Some(xid) {
+            let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
+            let y = w.get("y").and_then(serde_json::Value::as_i64)? as i32;
+            return Some((x, y));
+        }
+    }
+    parse_window_origin(raw, pid)
+}
+
 fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
     // gdbus prints a GVariant tuple like `('[{"pid":..,"x":..}]',)`. Pull the
     // JSON array out robustly (first '[' .. last ']') rather than parsing the
@@ -655,6 +687,10 @@ mod tests {
         let metadata: serde_json::Value =
             serde_json::from_str(EXTENSION_METADATA).expect("valid bundled helper metadata");
         assert_eq!(metadata["version"], 8);
+        let shell_versions = metadata["shell-version"].as_array().expect("shell-version array");
+        assert!(shell_versions.iter().any(|v| v == "50"));
+        assert!(shell_versions.iter().any(|v| v == "51"));
+        assert!(shell_versions.iter().any(|v| v == "60"));
 
         for action in [
             "idle", "observe", "click", "drag", "scroll", "text", "key", "navigate", "app",
@@ -668,5 +704,12 @@ mod tests {
 
         assert!(!EXTENSION_SOURCE.contains("const VERTS"));
         assert!(!EXTENSION_SOURCE.contains("setSourceRGBA(0.10, 0.75, 1.00"));
+    }
+
+    #[test]
+    fn accessibility_origin_matches_exact_xid_when_multiple_windows_share_pid() {
+        let raw = r#"('[{"id":46,"pid":6079,"title":"Window 1","x":14,"y":12,"w":560,"h":736},{"id":47,"pid":6079,"title":"Window 2","x":600,"y":12,"w":560,"h":736}]',)"#;
+        assert_eq!(parse_window_origin_with_xid(raw, 6079, 47), Some((600, 12)));
+        assert_eq!(parse_window_origin_with_xid(raw, 6079, 46), Some((14, 12)));
     }
 }

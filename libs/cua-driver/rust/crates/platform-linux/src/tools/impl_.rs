@@ -962,6 +962,9 @@ fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::
     let mut launch = std::process::Command::new(prog);
     launch
         .args(&rest)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         // Enable accessibility for this child without toggling GNOME's global
         // ScreenReaderEnabled setting (which can launch Orca). Native
         // toolkits ignore these when they do not need them.
@@ -1240,7 +1243,12 @@ impl Tool for LaunchAppTool {
                     for url in &urls {
                         children.push((
                             url.clone(),
-                            std::process::Command::new("xdg-open").arg(url).spawn()?,
+                            std::process::Command::new("xdg-open")
+                                .arg(url)
+                                .stdin(std::process::Stdio::null())
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .spawn()?,
                         ));
                     }
                     for (url, child) in children {
@@ -1305,7 +1313,12 @@ impl Tool for LaunchAppTool {
                                      round-trip its launch_path."
                                 );
                             }
-                            let child = std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            let child = std::process::Command::new("xdg-open")
+                                .arg(cmd)
+                                .stdin(std::process::Stdio::null())
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .spawn()?;
                             if let Some(reason) = xdg_open_failure(child) {
                                 anyhow::bail!("could not open '{cmd}': {reason}");
                             }

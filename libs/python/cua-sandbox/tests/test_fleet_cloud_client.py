@@ -61,6 +61,30 @@ async def test_template_calls_delegate_to_generated_client():
 
 
 @pytest.mark.asyncio
+async def test_namespace_calls_delegate_to_generated_client():
+    client = _FleetClient.__new__(_FleetClient)
+    calls = []
+
+    class SDK:
+        async def get_namespace(self, name):
+            calls.append(("get", name))
+            return "namespace"
+
+        async def create_namespace(self, name):
+            calls.append(("create", name))
+            return "namespace"
+
+        async def delete_namespace(self, name):
+            calls.append(("delete", name))
+
+    client._client = SDK()
+    assert await client.get_namespace("demo") == "namespace"
+    assert await client.create_namespace("demo") == "namespace"
+    assert await client.delete_namespace("demo") is None
+    assert calls == [("get", "demo"), ("create", "demo"), ("delete", "demo")]
+
+
+@pytest.mark.asyncio
 async def test_list_pools_enumerates_namespaces(monkeypatch):
     client = _FleetClient.__new__(_FleetClient)
 

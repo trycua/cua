@@ -20,18 +20,21 @@ from cua_sandbox.transport.fleet import FleetTransport
 from fleet_sdk import (
     CreateClaimRequest,
     CreatePoolRequest,
+    CreatePoolRequestBuilder,
     CreateTemplateRequest,
+    CreateTemplateRequestBuilder,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
     HttpRequest,
-    OsGymSandboxTemplateSpec,
-    OsGymSandboxWarmPoolSpec,
+    OsGymSandboxTemplateSpecBuilder,
+    OsGymSandboxWarmPoolSpecBuilder,
     PreservedJson,
-    SandboxService,
-    SandboxTemplateRef,
+    SandboxServiceBuilder,
+    SandboxTemplateRefBuilder,
+    SdkError,
     ServiceProtocol,
-    VmTemplate,
+    VmTemplateBuilder,
 )
 
 if TYPE_CHECKING:
@@ -84,6 +87,15 @@ class _FleetClient:
 
     async def delete_template(self, template: Any) -> None:
         await self._client.delete_template(template)
+
+    async def get_namespace(self, name: str) -> Any:
+        return await self._client.get_namespace(name)
+
+    async def create_namespace(self, name: str) -> Any:
+        return await self._client.create_namespace(name)
+
+    async def delete_namespace(self, name: str) -> None:
+        await self._client.delete_namespace(name)
 
     async def create_claim(self, request: CreateClaimRequest) -> Any:
         return await self._client.create_claim(request)
@@ -230,6 +242,8 @@ class FleetCloudTransport(FleetTransport):
         self._services = dict(services) if services is not None else None
         self._provisioned = False
         self._owns_resources = image is not None
+        self._namespace: Any = None
+        self._owns_namespace = False
         self._template: Any = None
         self._pool: Any = None
         self._claim: Any = None
@@ -249,6 +263,7 @@ class FleetCloudTransport(FleetTransport):
                         self._pool = await self._sdk.get_pool(self._name)
                     else:
                         self._validate_image(self._image)
+                        await self._ensure_namespace()
                         self._template = await self._sdk.create_template(self._template_request())
                         self._pool = await self._sdk.create_pool(self._pool_request())
                         self._pool = await self._sdk.wait_pool(self._pool)
@@ -314,7 +329,26 @@ class FleetCloudTransport(FleetTransport):
         if self._template is not None:
             await self._sdk.delete_template(self._template)
             self._template = None
+        if self._owns_namespace:
+            await self._sdk.delete_namespace(self._name)
+            self._namespace = None
+            self._owns_namespace = False
         self._provisioned = False
+
+    async def _ensure_namespace(self) -> None:
+        try:
+            self._namespace = await self._sdk.get_namespace(self._name)
+        except SdkError.Status as error:
+            if error.status != 404:
+                raise
+            try:
+                self._namespace = await self._sdk.create_namespace(self._name)
+            except SdkError.Status as create_error:
+                if create_error.status != 409:
+                    raise
+                self._namespace = await self._sdk.get_namespace(self._name)
+            else:
+                self._owns_namespace = True
 
     @classmethod
     async def list_sandboxes(cls) -> list[Any]:
@@ -375,43 +409,49 @@ class FleetCloudTransport(FleetTransport):
             **{f"port-{port}": port for port in self._image._ports if port != 8000},
         }
         services = [
-            SandboxService(name=name, target_port=port, protocol=ServiceProtocol.TCP)
+            SandboxServiceBuilder()
+            .name(name)
+            .target_port(port)
+            .protocol(ServiceProtocol.TCP)
+            .build()
             for name, port in service_ports.items()
         ]
-        return CreateTemplateRequest(
-            namespace=self._name,
-            name=self._name,
-            spec=OsGymSandboxTemplateSpec(
-                vm_template=VmTemplate(
-                    container_disk_image=self._image._registry,
-                    command=None,
-                    runtime=None,
-                    runtime_class_name=None,
-                    node_selector=None,
-                    tolerations=None,
-                    image_pull_policy=None,
-                    image_pull_secret="ecr-credentials",
-                    cpu_cores=self._cpu,
-                    memory=None if self._memory_mb is None else f"{self._memory_mb}Mi",
-                    firmware=None,
-                    probes=PreservedJson.from_json(
-                        json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
-                    ),
-                    services=services,
-                    oidc=None,
-                ),
-            ),
+        vm_template_builder = (
+            VmTemplateBuilder()
+            .container_disk_image(self._image._registry)
+            .image_pull_secret("ecr-credentials")
+            .probes(
+                PreservedJson.from_json(
+                    json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
+                )
+            )
+            .services(services)
+        )
+        if self._cpu is not None:
+            vm_template_builder = vm_template_builder.cpu_cores(self._cpu)
+        if self._memory_mb is not None:
+            vm_template_builder = vm_template_builder.memory(f"{self._memory_mb}Mi")
+
+        template_spec = (
+            OsGymSandboxTemplateSpecBuilder().vm_template(vm_template_builder.build()).build()
+        )
+        return (
+            CreateTemplateRequestBuilder()
+            .namespace(self._name)
+            .name(self._name)
+            .spec(template_spec)
+            .build()
         )
 
     def _pool_request(self) -> CreatePoolRequest:
-        return CreatePoolRequest(
-            namespace=self._name,
-            spec=OsGymSandboxWarmPoolSpec(
-                replicas=self._replicas,
-                sandbox_template_ref=SandboxTemplateRef(name=self._name),
-                autoscaling=None,
-            ),
+        template_ref = SandboxTemplateRefBuilder().name(self._name).build()
+        pool_spec = (
+            OsGymSandboxWarmPoolSpecBuilder()
+            .replicas(self._replicas)
+            .sandbox_template_ref(template_ref)
+            .build()
         )
+        return CreatePoolRequestBuilder().namespace(self._name).spec(pool_spec).build()
 
     @staticmethod
     def _service_names(template: Any) -> list[str]:

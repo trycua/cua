@@ -320,7 +320,7 @@ background AX read, agent-cursor glide.
 // Copyright (c) 2026 Cua AI, Inc.
 
 // ExampleAgentHarness — minimal reference host for embedding cua-driver.
-// Mirrored verbatim in Skills/cua-driver/EMBEDDING.md ("Minimal host
+// Mirrored verbatim in AgentPlugin/skills/cua-driver/EMBEDDING.md ("Minimal host
 // example") — keep the two in sync.
 //
 // Runs the one-grant demo sequence from EMBEDDING.md end to end:

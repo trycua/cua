@@ -150,11 +150,11 @@ macOS attributes Accessibility and Screen Recording grants to a responsible app 
   certified host adapter.
 - **Embedded:** have the macOS app that owns the grants use the generated `EmbeddedCuaDriverHost` to spawn a private daemon and return both SDK and MCP connection details. The daemon stays in the app's responsibility chain and inherits its grants. A gateway, terminal, or unrelated helper must not spawn the daemon on the app's behalf. `@trycua/cua-driver/embedded` is an organizational alias for the same Rust host exported at the package root; it has no separate lifecycle implementation.
 
-Directly spawning a raw `cua-driver serve` outside `CuaDriver.app` without embedded mode is unsupported: it has no stable bundle identity for TCC attribution. Do not grant permissions to arbitrary binary paths or rely on that configuration in production. See [`rust/Skills/cua-driver/EMBEDDING.md`](rust/Skills/cua-driver/EMBEDDING.md) for the embedding contract and examples.
+Directly spawning a raw `cua-driver serve` outside `CuaDriver.app` without embedded mode is unsupported: it has no stable bundle identity for TCC attribution. Do not grant permissions to arbitrary binary paths or rely on that configuration in production. See [`rust/AgentPlugin/skills/cua-driver/EMBEDDING.md`](rust/AgentPlugin/skills/cua-driver/EMBEDDING.md) for the embedding contract and examples.
 
 ## Publishing the agent skill to ClawHub
 
-The canonical skill source is `rust/Skills/cua-driver`. It is published as one
+The canonical skill source is `rust/AgentPlugin/skills/cua-driver`. It is published as one
 cross-platform ClawHub skill at `@cua/driver`; the bundle includes the
 macOS, Windows, and Linux documents. Direct installs through `cua-driver skills
 install` still keep only the host OS document unless `--all-platforms` is used.
@@ -171,7 +171,7 @@ all of the following:
 
 1. Dispatch the workflow from `main`.
 2. Enter a version that matches both `rust/Cargo.toml` and the `version` field
-   in `rust/Skills/cua-driver/SKILL.md`.
+   in `rust/AgentPlugin/skills/cua-driver/SKILL.md`.
 3. Confirm the MIT-0 rights check in the workflow form.
 4. Configure a repository Actions secret named `CLAWHUB_TOKEN` for a publisher
    that can release under the selected owner. The default owner is `cua`.

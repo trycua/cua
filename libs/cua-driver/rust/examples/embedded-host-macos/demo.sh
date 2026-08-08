@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build + run the one-grant embedding demo on a freshly reset TCC state.
 # MANUAL — needs a real Mac with a user at the keyboard; TCC prompts cannot
-# be granted from CI. See ../../Skills/cua-driver/EMBEDDING.md for the pass
+# be granted from CI. See ../../AgentPlugin/skills/cua-driver/EMBEDDING.md for the pass
 # criteria.
 #
 #   ./demo.sh                      # ad-hoc signature (fine for local demos)

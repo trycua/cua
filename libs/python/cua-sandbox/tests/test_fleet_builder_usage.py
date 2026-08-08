@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 PACKAGE_ROOT = Path(__file__).parents[1]
 FLEET_MODULES = {"cua_sandbox", "fleet_sdk"}
 BUILDER_ENABLED_RECORDS = {
@@ -100,7 +99,11 @@ class _BuilderRecordCallVisitor(ast.NodeVisitor):
             if alias.name == "*":
                 continue
             local_name = alias.asname or alias.name
-            if node.level == 0 and node.module in FLEET_MODULES and alias.name in BUILDER_ENABLED_RECORDS:
+            if (
+                node.level == 0
+                and node.module in FLEET_MODULES
+                and alias.name in BUILDER_ENABLED_RECORDS
+            ):
                 self.scope.bind(local_name, alias.name)
             else:
                 self._bind_other(local_name)
@@ -186,7 +189,9 @@ class _BuilderRecordCallVisitor(ast.NodeVisitor):
             self.scope = outer_scope
 
 
-def _find_builder_record_calls(source: str, *, filename: str = "<unknown>") -> list[tuple[int, str]]:
+def _find_builder_record_calls(
+    source: str, *, filename: str = "<unknown>"
+) -> list[tuple[int, str]]:
     visitor = _BuilderRecordCallVisitor()
     visitor.visit(ast.parse(source, filename=filename))
     return visitor.calls

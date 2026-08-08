@@ -50,7 +50,9 @@ class FleetSdkPackagingTests(unittest.TestCase):
         self.assertIn("cua-fleet", sandbox_requires_dist)
         self.assertNotIn("cua-train", sandbox_requires_dist)
         self.assertEqual(packages["cua-fleet"]["version"], "0.1.8")
-        self.assertEqual(packages["cua-fleet"]["source"], {"registry": "https://wheels.cua.ai/simple"})
+        self.assertEqual(
+            packages["cua-fleet"]["source"], {"registry": "https://wheels.cua.ai/simple"}
+        )
         self.assertNotIn("cua-train", fleet_dependencies)
         self.assertNotIn("cua-train", packages)
 

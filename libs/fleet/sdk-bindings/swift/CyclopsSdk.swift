@@ -1394,6 +1394,12 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func waitClaim(claim: Claim) async throws  -> Sandbox
 
+    func createNamespace(name: String) async throws  -> Namespace
+
+    func deleteNamespace(name: String) async throws
+
+    func getNamespace(name: String) async throws  -> Namespace
+
     func listNamespaces() async throws  -> [Namespace]
 
     func createPool(request: CreatePoolRequest) async throws  -> Pool
@@ -1652,6 +1658,57 @@ open func waitClaim(claim: Claim)async throws  -> Sandbox  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSandbox_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func createNamespace(name: String)async throws  -> Namespace  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeNamespace_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func deleteNamespace(name: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_void,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_void,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func getNamespace(name: String)async throws  -> Namespace  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeNamespace_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -4645,6 +4702,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() != 38049) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() != 4545) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() != 184) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() != 65288) {

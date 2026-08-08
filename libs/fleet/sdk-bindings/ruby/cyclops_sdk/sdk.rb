@@ -2475,6 +2475,15 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces,
     [:uint64, RustCallStatus.by_ref],
     :uint64
@@ -2744,6 +2753,15 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces,
@@ -3600,6 +3618,42 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim),RustCallStatus.new),
     )
     return result.consumeIntoTypeSandbox
+  end
+  def create_namespace(name)
+        name = FleetSdk::uniffi_utf8(name)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(uniffi_clone_handle(),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+    )
+    return result.consumeIntoTypeNamespace
+  end
+  def delete_namespace(name)
+        name = FleetSdk::uniffi_utf8(name)
+
+      FleetSdk.uniffi_rust_future_void(
+
+        SdkError,
+
+        UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(uniffi_clone_handle(),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+      )
+  end
+
+  def get_namespace(name)
+        name = FleetSdk::uniffi_utf8(name)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(uniffi_clone_handle(),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+    )
+    return result.consumeIntoTypeNamespace
   end
   def list_namespaces()
     result = FleetSdk.uniffi_rust_future_rust_buffer(

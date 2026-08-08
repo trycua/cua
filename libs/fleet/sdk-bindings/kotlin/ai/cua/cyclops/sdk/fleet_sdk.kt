@@ -714,6 +714,12 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool(
@@ -880,6 +886,12 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(`ptr`: Long,
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,`shutdownTime`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(`ptr`: Long,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(`ptr`: Long,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(`ptr`: Long,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(`ptr`: Long,
 ): Long
@@ -1158,6 +1170,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() != 38049.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() != 4545.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() != 184.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() != 65288.toShort()) {
@@ -3459,6 +3480,12 @@ public interface CyclopsClientInterface {
 
     suspend fun `waitClaim`(`claim`: Claim): Sandbox
 
+    suspend fun `createNamespace`(`name`: kotlin.String): Namespace
+
+    suspend fun `deleteNamespace`(`name`: kotlin.String)
+
+    suspend fun `getNamespace`(`name`: kotlin.String): Namespace
+
     suspend fun `listNamespaces`(): List<Namespace>
 
     suspend fun `createPool`(`request`: CreatePoolRequest): Pool
@@ -3722,6 +3749,70 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSandbox.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createNamespace`(`name`: kotlin.String) : Namespace {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(
+                uniffiHandle,
+                FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeNamespace.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteNamespace`(`name`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(
+                uniffiHandle,
+                FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `getNamespace`(`name`: kotlin.String) : Namespace {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(
+                uniffiHandle,
+                FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeNamespace.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )

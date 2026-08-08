@@ -58,6 +58,9 @@ fn generated_bindings_hide_raw_credentials_and_claim_update() {
     assert!(!python.contains("async def execute_authenticated"));
     assert!(!kotlin.contains("suspend fun `executeAuthenticated`"));
     assert!(python.contains("async def list_namespaces"));
+    assert!(python.contains("async def create_namespace"));
+    assert!(python.contains("async def get_namespace"));
+    assert!(python.contains("async def delete_namespace"));
     assert!(python.contains("async def list_user_api_keys"));
     assert!(python.contains("async def create_user_api_key"));
     assert!(python.contains("async def delete_user_api_key"));

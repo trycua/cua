@@ -129,6 +129,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 		withMiddlewares("/api/namespaces", nil, c.ListNamespaces))
 	r.Handle("POST /api/namespaces",
 		withMiddlewares("/api/namespaces", nil, c.CreateNamespace))
+	r.Handle("GET /api/namespaces/{name}",
+		withMiddlewares("/api/namespaces/{name}", []string{"name"}, c.GetNamespace))
 	r.Handle("DELETE /api/namespaces/{name}",
 		withMiddlewares("/api/namespaces/{name}", []string{"name"}, c.DeleteNamespace))
 

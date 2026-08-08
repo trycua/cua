@@ -534,6 +534,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() != 38049:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() != 48557:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() != 13689:
@@ -542,6 +544,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() != 4545:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() != 31235:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() != 54852:
@@ -549,6 +553,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key() != 1700:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() != 184:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() != 49450:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1159,6 +1165,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1179,6 +1190,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1199,6 +1215,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1439,6 +1460,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_na
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.restype = ctypes.c_uint16
@@ -1451,6 +1475,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key.
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool.restype = ctypes.c_uint16
@@ -1463,6 +1490,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key.
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool.restype = ctypes.c_uint16
@@ -4115,6 +4145,8 @@ class CyclopsClientProtocol(typing.Protocol):
 
     async def create_claim(self, request: CreateClaimRequest) -> Claim:
         raise NotImplementedError
+    async def create_namespace(self, name: str) -> Namespace:
+        raise NotImplementedError
     async def create_pool(self, request: CreatePoolRequest) -> Pool:
         raise NotImplementedError
     async def create_template(self, request: CreateTemplateRequest) -> Template:
@@ -4123,6 +4155,8 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def delete_claim(self, claim: Claim) -> None:
         raise NotImplementedError
+    async def delete_namespace(self, name: str) -> None:
+        raise NotImplementedError
     async def delete_pool(self, pool: Pool) -> None:
         raise NotImplementedError
     async def delete_template(self, template: Template) -> None:
@@ -4130,6 +4164,8 @@ class CyclopsClientProtocol(typing.Protocol):
     async def delete_user_api_key(self, id: str) -> None:
         raise NotImplementedError
     async def get_claim(self, claim: Claim) -> Claim:
+        raise NotImplementedError
+    async def get_namespace(self, name: str) -> Namespace:
         raise NotImplementedError
     async def get_pool(self, name: str) -> Pool:
         raise NotImplementedError
@@ -4338,6 +4374,23 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def create_namespace(self, name: str) -> Namespace:
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeNamespace.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def create_pool(self, request: CreatePoolRequest) -> Pool:
 
         _UniffiFfiConverterTypeCreatePoolRequest.check_lower(request)
@@ -4406,6 +4459,23 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def delete_namespace(self, name: str) -> None:
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def delete_pool(self, pool: Pool) -> None:
 
         _UniffiFfiConverterTypePool.check_lower(pool)
@@ -4468,6 +4538,23 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def get_namespace(self, name: str) -> Namespace:
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeNamespace.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(*_uniffi_lowered_args),
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,

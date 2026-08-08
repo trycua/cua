@@ -32,8 +32,9 @@ facade is out of scope because it does not expose `Sandbox.create()` or
 Pass `server_port` through `Sandbox._create()` into `FleetCloudTransport`.
 The transport stores the selected port and uses it consistently for:
 
-- the Fleet `server` Service `targetPort`; and
-- the generated VM readiness probe TCP port.
+- the Fleet `server` Service `targetPort`;
+- the generated VM readiness probe TCP port; and
+- `forward_tunnel(server_port)`, which must route through the named `server` Service.
 
 Ports declared with `Image.expose()` remain additional Fleet services named
 `port-<port>`. If an exposed port equals `server_port`, do not create a duplicate

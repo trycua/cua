@@ -1236,7 +1236,6 @@ class Sandbox:
                     memory_mb=memory_mb,
                     disk_gb=disk_gb,
                     region=region,
-                    server_port=server_port,
                 )
             else:
                 transport = _make_transport(

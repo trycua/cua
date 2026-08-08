@@ -44,6 +44,34 @@ def test_custom_server_port_configures_service_probe_and_exposed_port_deduplicat
     }
 
 
+def test_custom_services_include_configured_server_port():
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+        server_port=5000,
+        services={"metrics": 9000},
+    )._template_request()
+
+    assert [(service.name, service.target_port) for service in request.spec.vm_template.services] == [
+        ("server", 5000),
+        ("metrics", 9000),
+    ]
+
+
+def test_custom_server_service_cannot_override_configured_server_port():
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+        server_port=5000,
+        services={"server": 9000, "metrics": 9001},
+    )._template_request()
+
+    assert [(service.name, service.target_port) for service in request.spec.vm_template.services] == [
+        ("server", 5000),
+        ("metrics", 9001),
+    ]
+
+
 @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
 def test_rejects_invalid_server_port(server_port):
     with pytest.raises(ValueError, match="server_port must be an integer between 1 and 65535"):

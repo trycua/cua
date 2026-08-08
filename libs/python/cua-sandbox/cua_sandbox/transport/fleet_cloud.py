@@ -413,14 +413,24 @@ class FleetCloudTransport(FleetTransport):
 
     def _template_request(self) -> CreateTemplateRequest:
         assert self._image is not None
-        service_ports = self._services or {
-            "server": self._server_port,
-            **{
-                f"port-{port}": port
-                for port in self._image._ports
-                if port != self._server_port
-            },
-        }
+        if self._services is not None:
+            service_ports = {
+                "server": self._server_port,
+                **{
+                    name: port
+                    for name, port in self._services.items()
+                    if name != "server"
+                },
+            }
+        else:
+            service_ports = {
+                "server": self._server_port,
+                **{
+                    f"port-{port}": port
+                    for port in self._image._ports
+                    if port != self._server_port
+                },
+            }
         services = [
             SandboxServiceBuilder()
             .name(name)

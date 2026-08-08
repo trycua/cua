@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from cua_sandbox import Image
 from cua_sandbox.transport import fleet_cloud
@@ -21,6 +23,35 @@ def test_registry_image_becomes_typed_template_request():
         ("server", 8000),
         ("port-3000", 3000),
     ]
+
+
+def test_custom_server_port_configures_service_probe_and_exposed_port_deduplication():
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc")
+        .expose(5000)
+        .expose(3000),
+        name="demo",
+        server_port=5000,
+    )._template_request()
+
+    vm_template = request.spec.vm_template
+    assert [(service.name, service.target_port) for service in vm_template.services] == [
+        ("server", 5000),
+        ("port-3000", 3000),
+    ]
+    assert json.loads(vm_template.probes.to_json()) == {
+        "readinessProbe": {"tcpSocket": {"port": 5000}}
+    }
+
+
+@pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+def test_rejects_invalid_server_port(server_port):
+    with pytest.raises(ValueError, match="server_port must be an integer between 1 and 65535"):
+        FleetCloudTransport(
+            image=Image.from_registry("registry.example/workspace:latest"),
+            name="demo",
+            server_port=server_port,
+        )
 
 
 def test_pool_request_only_references_the_template():
@@ -478,6 +509,26 @@ async def test_forward_tunnel_uses_named_service_url():
     transport._sdk = Client()
     tunnel = await transport.forward_tunnel(3000)
     assert tunnel.url == "https://run.cua.ai/api/svc/demo/sandbox-port-3000/"
+
+
+@pytest.mark.asyncio
+async def test_forward_tunnel_uses_server_service_for_custom_server_port():
+    transport = FleetCloudTransport(
+        image=Image.from_registry("example:latest"), name="demo", server_port=5000
+    )
+    transport._provisioned = True
+    transport._bound = Sandbox(
+        namespace="demo", claim="claim", name="sandbox", services=["server"]
+    )
+
+    class Client:
+        def service_url(self, sandbox, service):
+            assert service == "server"
+            return "https://run.cua.ai/api/svc/demo/sandbox-server/"
+
+    transport._sdk = Client()
+    tunnel = await transport.forward_tunnel(5000)
+    assert tunnel.url == "https://run.cua.ai/api/svc/demo/sandbox-server/"
 
 
 @pytest.mark.asyncio

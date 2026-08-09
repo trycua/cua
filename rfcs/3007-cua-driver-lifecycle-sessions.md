@@ -5,9 +5,9 @@ authors:
   - Cua maintainers
 created: 2026-08-09
 last_updated: 2026-08-09
-status: review
+status: accepted
 discussion: https://github.com/trycua/cua/issues/3007
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/3008
 implementation:
 supersedes:
 superseded_by:
@@ -743,3 +743,9 @@ enumeration, disposable one-shot CLI sessions, and staged deprecation. The
 proposal rejects a suggested intermediate session-lifetime desktop
 authorization shim because it would allow lifecycle state to affect effective
 action authority.
+
+The maintainer decision in the discussion issue accepts this RFC. The shortened
+review period reflects the prior shipped decisions, repository-wide issue and
+pull-request audit, and two-round adversarial architecture review. The separate
+implementation pull request remains subject to every compatibility, privacy,
+CI, and exact-candidate platform gate in this document.

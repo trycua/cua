@@ -11,7 +11,8 @@ body:
         behavior and evidence rather than only a proposed fix. Do not include credentials,
         private application data, sensitive screenshots, or vulnerability details. Use
         [private vulnerability reporting](https://github.com/trycua/cua/security/advisories/new)
-        for suspected security issues.
+        for suspected security issues. File one problem per issue; open separate
+        issues for unrelated bugs.
 
   - type: dropdown
     id: area
@@ -62,7 +63,7 @@ body:
     id: actual
     attributes:
       label: Actual behavior
-      description: What happened instead? Include exact structured errors when available.
+      description: What happened instead? Include exact structured errors when available. If you do not know the cause, say so rather than guessing a diagnosis.
     validations:
       required: true
 
@@ -98,6 +99,8 @@ body:
       label: Submission checks
       options:
         - label: I searched for duplicate issues and active pull requests.
+          required: true
+        - label: This issue describes a single problem.
           required: true
         - label: I removed credentials, private data, sensitive screenshots, and vulnerability details from this public report.
           required: true

@@ -100,7 +100,7 @@ body:
     id: security
     attributes:
       label: Security, privacy, permissions, and telemetry
-      description: Identify permission boundaries and data that must never be collected or exposed. Use private security reporting for vulnerabilities.
+      description: Describe the intended permission and trust boundaries and data that must never be collected or exposed. Do not describe an exploitable defect in shipped code; report that privately instead.
     validations:
       required: true
 

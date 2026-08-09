@@ -16,12 +16,27 @@ to change.
 | Ask for contributor help                                                                             | The [Cua Discord community](https://discord.com/invite/mVnXXpdE85)                                                                      |
 
 The issue tracker is an intake queue and historical record, not a promise that
-every open item is scheduled or ready for implementation. Search for related
-issues and pull requests before filing or starting work. Before substantial
-implementation, comment with the intended scope and acceptance evidence so a
-maintainer can confirm that the work is not duplicating or conflicting with an
-active effort. Small, self-contained fixes may go directly to a focused pull
-request when the problem and evidence are clear.
+every open item is scheduled or ready for implementation. An open issue means
+the report was received. It does not mean anyone is working on it, and it does
+not reserve the work.
+
+Before substantial implementation:
+
+1. Search open issues and pull requests for the same problem. If an active pull
+   request already exists, contribute there or explain why your pull request
+   supersedes it.
+2. Comment on the issue with the scope you intend to implement and the
+   acceptance evidence you will produce.
+3. Open a draft pull request as soon as you have a branch and link it to the
+   issue. The linked draft pull request is the visible claim marker that helps
+   prevent duplicate work.
+
+Selection must be visible in GitHub through an issue assignment, a maintainer
+reply confirming the scope, or maintainer review of the linked draft pull
+request. Small, self-contained fixes may go directly to a focused pull request
+when the problem and evidence are clear; until reviewed, that work is an
+unselected contribution. Work that needs an RFC waits for the recorded decision
+in [`rfcs/README.md`](rfcs/README.md) before implementation begins.
 
 Once implementation starts, keep the issue or RFC as the problem and decision
 record and the pull request as the current execution record. Link them in both
@@ -62,6 +77,14 @@ GitHub issue form. Longer proposals and diagrams remain in this repository under
 4. Run the applicable commands in [`TESTING.md`](TESTING.md).
 5. Run the formatters and linters owned by the changed component.
 6. Open a focused pull request that explains behavior, validation, and known gaps.
+
+### Agent-Assisted Contributions
+
+Agent-assisted pull requests are welcome and are held to the same standard as
+any other contribution. The person who opens the pull request is accountable
+for it: read and understand the diff, be able to explain why each change is
+present, and run the checks claimed in the description. Generated output or a
+successful tool response is not validation evidence by itself.
 
 Use a Conventional Commit title because the squash-merge title becomes the
 release entry. `fix(cua-driver): preserve input while reconnecting` produces a

@@ -30,14 +30,21 @@ the GitHub issue forms, [`rfcs/README.md`](rfcs/README.md), and
 [`SECURITY.md`](SECURITY.md). Keep those files canonical instead of duplicating
 their field lists or RFC lifecycle here.
 
-Coding agents act as workers within that contract. GitHub is the durable work
-record; do not require a separate agent orchestrator or progress database for
-repository work. When work is selected:
+Coding agents act as workers within that contract, not as a planning authority.
+GitHub holds the durable record: the issue or RFC carries the problem and the
+decision, and the pull request carries the execution. Local schedulers, queues,
+and worktree tooling are private conveniences; a reviewer must not need them to
+understand, reproduce, or continue the work.
 
 - treat an open issue as intake, not evidence that the work is scheduled or
-  ready to implement;
-- search for duplicates and active pull requests, then establish a narrow
-  scope, owner, and observable acceptance evidence before substantial edits;
+  ready to implement. Selection must be visible in GitHub through an issue
+  assignment, a maintainer scope reply, or maintainer review of a linked draft
+  pull request;
+- before substantial edits, search for duplicates and active pull requests,
+  establish a narrow scope and observable acceptance evidence, and open one
+  linked draft pull request early. Do not start a second workstream for an issue
+  with an active linked pull request; contribute there or state why it is being
+  superseded;
 - use one issue or RFC as the problem/decision record and one isolated branch
   or worktree per implementation workstream;
 - keep the linked pull request description current with scope, progress,

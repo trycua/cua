@@ -150,10 +150,21 @@ impl SdkAdapter {
             .and_then(Value::as_str)
             .filter(|session| !session.is_empty() && *session != "default")
             .map(str::to_owned);
+        // The socket adapter's compatibility tombstone is keyed by the value
+        // its early guard sees. Explicit sessions use their public label;
+        // unnamed sessions use the transport-minted lifecycle id. Tracking
+        // both shapes lets an explicit start_session revive either episode.
+        let mirror_session = public_session.clone().or_else(|| {
+            arguments
+                .get("_session_id")
+                .and_then(Value::as_str)
+                .filter(|session| !session.is_empty() && *session != "default")
+                .map(str::to_owned)
+        });
         let ending_session = (name == "end_session")
-            .then_some(public_session.as_deref())
+            .then_some(mirror_session.as_deref())
             .flatten();
-        if let Some(session) = &public_session {
+        if let Some(session) = &mirror_session {
             self.public_sessions
                 .lock()
                 .unwrap()
@@ -200,7 +211,7 @@ impl SdkAdapter {
                     .unwrap()
                     .rollback_ended(session, marker, previous);
             }
-        } else if let Some(session) = public_session.as_deref() {
+        } else if let Some(session) = mirror_session.as_deref() {
             let capture_scope = value
                 .pointer("/structuredContent/capture_scope")
                 .cloned()
@@ -499,6 +510,45 @@ mod tests {
         .await
         .expect("revive session");
         assert!(!sdk.public_session_observation_state(session).ended);
+
+        sdk.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn public_observation_mirror_revives_an_implicit_transport_session() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = SdkAdapter::load(host_driver()).await.expect("SDK adapter");
+        let transport_session = "adapter-implicit-transport";
+        let implicit_args = || {
+            json!({
+                "_session_id": transport_session,
+                "_transport_session_id": transport_session,
+            })
+        };
+
+        let started = sdk
+            .invoke_raw("start_session", implicit_args())
+            .await
+            .expect("start implicit session");
+        assert_ne!(started["isError"], true);
+
+        let ended = sdk
+            .invoke_raw("end_session", implicit_args())
+            .await
+            .expect("end implicit session");
+        assert_ne!(ended["isError"], true);
+        assert!(sdk.is_session_ended(transport_session));
+
+        let revived = sdk
+            .invoke_raw("start_session", implicit_args())
+            .await
+            .expect("revive implicit session");
+        assert_ne!(revived["isError"], true);
+        assert_eq!(revived["structuredContent"]["revived"], true);
+        assert!(
+            !sdk.is_session_ended(transport_session),
+            "successful implicit revival must clear the adapter's early tombstone"
+        );
 
         sdk.shutdown().await.expect("shutdown");
     }

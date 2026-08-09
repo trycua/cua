@@ -1,8 +1,21 @@
+from types import SimpleNamespace
+
 import pytest
 from cua_sandbox import Image
 from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 from fleet_sdk import Sandbox
+
+
+def _pool(name="demo"):
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, namespace=name),
+        spec=SimpleNamespace(sandbox_template_ref=SimpleNamespace(name=name)),
+    )
+
+
+def _bound():
+    return Sandbox(namespace="demo", claim="demo-claim", name="sandbox", services=["server"])
 
 
 def test_registry_image_becomes_typed_template_request():
@@ -24,7 +37,7 @@ def test_registry_image_becomes_typed_template_request():
     ]
 
 
-def test_pool_request_uses_the_sandbox_name_and_requested_replicas():
+def test_pool_request_uses_the_single_sandbox_name_and_requested_replicas():
     request = FleetCloudTransport(
         image=Image.from_registry("registry.example/workspace@sha256:abc"),
         name="demo",
@@ -48,8 +61,8 @@ def test_rejects_unsupported_images(image):
 @pytest.mark.asyncio
 async def test_image_connect_reconciles_named_resources_without_namespace_calls(monkeypatch):
     calls = []
-    pool = type("Pool", (), {"metadata": type("Metadata", (), {"name": "demo"})()})()
-    bound = Sandbox(namespace="demo", claim="demo-claim", name="sandbox", services=["server"])
+    pool = _pool()
+    bound = _bound()
 
     class Client:
         async def reconcile_pool(self, request):
@@ -81,15 +94,16 @@ async def test_image_connect_reconciles_named_resources_without_namespace_calls(
         async def create_namespace(self, name):
             raise AssertionError("Fleet sandbox transport must not create namespaces")
 
-        async def delete_namespace(self, name):
-            raise AssertionError("Fleet sandbox transport must not delete namespaces")
+        async def create_pool(self, request):
+            raise AssertionError("Fleet sandbox transport must reconcile pools")
+
+        async def create_template(self, request):
+            raise AssertionError("Fleet sandbox transport must reconcile templates")
 
     client = Client()
     monkeypatch.setattr(fleet_cloud, "_FleetClient", lambda: client)
 
-    transport = FleetCloudTransport(
-        image=Image.from_registry("example:latest"), name="demo"
-    )
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
     await transport.connect()
 
     assert [call[0] for call in calls] == [
@@ -110,10 +124,141 @@ async def test_image_connect_reconciles_named_resources_without_namespace_calls(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_stage",
+    [
+        "reconcile_pool",
+        "reconcile_template",
+        "wait_pool",
+        "create_claim",
+        "wait_claim",
+        "service_ready",
+    ],
+)
+async def test_connect_failure_releases_only_created_claim(monkeypatch, failure_stage):
+    calls = []
+    pool = _pool()
+    bound = _bound()
+
+    class Client:
+        async def reconcile_pool(self, request):
+            calls.append("reconcile_pool")
+            if failure_stage == "reconcile_pool":
+                raise RuntimeError("reconcile_pool failed")
+            return pool
+
+        async def reconcile_template(self, request):
+            calls.append("reconcile_template")
+            if failure_stage == "reconcile_template":
+                raise RuntimeError("reconcile_template failed")
+            return "template"
+
+        async def wait_pool(self, reconciled_pool):
+            calls.append("wait_pool")
+            if failure_stage == "wait_pool":
+                raise RuntimeError("wait_pool failed")
+            return reconciled_pool
+
+        async def create_claim(self, request):
+            calls.append("create_claim")
+            if failure_stage == "create_claim":
+                raise RuntimeError("create_claim failed")
+            return "claim"
+
+        async def wait_claim(self, claim):
+            calls.append("wait_claim")
+            if failure_stage == "wait_claim":
+                raise RuntimeError("wait_claim failed")
+            return bound
+
+        async def wait_service_ready(self, sandbox, service, time_to_start):
+            calls.append("service_ready")
+            if failure_stage == "service_ready":
+                raise RuntimeError("service_ready failed")
+
+        async def delete_claim(self, claim):
+            calls.append("delete_claim")
+
+        async def delete_pool(self, reconciled_pool):
+            calls.append("delete_pool")
+
+        async def delete_template(self, template):
+            calls.append("delete_template")
+
+        async def delete_namespace(self, name):
+            calls.append("delete_namespace")
+
+    client = Client()
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", lambda: client)
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
+
+    with pytest.raises(RuntimeError, match=f"{failure_stage} failed"):
+        await transport.connect()
+
+    claim_was_created = failure_stage in {"wait_claim", "service_ready"}
+    assert ("delete_claim" in calls) is claim_was_created
+    assert "delete_pool" not in calls
+    assert "delete_template" not in calls
+    assert "delete_namespace" not in calls
+    assert transport._sdk is client
+    assert transport._pool is (None if failure_stage == "reconcile_pool" else pool)
+    template_reconciled = failure_stage not in {"reconcile_pool", "reconcile_template"}
+    assert transport._template == ("template" if template_reconciled else None)
+    assert transport._claim is None
+    assert not transport._provisioned
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_preserves_claim_when_claim_cleanup_fails(monkeypatch):
+    pool = _pool()
+    calls = []
+
+    class Client:
+        async def reconcile_pool(self, request):
+            return pool
+
+        async def reconcile_template(self, request):
+            return "template"
+
+        async def wait_pool(self, reconciled_pool):
+            return reconciled_pool
+
+        async def create_claim(self, request):
+            return "claim"
+
+        async def wait_claim(self, claim):
+            raise RuntimeError("claim wait failed")
+
+        async def delete_claim(self, claim):
+            calls.append(("delete_claim", claim))
+            raise RuntimeError("claim delete failed")
+
+        async def delete_pool(self, reconciled_pool):
+            raise AssertionError("failed claim cleanup must not delete the pool")
+
+        async def delete_template(self, template):
+            raise AssertionError("failed claim cleanup must not delete the template")
+
+    client = Client()
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", lambda: client)
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
+
+    with pytest.raises(RuntimeError, match="claim wait failed") as error:
+        await transport.connect()
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert str(error.value.__cause__) == "claim delete failed"
+    assert calls == [("delete_claim", "claim")]
+    assert transport._claim == "claim"
+    assert transport._pool is pool
+    assert transport._template == "template"
+
+
+@pytest.mark.asyncio
 async def test_connect_without_image_uses_existing_pool_and_claim_by_name(monkeypatch):
     calls = []
-    pool = type("Pool", (), {"metadata": type("Metadata", (), {"name": "demo"})()})()
-    bound = Sandbox(namespace="demo", claim="demo-claim", name="sandbox", services=["server"])
+    pool = _pool()
+    bound = _bound()
 
     class Client:
         async def get_pool(self, name):
@@ -154,7 +299,7 @@ async def test_connect_without_image_uses_existing_pool_and_claim_by_name(monkey
 
 
 @pytest.mark.asyncio
-async def test_cleanup_deletes_claim_pool_and_template_but_not_namespace():
+async def test_instance_cleanup_deletes_only_claim_and_preserves_infrastructure_state():
     calls = []
 
     class Client:
@@ -168,20 +313,137 @@ async def test_cleanup_deletes_claim_pool_and_template_but_not_namespace():
             calls.append(("delete_template", template))
 
         async def delete_namespace(self, name):
-            raise AssertionError("Fleet sandbox cleanup must not delete namespaces")
+            calls.append(("delete_namespace", name))
 
     transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
     transport._sdk = Client()
     transport._claim = "claim"
     transport._pool = "pool"
     transport._template = "template"
+    transport._provisioned = True
 
     await transport._cleanup_resources()
 
+    assert calls == [("delete_claim", "claim")]
+    assert transport._claim is None
+    assert transport._pool == "pool"
+    assert transport._template == "template"
+    assert not transport._provisioned
+
+
+@pytest.mark.asyncio
+async def test_instance_cleanup_stops_after_claim_failure_and_preserves_state():
+    calls = []
+
+    class Client:
+        async def delete_claim(self, claim):
+            calls.append(("delete_claim", claim))
+            raise RuntimeError("claim delete failed")
+
+        async def delete_pool(self, pool):
+            raise AssertionError("claim cleanup failure must not delete the pool")
+
+        async def delete_template(self, template):
+            raise AssertionError("claim cleanup failure must not delete the template")
+
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
+    transport._sdk = Client()
+    transport._claim = "claim"
+    transport._pool = "pool"
+    transport._template = "template"
+    transport._provisioned = True
+
+    with pytest.raises(RuntimeError, match="claim delete failed"):
+        await transport._cleanup_resources()
+
+    assert calls == [("delete_claim", "claim")]
+    assert transport._claim == "claim"
+    assert transport._pool == "pool"
+    assert transport._template == "template"
+    assert transport._provisioned
+
+
+@pytest.mark.asyncio
+async def test_delete_sandbox_resolves_and_deletes_only_deterministic_claim(monkeypatch):
+    calls = []
+    pool = _pool("demo")
+
+    class Client:
+        async def get_pool(self, name):
+            calls.append(("get_pool", name))
+            return pool
+
+        async def get_claim(self, existing_pool):
+            calls.append(("get_claim", existing_pool))
+            return "demo-claim"
+
+        async def delete_claim(self, claim):
+            calls.append(("delete_claim", claim))
+
+        async def delete_pool(self, existing_pool):
+            calls.append(("delete_pool", existing_pool))
+
+        async def delete_template(self, template):
+            calls.append(("delete_template", template))
+
+        async def delete_namespace(self, name):
+            calls.append(("delete_namespace", name))
+
+        async def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", Client)
+
+    await FleetCloudTransport.delete_sandbox("demo")
+
     assert calls == [
-        ("delete_claim", "claim"),
-        ("delete_pool", "pool"),
-        ("delete_template", "template"),
+        ("get_pool", "demo"),
+        ("get_claim", pool),
+        ("delete_claim", "demo-claim"),
+        ("close",),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_sandbox_closes_sdk_when_claim_delete_fails(monkeypatch):
+    calls = []
+    pool = _pool("demo")
+
+    class Client:
+        async def get_pool(self, name):
+            calls.append(("get_pool", name))
+            return pool
+
+        async def get_claim(self, existing_pool):
+            calls.append(("get_claim", existing_pool))
+            return "demo-claim"
+
+        async def delete_claim(self, claim):
+            calls.append(("delete_claim", claim))
+            raise RuntimeError("claim delete failed")
+
+        async def delete_pool(self, existing_pool):
+            raise AssertionError("class delete must not delete pools")
+
+        async def delete_template(self, template):
+            raise AssertionError("class delete must not delete templates")
+
+        async def delete_namespace(self, name):
+            raise AssertionError("class delete must not delete namespaces")
+
+        async def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", Client)
+
+    with pytest.raises(RuntimeError, match="claim delete failed"):
+        await FleetCloudTransport.delete_sandbox("demo")
+
+    assert calls == [
+        ("get_pool", "demo"),
+        ("get_claim", pool),
+        ("delete_claim", "demo-claim"),
+        ("close",),
     ]
 
 

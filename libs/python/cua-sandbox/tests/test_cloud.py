@@ -146,14 +146,13 @@ async def test_cloud_keyboard_mouse():
 
 @skip_no_key
 async def test_cloud_environment():
-    """Get environment info."""
+    """Get environment info from a cloud VM."""
     sb = await Sandbox.connect(VM_NAME, api_key=API_KEY)
     env = await sb.get_environment()
     assert env in ("windows", "mac", "linux", "browser")
     await sb.disconnect()
 
 
-@pytest.mark.xfail(reason="Approved upstream baseline failure with Fleet auth", strict=False)
 async def test_cloud_no_api_key_errors():
     """Connecting with no API key gives a clear error."""
     old = os.environ.pop("CUA_API_KEY", None)

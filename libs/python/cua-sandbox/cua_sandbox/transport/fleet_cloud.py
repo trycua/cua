@@ -355,12 +355,6 @@ class FleetCloudTransport(FleetTransport):
         if self._claim is not None:
             await self._sdk.delete_claim(self._claim)
             self._claim = None
-        if self._pool is not None:
-            await self._sdk.delete_pool(self._pool)
-            self._pool = None
-        if self._template is not None:
-            await self._sdk.delete_template(self._template)
-            self._template = None
         self._provisioned = False
 
     @classmethod
@@ -406,12 +400,7 @@ class FleetCloudTransport(FleetTransport):
         sdk = _FleetClient()
         try:
             pool = await sdk.get_pool(name)
-            template_name = pool.spec.sandbox_template_ref.name
             await sdk.delete_claim(await sdk.get_claim(pool))
-            await sdk.delete_pool(pool)
-            await sdk.delete_template(
-                await sdk.get_template(pool.metadata.namespace, template_name)
-            )
         finally:
             await sdk.close()
 

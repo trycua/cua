@@ -45,6 +45,7 @@ class CloudTransport(Transport):
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        metadata: Optional[Dict[str, str]] = None,
     ):
         self._name = name
         self._api_key_override = api_key
@@ -54,6 +55,7 @@ class CloudTransport(Transport):
         self._memory_mb = memory_mb
         self._disk_gb = disk_gb
         self._region = region
+        self._metadata = metadata
         self._time_to_start = time_to_start if time_to_start is not None else _POLL_TIMEOUT
         self._request_timeout = request_timeout if request_timeout is not None else 30.0
         self._inner: Optional[HTTPTransport] = None
@@ -375,6 +377,8 @@ class CloudTransport(Transport):
             body["diskGb"] = self._disk_gb or self._DEFAULT_DISK_GB
         else:
             body["configuration"] = "small"
+        if self._metadata:
+            body["metadata"] = self._metadata
         resp = await self._post_with_retry("/v1/vms", body)
         resp.raise_for_status()
         return resp.json()

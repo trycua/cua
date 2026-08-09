@@ -182,7 +182,12 @@ cua.configure(
 )
 
 async with Sandbox.ephemeral(
-    Image.from_registry("registry.example/desktop-workspace@sha256:...").expose(3000)
+    Image.from_registry(
+        "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace@sha256:b9e74dbff4cc727c33ff4b8483bffa0860bb99213041c88f11260ac31db7628f"
+    ).expose(3000),
+    server_port=5000,
 ) as sb:
     await sb.shell.run("uname -a")
 ```
+
+Windows computer-server images continue to use the default port `8000`.

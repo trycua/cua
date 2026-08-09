@@ -25,6 +25,7 @@ DEFAULT_BASE_URL = "https://run.cua.ai"
 DEFAULT_TOKEN_URL = (
     "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
 )
+SENSITIVE_SUMMARY_KEY_PARTS = {"apikey", "authorization", "password", "secret", "token"}
 
 
 class HttpxFleetClient(HttpClient):
@@ -122,7 +123,8 @@ async def collect_resource_inventory(
 
 def assert_template_contract(template: Any, expected_port: int) -> None:
     vm_template = template.spec.vm_template
-    server = next(service for service in vm_template.services if service.name == "server")
+    server = next((service for service in vm_template.services if service.name == "server"), None)
+    assert server is not None, "server service is required"
     assert server.target_port == expected_port, (
         f"server target_port={server.target_port}, expected {expected_port}"
     )
@@ -133,9 +135,29 @@ def assert_template_contract(template: Any, expected_port: int) -> None:
     )
 
 
+def _is_sensitive_summary_key(key: object) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
+    return any(part in SENSITIVE_SUMMARY_KEY_PARTS for part in normalized.split("_"))
+
+
+def _redact_summary(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "<redacted>"
+            if _is_sensitive_summary_key(key)
+            else _redact_summary(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_summary(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_summary(item) for item in value)
+    return value
+
+
 def write_summary(path: Path, summary: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(_redact_summary(summary), indent=2, sort_keys=True) + "\n")
 
 
 async def cleanup_namespace(name: str) -> bool:
@@ -143,7 +165,12 @@ async def cleanup_namespace(name: str) -> bool:
     try:
         if not await namespace_exists(client, name):
             return False
-        await client.delete_namespace(name)
+        try:
+            await client.delete_namespace(name)
+        except Exception as error:
+            if is_not_found_error(error):
+                return True
+            raise
         return await wait_namespace_absent(client, name)
     finally:
         await http_client.aclose()

@@ -379,67 +379,75 @@ class TestCmdDelete:
 class TestCmdVnc:
     """Tests for cmd_vnc function."""
 
-    def test_vnc_opens_browser(self, args_namespace, mock_api_key, mock_webbrowser):
-        """Test VNC opens browser with correct URL."""
-        args = args_namespace(name="test-sandbox")
+    def test_vnc_opens_discovered_display_url(self, args_namespace, mock_api_key, mock_webbrowser):
+        """Test VNC opens the display URL discovered through the SDK."""
+        args = args_namespace(name="test-sandbox", local=False)
+        mock_sandbox = MagicMock()
+        mock_sandbox.get_display_url = AsyncMock(
+            return_value="https://vnc.example.com/?password=secret"
+        )
+        mock_sandbox.disconnect = AsyncMock()
+        mock_connect = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = mock_connect
 
-        vm_info = {
-            "name": "test-sandbox",
-            "vnc_url": "https://vnc.example.com/test",
-        }
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[vm_info])
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
             with patch.object(sandbox, "print_info"):
                 result = sandbox.cmd_vnc(args)
 
         assert result == 0
-        mock_webbrowser.assert_called_once_with("https://vnc.example.com/test")
+        mock_connect.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
+        mock_sandbox.get_display_url.assert_awaited_once_with(share=True)
+        mock_sandbox.disconnect.assert_awaited_once_with()
+        mock_webbrowser.assert_called_once_with("https://vnc.example.com/?password=secret")
 
-    def test_vnc_constructs_url_from_host(self, args_namespace, mock_api_key, mock_webbrowser):
-        """Test VNC constructs URL when vnc_url not provided."""
-        args = args_namespace(name="test-sandbox")
+    def test_vnc_capability_absent(self, args_namespace, mock_api_key, mock_webbrowser):
+        """Test a sandbox without a VNC endpoint returns a clear error."""
+        args = args_namespace(name="test-sandbox", local=False)
+        mock_sandbox = MagicMock()
+        mock_sandbox.get_display_url = AsyncMock(
+            side_effect=ValueError(
+                "VM 'test-sandbox' has no VNC endpoint. "
+                "Only Android and desktop VMs expose a VNC endpoint."
+            )
+        )
+        mock_sandbox.disconnect = AsyncMock()
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = AsyncMock(return_value=mock_sandbox)
 
-        vm_info = {
-            "name": "test-sandbox",
-            "host": "sandbox.example.com",
-            "password": "secret123",
-        }
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[vm_info])
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_info"):
-                result = sandbox.cmd_vnc(args)
-
-        assert result == 0
-        mock_webbrowser.assert_called_once()
-        # Check URL contains host and encoded password
-        call_url = mock_webbrowser.call_args[0][0]
-        assert "sandbox.example.com" in call_url
-        assert "secret123" in call_url
-
-    def test_vnc_sandbox_not_found(self, args_namespace, mock_api_key):
-        """Test VNC with nonexistent sandbox."""
-        args = args_namespace(name="nonexistent")
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[])
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_error"):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
                 result = sandbox.cmd_vnc(args)
 
         assert result == 1
+        mock_sandbox.get_display_url.assert_awaited_once_with(share=True)
+        mock_sandbox.disconnect.assert_awaited_once_with()
+        mock_error.assert_called_once_with(
+            "VNC not available for this sandbox: "
+            "VM 'test-sandbox' has no VNC endpoint. "
+            "Only Android and desktop VMs expose a VNC endpoint."
+        )
+        mock_webbrowser.assert_not_called()
+
+    def test_vnc_sandbox_not_found(self, args_namespace, mock_api_key, mock_webbrowser):
+        """Test a missing sandbox reports a connection error."""
+        args = args_namespace(name="missing-sandbox", local=False)
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = AsyncMock(
+            side_effect=ValueError("Sandbox 'missing-sandbox' not found")
+        )
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
+                result = sandbox.cmd_vnc(args)
+
+        assert result == 1
+        mock_error.assert_called_once_with(
+            "Failed to connect to sandbox: Sandbox 'missing-sandbox' not found"
+        )
+        mock_webbrowser.assert_not_called()
 
 
 class TestCmdShell:

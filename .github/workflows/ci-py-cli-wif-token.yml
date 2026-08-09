@@ -1,10 +1,7 @@
 name: "CI: cua-cli GitHub WIF token"
 
 on:
-  pull_request:
-    paths:
-      - "libs/python/cua-cli/**"
-      - ".github/workflows/ci-py-cli-wif-token.yml"
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -17,20 +14,21 @@ permissions:
 
 jobs:
   smoke:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e libs/python/cua-cli
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      - name: Install cua-cli from the locked dependency set
+        working-directory: libs/python/cua-cli
+        run: uv sync --frozen
       - name: Validate GitHub WIF token claims
+        working-directory: libs/python/cua-cli
         shell: bash
         run: |
           set -euo pipefail
-          export FLEETS_TOKEN="$(cua wif-token github)"
-          python - <<'PY'
+          FLEETS_TOKEN="$(uv run cua wif-token github)"
+          export FLEETS_TOKEN
+          uv run python - <<'PY'
           import base64
           import json
           import os

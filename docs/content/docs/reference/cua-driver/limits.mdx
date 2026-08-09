@@ -46,7 +46,7 @@ claim.
 | macOS Chrome and Edge | Existing-profile attachment is validated. Synthetic DOM actions can remain fully background; trusted standalone pointer routes refuse when Chromium would activate. |
 | Linux X11 Chrome and Edge | Validated for exact binding and synthetic DOM background routes. Trusted standalone pointer routes refuse when activation is unavoidable. |
 | Linux Sway with Chrome | Validated only when compositor identity, process, window, and geometry are exact. |
-| Generic GNOME or KDE Wayland | Read-only discovery or structured refusal; mutation is not claimed. |
+| Unattested GNOME or KDE Wayland | Read-only discovery or structured refusal; mutation is not claimed. |
 | Electron | Validated only for the bounded one-native-window to one-CDP-page shape. |
 | Brave, Vivaldi, Opera, Arc, and other detected Chromium derivatives | Detected but not release-accepted; use at your own risk. |
 | Safari, Firefox, WebView2, Tauri, WKWebView, and WebKitGTK | Typed mutation unsupported. Use documented native AX/PX fallbacks where available. |
@@ -76,11 +76,13 @@ Endpoint ownership must resolve to the approved browser PID; wrapper processes,
 ambiguous process trees, unsupported products, unrecognized UI locales, and
 generic Wayland identities are refused.
 
-On generic GNOME or KDE Wayland sessions, browser state may be discoverable
-without enough compositor evidence to correlate native and DevTools geometry
-exactly. That route stays read-only. X11 and the validated Sway configuration
-can authorize mutation when their ownership and geometry proofs agree. This
-does not imply arbitrary raw background PX delivery on Wayland.
+On a GNOME or KDE Wayland session without its supported, trusted compositor
+adapter, browser state may be discoverable without enough compositor evidence
+to correlate native and DevTools geometry exactly. That route stays read-only.
+KDE's protocol-v1 `cua-kwin@cua` package supplies exact KWin UUID, PID, geometry,
+activation, and restoration evidence, but product-specific browser acceptance
+still depends on the documented validation matrix. This does not imply
+arbitrary raw background PX delivery on Wayland.
 
 ---
 
@@ -169,6 +171,15 @@ compositor's active seat and requires a RemoteDesktop grant. The virtual
 keyboard used on wlroots compositors is also focus-bound, even though it does
 not require the same portal route.
 
+On KDE Plasma 6, installing the bundled protocol-v1 `cua-kwin@cua` package
+enables only a bounded foreground exception: cua-driver resolves the complete
+KWin internal UUID and PID, activates and verifies it in a fresh snapshot,
+runs one operation, then restores and verifies the previous UUID. Adapter
+absence, protocol mismatch, untrusted ownership, ambiguity, staleness, failed
+activation, or failed restoration is surfaced rather than bypassed. Install it
+with `~/.cua-driver/packages/current/wayland-helper/kwin/install.sh`; no
+logout/login is required because the installer reconfigures KWin live.
+
 **Workarounds:**
 
 1. Type into accessible text fields with `type_text`. AT-SPI `insertText` writes the field directly, with no synthetic key event involved.
@@ -196,7 +207,7 @@ client on Sway, GNOME, or KDE, and its capabilities are documented separately.
 
 **Cause:** GTK4's AT-SPI bridge returns `Component.GetExtents(SCREEN)` as `(0,0)` for every widget (GNOME/gtk issues #1564 / #1739). A naive consumer would collapse every element to the window's top-left corner.
 
-**How Cua Driver handles it:** it queries `CoordType::Window` (which GTK4 *does* report correctly per-widget) and adds the window's screen origin from `_GTK_FRAME_EXTENTS` on X11 or the `org.cua.WinRects` shell helper on Wayland. That reconstructs true screen coordinates, so no caller action is required.
+**How Cua Driver handles it:** it queries `CoordType::Window` (which GTK4 *does* report correctly per-widget) and adds the window's screen origin from `_GTK_FRAME_EXTENTS` on X11, the `org.cua.WinRects` Shell helper on GNOME Wayland, or the exact UUID/PID-correlated `cua-kwin@cua` snapshot on KDE Plasma 6 Wayland. That reconstructs true screen coordinates, so no caller action is required when the matching compositor adapter is trusted.
 
 ---
 

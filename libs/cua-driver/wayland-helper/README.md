@@ -1,4 +1,11 @@
-# cua WinRects — GNOME Shell helper extension (Wayland)
+# cua compositor helpers — GNOME and KDE Wayland
+
+These packages provide compositor-owned window identity and activation where
+ordinary Wayland clients cannot. They are desktop-specific: WinRects targets
+GNOME Shell/Mutter, and the KWin adapter targets KDE Plasma 6/KWin. Installing
+either package does not claim support for other Wayland compositors.
+
+## GNOME Shell/Mutter: WinRects
 
 A small GNOME Shell extension that lets cua-driver get **pixel coordinates**,
 activate an exact target window, capture the compositor stage, and draw the
@@ -35,7 +42,7 @@ It exposes `org.cua.WinRects` on the session bus:
 It runs in the shell's privileged context, so **no xdg-desktop-portal grant** is
 needed (unlike libei/RemoteDesktop).
 
-## Install
+### Install on GNOME
 
 ```
 ~/.cua-driver/packages/current/wayland-helper/install.sh
@@ -63,6 +70,67 @@ focused Shell window is restored and verified.
 wlroots compositors such as Sway and labwc do not need it: cua-driver uses
 foreign-toplevel activation, virtual-pointer input, and layer-shell there.
 
-KDE Plasma Wayland needs an equivalent target-addressable KWin activation
-adapter; it is not yet provided. Portal reachability alone is insufficient
-because RemoteDesktop/libei input is global to the compositor focus.
+## KDE Plasma 6/KWin: exact target adapter
+
+The adapter source at `kwin/cua-kwin@cua` is a passive KWin 6 script with
+protocol version 1. KDE's KPackage ID grammar does not permit `@`, so its
+installed KWin package ID is the equivalent `cua-kwin.cua`; metadata retains
+`cua-kwin@cua` as the adapter ID. It defines two primitives in KWin's own
+scripting context:
+
+- `cuaKWinSnapshot()` returns KWin's current stacking order, exact unmodified
+  `KWin::Window.internalId` UUID, PID, frame geometry, caption,
+  active/minimized/hidden/visible state, and the active-window UUID.
+- `cuaKWinActivate(uuid)` resolves one complete internal UUID and asks KWin to
+  unminimize, raise, and activate only that window. Its acknowledgement is not
+  treated as proof of focus; cua-driver obtains another fresh snapshot and
+  compares the complete UUID before any portal/libei input is sent.
+
+Merely enabling the package performs no enumeration, activation, signal
+registration, or other mutation. cua-driver invokes one primitive at a time
+through the verified current user's genuine `kwin_wayland` process. The driver
+retains each complete internal UUID behind its numeric API identifier, rejects
+collisions, stale or unknown identifiers, and ambiguous PID-only targeting.
+
+For a foreground operation, cua-driver records the exact active UUID, activates
+and verifies the requested UUID, runs one bounded focus-sensitive operation,
+then restores and verifies the prior UUID. Any missing, malformed, outdated, or
+untrusted adapter state fails closed before global input.
+
+### Install or update on KDE
+
+```bash
+~/.cua-driver/packages/current/wayland-helper/kwin/install.sh
+# From a source checkout:
+./libs/cua-driver/wayland-helper/kwin/install.sh
+./libs/cua-driver/wayland-helper/kwin/diagnose.sh
+cua-driver doctor
+```
+
+Installation uses Plasma's current-user KPackage directory and updates only
+the adapter's `cua-kwin.cuaEnabled` KWin setting. It never needs root and does
+not edit unrelated KWin settings. A running KWin session is reconfigured over
+its session-bus API, so logout/login is not required. If KWin is not running,
+the enabled package is loaded at the next ordinary Plasma session start.
+
+Re-run `kwin/install.sh` to update the package. The diagnostic is read-only and
+reports the session type, package/protocol state, KWin reachability, enabled
+state, and whether KWin loaded the script. `cua-driver doctor` performs the
+stronger owner/process, enumeration, exact-activation, and portal checks.
+
+### Uninstall on KDE
+
+```bash
+~/.cua-driver/packages/current/wayland-helper/kwin/uninstall.sh
+# From a source checkout:
+./libs/cua-driver/wayland-helper/kwin/uninstall.sh
+```
+
+The uninstaller disables and unloads only the `cua-kwin@cua` adapter's
+`cua-kwin.cua` KWin package, removes its
+current-user KPackage, and reconfigures KWin. No logout/login is required.
+
+Portal reachability by itself is never sufficient: RemoteDesktop/libei input
+is global to KWin's current focus. If the adapter or its supported protocol is
+absent, cua-driver continues to allow safe AT-SPI actions but refuses
+focus-bound foreground input rather than guessing a target.

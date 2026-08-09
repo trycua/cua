@@ -430,6 +430,205 @@ fn wait_for_child(
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+struct KwinDoctorFacts<'a> {
+    installed: bool,
+    protocol_supported: bool,
+    owner_trusted: bool,
+    enumeration_available: bool,
+    activation_verified: bool,
+    fully_available: bool,
+    message: &'a str,
+}
+
+#[cfg(target_os = "linux")]
+fn kwin_remediation(message: &str) -> String {
+    format!(
+        "{message}\nRun: {}",
+        platform_linux::wayland::kwin_adapter::INSTALL_COMMAND
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn probe_kwin_portal_for_doctor() -> Result<bool, String> {
+    // `doctor` is invoked from the async CLI runtime, while the platform
+    // probe intentionally owns a small current-thread runtime. Keep the two
+    // runtimes on different OS threads so this synchronous report cannot
+    // panic with Tokio's nested-runtime guard.
+    std::thread::spawn(platform_linux::health_report::probe_portal_remote_desktop)
+        .join()
+        .map_err(|_| "xdg-desktop-portal RemoteDesktop probe panicked".to_owned())?
+        .map_err(|error| error.to_string())
+}
+
+/// Run the trusted KWin adapter diagnosis for `doctor`.
+///
+/// The adapter talks to KWin over zbus's blocking API, which (with the `tokio`
+/// backend) requires an ambient Tokio runtime for its background tasks yet
+/// panics if its own `block_on` runs on a runtime *worker* thread. `doctor`
+/// runs on a plain synchronous thread with no runtime at all. Own a private
+/// multi-thread runtime and run the blocking probe on one of its blocking
+/// threads — the same context the async tool dispatch uses in the daemon — on a
+/// dedicated OS thread so this stays correct even if `doctor` is ever invoked
+/// from within another runtime.
+#[cfg(target_os = "linux")]
+fn diagnose_kwin_for_doctor() -> platform_linux::wayland::kwin_adapter::AdapterDiagnostic {
+    std::thread::spawn(|| {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("build KWin doctor probe runtime");
+        runtime.block_on(async {
+            tokio::task::spawn_blocking(platform_linux::wayland::kwin_adapter::diagnose)
+                .await
+                .expect("KWin diagnosis task panicked")
+        })
+    })
+    .join()
+    .unwrap_or_else(
+        |_| platform_linux::wayland::kwin_adapter::AdapterDiagnostic {
+            message: "kwin_adapter_unavailable: KWin diagnosis thread panicked".to_owned(),
+            ..Default::default()
+        },
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn append_kwin_adapter_probes(
+    report: &mut Report,
+    facts: KwinDoctorFacts<'_>,
+    portal_compiled: bool,
+    portal_probe: Result<bool, String>,
+) {
+    let every_required_fact = facts.installed
+        && facts.protocol_supported
+        && facts.owner_trusted
+        && facts.enumeration_available
+        && facts.activation_verified;
+    let fully_available = facts.fully_available && every_required_fact;
+
+    if facts.installed {
+        report.push(Probe::ok(
+            "KWin adapter installed",
+            "current-user KWin target adapter is installed",
+        ));
+    } else {
+        report.push(
+            Probe::warn(
+                "KWin adapter installed",
+                "current-user KWin target adapter is absent",
+            )
+            .with_detail(kwin_remediation(facts.message)),
+        );
+    }
+
+    if facts.protocol_supported {
+        report.push(Probe::ok(
+            "KWin adapter protocol",
+            "adapter protocol version is supported",
+        ));
+    } else {
+        report.push(
+            Probe::warn(
+                "KWin adapter protocol",
+                "adapter protocol is absent, malformed, or unsupported",
+            )
+            .with_detail(kwin_remediation(facts.message)),
+        );
+    }
+
+    if facts.owner_trusted {
+        report.push(Probe::ok(
+            "KWin adapter owner/process",
+            "immutable session owner, UID, KWin process, and executable trust checks passed",
+        ));
+    } else {
+        report.push(
+            Probe::warn(
+                "KWin adapter owner/process",
+                "adapter owner, UID, KWin process, or executable trust could not be proven",
+            )
+            .with_detail(kwin_remediation(facts.message)),
+        );
+    }
+
+    if facts.enumeration_available {
+        report.push(Probe::ok(
+            "KWin exact enumeration",
+            "authoritative compositor window enumeration succeeded",
+        ));
+    } else {
+        report.push(
+            Probe::warn(
+                "KWin exact enumeration",
+                "authoritative compositor window enumeration is unavailable",
+            )
+            .with_detail(kwin_remediation(facts.message)),
+        );
+    }
+
+    if facts.activation_verified {
+        report.push(Probe::ok(
+            "KWin activation verification",
+            "exact active-window identity was verified through a fresh compositor snapshot",
+        ));
+    } else {
+        report.push(
+            Probe::warn(
+                "KWin activation verification",
+                "exact target activation could not be verified through a fresh compositor snapshot",
+            )
+            .with_detail(kwin_remediation(facts.message)),
+        );
+    }
+
+    if !portal_compiled {
+        report.push(
+            Probe::warn(
+                "KWin portal/libei input",
+                "this build does not include the portal/libei input backend",
+            )
+            .with_detail(
+                "Install a release build or rebuild cua-driver with --features portal-input.",
+            ),
+        );
+        return;
+    }
+
+    match portal_probe {
+        Err(error) => report.push(
+            Probe::warn(
+                "KWin portal/libei input",
+                "xdg-desktop-portal RemoteDesktop probe failed",
+            )
+            .with_detail(format!(
+                "{error}\nEnsure xdg-desktop-portal and xdg-desktop-portal-kde are running in this user session."
+            )),
+        ),
+        Ok(false) => report.push(
+            Probe::warn(
+                "KWin portal/libei input",
+                "xdg-desktop-portal RemoteDesktop is not reachable",
+            )
+            .with_detail(
+                "Ensure xdg-desktop-portal and xdg-desktop-portal-kde are running in this user session.",
+            ),
+        ),
+        Ok(true) if fully_available => report.push(Probe::ok(
+            "KWin portal/libei input",
+            "RemoteDesktop is reachable and global input is gated by verified exact KWin activation and restoration",
+        )),
+        Ok(true) => report.push(
+            Probe::warn(
+                "KWin portal/libei input",
+                "RemoteDesktop is reachable, but global input remains blocked until the full trusted KWin path verifies",
+            )
+            .with_detail(kwin_remediation(facts.message)),
+        ),
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn append_platform_probes(report: &mut Report) {
     // Display server probe. Order matters: Wayland wins when both are set
     // (XWayland leaves DISPLAY pointing at the X server XWayland exposes,
@@ -517,6 +716,33 @@ fn append_platform_probes(report: &mut Report) {
                 );
             }
         }
+    }
+
+    // KDE/KWin portal input is global to the compositor's active seat. Surface
+    // each trust gate separately so a reachable portal can never be mistaken
+    // for safe target-addressable input.
+    if platform_linux::wayland::kwin_adapter::is_kde_wayland_session() {
+        let diagnosis = diagnose_kwin_for_doctor();
+        let portal_compiled = platform_linux::wayland::PORTAL_INPUT_ENABLED;
+        let portal_probe = if portal_compiled {
+            probe_kwin_portal_for_doctor()
+        } else {
+            Ok(false)
+        };
+        append_kwin_adapter_probes(
+            report,
+            KwinDoctorFacts {
+                installed: diagnosis.installed,
+                protocol_supported: diagnosis.protocol_supported,
+                owner_trusted: diagnosis.owner_trusted,
+                enumeration_available: diagnosis.enumeration_available,
+                activation_verified: diagnosis.activation_verified,
+                fully_available: diagnosis.fully_available(),
+                message: &diagnosis.message,
+            },
+            portal_compiled,
+            portal_probe,
+        );
     }
 }
 
@@ -654,6 +880,145 @@ mod tests {
         assert!(status.is_none());
         child.kill().unwrap();
         child.wait().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn kwin_facts(
+        installed: bool,
+        protocol_supported: bool,
+        owner_trusted: bool,
+        enumeration_available: bool,
+        activation_verified: bool,
+    ) -> KwinDoctorFacts<'static> {
+        KwinDoctorFacts {
+            installed,
+            protocol_supported,
+            owner_trusted,
+            enumeration_available,
+            activation_verified,
+            fully_available: installed
+                && protocol_supported
+                && owner_trusted
+                && enumeration_available
+                && activation_verified,
+            message: "fixture KWin diagnosis",
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn kwin_doctor_reports_every_trust_gate_and_portal_success() {
+        let mut report = Report::default();
+        append_kwin_adapter_probes(
+            &mut report,
+            kwin_facts(true, true, true, true, true),
+            true,
+            Ok(true),
+        );
+
+        assert_eq!(report.probes.len(), 6);
+        assert!(report.probes.iter().all(|probe| probe.status == Status::Ok));
+        let labels = report
+            .probes
+            .iter()
+            .map(|probe| probe.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            [
+                "KWin adapter installed",
+                "KWin adapter protocol",
+                "KWin adapter owner/process",
+                "KWin exact enumeration",
+                "KWin activation verification",
+                "KWin portal/libei input",
+            ]
+        );
+        assert!(report.probes[5].message.contains("verified exact KWin"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn kwin_doctor_missing_adapter_is_fail_closed_with_exact_remediation() {
+        let mut report = Report::default();
+        append_kwin_adapter_probes(
+            &mut report,
+            kwin_facts(false, false, false, false, false),
+            true,
+            Ok(true),
+        );
+
+        assert_eq!(report.probes.len(), 6);
+        assert!(report
+            .probes
+            .iter()
+            .all(|probe| probe.status == Status::Warn));
+        assert!(report.probes[5].message.contains("remains blocked"));
+        assert!(report.probes.iter().any(|probe| {
+            probe
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains(platform_linux::wayland::kwin_adapter::INSTALL_COMMAND)
+        }));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn kwin_doctor_outdated_or_untrusted_adapter_never_unlocks_portal_input() {
+        for facts in [
+            kwin_facts(true, false, true, true, true),
+            kwin_facts(true, true, false, true, true),
+            kwin_facts(true, true, true, false, true),
+            kwin_facts(true, true, true, true, false),
+        ] {
+            let mut report = Report::default();
+            append_kwin_adapter_probes(&mut report, facts, true, Ok(true));
+
+            let portal = report.probes.last().expect("portal probe");
+            assert_eq!(portal.status, Status::Warn);
+            assert!(portal.message.contains("remains blocked"));
+            assert!(portal
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains(platform_linux::wayland::kwin_adapter::INSTALL_COMMAND));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn kwin_doctor_distinguishes_missing_build_and_missing_portal() {
+        let ready = kwin_facts(true, true, true, true, true);
+
+        let mut no_feature = Report::default();
+        append_kwin_adapter_probes(&mut no_feature, ready, false, Ok(false));
+        assert_eq!(
+            no_feature.probes.last().unwrap().message,
+            "this build does not include the portal/libei input backend"
+        );
+
+        let mut no_portal = Report::default();
+        append_kwin_adapter_probes(&mut no_portal, ready, true, Ok(false));
+        assert_eq!(
+            no_portal.probes.last().unwrap().message,
+            "xdg-desktop-portal RemoteDesktop is not reachable"
+        );
+
+        let mut probe_error = Report::default();
+        append_kwin_adapter_probes(
+            &mut probe_error,
+            ready,
+            true,
+            Err("fixture failure".to_owned()),
+        );
+        assert!(probe_error
+            .probes
+            .last()
+            .unwrap()
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("fixture failure")));
     }
 
     #[test]

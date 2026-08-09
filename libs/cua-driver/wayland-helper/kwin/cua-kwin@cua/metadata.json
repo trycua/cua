@@ -1,0 +1,22 @@
+{
+  "KPackageStructure": "KWin/Script",
+  "KPlugin": {
+    "Authors": [
+      {
+        "Name": "Cua contributors"
+      }
+    ],
+    "Description": "Expose exact KWin window snapshots and activation primitives to cua-driver.",
+    "EnabledByDefault": false,
+    "Icon": "preferences-system-windows",
+    "Id": "cua-kwin.cua",
+    "License": "MIT",
+    "Name": "Cua KWin Target Adapter",
+    "Version": "1.0.0",
+    "Website": "https://github.com/trycua/cua"
+  },
+  "X-Cua-Adapter-Id": "cua-kwin@cua",
+  "X-Cua-Protocol-Version": 1,
+  "X-Plasma-API": "javascript",
+  "X-Plasma-MainScript": "code/main.js"
+}

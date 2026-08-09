@@ -7,6 +7,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from cua_cli.commands import sandbox
 
 
+class TestCloudAuth:
+    """Tests for cloud authentication mode selection."""
+
+    async def test_cloud_auth_kwargs_omits_legacy_key_for_wif(self, monkeypatch):
+        monkeypatch.setenv("FLEETS_TOKEN", "github-token")
+
+        with patch.object(sandbox, "get_access_token", new_callable=AsyncMock) as mock_token:
+            assert await sandbox._cloud_auth_kwargs() == {}
+
+        mock_token.assert_not_awaited()
+
+    async def test_cloud_auth_kwargs_uses_interactive_token_without_wif(self, monkeypatch):
+        monkeypatch.delenv("FLEETS_TOKEN", raising=False)
+
+        with patch.object(
+            sandbox, "get_access_token", new_callable=AsyncMock, return_value="interactive"
+        ):
+            assert await sandbox._cloud_auth_kwargs() == {"api_key": "interactive"}
+
+
 class TestRegisterParser:
     """Tests for register_parser function."""
 
@@ -290,6 +310,34 @@ class TestCmdLaunch:
         created.disconnect.assert_awaited_once_with()
 
 
+    def test_launch_with_wif_omits_legacy_key_and_interactive_token(self, args_namespace, monkeypatch):
+        """Test workload identity selects the Fleet SDK transport."""
+        monkeypatch.setenv("FLEETS_TOKEN", "github-token")
+        args = args_namespace(
+            image="ubuntu:24.04", local=False, name="fleet-sandbox", vm=False, cpu=None,
+            memory=None, disk=None, region=None, json=False,
+        )
+        image = object()
+        created = MagicMock(name="created")
+        created.name = "fleet-sandbox"
+        created.disconnect = AsyncMock()
+        mock_create = AsyncMock(return_value=created)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.create = mock_create
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "_parse_image", return_value=image):
+                with patch.object(
+                    sandbox, "get_access_token", new_callable=AsyncMock
+                ) as mock_token:
+                    with patch.object(sandbox, "print_success"):
+                        result = sandbox.cmd_launch(args)
+
+        assert result == 0
+        mock_token.assert_not_awaited()
+        mock_create.assert_awaited_once_with(image, name="fleet-sandbox")
+        created.disconnect.assert_awaited_once_with()
+
 class TestCmdGet:
     """Tests for cmd_get function."""
 
@@ -465,6 +513,27 @@ class TestCmdDelete:
 
         assert result == 0
 
+
+    def test_delete_with_wif_omits_legacy_key_and_interactive_token(
+        self, args_namespace, monkeypatch
+    ):
+        """Test workload identity releases the Fleet claim without an API key."""
+        monkeypatch.setenv("FLEETS_TOKEN", "github-token")
+        args = args_namespace(name="fleet-sandbox", local=False, force=True)
+        mock_delete = AsyncMock()
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.delete = mock_delete
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(
+                sandbox, "get_access_token", new_callable=AsyncMock
+            ) as mock_token:
+                with patch.object(sandbox, "print_success"):
+                    result = sandbox.cmd_delete(args)
+
+        assert result == 0
+        mock_token.assert_not_awaited()
+        mock_delete.assert_awaited_once_with("fleet-sandbox", local=False)
 
 class TestCmdVnc:
     """Tests for cmd_vnc function."""
@@ -806,3 +875,35 @@ class TestCmdExec:
         mock_sandbox.shell.run.assert_awaited_once_with("pwd", timeout=120)
         mock_sandbox.disconnect.assert_awaited_once_with()
         assert capsys.readouterr().out == "/workspace\n"
+
+    def test_exec_with_wif_uses_sdk_without_legacy_auth_or_url(
+        self, args_namespace, monkeypatch, capsys
+    ):
+        """Test workload identity executes through the Fleet SDK service proxy."""
+        monkeypatch.setenv("FLEETS_TOKEN", "github-token")
+        args = args_namespace(
+            name="fleet-sandbox",
+            exec_command=["echo", "hello"],
+            json=False,
+            local=False,
+        )
+        command_result = SimpleNamespace(stdout="hello\n", stderr="", returncode=0)
+        mock_sandbox = MagicMock()
+        mock_sandbox.shell.run = AsyncMock(return_value=command_result)
+        mock_sandbox.disconnect = AsyncMock()
+        mock_connect = AsyncMock(return_value=mock_sandbox)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.connect = mock_connect
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "get_access_token", new_callable=AsyncMock) as mock_token:
+                with patch.object(sandbox, "_get_sandbox_api_url") as mock_api_url:
+                    result = sandbox.cmd_exec(args)
+
+        assert result == 0
+        mock_token.assert_not_awaited()
+        mock_api_url.assert_not_called()
+        mock_connect.assert_awaited_once_with("fleet-sandbox", local=False)
+        mock_sandbox.shell.run.assert_awaited_once_with("echo hello", timeout=120)
+        mock_sandbox.disconnect.assert_awaited_once_with()
+        assert capsys.readouterr().out == "hello\n"

@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import aiohttp
 from cua_cli.auth.oidc import get_access_token
+from cua_cli.auth.workload import get_fleets_token
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import (
     print_error,
@@ -158,6 +159,13 @@ async def _get_sandbox_api_url(name: str, local: bool) -> tuple[str, Optional[st
     if not url:
         raise ValueError(f"Sandbox '{name}' has no API URL (is it running?)")
     return url, api_key
+
+
+async def _cloud_auth_kwargs() -> dict[str, str]:
+    """Return cloud SDK authentication keyword arguments for the active mode."""
+    if get_fleets_token():
+        return {}
+    return {"api_key": await get_access_token()}
 
 
 # ---------------------------------------------------------------------------
@@ -442,8 +450,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
                     create_kwargs["memory_mb"] = memory_mb
                 if disk_gb is not None:
                     create_kwargs["disk_gb"] = disk_gb
-                api_key = await get_access_token()
-                create_kwargs["api_key"] = api_key
+                create_kwargs.update(await _cloud_auth_kwargs())
                 sb = await Sandbox.create(image, **create_kwargs)
 
             name = sb.name
@@ -491,8 +498,7 @@ def cmd_ls(args: argparse.Namespace) -> int:
 
         if show_all or not local:
             try:
-                api_key = await get_access_token()
-                cloud_list = await Sandbox.list(local=False, api_key=api_key)
+                cloud_list = await Sandbox.list(local=False, **await _cloud_auth_kwargs())
                 for s in cloud_list:
                     results.append(
                         {
@@ -529,9 +535,7 @@ def cmd_info(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             info = await Sandbox.get_info(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(str(e))
@@ -573,9 +577,7 @@ def cmd_suspend(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             await Sandbox.suspend(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to suspend sandbox: {e}")
@@ -594,9 +596,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             await Sandbox.resume(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to resume sandbox: {e}")
@@ -615,9 +615,7 @@ def cmd_restart(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             await Sandbox.restart(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to restart sandbox: {e}")
@@ -652,9 +650,7 @@ def cmd_delete(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             await Sandbox.delete(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to delete sandbox: {e}")
@@ -673,9 +669,7 @@ def cmd_vnc(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             sb = await Sandbox.connect(args.name, local=local, **kwargs)
             vnc_url = await sb.get_display_url(share=True)
             await sb.disconnect()
@@ -949,9 +943,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             sb = await Sandbox.connect(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to connect to sandbox: {e}")

@@ -826,6 +826,11 @@ pub fn register_all(
                 crate::cursor::overlay::remove_cursor(session_id.to_owned());
             });
         registry.retain_session_end_hook(registration);
+        let revive_registration =
+            cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
+                crate::cursor::overlay::revive_cursor(session_id.to_owned());
+            });
+        registry.retain_session_revive_hook(revive_registration);
     }
 
     registry.register(Box::new(list_apps::ListAppsTool));

@@ -200,6 +200,12 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
             }
             None
         }
+        OverlayMsg::Revive(key) => {
+            if key != "default" {
+                map.ended.remove(&key);
+            }
+            None
+        }
         OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
             if map.ended.contains(&key) {
                 tracing::debug!(key = %key, cmd = ?cmd, "overlay: command dropped — key was ended");
@@ -508,6 +514,23 @@ pub fn remove_cursor(key: CursorKey) {
         return;
     }
     let msg = OverlayMsg::Remove(key);
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(msg.clone());
+    }
+    #[cfg(target_os = "linux")]
+    if crate::wayland::is_wayland() && !crate::wayland::shell_helper::available() {
+        let _ = crate::wayland::overlay::forward(&msg);
+    }
+}
+
+/// Clear the X11 render-side tombstone after a successful explicit session
+/// revival. Wayland has no keyed tombstone, so forwarding this lifecycle
+/// signal there is an accepted no-op.
+pub fn revive_cursor(key: CursorKey) {
+    if key.is_empty() {
+        return;
+    }
+    let msg = OverlayMsg::Revive(key);
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(msg.clone());
     }
@@ -3072,6 +3095,32 @@ mod tests {
             ended: HashSet::new(),
             last_active: None,
         }
+    }
+
+    #[test]
+    fn explicit_revival_clears_tombstone_and_recreates_lazily() {
+        let move_msg = |x, y| {
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "sessA".to_owned(),
+                cmd: OverlayCommand::MoveTo {
+                    x,
+                    y,
+                    end_heading_radians: 0.0,
+                },
+            })
+        };
+        let mut map = default_render_map();
+        apply_msg(&mut map, move_msg(10.0, 10.0));
+        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
+        assert!(apply_msg(&mut map, move_msg(20.0, 20.0)).is_none());
+
+        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
+        assert!(!map.cursors.contains_key("sessA"));
+        assert!(!map.ended.contains("sessA"));
+
+        let resolved = apply_msg(&mut map, move_msg(30.0, 30.0));
+        assert_eq!(resolved.as_deref(), Some("sessA"));
+        assert!(map.cursors.contains_key("sessA"));
     }
 
     fn test_message() -> OverlayMsg {

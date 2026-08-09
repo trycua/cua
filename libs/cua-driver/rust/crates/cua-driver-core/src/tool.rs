@@ -561,6 +561,7 @@ pub struct ToolRegistry {
     pub recording: Arc<RecordingSession>,
     replay_registry: ReplayRegistrySlot,
     session_end_hooks: Vec<crate::session::SessionEndHookRegistration>,
+    session_revive_hooks: Vec<crate::session::SessionReviveHookRegistration>,
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
     /// Runtime-owned protected-consent broker shared by every resource
@@ -616,6 +617,7 @@ impl ToolRegistry {
             recording: Arc::new(RecordingSession::new()),
             replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
             session_end_hooks: vec![session_end_hook],
+            session_revive_hooks: Vec::new(),
             cursor_outcome_readers: Vec::new(),
             runtime_cleanups: Vec::new(),
             approval_broker,
@@ -713,6 +715,13 @@ impl ToolRegistry {
         registration: crate::session::SessionEndHookRegistration,
     ) {
         self.session_end_hooks.push(registration);
+    }
+
+    pub fn retain_session_revive_hook(
+        &mut self,
+        registration: crate::session::SessionReviveHookRegistration,
+    ) {
+        self.session_revive_hooks.push(registration);
     }
 
     pub fn retain_cursor_outcome_reader(

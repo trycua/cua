@@ -124,6 +124,12 @@ impl Tool for StartSessionTool {
                     .with_structured(json!({ "code": "session_ended", "session": id }));
             }
         };
+        // Platform overlays keep their own late-command tombstones. Clear
+        // those only after core revival and capture-policy binding both
+        // succeeded, so a failed declaration cannot revive render state.
+        if revived {
+            crate::session::fire_session_revive(&id);
+        }
         // Refresh (or begin) the session's idle-TTL clock. The cursor appears on
         // the first action carrying this `session`.
         crate::session::touch_session(&id);
@@ -282,6 +288,10 @@ fn session_tool_def(name: &str) -> ToolDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     fn result_code(result: &ToolResult) -> Option<&str> {
         result.structured_content.as_ref()?.get("code")?.as_str()
@@ -332,6 +342,44 @@ mod tests {
         assert_eq!(structured["capture_scope"], "desktop");
         assert_eq!(structured["effective_scope"], "desktop");
         assert_eq!(structured["revived"], true);
+    }
+
+    #[tokio::test]
+    async fn successful_explicit_revival_notifies_session_owned_subsystems_once() {
+        let id = format!("session-tool-revive-hook-{}", std::process::id());
+        let notifications = Arc::new(AtomicUsize::new(0));
+        let observed_id = id.clone();
+        let notifications_for_hook = notifications.clone();
+        let _registration = crate::session::register_scoped_session_revive_hook(move |got| {
+            if got == observed_id {
+                notifications_for_hook.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let start = StartSessionTool;
+
+        let fresh = start
+            .invoke(json!({"session": id, "capture_scope": "window"}))
+            .await;
+        assert_ne!(fresh.is_error, Some(true));
+        assert_eq!(notifications.load(Ordering::SeqCst), 0);
+
+        EndSessionTool.invoke(json!({"session": id})).await;
+        let revived = start
+            .invoke(json!({"session": id, "capture_scope": "desktop"}))
+            .await;
+        assert_ne!(revived.is_error, Some(true));
+        assert_eq!(
+            revived.structured_content.as_ref().unwrap()["revived"],
+            true
+        );
+        assert_eq!(notifications.load(Ordering::SeqCst), 1);
+
+        let idempotent = start
+            .invoke(json!({"session": id, "capture_scope": "desktop"}))
+            .await;
+        assert_ne!(idempotent.is_error, Some(true));
+        assert_eq!(notifications.load(Ordering::SeqCst), 1);
+        EndSessionTool.invoke(json!({"session": id})).await;
     }
 
     #[tokio::test]

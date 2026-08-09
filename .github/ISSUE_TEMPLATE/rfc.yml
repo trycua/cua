@@ -9,8 +9,10 @@ body:
       value: |
         Use this form for public API, CLI, MCP, protocol, cross-platform architecture,
         permission, security, compatibility, or multi-component decisions. Search for
-        existing proposals first. Do not disclose vulnerabilities, credentials, private
-        user data, partner context, or sensitive screenshots in a public issue.
+        existing proposals first. Report suspected vulnerabilities through
+        [GitHub private vulnerability reporting](https://github.com/trycua/cua/security/advisories/new).
+        Do not disclose vulnerabilities, credentials, private user data, partner context,
+        or sensitive screenshots in a public issue.
 
         The issue is the discussion and decision record. If the proposal needs a longer
         specification or diagrams, add a linked `rfcs/<issue>-<short-name>.md` pull request

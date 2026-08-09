@@ -1,0 +1,103 @@
+name: Bug report
+description: Report reproducible incorrect behavior in Cua
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues and pull requests before filing. Describe the observed
+        behavior and evidence rather than only a proposed fix. Do not include credentials,
+        private application data, sensitive screenshots, or vulnerability details. Use
+        [private vulnerability reporting](https://github.com/trycua/cua/security/advisories/new)
+        for suspected security issues.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Cua Driver
+        - SDK or bindings
+        - MCP or agent integration
+        - CLI
+        - Lume
+        - Containers or images
+        - Documentation
+        - Build, packaging, or release
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the incorrect behavior in one or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest numbered steps or example that reproduces the behavior. If it is intermittent, say how often you observe it.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What observable result did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include exact structured errors when available.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the component/package and version or commit, operating system and architecture, plus the application, browser, window system, or container image when relevant.
+      placeholder: |
+        Cua component and version/commit:
+        Operating system and architecture:
+        Application/browser/window system/image:
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add redacted logs, error text, screenshots, recordings, or a minimal repository that help prove the behavior. Write "None available" when no additional artifact exists.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround and additional context
+      description: Describe any workaround, regression range, suspected area, or related issue or pull request.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for duplicate issues and active pull requests.
+          required: true
+        - label: I removed credentials, private data, sensitive screenshots, and vulnerability details from this public report.
+          required: true

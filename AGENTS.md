@@ -23,6 +23,32 @@ Preserve contributor credit when external code or design ships in Cua.
 
 Do not reimplement submitted work solely to remove its authorship history.
 
+## Issue and pull request workflow
+
+The human-facing contribution contract lives in [`CONTRIBUTING.md`](CONTRIBUTING.md),
+the GitHub issue forms, [`rfcs/README.md`](rfcs/README.md), and
+[`SECURITY.md`](SECURITY.md). Keep those files canonical instead of duplicating
+their field lists or RFC lifecycle here.
+
+Coding agents act as workers within that contract. GitHub is the durable work
+record; do not require a separate agent orchestrator or progress database for
+repository work. When work is selected:
+
+- treat an open issue as intake, not evidence that the work is scheduled or
+  ready to implement;
+- search for duplicates and active pull requests, then establish a narrow
+  scope, owner, and observable acceptance evidence before substantial edits;
+- use one issue or RFC as the problem/decision record and one isolated branch
+  or worktree per implementation workstream;
+- keep the linked pull request description current with scope, progress,
+  validation evidence, known gaps, and blockers instead of posting noisy
+  periodic status comments;
+- use `Refs #123` unless the pull request fully resolves the linked issue, in
+  which case use an issue-closing keyword; and
+- route suspected vulnerabilities through the private process in
+  [`SECURITY.md`](SECURITY.md), never a public issue, RFC, pull request, log, or
+  screenshot.
+
 ## Cross-platform Cua Driver behavior
 
 Treat user-visible Cua Driver behavior as a cross-platform contract. Implement
@@ -66,8 +92,7 @@ macOS:   libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
 - Prefer the GitHub-hosted Windows workflow when its strict preflight proves an
-  interactive desktop. Do not assume that GitHub-hosted Windows runs in Session
-  0. Azure RDP is an optional environment-parity replay, not the canonical gate.
+  interactive desktop. Do not assume that GitHub-hosted Windows runs in Session 0. Azure RDP is an optional environment-parity replay, not the canonical gate.
 - Use the GitHub-hosted Linux X11 workflow for the supported Linux gate. Keep
   Nix source checks and compositor-specific Wayland lanes as their documented
   separate gates.

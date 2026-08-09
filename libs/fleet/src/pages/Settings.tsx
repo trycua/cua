@@ -17,7 +17,6 @@ import Multiselect, {
 } from "@cloudscape-design/components/multiselect"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
-import Textarea from "@cloudscape-design/components/textarea"
 import Toggle from "@cloudscape-design/components/toggle"
 import { userInfo } from "../auth/keycloak"
 import { useFeatureFlags } from "../components/FeatureFlagContext"
@@ -34,7 +33,6 @@ export function Settings() {
   const [policies, setPolicies] = useState<GitHubTrustPolicy[]>([])
   const [namespaceOptions, setNamespaceOptions] = useState<MultiselectProps.Option[]>([])
   const [selectedNamespaces, setSelectedNamespaces] = useState<MultiselectProps.Option[]>([])
-  const [extraNamespaces, setExtraNamespaces] = useState("")
   const [policyName, setPolicyName] = useState("")
   const [repository, setRepository] = useState("")
   const [enabled, setEnabled] = useState(true)
@@ -96,19 +94,12 @@ export function Settings() {
     setRepository("")
     setEnabled(true)
     setSelectedNamespaces([])
-    setExtraNamespaces("")
   }
 
-  const collectNamespaces = () => {
-    const merged = new Set<string>()
-    for (const option of selectedNamespaces) {
-      if (option.value) merged.add(option.value)
-    }
-    for (const value of extraNamespaces.split(/[\s,]+/)) {
-      if (value) merged.add(value)
-    }
-    return [...merged].sort()
-  }
+  const collectNamespaces = () =>
+    selectedNamespaces
+      .flatMap(option => (option.value ? [option.value] : []))
+      .sort()
 
   const submit = async () => {
     setSaving(true)
@@ -134,18 +125,12 @@ export function Settings() {
   }
 
   const startEdit = (policy: GitHubTrustPolicy) => {
-    const existing = new Set(namespaceOptions.map(option => option.value))
     setEditingId(policy.id)
     setPolicyName(policy.name)
     setRepository(policy.repository)
     setEnabled(policy.enabled)
     setSelectedNamespaces(
-      policy.allowed_namespaces
-        .filter(ns => existing.has(ns))
-        .map(ns => ({ label: ns, value: ns })),
-    )
-    setExtraNamespaces(
-      policy.allowed_namespaces.filter(ns => !existing.has(ns)).join(", "),
+      policy.allowed_namespaces.map(ns => ({ label: ns, value: ns })),
     )
   }
 
@@ -253,7 +238,7 @@ steps:
             header={
               <Header
                 variant="h3"
-                description="Create or update a repository trust policy. Existing namespaces are selectable, and you can add future namespaces below."
+                description="Create or update a repository trust policy for namespaces you own."
               >
                 {editingId ? "Edit trust policy" : "Create trust policy"}
               </Header>
@@ -304,17 +289,6 @@ steps:
                   loadingText="Loading namespaces..."
                   statusType={loading ? "loading" : "finished"}
                   empty="No namespaces found"
-                />
-              </FormField>
-              <FormField
-                label="Additional namespaces"
-                description="Enter future namespaces as comma- or newline-separated DNS labels."
-              >
-                <Textarea
-                  value={extraNamespaces}
-                  onChange={e => setExtraNamespaces(e.detail.value)}
-                  placeholder="preview-a, preview-b"
-                  rows={3}
                 />
               </FormField>
               <Toggle

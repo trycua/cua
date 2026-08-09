@@ -29,7 +29,7 @@ test.describe("Settings GitHub trust policies", () => {
 
     await page.getByLabel("Display name").fill("preview-ci")
     await page.getByLabel("Repository").fill("trycua/preview")
-    await page.getByLabel("Additional namespaces").fill("preview-b, preview-c")
+    await expect(page.getByLabel("Additional namespaces")).toHaveCount(0)
     await page.getByRole("button", { name: "Create policy" }).click()
 
     await expect(page.getByText("preview-ci")).toBeVisible()

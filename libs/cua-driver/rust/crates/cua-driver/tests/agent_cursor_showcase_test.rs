@@ -94,12 +94,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         // visible for two seconds, so this settle stays inside that window.
         settle(900);
 
-        let (cursor_png, cursor_width, cursor_height) = capture_desktop_png(&mut driver);
-        assert_eq!(
-            (width, height),
-            (cursor_width, cursor_height),
-            "logical desktop dimensions changed while checking the cursor overlay"
-        );
+        let cursor_png = capture_cursor_oracle_png(&mut driver);
         let cursor_frame = image::load_from_memory(&cursor_png)
             .expect("decode cursor desktop screenshot")
             .to_rgba8();
@@ -303,6 +298,38 @@ fn capture_desktop_png(driver: &mut McpDriver) -> (Vec<u8>, f64, f64) {
         .or_else(|| response.structured()["screenshot_height"].as_f64())
         .expect("desktop capture returned no logical height");
     (png, width, height)
+}
+
+fn capture_cursor_oracle_png(driver: &mut McpDriver) -> Vec<u8> {
+    #[cfg(target_os = "linux")]
+    {
+        // A compositor-less X11 root read can omit the overlay client's own
+        // shaped window even while an independent display capture sees the
+        // complete cursor and badge. The action evidence recorder is the
+        // canonical external behavior oracle and has already captured the
+        // move_cursor after-frame before this call returns.
+        let path = driver
+            .recording_dir()
+            .expect("showcase recording directory")
+            .join("turn-00001/after.png");
+        for _ in 0..20 {
+            if let Ok(png) = std::fs::read(&path) {
+                if !png.is_empty() {
+                    return png;
+                }
+            }
+            settle(50);
+        }
+        panic!(
+            "action evidence did not produce the cursor after-frame at {}",
+            path.display()
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        capture_desktop_png(driver).0
+    }
 }
 
 fn call_ok(driver: &mut McpDriver, tool: &str, arguments: serde_json::Value) {

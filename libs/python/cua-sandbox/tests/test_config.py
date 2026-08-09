@@ -1,6 +1,6 @@
 """Unit tests for config and auth modules."""
 
-import os
+import pytest
 
 from cua_sandbox._config import (
     _global_config,
@@ -16,21 +16,33 @@ from cua_sandbox._config import (
 )
 
 
-class TestConfig:
-    def setup_method(self):
-        _global_config.api_key = None
-        _global_config.base_url = "https://api.cua.ai"
-        _global_config.fleet_base_url = "https://run.cua.ai"
-        _global_config.token_url = (
-            "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
-        )
-        _global_config.client_id = None
-        _global_config.client_secret = None
-        _global_config.fleet_token = None
-        os.environ.pop("FLEETS_TOKEN", None)
-        os.environ.pop("CUA_CLIENT_ID", None)
-        os.environ.pop("CUA_CLIENT_SECRET", None)
+_CONFIG_ENV_VARS = (
+    "CUA_API_KEY",
+    "CUA_BASE_URL",
+    "CUA_FLEET_BASE_URL",
+    "CUA_TOKEN_URL",
+    "CUA_CLIENT_ID",
+    "CUA_CLIENT_SECRET",
+    "FLEETS_TOKEN",
+)
 
+
+@pytest.fixture(autouse=True)
+def isolate_config(monkeypatch):
+    original_config = vars(_global_config).copy()
+    clean_config = type(_global_config)()
+    vars(_global_config).update(vars(clean_config))
+    for variable_name in _CONFIG_ENV_VARS:
+        monkeypatch.delenv(variable_name, raising=False)
+
+    try:
+        yield
+    finally:
+        vars(_global_config).clear()
+        vars(_global_config).update(original_config)
+
+
+class TestConfig:
     def test_configure_client_credentials_uses_fleet_defaults(self):
         configure(client_id="client-id", client_secret="client-secret")
 

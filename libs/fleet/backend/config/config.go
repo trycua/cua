@@ -24,7 +24,7 @@ type Configuration struct {
 	Auth      AuthConfiguration
 	Keycloak  KeycloakConfiguration
 	Gateway   GatewayConfiguration
-	Templates TemplatesConfiguration
+	Database  DatabaseConfiguration
 	Stripe    StripeConfiguration
 	Metrics   MetricsConfiguration
 	Telemetry TelemetryConfiguration
@@ -78,18 +78,19 @@ type GatewayConfiguration struct {
 	ClusterDomain string
 }
 
-// TemplatesConfiguration carries the Redis URL used by the original
-// GitHub trust-policy store. PR #5302 replaces this with DatabaseConfiguration.
-type TemplatesConfiguration struct {
-	RedisURL string
-}
-
 type StripeConfiguration struct {
 	SecretKey          string
 	WebhookSecret      string
 	CheckoutSuccessURL string
 	CheckoutCancelURL  string
 	PortalReturnURL    string
+}
+
+// DatabaseConfiguration drives the Postgres-backed stores (currently the
+// GitHub OIDC trust policies). An empty URL disables those routes (503),
+// keeping the backend bootable without a database — see CUA-675.
+type DatabaseConfiguration struct {
+	URL string // DATABASE_URL — postgres://user:pass@host:5432/dbname?sslmode=require
 }
 
 type MetricsConfiguration struct {
@@ -132,8 +133,7 @@ var specs = []flagSpec{
 	{"gateway.scheme", "orch-scheme", "ORCH_SCHEME", "http", "orchestrator scheme"},
 	{"gateway.port", "orch-port", "ORCH_PORT", "80", "orchestrator port"},
 	{"gateway.cluster-domain", "cluster-domain", "CLUSTER_DOMAIN", "svc.cluster.local", "in-cluster DNS domain"},
-	{"batch.redis-url", "batch-redis-url", "BATCH_REDIS_URL", "", "legacy GitHub trust-policy Redis URL fallback"},
-	{"templates.redis-url", "pool-templates-redis-url", "POOL_TEMPLATES_REDIS_URL", "", "GitHub trust-policy Redis URL (falls back to batch Redis)"},
+	{"database.url", "database-url", "DATABASE_URL", "", "Postgres URL for trust-policy storage (enables /api/github-trust-policies)"},
 	{"stripe.secret-key", "stripe-secret-key", "STRIPE_SECRET_KEY", "", "Stripe secret key (server-only)"},
 	{"stripe.webhook-secret", "stripe-webhook-secret", "STRIPE_WEBHOOK_SECRET", "", "Stripe webhook signing secret"},
 	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
@@ -170,11 +170,6 @@ func LoadConfig() (*Configuration, error) {
 		issuer = realmPath
 	}
 
-	templatesRedis := viper.GetString("templates.redis-url")
-	if templatesRedis == "" {
-		templatesRedis = viper.GetString("batch.redis-url")
-	}
-
 	cfg := &Configuration{
 		WebServer: WebServerConfiguration{Addr: viper.GetString("webserver.addr")},
 		Auth: AuthConfiguration{
@@ -209,7 +204,7 @@ func LoadConfig() (*Configuration, error) {
 			Port:          viper.GetString("gateway.port"),
 			ClusterDomain: viper.GetString("gateway.cluster-domain"),
 		},
-		Templates: TemplatesConfiguration{RedisURL: templatesRedis},
+		Database: DatabaseConfiguration{URL: viper.GetString("database.url")},
 		Stripe: StripeConfiguration{
 			SecretKey:          viper.GetString("stripe.secret-key"),
 			WebhookSecret:      viper.GetString("stripe.webhook-secret"),

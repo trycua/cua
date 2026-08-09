@@ -316,14 +316,18 @@ func run() error {
 	h.WorkloadAdmin = workloadAdmin
 	h.WorkloadAudience = cfg.Keycloak.WorkloadAudience
 	h.WorkloadTokenURL = cfg.Keycloak.WorkloadTokenURL
-	if store, err := githubtrust.New(ctx, cfg.Templates.RedisURL); err != nil {
+	// Postgres-backed GitHub OIDC trust policies (CUA-675). A connection
+	// failure is non-fatal — the routes stay registered and reply 503 until
+	// the database is reachable, mirroring how the other optional surfaces
+	// degrade gracefully.
+	if store, err := githubtrust.New(ctx, cfg.Database.URL); err != nil {
 		slog.Error("github trust policies: init failed; /api/github-trust-policies will return 503", "err", err)
 	} else if store != nil {
 		h.GitHubTrustPolicies = store
 		auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolver(store))
 		slog.Info("github trust policies: enabled")
 	} else {
-		slog.Info("github trust policies: disabled (no Redis URL configured)")
+		slog.Info("github trust policies: disabled (no DATABASE_URL configured)")
 	}
 
 	router := setupRouter(h)

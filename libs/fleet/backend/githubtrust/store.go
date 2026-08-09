@@ -1,21 +1,35 @@
 package githubtrust
 
+// Postgres-backed persistence for GitHub Actions OIDC trust policies.
+//
+// Schema is derived from the Policy struct via GORM AutoMigrate — no manual
+// DDL. Queries use pgx directly (the GORM postgres driver also uses pgx
+// under the hood, so there is no driver conflict).
+//
+// Listing is indexed by owner_sub (List); ResolveByRepository (the per-request
+// auth hot path) is indexed by repository. Every read takes the owner so the
+// storage layer enforces the same tenant isolation the HTTP layer does —
+// CUA-675 moved this off Redis so policies survive a Pod eviction (the
+// cyclops-cs Redis persists to an emptyDir, which does not).
+
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-const (
-	keyPrefix        = "ghtrust:policy:"
-	ownerIndexPrefix = "ghtrust:owner:"
-	repoIndexPrefix  = "ghtrust:repo:"
-)
+// ErrNotFound is returned by Update when the policy no longer exists for the
+// given owner. Handlers Get-then-Update, so this is a race backstop.
+var ErrNotFound = errors.New("github trust policy not found")
+
+const policyColumns = "id, owner_sub, name, repository, allowed_namespaces, enabled, created_at, updated_at"
 
 type Store interface {
 	List(ctx context.Context, ownerSub string) ([]*Policy, error)
@@ -26,58 +40,68 @@ type Store interface {
 	ResolveByRepository(ctx context.Context, repository string) ([]*Policy, error)
 }
 
-type redisStore struct{ c *redis.Client }
+type pgStore struct{ pool *pgxpool.Pool }
 
-func policyKey(id string) string   { return keyPrefix + id }
-func ownerKey(owner string) string { return ownerIndexPrefix + owner }
-func repoKey(repo string) string   { return repoIndexPrefix + repo }
-
+// New opens a connection pool against url (a Postgres DSN or URL) and ensures
+// the schema exists by running GORM AutoMigrate against the Policy struct. An
+// empty url disables the feature (returns nil, nil) so the handlers reply
+// 503, mirroring the previous Redis behaviour. A startup connectivity blip is
+// non-fatal to the process: initialization returns an error so the caller can
+// leave the routes disabled rather than exposing a store without its table.
 func New(ctx context.Context, url string) (Store, error) {
 	if url == "" {
 		return nil, nil
 	}
-	opts, err := redis.ParseURL(url)
+
+	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("parse redis url: %w", err)
+		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
-	c := redis.NewClient(opts)
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	s := &pgStore{pool: pool}
+
+	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := c.Ping(pingCtx).Err(); err != nil {
-		slog.Warn("githubtrust: redis ping failed at startup; will retry on demand", "err", err)
-	}
-	return &redisStore{c: c}, nil
-}
 
-func (s *redisStore) List(ctx context.Context, ownerSub string) ([]*Policy, error) {
-	ids, err := s.c.SMembers(ctx, ownerKey(ownerSub)).Result()
+	if err := pool.Ping(initCtx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("ping postgres: %w", err)
+	}
+
+	// AutoMigrate derives the table schema from the Policy struct — no manual
+	// DDL. GORM creates the table, columns, and indexes based on struct tags.
+	// We open a throwaway gorm.DB from the same URL for migration only; pgx
+	// is used for all queries.
+	gormDB, err := gorm.Open(postgres.Open(url), &gorm.Config{})
 	if err != nil {
-		return nil, fmt.Errorf("smembers owner index: %w", err)
+		pool.Close()
+		return nil, fmt.Errorf("open postgres migrator: %w", err)
 	}
-	out := make([]*Policy, 0, len(ids))
-	for _, id := range ids {
-		fields, err := s.c.HGetAll(ctx, policyKey(id)).Result()
-		if err != nil {
-			return nil, fmt.Errorf("hgetall %s: %w", id, err)
-		}
-		if len(fields) == 0 {
-			s.c.SRem(ctx, ownerKey(ownerSub), id)
-			continue
-		}
-		policy, err := hydrate(fields)
-		if err != nil {
-			return nil, err
-		}
-		if policy.OwnerSub != ownerSub {
-			continue
-		}
-		out = append(out, policy)
+	gormSQLDB, err := gormDB.DB()
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("get postgres migrator connection: %w", err)
 	}
-	sortByUpdatedDesc(out)
-	return out, nil
+	defer gormSQLDB.Close()
+	if err := gormDB.WithContext(initCtx).AutoMigrate(&Policy{}); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("auto-migrate github trust policies: %w", err)
+	}
+
+	return s, nil
 }
 
-func (s *redisStore) Create(ctx context.Context, policy *Policy) error {
+func (s *pgStore) List(ctx context.Context, ownerSub string) ([]*Policy, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+policyColumns+` FROM github_trust_policies
+		 WHERE owner_sub = $1
+		 ORDER BY updated_at DESC, id ASC`, ownerSub)
+	if err != nil {
+		return nil, fmt.Errorf("list policies: %w", err)
+	}
+	return collect(rows)
+}
+
+func (s *pgStore) Create(ctx context.Context, policy *Policy) error {
 	now := time.Now().UTC()
 	if policy.ID == "" {
 		policy.ID = uuid.NewString()
@@ -86,137 +110,98 @@ func (s *redisStore) Create(ctx context.Context, policy *Policy) error {
 		policy.CreatedAt = now
 	}
 	policy.UpdatedAt = now
-	return s.save(ctx, nil, policy)
-}
-
-func (s *redisStore) Get(ctx context.Context, ownerSub, id string) (*Policy, error) {
-	fields, err := s.c.HGetAll(ctx, policyKey(id)).Result()
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO github_trust_policies (`+policyColumns+`)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		policy.ID, policy.OwnerSub, policy.Name, policy.Repository,
+		policy.AllowedNamespaces, policy.Enabled, policy.CreatedAt, policy.UpdatedAt)
 	if err != nil {
-		return nil, fmt.Errorf("hgetall: %w", err)
-	}
-	if len(fields) == 0 {
-		return nil, nil
-	}
-	policy, err := hydrate(fields)
-	if err != nil {
-		return nil, err
-	}
-	if policy.OwnerSub != ownerSub {
-		return nil, nil
-	}
-	return policy, nil
-}
-
-func (s *redisStore) Update(ctx context.Context, policy *Policy) error {
-	current, err := s.Get(ctx, policy.OwnerSub, policy.ID)
-	if err != nil {
-		return err
-	}
-	if current == nil {
-		return redis.Nil
-	}
-	policy.CreatedAt = current.CreatedAt
-	policy.UpdatedAt = time.Now().UTC()
-	return s.save(ctx, current, policy)
-}
-
-func (s *redisStore) Delete(ctx context.Context, ownerSub, id string) (bool, error) {
-	current, err := s.Get(ctx, ownerSub, id)
-	if err != nil {
-		return false, err
-	}
-	if current == nil {
-		return false, nil
-	}
-	pipe := s.c.TxPipeline()
-	pipe.Del(ctx, policyKey(id))
-	pipe.SRem(ctx, ownerKey(ownerSub), id)
-	pipe.SRem(ctx, repoKey(current.Repository), id)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return false, fmt.Errorf("delete policy: %w", err)
-	}
-	return true, nil
-}
-
-func (s *redisStore) ResolveByRepository(ctx context.Context, repository string) ([]*Policy, error) {
-	ids, err := s.c.SMembers(ctx, repoKey(repository)).Result()
-	if err != nil {
-		return nil, fmt.Errorf("smembers repo index: %w", err)
-	}
-	out := make([]*Policy, 0, len(ids))
-	for _, id := range ids {
-		fields, err := s.c.HGetAll(ctx, policyKey(id)).Result()
-		if err != nil {
-			return nil, fmt.Errorf("hgetall %s: %w", id, err)
-		}
-		if len(fields) == 0 {
-			s.c.SRem(ctx, repoKey(repository), id)
-			continue
-		}
-		policy, err := hydrate(fields)
-		if err != nil {
-			return nil, err
-		}
-		if policy.Repository != repository {
-			continue
-		}
-		out = append(out, policy)
-	}
-	sortByUpdatedDesc(out)
-	return out, nil
-}
-
-func (s *redisStore) save(ctx context.Context, previous, policy *Policy) error {
-	allowed, err := json.Marshal(policy.AllowedNamespaces)
-	if err != nil {
-		return fmt.Errorf("marshal allowed_namespaces: %w", err)
-	}
-	pipe := s.c.TxPipeline()
-	pipe.HSet(ctx, policyKey(policy.ID), map[string]any{
-		"id":                 policy.ID,
-		"owner_sub":          policy.OwnerSub,
-		"name":               policy.Name,
-		"repository":         policy.Repository,
-		"allowed_namespaces": string(allowed),
-		"enabled":            policy.Enabled,
-		"created_at":         policy.CreatedAt.UTC().Format(time.RFC3339Nano),
-		"updated_at":         policy.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	})
-	pipe.SAdd(ctx, ownerKey(policy.OwnerSub), policy.ID)
-	pipe.SAdd(ctx, repoKey(policy.Repository), policy.ID)
-	if previous != nil && previous.Repository != "" && previous.Repository != policy.Repository {
-		pipe.SRem(ctx, repoKey(previous.Repository), policy.ID)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("save policy: %w", err)
+		return fmt.Errorf("create policy: %w", err)
 	}
 	return nil
 }
 
-func hydrate(fields map[string]string) (*Policy, error) {
-	policy := &Policy{
-		ID:         fields["id"],
-		OwnerSub:   fields["owner_sub"],
-		Name:       fields["name"],
-		Repository: fields["repository"],
+func (s *pgStore) Get(ctx context.Context, ownerSub, id string) (*Policy, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT `+policyColumns+` FROM github_trust_policies
+		 WHERE id = $1 AND owner_sub = $2`, id, ownerSub)
+	policy, err := scanPolicy(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
 	}
-	if v := fields["allowed_namespaces"]; v != "" {
-		if err := json.Unmarshal([]byte(v), &policy.AllowedNamespaces); err != nil {
-			return nil, fmt.Errorf("decode allowed_namespaces: %w", err)
-		}
-	}
-	if v := fields["enabled"]; v == "1" || v == "true" {
-		policy.Enabled = true
-	}
-	if v := fields["created_at"]; v != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, v); err == nil {
-			policy.CreatedAt = parsed
-		}
-	}
-	if v := fields["updated_at"]; v != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, v); err == nil {
-			policy.UpdatedAt = parsed
-		}
+	if err != nil {
+		return nil, fmt.Errorf("get policy: %w", err)
 	}
 	return policy, nil
+}
+
+func (s *pgStore) Update(ctx context.Context, policy *Policy) error {
+	policy.UpdatedAt = time.Now().UTC()
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE github_trust_policies
+		 SET name = $3, repository = $4, allowed_namespaces = $5, enabled = $6, updated_at = $7
+		 WHERE id = $1 AND owner_sub = $2`,
+		policy.ID, policy.OwnerSub, policy.Name, policy.Repository,
+		policy.AllowedNamespaces, policy.Enabled, policy.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("update policy: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *pgStore) Delete(ctx context.Context, ownerSub, id string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM github_trust_policies WHERE id = $1 AND owner_sub = $2`, id, ownerSub)
+	if err != nil {
+		return false, fmt.Errorf("delete policy: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (s *pgStore) ResolveByRepository(ctx context.Context, repository string) ([]*Policy, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+policyColumns+` FROM github_trust_policies
+		 WHERE repository = $1
+		 ORDER BY updated_at DESC, id ASC`, repository)
+	if err != nil {
+		return nil, fmt.Errorf("resolve policies by repository: %w", err)
+	}
+	return collect(rows)
+}
+
+// collect scans all rows from a pgx.Rows into a slice of policies.
+func collect(rows pgx.Rows) ([]*Policy, error) {
+	out := make([]*Policy, 0)
+	for rows.Next() {
+		policy, err := scanPolicy(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, policy)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan policies: %w", err)
+	}
+	return out, nil
+}
+
+// scanner is implemented by both pgx.Row and pgx.Rows.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanPolicy(r scanner) (*Policy, error) {
+	p := &Policy{}
+	err := r.Scan(
+		&p.ID, &p.OwnerSub, &p.Name, &p.Repository,
+		&p.AllowedNamespaces, &p.Enabled, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }

@@ -17,16 +17,23 @@ var (
 	ErrInvalidNamespace  = errors.New("allowed_namespaces must be DNS-1123 labels")
 )
 
+// Policy is the runtime representation of a GitHub Actions OIDC trust policy.
+// GORM tags drive AutoMigrate so the schema is derived from this struct —
+// no manual DDL. pgx is still used for queries; GORM is migration-only.
 type Policy struct {
-	ID                string    `json:"id"`
-	OwnerSub          string    `json:"owner_sub"`
+	ID                string    `json:"id" gorm:"primaryKey"`
+	OwnerSub          string    `json:"owner_sub" gorm:"column:owner_sub;index"`
 	Name              string    `json:"name"`
-	Repository        string    `json:"repository"`
-	AllowedNamespaces []string  `json:"allowed_namespaces"`
+	Repository        string    `json:"repository" gorm:"column:repository;index"`
+	AllowedNamespaces []string  `json:"allowed_namespaces" gorm:"type:text[]"`
 	Enabled           bool      `json:"enabled"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
+
+// TableName overrides GORM's default pluralisation so the table name matches
+// what the pgx queries expect.
+func (Policy) TableName() string { return "github_trust_policies" }
 
 type PolicyInput struct {
 	Name              string   `json:"name"`

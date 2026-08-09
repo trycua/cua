@@ -304,15 +304,24 @@ class FleetCloudTransport(FleetTransport):
                         self._claim = await self._sdk.get_claim(self._pool)
                     else:
                         self._claim = await self._sdk.create_claim(
-                            CreateClaimRequest(pool=self._pool, spec=None)
+                            CreateClaimRequest(
+                                pool=self._pool, spec=None, name=f"{self._name}-claim"
+                            )
                         )
                 bound = await self._sdk.wait_claim(self._claim)
                 await self._sdk.wait_service_ready(bound, "server", self._time_to_start)
             except BaseException as provisioning_error:
+                cleanup_error: BaseException | None = None
                 try:
                     if self._owns_resources:
                         await self._cleanup_resources()
-                except BaseException as cleanup_error:
+                except BaseException as error:
+                    cleanup_error = error
+                finally:
+                    if self._owns_resources:
+                        self._pool = None
+                        self._template = None
+                if cleanup_error is not None:
                     logger.warning(
                         "Failed to clean up Fleet sandbox %r: %s", self._name, cleanup_error
                     )

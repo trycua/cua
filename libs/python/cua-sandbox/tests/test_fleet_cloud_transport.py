@@ -116,11 +116,142 @@ async def test_image_connect_reconciles_named_resources_without_namespace_calls(
     ]
     pool_request = calls[0][1]
     template_request = calls[1][1]
+    claim_request = calls[3][1]
     assert pool_request.namespace == "demo"
     assert pool_request.spec.sandbox_template_ref.name == "demo"
     assert pool_request.spec.replicas == 1
     assert (template_request.namespace, template_request.name) == ("demo", "demo")
+    assert claim_request.name == "demo-claim"
     assert calls[-1] == ("wait_service_ready", bound, "server", 600.0)
+
+@pytest.mark.asyncio
+async def test_created_claim_is_resolved_by_later_connect_and_delete(monkeypatch):
+    calls = []
+    pool = _pool()
+    bound = _bound()
+    created_claim = None
+
+    class Client:
+        async def reconcile_pool(self, request):
+            return pool
+
+        async def reconcile_template(self, request):
+            return "template"
+
+        async def wait_pool(self, reconciled_pool):
+            return reconciled_pool
+
+        async def create_claim(self, request):
+            nonlocal created_claim
+            calls.append(("create_claim", request.name))
+            created_claim = SimpleNamespace(metadata=SimpleNamespace(name=request.name))
+            return created_claim
+
+        async def get_pool(self, name):
+            calls.append(("get_pool", name))
+            return pool
+
+        async def get_claim(self, existing_pool):
+            expected_name = f"{existing_pool.metadata.name}-claim"
+            calls.append(("get_claim", expected_name))
+            assert created_claim is not None
+            assert created_claim.metadata.name == expected_name
+            return created_claim
+
+        async def wait_claim(self, claim):
+            assert claim is created_claim
+            return bound
+
+        async def wait_service_ready(self, sandbox, service, time_to_start):
+            return None
+
+        async def delete_claim(self, claim):
+            calls.append(("delete_claim", claim.metadata.name))
+
+        async def close(self):
+            calls.append(("close",))
+
+    client = Client()
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", lambda: client)
+
+    await FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo").connect()
+    await FleetCloudTransport(image=None, name="demo").connect()
+    await FleetCloudTransport.delete_sandbox("demo")
+
+    assert calls == [
+        ("create_claim", "demo-claim"),
+        ("get_pool", "demo"),
+        ("get_claim", "demo-claim"),
+        ("get_pool", "demo"),
+        ("get_claim", "demo-claim"),
+        ("delete_claim", "demo-claim"),
+        ("close",),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["reconcile_template", "wait_pool"])
+async def test_retry_reruns_full_image_reconciliation_order(monkeypatch, failure_stage):
+    calls = []
+    pool = _pool()
+    bound = _bound()
+    failed_once = False
+
+    class Client:
+        async def reconcile_pool(self, request):
+            calls.append("reconcile_pool")
+            return pool
+
+        async def reconcile_template(self, request):
+            nonlocal failed_once
+            calls.append("reconcile_template")
+            if failure_stage == "reconcile_template" and not failed_once:
+                failed_once = True
+                raise RuntimeError("reconcile_template failed")
+            return "template"
+
+        async def wait_pool(self, reconciled_pool):
+            nonlocal failed_once
+            calls.append("wait_pool")
+            if failure_stage == "wait_pool" and not failed_once:
+                failed_once = True
+                raise RuntimeError("wait_pool failed")
+            return reconciled_pool
+
+        async def create_claim(self, request):
+            calls.append("create_claim")
+            assert request.name == "demo-claim"
+            return "claim"
+
+        async def wait_claim(self, claim):
+            calls.append("wait_claim")
+            return bound
+
+        async def wait_service_ready(self, sandbox, service, time_to_start):
+            calls.append("service_ready")
+
+    client = Client()
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", lambda: client)
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
+
+    with pytest.raises(RuntimeError, match=f"{failure_stage} failed"):
+        await transport.connect()
+
+    assert transport._pool is None
+    assert transport._template is None
+    await transport.connect()
+
+    first_attempt = ["reconcile_pool", "reconcile_template"]
+    if failure_stage == "wait_pool":
+        first_attempt.append("wait_pool")
+    assert calls == first_attempt + [
+        "reconcile_pool",
+        "reconcile_template",
+        "wait_pool",
+        "create_claim",
+        "wait_claim",
+        "service_ready",
+    ]
 
 
 @pytest.mark.asyncio
@@ -201,9 +332,8 @@ async def test_connect_failure_releases_only_created_claim(monkeypatch, failure_
     assert "delete_template" not in calls
     assert "delete_namespace" not in calls
     assert transport._sdk is client
-    assert transport._pool is (None if failure_stage == "reconcile_pool" else pool)
-    template_reconciled = failure_stage not in {"reconcile_pool", "reconcile_template"}
-    assert transport._template == ("template" if template_reconciled else None)
+    assert transport._pool is None
+    assert transport._template is None
     assert transport._claim is None
     assert not transport._provisioned
 
@@ -250,8 +380,8 @@ async def test_connect_failure_preserves_claim_when_claim_cleanup_fails(monkeypa
     assert str(error.value.__cause__) == "claim delete failed"
     assert calls == [("delete_claim", "claim")]
     assert transport._claim == "claim"
-    assert transport._pool is pool
-    assert transport._template == "template"
+    assert transport._pool is None
+    assert transport._template is None
 
 
 @pytest.mark.asyncio

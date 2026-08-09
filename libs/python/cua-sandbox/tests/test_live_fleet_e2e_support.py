@@ -140,6 +140,7 @@ def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
             "authorization": "Bearer top-secret",
             "token": "token-value",
             "client_secret": "client-secret-value",
+            "api_key": "api-key-value",
             "nested": {
                 "Authorization": "Nested Bearer secret",
                 "items": [{"TOKEN": "nested-token"}, {"safe": "visible"}],
@@ -154,6 +155,7 @@ def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
         "Bearer top-secret",
         "token-value",
         "client-secret-value",
+        "api-key-value",
         "Nested Bearer secret",
         "nested-token",
     ):
@@ -161,6 +163,7 @@ def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
     assert summary["authorization"] == "<redacted>"
     assert summary["token"] == "<redacted>"
     assert summary["client_secret"] == "<redacted>"
+    assert summary["api_key"] == "<redacted>"
     assert summary["nested"]["Authorization"] == "<redacted>"
     assert summary["nested"]["items"][0]["TOKEN"] == "<redacted>"
     assert summary["nested"]["items"][1]["safe"] == "visible"

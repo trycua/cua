@@ -25,7 +25,8 @@ DEFAULT_BASE_URL = "https://run.cua.ai"
 DEFAULT_TOKEN_URL = (
     "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
 )
-SENSITIVE_SUMMARY_KEY_PARTS = {"apikey", "authorization", "password", "secret", "token"}
+SENSITIVE_SUMMARY_KEY_NAMES = {"api_key", "apikey"}
+SENSITIVE_SUMMARY_KEY_PARTS = {"authorization", "password", "secret", "token"}
 
 
 class HttpxFleetClient(HttpClient):
@@ -137,7 +138,10 @@ def assert_template_contract(template: Any, expected_port: int) -> None:
 
 def _is_sensitive_summary_key(key: object) -> bool:
     normalized = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
-    return any(part in SENSITIVE_SUMMARY_KEY_PARTS for part in normalized.split("_"))
+    return (
+        normalized in SENSITIVE_SUMMARY_KEY_NAMES
+        or any(part in SENSITIVE_SUMMARY_KEY_PARTS for part in normalized.split("_"))
+    )
 
 
 def _redact_summary(value: Any) -> Any:

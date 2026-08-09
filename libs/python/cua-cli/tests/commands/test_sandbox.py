@@ -363,16 +363,18 @@ class TestCmdRestart:
         """Test restarting a sandbox."""
         args = args_namespace(name="test-sandbox")
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.restart_vm = AsyncMock(return_value={"status": "restarting"})
+        mock_restart = AsyncMock()
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.restart = mock_restart
 
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
             with patch.object(sandbox, "print_success"):
                 result = sandbox.cmd_restart(args)
 
         assert result == 0
+        mock_restart.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
 
 
 class TestCmdSuspend:
@@ -382,29 +384,35 @@ class TestCmdSuspend:
         """Test suspending a sandbox."""
         args = args_namespace(name="test-sandbox")
 
-        # Mock the API response (status 202 = suspending)
-        async def mock_api_request(*args, **kwargs):
-            return (202, {"status": "suspending"})
+        mock_suspend = AsyncMock()
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.suspend = mock_suspend
 
-        with patch.object(sandbox, "_api_request", side_effect=mock_api_request):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
             with patch.object(sandbox, "print_success"):
                 result = sandbox.cmd_suspend(args)
 
         assert result == 0
+        mock_suspend.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
 
     def test_suspend_unsupported(self, args_namespace, mock_api_key):
         """Test suspend on unsupported sandbox."""
         args = args_namespace(name="test-sandbox")
 
-        # Mock the API response (status 400 = unsupported)
-        async def mock_api_request(*args, **kwargs):
-            return (400, "Suspend not supported for Windows")
+        mock_suspend = AsyncMock(side_effect=RuntimeError("Suspend not supported for Windows"))
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.suspend = mock_suspend
 
-        with patch.object(sandbox, "_api_request", side_effect=mock_api_request):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
             with patch.object(sandbox, "print_error"):
                 result = sandbox.cmd_suspend(args)
 
         assert result == 1
+        mock_suspend.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
 
 
 class TestCmdDelete:
@@ -495,63 +503,69 @@ class TestCmdVnc:
         """Test VNC opens browser with correct URL."""
         args = args_namespace(name="test-sandbox")
 
-        vm_info = {
-            "name": "test-sandbox",
-            "vnc_url": "https://vnc.example.com/test",
-        }
+        mock_sandbox = MagicMock()
+        mock_sandbox.get_display_url = AsyncMock(
+            return_value="https://vnc.example.com/test"
+        )
+        mock_sandbox.disconnect = AsyncMock()
+        mock_connect = AsyncMock(return_value=mock_sandbox)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.connect = mock_connect
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[vm_info])
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
             with patch.object(sandbox, "print_info"):
                 result = sandbox.cmd_vnc(args)
 
         assert result == 0
+        mock_connect.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
+        mock_sandbox.get_display_url.assert_awaited_once_with(share=True)
+        mock_sandbox.disconnect.assert_awaited_once_with()
         mock_webbrowser.assert_called_once_with("https://vnc.example.com/test")
 
     def test_vnc_constructs_url_from_host(self, args_namespace, mock_api_key, mock_webbrowser):
-        """Test VNC constructs URL when vnc_url not provided."""
+        """Test VNC opens the display URL returned by the sandbox."""
         args = args_namespace(name="test-sandbox")
+        mock_sandbox = MagicMock()
+        mock_sandbox.get_display_url = AsyncMock(
+            return_value="https://sandbox.example.com/vnc?password=secret123"
+        )
+        mock_sandbox.disconnect = AsyncMock()
+        mock_connect = AsyncMock(return_value=mock_sandbox)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.connect = mock_connect
 
-        vm_info = {
-            "name": "test-sandbox",
-            "host": "sandbox.example.com",
-            "password": "secret123",
-        }
-
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[vm_info])
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
             with patch.object(sandbox, "print_info"):
                 result = sandbox.cmd_vnc(args)
 
         assert result == 0
-        mock_webbrowser.assert_called_once()
-        # Check URL contains host and encoded password
-        call_url = mock_webbrowser.call_args[0][0]
-        assert "sandbox.example.com" in call_url
-        assert "secret123" in call_url
+        mock_connect.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
+        mock_sandbox.get_display_url.assert_awaited_once_with(share=True)
+        mock_sandbox.disconnect.assert_awaited_once_with()
+        mock_webbrowser.assert_called_once_with(
+            "https://sandbox.example.com/vnc?password=secret123"
+        )
 
     def test_vnc_sandbox_not_found(self, args_namespace, mock_api_key):
         """Test VNC with nonexistent sandbox."""
         args = args_namespace(name="nonexistent")
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.list_vms = AsyncMock(return_value=[])
+        mock_connect = AsyncMock(side_effect=ValueError("Sandbox 'nonexistent' not found"))
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.connect = mock_connect
 
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
             with patch.object(sandbox, "print_error"):
                 result = sandbox.cmd_vnc(args)
 
         assert result == 1
+        mock_connect.assert_awaited_once_with(
+            "nonexistent", local=False, api_key="test-access-token"
+        )
 
 
 class TestCmdShell:
@@ -605,18 +619,19 @@ class TestCmdShell:
             rows=None,
         )
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.get_vm = AsyncMock(return_value={"status": "not_found"})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+        with patch.object(
+            sandbox,
+            "_get_sandbox_api_url",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Sandbox 'nonexistent' not found"),
+        ) as mock_api_url:
             with patch.object(sandbox, "print_error") as mock_error:
                 with patch("sys.stdin") as mock_stdin:
                     mock_stdin.isatty.return_value = False
                     result = sandbox.cmd_shell(args)
 
         assert result == 1
+        mock_api_url.assert_awaited_once_with("nonexistent", False)
         mock_error.assert_called()
 
     def test_shell_no_api_url(self, args_namespace, mock_api_key):
@@ -628,18 +643,21 @@ class TestCmdShell:
             rows=None,
         )
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.get_vm = AsyncMock(return_value={"status": "stopped", "api_url": None})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+        with patch.object(
+            sandbox,
+            "_get_sandbox_api_url",
+            new_callable=AsyncMock,
+            side_effect=ValueError(
+                "Sandbox 'test-sandbox' has no API URL (is it running?)"
+            ),
+        ) as mock_api_url:
             with patch.object(sandbox, "print_error") as mock_error:
                 with patch("sys.stdin") as mock_stdin:
                     mock_stdin.isatty.return_value = False
                     result = sandbox.cmd_shell(args)
 
         assert result == 1
+        mock_api_url.assert_awaited_once_with("test-sandbox", False)
         mock_error.assert_called()
 
 

@@ -5,7 +5,7 @@ Unified command-line interface for CUA (Computer-Use Agents).
 ## Installation
 
 ```bash
-pip install cua-cli
+pip install --extra-index-url https://wheels.cua.ai/simple cua-cli
 ```
 
 ## Usage
@@ -52,16 +52,16 @@ cua serve-mcp --permissions sandbox:all,computer:readonly
 
 ```bash
 # Basic installation
-pip install cua-cli
+pip install --extra-index-url https://wheels.cua.ai/simple cua-cli
 
 # With MCP server support
-pip install cua-cli[mcp]
+pip install --extra-index-url https://wheels.cua.ai/simple "cua-cli[mcp]"
 
 # With skills recording (VLM captioning)
-pip install cua-cli[skills]
+pip install --extra-index-url https://wheels.cua.ai/simple "cua-cli[skills]"
 
 # Full installation
-pip install cua-cli[all]
+pip install --extra-index-url https://wheels.cua.ai/simple "cua-cli[all]"
 ```
 
 ## MCP Integration

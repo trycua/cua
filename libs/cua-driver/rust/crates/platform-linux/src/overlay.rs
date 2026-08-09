@@ -389,6 +389,26 @@ pub fn is_enabled_for(key: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Truthful render acknowledgement for lifecycle inspection. This checks the
+/// exact session key and never inherits the seeded default cursor.
+pub fn is_visible_for_session(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|map| map.cursors.get(key))
+                .map(|rs| {
+                    rs.core.cfg.enabled
+                        && rs.core.visible
+                        && rs.core.idle_alpha >= 0.004
+                        && rs.core.pos.0 >= -100.0
+                })
+        })
+        .unwrap_or(false)
+}
+
 pub fn current_position() -> (f64, f64) {
     current_position_for("default")
 }

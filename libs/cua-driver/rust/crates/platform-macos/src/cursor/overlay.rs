@@ -91,13 +91,13 @@ struct RenderMap {
     backing_scale: f64,
     /// Frozen launch-time config used as the template for lazily-created cursors.
     template: CursorConfig,
-    /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
+    /// Render-side tombstone of ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
     /// click/move from another task that lands AFTER the owning session's
     /// `Remove` can never resurrect the just-removed cursor (the ghost-cursor
-    /// resurrection race). Keyed on session_id, which is unique per session, so
-    /// a permanent tombstone is correct (no cursor_id reuse across a
-    /// session_end boundary). "default" is never tombstoned.
+    /// resurrection race). An explicit owner-checked `start_session` revival
+    /// clears this tombstone before the cursor is reused. "default" is never
+    /// tombstoned.
     ended: std::collections::HashSet<CursorKey>,
 }
 
@@ -220,8 +220,8 @@ pub fn init(cfg: CursorConfig) {
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    // Empty key is the explicit no-cursor sentinel → drop the command so a
-    // cursor-less run never paints.
+    // Empty key is the explicit no-cursor sentinel for direct platform calls
+    // that bypass lifecycle dispatch.
     if key.is_empty() {
         return;
     }
@@ -234,6 +234,22 @@ pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
 /// seeded `"default"` cursor (the anonymous / one-shot identity).
 pub fn send_command_default(cmd: OverlayCommand) {
     send_command("default".to_owned(), cmd);
+}
+
+/// Truthful render acknowledgement for lifecycle inspection. This never falls
+/// back to the seeded default cursor: an absent, off-screen, disabled, or
+/// idle-faded session cursor is not reported as visible.
+pub fn is_visible_for_session(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|map| map.cursors.get(key))
+                .map(cursor_is_externally_visible)
+        })
+        .unwrap_or(false)
 }
 
 /// Remove a session's owned cursor from the render collection (fired from the

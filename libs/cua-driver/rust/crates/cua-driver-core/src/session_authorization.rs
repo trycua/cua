@@ -241,6 +241,15 @@ impl EffectiveAuthorizationContext {
         self.transport_session.as_deref()
     }
 
+    /// Lifecycle idle TTL selected by a trusted delegated-session host. An
+    /// ordinary compatibility context uses the product default instead.
+    #[doc(hidden)]
+    pub fn lifecycle_idle_ttl_override(&self) -> Option<Duration> {
+        (self.source == AuthorizationContextSource::TrustedHost)
+            .then_some(self.idle_ttl)
+            .flatten()
+    }
+
     #[doc(hidden)]
     pub fn user_policy_sha256(&self) -> Option<&str> {
         self.user_policy_sha256.as_deref()

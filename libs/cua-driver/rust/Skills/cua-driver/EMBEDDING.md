@@ -194,8 +194,9 @@ daemon child.
   completion is unknown.
 - The Rust owner holds a parent-liveness pipe, so host death closes the daemon;
   orderly shutdown should still await `stop()`.
-- Capture scope belongs to each session. One embedded daemon can concurrently
-  serve `auto`, strict `window`, and strict `desktop` sessions.
+- Capture modality belongs to each observation or action target, not to the
+  lifecycle session. One embedded daemon can concurrently serve exact window
+  and desktop calls without changing session state.
 - Permission changes require destroying clients, restarting the daemon, and
   reconnecting. A connection from the old generation is never reusable.
 

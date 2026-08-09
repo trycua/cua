@@ -58,7 +58,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.6.0",
+                    "contract_version": "0.7.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -142,7 +142,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.6.0",
+                                "contract_version": "0.7.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",
@@ -186,6 +186,8 @@ except FileNotFoundError:
             expected_methods = {
                 "start_session",
                 "escalate_session",
+                "get_session",
+                "list_sessions",
                 "get_session_state",
                 "end_session",
                 "get_desktop_state",
@@ -224,6 +226,7 @@ except FileNotFoundError:
                     ClickInput(
                         x=12.0,
                         y=34.0,
+                        target=None,
                         scope=DesktopScope.DESKTOP,
                         session="python-run",
                         button=ClickButton.LEFT,

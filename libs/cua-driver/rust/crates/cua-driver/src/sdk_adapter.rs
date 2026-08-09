@@ -279,12 +279,73 @@ impl SdkAdapter {
             .map(|_| ())
     }
 
-    pub fn create_trusted_session(
+    pub fn end_transport_sessions(&self, transport_session: &str) -> usize {
+        let owner = format!("{}{}", self.runtime_prefix, transport_session);
+        cua_driver_core::session::end_sessions_for_owner(
+            &owner,
+            cua_driver_core::session::SessionEndReason::ProcessExit,
+        )
+    }
+
+    pub fn operator_sessions_json(&self) -> Value {
+        let sessions = cua_driver_core::session::list_session_snapshots_with_prefix(
+            &self.runtime_prefix,
+            cua_driver_core::session::DEFAULT_SESSION_IDLE_TTL,
+        )
+        .into_iter()
+        .map(|session| {
+            let owner_short_id = session
+                .owner_transport
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric())
+                .rev()
+                .take(8)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>();
+            let transport = match session.transport {
+                cua_driver_core::session::SessionTransport::Cli => "cli",
+                cua_driver_core::session::SessionTransport::Daemon => "daemon",
+                cua_driver_core::session::SessionTransport::McpStdio => "mcp_stdio",
+                cua_driver_core::session::SessionTransport::McpHttp => "mcp_http",
+            };
+            let client_kind = match session.client_kind {
+                cua_driver_core::session::SessionClientKind::Cli => "cli",
+                cua_driver_core::session::SessionClientKind::Direct => "direct",
+                cua_driver_core::session::SessionClientKind::Mcp => "mcp",
+                cua_driver_core::session::SessionClientKind::PythonSdk => "python_sdk",
+                cua_driver_core::session::SessionClientKind::TypescriptSdk => "typescript_sdk",
+            };
+            json!({
+                "session": session.public_label.as_deref().and_then(cursor_overlay::sanitize_session_label),
+                "implicit": session.implicit,
+                "state": if session.ending { "ending" } else { "active" },
+                "client_kind": client_kind,
+                "transport": transport,
+                "owner_short_id": owner_short_id,
+                "cursor_visible": cua_driver_core::session::cursor_visible(&session.runtime_id),
+                "recording_active": cua_driver_core::session::recording_active(&session.runtime_id),
+                "started_seconds_ago": session.started_for.as_secs(),
+                "idle_seconds": session.idle.as_secs(),
+                "expires_in_seconds": session.expires_in.as_secs(),
+            })
+        })
+        .collect::<Vec<_>>();
+        let count = sessions.len();
+        json!({
+            "sessions": sessions,
+            "count": count,
+        })
+    }
+
+    pub fn create_trusted_session_for_transport(
         &self,
         options: TrustedSessionOptions,
+        transport_session: &str,
     ) -> Result<Arc<CuaDriverSession>, String> {
         self.driver
-            .create_trusted_session(options)
+            .create_trusted_session_for_transport(options, transport_session)
             .map_err(|error| error.to_string())
     }
 

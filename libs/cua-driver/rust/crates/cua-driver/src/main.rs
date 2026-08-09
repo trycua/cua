@@ -704,6 +704,10 @@ fn main() {
             let pid_path = serve::default_pid_file_path();
             serve::run_status_cmd(&sp, &pid_path);
         }
+        cli::Command::Sessions { json, socket } => {
+            let sp = socket.unwrap_or_else(serve::default_socket_path);
+            serve::run_sessions_list_cmd(&sp, json);
+        }
         cli::Command::Recording {
             subcommand,
             args,
@@ -956,6 +960,11 @@ fn main() -> anyhow::Result<()> {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
             serve::run_status_cmd(&sp, &pid_path);
+            return Ok(());
+        }
+        cli::Command::Sessions { json, socket } => {
+            let sp = socket.unwrap_or_else(serve::default_socket_path);
+            serve::run_sessions_list_cmd(&sp, json);
             return Ok(());
         }
         cli::Command::Recording {

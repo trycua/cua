@@ -1887,7 +1887,7 @@ fn mouse_button_name(button: u8) -> &'static str {
 }
 
 fn resolve_cursor_key(args: &Value) -> String {
-    for key in ["session", "cursor_id"] {
+    for key in ["session", "_session_id", "cursor_id"] {
         if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
             if !v.is_empty() {
                 return v.to_owned();
@@ -1895,6 +1895,35 @@ fn resolve_cursor_key(args: &Value) -> String {
         }
     }
     "default".to_owned()
+}
+
+#[cfg(test)]
+mod cursor_key_resolution_tests {
+    use super::resolve_cursor_key;
+    use serde_json::json;
+
+    #[test]
+    fn trusted_implicit_session_owns_the_cursor() {
+        assert_eq!(resolve_cursor_key(&json!({})), "default");
+        assert_eq!(
+            resolve_cursor_key(&json!({"_session_id": "implicit-lease"})),
+            "implicit-lease"
+        );
+        assert_eq!(
+            resolve_cursor_key(&json!({
+                "_session_id": "implicit-lease",
+                "cursor_id": "legacy"
+            })),
+            "implicit-lease"
+        );
+        assert_eq!(
+            resolve_cursor_key(&json!({
+                "session": "named",
+                "_session_id": "implicit-lease"
+            })),
+            "named"
+        );
+    }
 }
 
 fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
@@ -2210,7 +2239,7 @@ impl Tool for ClickTool {
         let cursor_id = resolve_cursor_key(&args);
         let modifiers: Vec<String> = args.str_array("modifier");
 
-        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // ── Window-less screen-absolute branch (desktop target) ───────────────
         // x,y with NO pid and NO window_id → TRUE SCREEN pixels. Foreground,
         // desktop-scope click (the Linux peer of the Windows WindowFromPoint /
         // macOS global-HID path). The core registry has already enforced the
@@ -6241,12 +6270,11 @@ impl Tool for GetDesktopStateTool {
     fn def(&self) -> &ToolDef {
         GDS_DEF.get_or_init(|| ToolDef {
             name: "get_desktop_state".into(),
-            description: "Full-display vision screenshot in true screen pixels (no downscale), \
-                for capture_scope=\"desktop\" GUI loops. Captures the entire display (root \
-                window) as native-size PNG so screen-absolute pixel coordinates land exactly. \
-                No AT-SPI walk.".into(),
+            description: "Capture the full display in true screen pixels with no downscale. \
+                Use its native-size PNG as the coordinate source for actions whose target is \
+                {kind:\"desktop\",display_id:\"primary\"}. No AT-SPI walk.".into(),
             input_schema: json!({"type":"object","properties":{
-                "session":{"type":"string","description":"Optional session id."},
+                "session":{"type":"string","description":"Optional public session label. Omit it to use the authenticated transport's implicit lifecycle session."},
                 "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -6462,14 +6490,9 @@ impl Tool for MoveCursorTool {
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
         // overlay arrow settles to the natural macOS-style pose.
-        crate::overlay::send_command_for(
-            cursor_id.clone(),
-            cursor_overlay::OverlayCommand::MoveTo {
-                x,
-                y,
-                end_heading_radians: std::f64::consts::FRAC_PI_4,
-            },
-        );
+        // Use the acknowledged animation path so a first-ever move seeds and
+        // displays the session cursor just as reliably as a coordinate click.
+        crate::overlay::animate_cursor_to_for(cursor_id.clone(), x, y).await;
         // Native Wayland: also warp the real cursor via zwlr_virtual_pointer.
         // Off-thread because the wayland-client roundtrip is blocking. Best-effort
         // — overlay update + registry write already succeeded; surface a warning
@@ -6867,12 +6890,12 @@ impl Tool for SetConfigTool {
             || args.get("key").and_then(Value::as_str) == Some("capture_scope")
         {
             return ToolResult::error(
-                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
             .with_structured(json!({
                 "code": "config_key_retired",
                 "key": "capture_scope",
-                "replacement": "start_session.capture_scope",
+                "replacement": "action.target",
             }));
         }
         let mut cfg = self.state.config.write().unwrap();
@@ -7768,11 +7791,13 @@ pub fn build_registry_with_provider(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
+                        crate::overlay::is_visible_for_session(session_id),
                         Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
                         false,
                         false,
                         None,

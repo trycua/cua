@@ -27,11 +27,12 @@ pub use cursor::{
     CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
-    CaptureScope, ClickButton, ClickInput, ClipboardReadInput, ClipboardWriteInput, DesktopScope,
-    DragInput, EndSessionInput, EscalateSessionInput, EscalationReason, GetAgentCursorStateInput,
-    GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput,
-    HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection,
-    ScrollInput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClipboardReadInput,
+    ClipboardWriteInput, DesktopScope, DragInput, EndSessionInput, EscalateSessionInput,
+    EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput, InvokeMenuInput,
+    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
     SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
 };
 pub use outputs::{
@@ -40,9 +41,10 @@ pub use outputs::{
     ActionEvidenceKind, ActionResult, ActionResultValidationError, ActionRoute,
     ClipboardReadOutput, ClipboardWriteOutput, CursorMotionOutput, CursorPointOutput,
     CursorPositionOutput, CursorThemeOutput, CursorVisualOutput, DesktopStateOutput,
-    EffectiveScope, EndSessionOutput, GetAgentCursorStateOutput, ScreenSizeOutput,
-    SessionStateOutput, SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput,
-    SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
+    EffectiveScope, EndSessionOutput, GetAgentCursorStateOutput, ListSessionsOutput,
+    ScreenSizeOutput, SessionClientKindOutput, SessionLifecycleState, SessionOutput,
+    SessionStateOutput, SessionTransportOutput, SetAgentCursorEnabledOutput,
+    SetAgentCursorMotionOutput, SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
 };
 pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
@@ -57,7 +59,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.6.0";
+pub const CONTRACT_VERSION: &str = "0.7.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -294,7 +296,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.6.0");
+        assert_eq!(manifest.contract_version, "0.7.0");
         assert!(manifest.experimental);
     }
 

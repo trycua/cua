@@ -198,10 +198,8 @@ osascript -e \
 
 # An actual desktop capture triggers Tahoe's separate direct-capture prompt.
 DRIVER=/Users/lume/.local/bin/cua-driver
-"$DRIVER" call set_config '{"capture_scope":"desktop"}'
 "$DRIVER" call get_desktop_state '{}' \
   > /tmp/cua-driver-seed-desktop-state.json
-"$DRIVER" call set_config '{"capture_scope":"window"}'
 ```
 
 Choose **Allow** for:

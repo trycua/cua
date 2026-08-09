@@ -773,11 +773,13 @@ pub fn register_all(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
+                        crate::cursor::overlay::is_visible_for_session(session_id),
                         Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
                         false,
                         false,
                         None,

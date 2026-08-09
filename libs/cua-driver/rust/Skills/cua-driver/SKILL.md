@@ -142,8 +142,8 @@ in the background.
 
 ## The no-foreground principle (window phase)
 
-In a strict `window` session, and during the initial window phase of an
-`auto` session, **the user's frontmost app MUST NOT change.** Every platform
+During window-targeted background actions, **the user's frontmost app MUST NOT
+change.** Every platform
 has its own list of forbidden commands:
 
 - macOS: any `open` invocation, any `osascript` that mutates GUI
@@ -157,11 +157,11 @@ If you reach for a command that says "activate", "foreground",
 "raise", or "make key", stop and translate to the cua-driver tool
 that does the same intent without focus-stealing.
 
-A strict `desktop` session is an explicit user choice to operate the visible
-desktop and therefore uses foreground/system input. An `auto` session may enter
-that phase only after the complete window ladder below has been attempted and
-verified, followed by `escalate_session`. Never infer desktop permission from a
-failed action or a proxy/transport session id.
+A desktop target is an explicit per-call choice to operate the visible desktop
+and therefore uses foreground/system input. Use it only after the narrower
+window ladder has been attempted and verified. Permission policy must still
+admit the display resource. Never infer desktop permission from a failed action
+or a public session label.
 
 ## GUI transport defaults — prefer cua-driver over GUI shell shims
 
@@ -232,7 +232,7 @@ cua-driver stop
 ```
 
 For Chromium page content, keep the same native window selection but switch to
-the browser capability loop: `start_session`, bind `(pid, window_id)` with
+the browser capability loop: use one lifecycle session, bind `(pid, window_id)` with
 `get_browser_state`, snapshot the returned tab, then use `browser_click`,
 `browser_type`, or `browser_navigate`. Read `BROWSER.md` before using this
 route. Browser target ids, tab ids, and refs are session-scoped and stale refs
@@ -240,8 +240,9 @@ must be replaced by a fresh snapshot.
 
 ## Agent cursor overlay
 
-Visual cursor overlay for demos and screen recordings. It is enabled by
-default for declared sessions; anonymous actions remain cursor-less. Toggle with
+Visual cursor overlay for demos and screen recordings. It initializes on the
+first cursor-bearing action, including `move_cursor`, and follows the
+transport's implicit or named lifecycle session. Toggle a named cursor with
 `set_agent_cursor_enabled` to hide or re-show it. The embedded
 `cua.default` theme uses a session-colored pointer over a larger,
 cursor-shaped glow in the same session color. The glow fades to transparent
@@ -347,7 +348,8 @@ An optional escalation is a harness instruction, never an automatic retry:
 - `pixel`: refresh visual state and choose an exact pixel target;
 - `foreground`: explicitly select foreground delivery if session policy allows;
 - `page`: bind the native window to a supported browser page route;
-- `session`: prepare or explicitly widen the session only when policy permits.
+- `session`: a legacy compatibility signal from an older capture-scope daemon;
+  current callers choose a desktop target on the specific action instead.
 
 Branch on the closed reason vocabulary:
 `route_unavailable`, `delivery_failed`, `effect_unconfirmed`,
@@ -357,38 +359,31 @@ After any action, keep using `verify_state` or a fresh state snapshot for the
 actual task postcondition. The multimodal harness owns visual reading and the
 decision to stop, retry, or advance the ladder.
 
-## Choose capture scope when the session starts
+## Choose the target on each action
 
-`capture_scope` is a per-session policy, not persistent configuration. Declare
-it with `start_session`; it is immutable until that session ends. Concurrent
-sessions may choose different policies safely.
+A session owns lifecycle, cursor, recording, cleanup, and telemetry state. It
+does not store the current capture modality. Select an exact target on each
+action:
 
-- `auto` (default): begins with effective scope `window`. Desktop perception
-  and actions are locked until the window ladder is exhausted, each attempted
-  action is verified, and the caller explicitly invokes `escalate_session`.
-  Escalation is permanent for that session, and window-scoped tools remain
-  disabled. To recover window scope, call `end_session`, then call
-  `start_session` with a new session id.
-- `window`: strict window-only perception and actions. Desktop tools are always
-  rejected with `desktop_scope_disabled`.
-- `desktop`: strict full-desktop perception and foreground/system actions.
-  Window-scoped perception and actions are rejected with
-  `window_scope_disabled`.
-
-```bash
-cua-driver start_session '{"session":"research-1","capture_scope":"auto"}'
-cua-driver get_session_state '{"session":"research-1"}'
+```jsonc
+{"target":{"kind":"window","pid":844,"window_id":10725}}
+{"target":{"kind":"desktop","display_id":"primary"}}
 ```
 
-Do not use `config set capture_scope` or `set_config`; that key is retired and
-stale values on disk are ignored. Always pass the public `session` field on
-state and action calls. Reserved fields such as `_session_id` are transport
-metadata and cannot create or change policy.
+The window target uses window-local coordinates and the background/foreground
+delivery ladder. The desktop target uses screen coordinates and foreground
+delivery. A desktop action does not disable window tools for later calls.
 
-During a mixed-version rollout, require `tools/list` to advertise
-`session.capture_scope` (and `session.capture_scope.escalate` for `auto`). If an
-older daemon does not advertise them, fail closed and ask for an upgrade; never
-fall back to the retired global config key.
+`start_session` is optional. The first admitted stateful call creates one
+implicit session for the authenticated transport, and later unnamed calls on
+that transport reuse it. The default idle TTL is five minutes. Use a public
+session label only when you need explicit naming or lifecycle control.
+
+Do not use `config set capture_scope` or `set_config`; that key is retired and
+stale values on disk are ignored. `start_session.capture_scope`,
+`get_session_state`, and `escalate_session` are deprecated compatibility
+surfaces. There is no `deescalate_session`. Reserved fields such as
+`_session_id` are transport metadata and cannot create authority.
 
 ### Why window selection is the caller's job now
 
@@ -573,15 +568,12 @@ if resp.escalation.target == "foreground"
     # unfocused window there; see LINUX.md
     verify again
 
-# Route 5 — desktop fallback (auto sessions only, explicit and one-way)
+# Route 5 — per-call desktop fallback
 # Reach this only after semantic, AX, window-pixel, and foreground-window
 # delivery have all been exhausted and verified ineffective.
-escalate_session(session,
-    reason="foreground_ineffective",       # or another advertised reason
-    detail="bounded non-sensitive summary")
-get_desktop_state(session)                  # full primary display
-desktop_action(session, scope="desktop", ...)  # no pid/window_id
-get_desktop_state(session)                  # verify in the same coordinate frame
+get_desktop_state()                         # full primary display
+desktop_action(target={kind:"desktop", display_id:"primary"}, ...)
+get_desktop_state()                         # verify in the same coordinate frame
 ```
 
 The two ideas to hold onto: (1) the AX tree **lies** on canvas / web /
@@ -612,44 +604,40 @@ last resort.
 ## The canonical loop
 
 ```
-start_session(session, capture_scope="auto") # once per run; policy is immutable
+# start_session(session) is optional; ordinary calls create an implicit session
 launch_app(target)
   → pick window_id from the returned `windows` array
     (or call list_windows(pid) separately)
   → get_window_state(pid, window_id)
-    → [act]  # every action also takes (pid, window_id) + your `session`
+    → [act]  # pass target={kind:"window", pid, window_id}
   → verify_state(pid, window_id, expect)  # structured check; optional image
-end_session(session)              # when the run finishes
+end_session(session?)             # optional explicit cleanup
 ```
 
-For strict desktop sessions, replace the window portion with
-`get_desktop_state(session) → action(session, scope="desktop", ...) →
-get_desktop_state(session)`. Desktop actions use screen-absolute coordinates
-from that exact full-display image and omit `pid`/`window_id`. The global
-`get_screen_size` and `get_cursor_position` helpers are desktop-scoped too.
+For screen-absolute work, replace the window portion with
+`get_desktop_state() → action(target={kind:"desktop",display_id:"primary"}, ...)
+→ get_desktop_state()`. Desktop actions use coordinates from that exact
+full-display image.
 
 `launch_app` now returns a `windows` array alongside the pid, so the
 common case collapses to two calls (`launch_app` → `get_window_state`)
 without a separate `list_windows` hop.
 
-**Declare a session.** A session is _your run's_ identity — a stable id
-you choose (`"research-1"`), declared with `start_session` and passed as
-`session` on every action. It owns your agent cursor and capture policy (a
-distinct colour and one immutable policy per id), follows the run across any
-apps/windows, and is the same whether
-you drive over MCP, the CLI, or the socket. Declaring the session creates the
-cursor; anonymous actions remain cursor-less.
-End with `end_session` (or the idle-TTL reclaims it).
+**Name a session only when useful.** An unnamed transport still gets one private
+lifecycle identity and visible agent cursor. A public label such as
+`"research-1"` makes explicit inspection and cleanup easier, but it is not a
+credential. End with `end_session` when useful; transport close or the
+five-minute idle TTL also reclaims it.
 
-**Concurrent runs/subagents:** each run may independently choose `auto`,
-`window`, or `desktop`; one session's escalation never changes another. Also,
+**Concurrent runs/subagents:** each transport gets its own implicit session.
+Also,
 `launch_app` is idempotent — two runs that
 launch the same app get the **same** instance (and on single-instance apps
 like Calculator, the same window), so they clobber each other. Give each run
-its **own `session`** (→ its own cursor) AND pass
+its **own connection** (for independent lifecycle/cursor ownership) AND pass
 `creates_new_application_instance: true` to `launch_app` (→ its own window).
-The element cache is keyed on `(pid, window_id)` and the cursor on `session`,
-so distinct instances + distinct sessions keep the runs fully separated.
+The element cache is keyed on `(pid, window_id)` and the cursor on the private
+lifecycle session, so distinct instances and transports keep the runs isolated.
 
 **Parallelism vs. ordering.** Distinct sessions give distinct _cursors_, not
 distinct _connections_. Subagents that share one `cua-driver mcp` (stdio)

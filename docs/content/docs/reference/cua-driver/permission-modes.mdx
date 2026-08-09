@@ -323,8 +323,10 @@ create a fresh authorization generation.
 
 ## Cursor and session badge
 
-The semantic cursor is optional activity feedback. A declared session displays
-its sanitized public session name in a badge below the cursor. The badge uses
+The semantic cursor is optional activity feedback. It initializes on the first
+cursor-bearing action even when the transport uses an implicit session. A
+publicly named session displays its sanitized label in a badge below the
+cursor. The badge uses
 the session color, strips control characters, collapses whitespace, and
 truncates long labels.
 

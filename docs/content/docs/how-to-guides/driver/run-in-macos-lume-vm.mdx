@@ -102,10 +102,8 @@ without the system picker. Trigger that request with an actual desktop capture:
 ```bash
 DRIVER=/Users/lume/.local/bin/cua-driver
 
-"$DRIVER" call set_config '{"capture_scope":"desktop"}'
 "$DRIVER" call get_desktop_state '{}' \
   > /tmp/cua-driver-desktop-state.json
-"$DRIVER" call set_config '{"capture_scope":"window"}'
 ```
 
 Choose **Allow** on the direct-capture prompt. Check that the command returned
@@ -169,10 +167,8 @@ assert status['screen_recording_capturable'] is True
 assert status['direct_capture_status'] == 'ready'
 PY
 /Users/lume/.local/bin/cua-driver call get_accessibility_tree '{}'
-/Users/lume/.local/bin/cua-driver call set_config '{"capture_scope":"desktop"}'
 /Users/lume/.local/bin/cua-driver call get_desktop_state '{}' \
   > /tmp/cua-driver-desktop-state-second.json
-/Users/lume/.local/bin/cua-driver call set_config '{"capture_scope":"window"}'
 ```
 
 The commands must succeed without opening System Settings or another consent

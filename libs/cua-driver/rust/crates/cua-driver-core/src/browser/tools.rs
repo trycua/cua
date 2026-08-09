@@ -90,7 +90,7 @@ fn schema_ref() -> Value {
 fn schema_session() -> Value {
     json!({
         "type": "string",
-        "description": "Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session."
+        "description": "Optional public session label. Browser targets, tabs, and refs use the authenticated transport's implicit lifecycle session when omitted."
     })
 }
 

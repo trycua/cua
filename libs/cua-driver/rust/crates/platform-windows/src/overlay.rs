@@ -98,11 +98,12 @@ struct RenderMap {
     last_tick: Instant,
     /// Frozen launch-time config used as the template for lazily-created cursors.
     template: CursorConfig,
-    /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
+    /// Render-side tombstone of ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
     /// click/move from another task that lands AFTER the owning session's
-    /// `Remove` can never resurrect the just-removed cursor. "default" is never
-    /// tombstoned (it backs the anonymous / one-shot path).
+    /// `Remove` can never resurrect the just-removed cursor. An explicit
+    /// owner-checked revival clears the tombstone. "default" is never
+    /// tombstoned for legacy direct platform calls.
     ended: HashSet<CursorKey>,
     /// Cursor key whose target the overlay should currently sit above. A single
     /// layered window can occupy only one z-band, so the most-recently-touched
@@ -327,6 +328,27 @@ pub fn is_enabled(key: &str) -> bool {
                     .or_else(|| m.cursors.get("default"))
                     .map(|rs| rs.core.visible)
             })
+        })
+        .unwrap_or(false)
+}
+
+/// Truthful render acknowledgement for lifecycle inspection. Unlike
+/// [`is_enabled`], this checks the exact session key and never falls back to
+/// the seeded default cursor.
+pub fn is_visible_for_session(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|map| map.cursors.get(key))
+                .map(|rs| {
+                    rs.core.cfg.enabled
+                        && rs.core.visible
+                        && rs.core.idle_alpha >= 0.004
+                        && rs.core.pos.0 >= -100.0
+                })
         })
         .unwrap_or(false)
 }

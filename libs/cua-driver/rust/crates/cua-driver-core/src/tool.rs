@@ -163,12 +163,13 @@ impl ToolDef {
         //
         // Published SDK tools resolve capabilities from their typed Rust
         // contract. The legacy map remains only for runtime-only tools.
-        let caps = advertised_capabilities_for(&self.name, &self.input_schema);
+        let input_schema = advertised_runtime_input_schema(&self.name, &self.input_schema);
+        let caps = advertised_capabilities_for(&self.name, &input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
         let mut entry = serde_json::json!({
             "name": self.name,
             "description": self.description,
-            "inputSchema": self.input_schema,
+            "inputSchema": input_schema,
             "annotations": {
                 "readOnlyHint": self.read_only,
                 "destructiveHint": self.destructive,
@@ -203,6 +204,30 @@ impl ToolDef {
     }
 }
 
+fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
+    let mut schema = schema.clone();
+    if !crate::action_target::supports_typed_target(tool_name) {
+        return schema;
+    }
+    let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
+        return schema;
+    };
+    // Reuse the portable contract's exact tagged-union schema while retaining
+    // the live runtime's broader legacy `scope=window|desktop` decoder.
+    if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
+        if let Some(portable_properties) = portable
+            .input_schema
+            .get("properties")
+            .and_then(Value::as_object)
+        {
+            if let Some(field_schema) = portable_properties.get("target") {
+                properties.insert("target".into(), field_schema.clone());
+            }
+        }
+    }
+    schema
+}
+
 /// Centralised tool name → capability tokens map. Lookup is by name so
 /// platform-specific tool modules don't have to declare their own
 /// capabilities — keeps the additive-only contract tight and avoids
@@ -234,9 +259,10 @@ impl ToolDef {
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
 /// - `system.config.read`, `system.config.write`
-/// - `session.lifecycle.start`, `session.lifecycle.end`,
-///   `session.capture_scope`, `session.capture_scope.read`,
-///   `session.capture_scope.escalate`
+/// - `session.lifecycle.start`, `session.lifecycle.read`,
+///   `session.lifecycle.list`, `session.lifecycle.end`, plus the deprecated
+///   `session.capture_scope`, `session.capture_scope.read`, and
+///   `session.capture_scope.escalate` compatibility tokens
 /// - `agent_cursor.move`, `agent_cursor.set_enabled`,
 ///   `agent_cursor.set_motion`, `agent_cursor.set_theme`,
 ///   `agent_cursor.state`
@@ -563,6 +589,7 @@ pub struct ToolRegistry {
     session_end_hooks: Vec<crate::session::SessionEndHookRegistration>,
     session_revive_hooks: Vec<crate::session::SessionReviveHookRegistration>,
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
+    _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
@@ -611,14 +638,24 @@ impl ToolRegistry {
                     });
                 }
             });
+        let recording = Arc::new(RecordingSession::new());
+        let weak_recording = Arc::downgrade(&recording);
+        let recording_state_reader =
+            crate::session::register_scoped_recording_state_reader(Arc::new(move |session_id| {
+                weak_recording.upgrade().is_some_and(|recording| {
+                    let state = recording.current_state();
+                    state.enabled && state.owner.as_deref() == Some(session_id)
+                })
+            }));
         Self {
             tools: HashMap::new(),
             order: Vec::new(),
-            recording: Arc::new(RecordingSession::new()),
+            recording,
             replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
             session_end_hooks: vec![session_end_hook],
             session_revive_hooks: Vec::new(),
             cursor_outcome_readers: Vec::new(),
+            _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
             approval_broker,
             protected_resource_grants,
@@ -749,15 +786,19 @@ impl ToolRegistry {
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
     }
 
-    /// Register the platform-independent session-lifecycle tools
-    /// (`start_session` / `end_session`). Call alongside
+    /// Register the platform-independent lifecycle and compatibility tools
+    /// (`start_session`, `get_session`, `list_sessions`, `end_session`, and
+    /// the legacy capture-scope readers). Call alongside
     /// `register_recording_tools` from each platform's `register_all`.
     pub fn register_session_tools(&mut self) {
         use crate::session_tools::{
-            EndSessionTool, EscalateSessionTool, GetSessionStateTool, StartSessionTool,
+            EndSessionTool, EscalateSessionTool, GetSessionStateTool, GetSessionTool,
+            ListSessionsTool, StartSessionTool,
         };
         self.register(Box::new(StartSessionTool));
         self.register(Box::new(EscalateSessionTool));
+        self.register(Box::new(GetSessionTool));
+        self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
     }
@@ -968,6 +1009,11 @@ impl ToolRegistry {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
 
+        if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
+        {
+            return result;
+        }
+
         // This registry is the canonical native dispatch boundary shared by
         // the same-process SDK and every transport adapter. Authorization must
         // live here: transport-only checks leave CuaDriver::create() able to
@@ -990,8 +1036,19 @@ impl ToolRegistry {
         // caller-chosen label alone. Translate it only after authorization so
         // policy and manifests continue to evaluate the public request.
         let runtime_prefix = namespace_runtime_args(&mut args, context, evidence);
+        if session_selecting_tool(resolved_name)
+            && args.get("_session_id").and_then(Value::as_str).is_none()
+        {
+            let implicit = args
+                .get("_transport_session_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{runtime_prefix}implicit-direct"));
+            args["_session_id"] = Value::String(implicit.clone());
+            args["_transport_session_id"] = Value::String(implicit);
+        }
         let runtime_session = args
-            .get("session")
+            .get("_session_id")
             .and_then(Value::as_str)
             .map(str::to_owned);
         if let Some(session) = runtime_session.as_deref() {
@@ -1005,7 +1062,6 @@ impl ToolRegistry {
                 restore_public_runtime_result(&mut result, &runtime_prefix);
                 return result;
             }
-            crate::session::touch_session(session);
         }
 
         // Reject modality violations before reserving a recording turn. A
@@ -1301,6 +1357,49 @@ impl ToolRegistry {
             }
         }
 
+        let lifecycle_dispatch =
+            if session_requiring_tool(resolved_name) && resolved_name != "start_session" {
+                let Some(session_id) = runtime_session.as_deref() else {
+                    return protected_refusal(
+                        "session_unavailable",
+                        "an admitted session-requiring call has no lifecycle identity",
+                    );
+                };
+                let owner = args
+                    .get("_transport_session_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(session_id);
+                let public_label = args.get("_public_session_label").and_then(Value::as_str);
+                let (transport, client_kind) = crate::session::infer_transport_metadata(owner);
+                let admitted = match context.lifecycle_idle_ttl_override() {
+                    Some(idle_ttl) => crate::session::begin_session_dispatch_with_ttl(
+                        session_id,
+                        public_label,
+                        owner,
+                        public_label.is_none(),
+                        transport,
+                        client_kind,
+                        idle_ttl,
+                    ),
+                    None => crate::session::begin_session_dispatch(
+                        session_id,
+                        public_label,
+                        owner,
+                        public_label.is_none(),
+                        transport,
+                        client_kind,
+                    ),
+                };
+                match admitted {
+                    Ok(guard) => Some(guard),
+                    Err(message) => {
+                        return protected_refusal("session_ended", message);
+                    }
+                }
+            } else {
+                None
+            };
+
         // Capture start time for recording timestamps only after validation.
         let launch_snapshot = if resolved_name == "launch_app" {
             self.snapshot_running_pids().await
@@ -1345,6 +1444,7 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
         // finish for the completed call.
@@ -1390,12 +1490,6 @@ impl ToolRegistry {
         // recording/PiP screenshots would unnecessarily block an unrelated
         // runtime after the input side effect has already completed.
         drop(_desktop_action);
-        // A long-running authorized action is active work, not idle time.
-        // Refresh again at completion so the idle TTL measures the gap
-        // between calls rather than time spent executing the previous call.
-        if let Some(session) = runtime_session.as_deref() {
-            crate::session::touch_session(session);
-        }
         restore_public_runtime_result(&mut result, &runtime_prefix);
         // Preserve the producer's private summary for recording/replay before
         // the public ActionResult projection deliberately replaces legacy
@@ -2043,12 +2137,12 @@ impl ToolRegistry {
         {
             return Err(
                 ToolResult::error(
-                    "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+                    "config key 'capture_scope' is retired; select a window or desktop target on each action",
                 )
                 .with_structured(serde_json::json!({
                     "code": "config_key_retired",
                     "key": "capture_scope",
-                    "replacement": "start_session.capture_scope",
+                    "replacement": "action.target",
                 })),
             );
         }
@@ -2364,6 +2458,13 @@ fn namespace_runtime_args(
             );
         }
     }
+    if let Some(idle_ttl) = context.lifecycle_idle_ttl_override() {
+        let idle_ttl_ms = idle_ttl.as_millis().min(u64::MAX as u128) as u64;
+        arguments.insert(
+            "_session_idle_ttl_ms".to_owned(),
+            Value::Number(idle_ttl_ms.into()),
+        );
+    }
     // The registry is the first boundary shared by every transport and the
     // direct SDK. Transport adapters may already have injected `_session_id`,
     // but a direct runtime call only carries the public `session` field. Mint
@@ -2402,6 +2503,26 @@ fn namespace_runtime_args(
         arguments.insert(key.to_owned(), Value::String(internal));
     }
     runtime_prefix
+}
+
+fn session_requiring_tool(tool_name: &str) -> bool {
+    !matches!(
+        tool_name,
+        "check_permissions"
+            | "health_report"
+            | "get_session"
+            | "list_sessions"
+            | "get_session_state"
+            | "end_session"
+    )
+}
+
+fn session_selecting_tool(tool_name: &str) -> bool {
+    session_requiring_tool(tool_name)
+        || matches!(
+            tool_name,
+            "get_session" | "list_sessions" | "get_session_state" | "end_session"
+        )
 }
 
 fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
@@ -3354,18 +3475,16 @@ resources:
 
     #[tokio::test]
     async fn standard_sessionless_owned_process_termination_reproves_the_fingerprint() {
-        // A sessionless launch_app records provenance in the runtime-scoped
-        // anonymous bucket, so the matching sessionless kill_app can reprove
-        // it. Ownership used to be recorded only for calls carrying a
-        // session, which left launch-then-kill without one permanently
-        // refused even though this runtime had just started the process.
+        // A call without a public label now receives the runtime's implicit
+        // lifecycle identity, so launch provenance and the matching kill_app
+        // resolve through that stable private bucket.
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("kill_app", None, hits.clone(), false);
         let context = standard_context();
         registry
             .protected_resource_ownership()
             .mark_driver_owned_process(
-                &context.runtime_session_key("\u{0}anonymous-launch"),
+                &context.runtime_session_key("implicit-direct"),
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
@@ -3403,6 +3522,57 @@ resources:
                 .and_then(|value| value.pointer("/refusal/code"))
                 .and_then(serde_json::Value::as_str),
             Some("foreign_process_termination_denied")
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_session_selection_cannot_turn_a_denied_action_into_allow() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("kill_app", None, hits.clone(), false);
+        let context = standard_context();
+        let runtime_prefix = context.runtime_session_key("");
+        let before = crate::session::list_session_snapshots_with_prefix(
+            &runtime_prefix,
+            crate::session::DEFAULT_SESSION_IDLE_TTL,
+        )
+        .len();
+        let variants = [
+            serde_json::json!({"pid": 424242}),
+            serde_json::json!({"pid": 424242, "session": "named-a"}),
+            serde_json::json!({"pid": 424242, "session": "named-b"}),
+            serde_json::json!({
+                "pid": 424242,
+                "session": "named-a",
+                "_session_id": "forged-private-session",
+                "_transport_session_id": "forged-transport"
+            }),
+        ];
+        let mut refusal_codes = Vec::new();
+        for arguments in variants {
+            let result = registry
+                .invoke_with_context("kill_app", arguments, context.clone())
+                .await;
+            refusal_codes.push(
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.pointer("/refusal/code"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(refusal_codes
+            .iter()
+            .all(|code| code.as_deref() == Some("foreign_process_termination_denied")));
+        assert_eq!(
+            crate::session::list_session_snapshots_with_prefix(
+                &runtime_prefix,
+                crate::session::DEFAULT_SESSION_IDLE_TTL,
+            )
+            .len(),
+            before,
+            "denied calls must not create or refresh lifecycle sessions"
         );
     }
 
@@ -4282,6 +4452,8 @@ mod capability_tests {
         "set_config",
         // sessions
         "start_session",
+        "get_session",
+        "list_sessions",
         "escalate_session",
         "get_session_state",
         "end_session",
@@ -4363,6 +4535,8 @@ mod capability_tests {
         "system.config.write",
         // sessions
         "session.lifecycle.start",
+        "session.lifecycle.read",
+        "session.lifecycle.list",
         "session.lifecycle.end",
         "session.capture_scope",
         "session.capture_scope.read",

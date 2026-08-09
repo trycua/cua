@@ -8,6 +8,14 @@
 
 **Tech Stack:** Python 3.11-3.13, `pytest`, `pytest-asyncio`, `ruff`, `cua-sandbox`, `cua-fleet`/UniFFI Fleet bindings.
 
+## Correction — August 9, 2026
+
+The attempted certification with pinned image
+`desktop-workspace@sha256:b9e74...` disproved the original image assumption.
+That image exposes cua-driver MCP on TCP `3000` and does not run the CUA
+computer-server on TCP `5000`. Positive live E2E remains blocked until a
+suitable image that serves the computer-server `/cmd` API is available.
+
 ## Global Constraints
 
 - `server_port` defaults to exactly `8000`.
@@ -272,7 +280,8 @@ Add this argument description to both public methods:
 
 ```text
 server_port: Guest computer-server TCP port for Fleet cloud sandboxes.
-    Defaults to 8000. Use 5000 for the canonical Linux desktop-workspace image.
+    Defaults to 8000. Set this when the guest image runs the CUA
+    computer-server /cmd API on a non-default port, for example 5000.
 ```
 
 Update each method's example when useful, but do not change local-runtime examples to include a Fleet-only option.
@@ -310,23 +319,23 @@ git commit -m "feat(cua-sandbox): expose Fleet server port"
 
 **Interfaces:**
 - Consumes: `Sandbox.create(..., server_port=5000)` and `Sandbox.ephemeral(..., server_port=5000)` from Task 2.
-- Produces: documented canonical Linux usage and release-ready E2E evidence.
+- Produces: documented custom Linux image usage and release-ready E2E evidence once a suitable image is available.
 
-- [ ] **Step 1: Add the canonical Linux README example**
+- [ ] **Step 1: Add a generic Linux README example**
 
 Update the Fleet cloud example to show the explicit image contract:
 
 ```python
 async with Sandbox.ephemeral(
-    Image.from_registry(
-        "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace@sha256:b9e74dbff4cc727c33ff4b8483bffa0860bb99213041c88f11260ac31db7628f"
-    ).expose(3000),
+    Image.from_registry("registry.example/linux-computer-server:latest"),
     server_port=5000,
 ) as sb:
     await sb.shell.run("uname -a")
 ```
 
-Add one sentence explaining that Windows computer-server images continue to use the default port `8000`.
+State that the image must serve the CUA computer-server `/cmd` API on the
+configured port and that Windows computer-server images continue to use the
+default port `8000`.
 
 - [ ] **Step 2: Run formatting and focused package tests**
 
@@ -365,13 +374,17 @@ git commit -m "docs(cua-sandbox): document Linux Fleet server port"
 
 - [ ] **Step 5: Run one live empty-namespace Linux E2E**
 
-Using a namespace name unique to the run and a user-scoped Fleet credential, run this public API shape from the candidate commit:
+This step remains blocked until a Linux image that serves the CUA
+computer-server `/cmd` API on TCP `5000` is available. Do not use the pinned
+`desktop-workspace@sha256:b9e74...` image: it exposes cua-driver MCP on `3000`
+and has no computer-server listener on `5000`.
+
+Once a suitable image is available, use a unique namespace and a user-scoped
+Fleet credential with this public API shape from the candidate commit:
 
 ```python
 async with Sandbox.ephemeral(
-    Image.from_registry(
-        "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace@sha256:b9e74dbff4cc727c33ff4b8483bffa0860bb99213041c88f11260ac31db7628f"
-    ),
+    Image.from_registry("<linux-computer-server-image>"),
     name="pr-server-port-e2e-<timestamp>",
     cpu=4,
     memory_mb=4096,
@@ -404,4 +417,6 @@ Use PR title:
 feat(cua-sandbox): configure Fleet computer-server port
 ```
 
-The PR body must link merged PR `#2979`, describe the live `server_port=5000` E2E, list exact test commands, and call out that the default remains `8000`.
+The PR body must link merged PR `#2979`, list exact test commands, call out that
+the default remains `8000`, and record that positive live `server_port=5000`
+E2E is blocked pending a suitable Linux computer-server image.

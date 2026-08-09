@@ -440,8 +440,9 @@ class Sandbox:
                 Individual commands with a server-side timeout automatically
                 extend the client timeout to match.
             server_port: Guest computer-server TCP port for Fleet cloud sandboxes.
-                Defaults to 8000. Use 5000 for the canonical Linux
-                desktop-workspace image.
+                Defaults to 8000. Set this when the guest image runs the CUA
+                computer-server ``/cmd`` API on a non-default port, for example
+                5000.
             telemetry_enabled: Set to False to disable telemetry for this instance.
 
         Example::
@@ -566,8 +567,9 @@ class Sandbox:
                 Individual commands with a server-side timeout automatically
                 extend the client timeout to match.
             server_port: Guest computer-server TCP port for Fleet cloud sandboxes.
-                Defaults to 8000. Use 5000 for the canonical Linux
-                desktop-workspace image.
+                Defaults to 8000. Set this when the guest image runs the CUA
+                computer-server ``/cmd`` API on a non-default port, for example
+                5000.
 
         Example::
 

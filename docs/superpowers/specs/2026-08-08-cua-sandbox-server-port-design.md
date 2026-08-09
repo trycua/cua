@@ -1,15 +1,23 @@
 # Cua Sandbox Fleet Server Port Design
 
+## Correction — August 9, 2026
+
+The attempted certification with pinned image
+`desktop-workspace@sha256:b9e74...` disproved the original image assumption.
+That image exposes cua-driver MCP on TCP `3000` and does not run the CUA
+computer-server on TCP `5000`. Positive live E2E remains blocked until a
+suitable image that serves the computer-server `/cmd` API is available.
+
 ## Problem
 
 Fleet-backed `Sandbox.create()` and `Sandbox.ephemeral()` currently assume the
 guest computer server listens on TCP port `8000`. The transport uses that value
 for both the generated `server` Service and the VM readiness probe.
 
-The canonical Linux `desktop-workspace` image listens on port `5000`, while the
-Windows `cua-server-windows` image listens on port `8000`. A single hardcoded
-port therefore prevents the public sandbox creation API from supporting both
-images without changing their image contracts.
+Guest images may run the CUA computer-server on a non-default port such as
+`5000`, while Windows computer-server images retain the default `8000`. A
+single hardcoded port prevents callers from declaring those differing guest
+image contracts.
 
 ## Public API
 
@@ -64,17 +72,19 @@ implementation and then passes with the fix:
 5. Invalid ports fail before Fleet provisioning.
 
 Run the existing Fleet transport, sandbox creation, formatting, and packaging
-tests. Perform one live E2E with the canonical Linux image using
-`server_port=5000`, verifying screen access and owned-namespace cleanup.
+tests. Once a suitable Linux computer-server image is available, perform one
+live E2E using `server_port=5000`, verifying screen access and owned-namespace
+cleanup. The pinned `desktop-workspace@sha256:b9e74...` image is not suitable.
 
 ## Documentation
 
 Document the optional argument in the public constructor docstrings and add a
-README example for the canonical Linux registry image:
+README example showing a generic Linux computer-server image contract:
 
 ```python
 sandbox = await Sandbox.create(image, server_port=5000)
 ```
 
-No image-name inference is added. The caller explicitly declares the guest
-computer-server contract, avoiding brittle registry-specific behavior.
+No image-name inference is added. The caller explicitly declares the port where
+the guest serves the CUA computer-server `/cmd` API, avoiding brittle
+registry-specific behavior.

@@ -80,10 +80,11 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
                 "y": center_y - 80.0
             }),
         );
-        // move_cursor now waits for the configured glide to reach its target.
-        // Leave only a short compositor settle so the screenshot stays inside
-        // the session badge's two-second reveal window.
-        settle(100);
+        // move_cursor waits for the configured glide, but X11/Wayland capture
+        // still needs a compositor round-trip before the overlay is guaranteed
+        // to appear in the driver-owned screenshot. The badge remains fully
+        // visible for two seconds, so this settle stays inside that window.
+        settle(900);
 
         let (cursor_png, cursor_width, cursor_height) = capture_desktop_png(&mut driver);
         assert_eq!(

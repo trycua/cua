@@ -102,3 +102,19 @@ Individual permissions: `sandbox:list`, `sandbox:create`, `sandbox:delete`, `san
 `cua auth login` uses the standard OAuth device authorization flow. It discovers Keycloak endpoints from `https://auth.cua.ai/realms/cyclops-cs`, while the short verification UI is served from `https://run.cua.ai/device`. The CLI prints a verification URL and code, so it also works over SSH or in CI-style terminals; use `--no-browser` to prevent an automatic browser attempt. Complete the verification in any browser, then return to the terminal while the CLI polls for approval.
 
 Access tokens refresh automatically before authenticated `run.cua.ai` requests. `cua auth logout` asks the issuer to revoke the refresh token and always removes the local credential-vault entry, even when the network is unavailable. The CLI never prints access or refresh tokens.
+
+## GitHub Actions workload identity
+
+Use `cua wif-token github` from a GitHub Actions job to obtain a GitHub OIDC token for Fleets. The command runs only in GitHub Actions, requests the `fleets` audience, and prints only the raw token. It does not use the interactive `cua auth login` session.
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+
+steps:
+  - name: Get GitHub WIF token for Fleets
+    run: |
+      FLEETS_TOKEN="$(cua wif-token github)"
+      test -n "$FLEETS_TOKEN"
+```

@@ -182,7 +182,11 @@ cua.configure(
 )
 
 async with Sandbox.ephemeral(
-    Image.from_registry("registry.example/desktop-workspace@sha256:...").expose(3000)
+    Image.from_registry("registry.example/linux-computer-server:latest"),
+    server_port=5000,
 ) as sb:
     await sb.shell.run("uname -a")
 ```
+
+The image must run the CUA computer-server `/cmd` API on the configured `server_port`.
+Windows computer-server images continue to use the default port `8000`.

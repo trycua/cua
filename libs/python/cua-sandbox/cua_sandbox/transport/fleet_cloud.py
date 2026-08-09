@@ -210,9 +210,17 @@ class FleetCloudTransport(FleetTransport):
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        server_port: int = 8000,
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
     ) -> None:
+        if (
+            isinstance(server_port, bool)
+            or not isinstance(server_port, int)
+            or server_port < 1
+            or server_port > 65535
+        ):
+            raise ValueError("server_port must be an integer between 1 and 65535")
         if disk_gb is not None:
             raise ValueError("disk_gb is not supported by the Fleet cloud transport")
         if region != "us-east-1":
@@ -238,6 +246,7 @@ class FleetCloudTransport(FleetTransport):
         self._memory_mb = memory_mb
         self._time_to_start = time_to_start if time_to_start is not None else 600.0
         self._request_timeout = request_timeout or 30.0
+        self._server_port = server_port
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
         self._provisioned = False
@@ -304,7 +313,7 @@ class FleetCloudTransport(FleetTransport):
             raise ValueError("Fleet services can only expose numeric TCP ports")
         if not self._provisioned:
             raise ValueError("Transport not connected")
-        service = "server" if sandbox_port == 8000 else f"port-{sandbox_port}"
+        service = "server" if sandbox_port == self._server_port else f"port-{sandbox_port}"
         from cua_sandbox.interfaces.tunnel import TunnelInfo
 
         endpoint = self._sdk.service_url(self._bound, service)
@@ -404,10 +413,18 @@ class FleetCloudTransport(FleetTransport):
 
     def _template_request(self) -> CreateTemplateRequest:
         assert self._image is not None
-        service_ports = self._services or {
-            "server": 8000,
-            **{f"port-{port}": port for port in self._image._ports if port != 8000},
-        }
+        if self._services is not None:
+            service_ports = {
+                "server": self._server_port,
+                **{name: port for name, port in self._services.items() if name != "server"},
+            }
+        else:
+            service_ports = {
+                "server": self._server_port,
+                **{
+                    f"port-{port}": port for port in self._image._ports if port != self._server_port
+                },
+            }
         services = [
             SandboxServiceBuilder()
             .name(name)
@@ -422,7 +439,7 @@ class FleetCloudTransport(FleetTransport):
             .image_pull_secret("ecr-credentials")
             .probes(
                 PreservedJson.from_json(
-                    json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
+                    json.dumps({"readinessProbe": {"tcpSocket": {"port": self._server_port}}})
                 )
             )
             .services(services)

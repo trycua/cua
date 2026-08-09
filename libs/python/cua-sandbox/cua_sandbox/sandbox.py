@@ -413,6 +413,7 @@ class Sandbox:
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        server_port: int = 8000,
         telemetry_enabled: bool = True,
     ) -> "Sandbox":
         """Provision a new persistent sandbox and return it connected.
@@ -438,6 +439,10 @@ class Sandbox:
                 commands sent to the computer-server (default 30, cloud only).
                 Individual commands with a server-side timeout automatically
                 extend the client timeout to match.
+            server_port: Guest computer-server TCP port for Fleet cloud sandboxes.
+                Defaults to 8000. Set this when the guest image runs the CUA
+                computer-server ``/cmd`` API on a non-default port, for example
+                5000.
             telemetry_enabled: Set to False to disable telemetry for this instance.
 
         Example::
@@ -460,6 +465,7 @@ class Sandbox:
             region=region,
             time_to_start=time_to_start,
             request_timeout=request_timeout,
+            server_port=server_port,
             telemetry_enabled=telemetry_enabled,
         )
 
@@ -538,6 +544,7 @@ class Sandbox:
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        server_port: int = 8000,
         telemetry_enabled: bool = True,
     ) -> AsyncIterator["Sandbox"]:
         """Create an ephemeral sandbox that is automatically destroyed on exit.
@@ -559,6 +566,10 @@ class Sandbox:
                 commands sent to the computer-server (default 30, cloud only).
                 Individual commands with a server-side timeout automatically
                 extend the client timeout to match.
+            server_port: Guest computer-server TCP port for Fleet cloud sandboxes.
+                Defaults to 8000. Set this when the guest image runs the CUA
+                computer-server ``/cmd`` API on a non-default port, for example
+                5000.
 
         Example::
 
@@ -579,6 +590,7 @@ class Sandbox:
             region=region,
             time_to_start=time_to_start,
             request_timeout=request_timeout,
+            server_port=server_port,
             telemetry_enabled=telemetry_enabled,
         )
         try:
@@ -1027,9 +1039,18 @@ class Sandbox:
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        server_port: int = 8000,
         telemetry_enabled: bool = True,
     ) -> "Sandbox":
-        """Internal workhorse — all public factories delegate here."""
+        """Internal factory that validates server_port before selecting a transport."""
+        if (
+            isinstance(server_port, bool)
+            or not isinstance(server_port, int)
+            or server_port < 1
+            or server_port > 65535
+        ):
+            raise ValueError("server_port must be an integer between 1 and 65535")
+
         _t_start = time.monotonic()
         if ephemeral is None:
             ephemeral = bool(image)
@@ -1093,6 +1114,7 @@ class Sandbox:
                     region=region,
                     time_to_start=time_to_start,
                     request_timeout=request_timeout,
+                    server_port=server_port,
                 )
                 sb = cls(
                     transport, name=name, _ephemeral=ephemeral, _telemetry_enabled=telemetry_enabled

@@ -243,7 +243,135 @@ class TestDestroyResilience:
 
 
 # ===================================================================
-# 3. ephemeral() integration — cleanup through the context manager
+# 3. Fleet server_port forwarding and validation
+# ===================================================================
+
+
+class TestFleetServerPortForwarding:
+    """Sandbox factories should pass server_port to Fleet and validate it early."""
+
+    @pytest.mark.parametrize("server_port", [1, 65535])
+    async def test_create_forwards_server_port(self, server_port):
+        sandbox = object()
+        with patch.object(Sandbox, "_create", AsyncMock(return_value=sandbox)) as create:
+            result = await Sandbox.create(
+                Image.from_registry("registry.example/workspace:latest"),
+                server_port=server_port,
+                telemetry_enabled=False,
+            )
+
+        assert result is sandbox
+        assert create.await_args.kwargs["server_port"] == server_port
+
+    async def test_create_forwards_default_server_port(self):
+        sandbox = object()
+        with patch.object(Sandbox, "_create", AsyncMock(return_value=sandbox)) as create:
+            result = await Sandbox.create(
+                Image.from_registry("registry.example/workspace:latest"),
+                telemetry_enabled=False,
+            )
+
+        assert result is sandbox
+        assert create.await_args.kwargs["server_port"] == 8000
+
+    async def test_ephemeral_forwards_server_port(self):
+        sandbox = _make_sandbox(_make_cloud_transport(name="port-e2e"), ephemeral=True)
+        sandbox.destroy = AsyncMock()
+        with patch.object(Sandbox, "_create", AsyncMock(return_value=sandbox)) as create:
+            async with Sandbox.ephemeral(
+                Image.from_registry("registry.example/workspace:latest"),
+                server_port=5000,
+                telemetry_enabled=False,
+            ):
+                pass
+
+        assert create.await_args.kwargs["server_port"] == 5000
+
+    async def test_create_passes_server_port_to_fleet_transport(self):
+        transport = _make_cloud_transport(name="port-fleet")
+        transport.connect = AsyncMock()
+
+        with (
+            patch(
+                "cua_sandbox.sandbox.FleetCloudTransport",
+                return_value=transport,
+            ) as fleet_transport,
+            patch.object(Sandbox, "_connect", AsyncMock()),
+        ):
+            await Sandbox._create(
+                image=Image.from_registry("registry.example/workspace:latest"),
+                server_port=5000,
+                telemetry_enabled=False,
+            )
+
+        assert fleet_transport.call_args.kwargs["server_port"] == 5000
+
+    async def test_existing_pool_does_not_pass_server_port_to_fleet_transport(self):
+        transport = _make_cloud_transport(name="existing-pool")
+
+        with (
+            patch.object(Sandbox, "_uses_fleet", return_value=True),
+            patch(
+                "cua_sandbox.sandbox.FleetCloudTransport",
+                return_value=transport,
+            ) as fleet_transport,
+            patch.object(Sandbox, "_connect", AsyncMock()),
+        ):
+            await Sandbox._create(
+                name="existing-pool",
+                server_port=5000,
+                telemetry_enabled=False,
+            )
+
+        assert "server_port" not in fleet_transport.call_args.kwargs
+
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_create_rejects_invalid_server_port_before_local_provisioning(self, server_port):
+        runtime = AsyncMock()
+
+        with pytest.raises(ValueError, match="server_port must be an integer between 1 and 65535"):
+            await Sandbox.create(
+                Image.from_registry("registry.example/workspace:latest"),
+                local=True,
+                runtime=runtime,
+                server_port=server_port,
+                telemetry_enabled=False,
+            )
+
+        runtime.start.assert_not_awaited()
+
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_invalid_server_port_rejects_before_legacy_cloud_provisioning(self, server_port):
+        with patch("cua_sandbox.sandbox._make_transport") as make_transport:
+            with pytest.raises(
+                ValueError, match="server_port must be an integer between 1 and 65535"
+            ):
+                await Sandbox._create(
+                    image=Image.from_registry("registry.example/workspace:latest"),
+                    api_key="sk-legacy",
+                    server_port=server_port,
+                    telemetry_enabled=False,
+                )
+
+        make_transport.assert_not_called()
+
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_invalid_server_port_rejects_before_fleet_provisioning(self, server_port):
+        with patch("cua_sandbox.sandbox.FleetCloudTransport") as fleet_transport:
+            with pytest.raises(
+                ValueError, match="server_port must be an integer between 1 and 65535"
+            ):
+                await Sandbox._create(
+                    image=Image.from_registry("registry.example/workspace:latest"),
+                    server_port=server_port,
+                    telemetry_enabled=False,
+                )
+
+        fleet_transport.assert_not_called()
+
+
+# ===================================================================
+# 4. ephemeral() integration — cleanup through the context manager
 # ===================================================================
 
 

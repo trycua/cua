@@ -1,6 +1,7 @@
 """Tests for sandbox command module."""
 
 import argparse
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from cua_cli.commands import sandbox
@@ -484,51 +485,148 @@ class TestCmdShell:
         assert args.name == "my-sandbox"
         assert args.shell_command == ["ls"]
 
-    def test_shell_sandbox_not_found(self, args_namespace, mock_api_key):
-        """Test shell with nonexistent sandbox."""
+    def test_interactive_shell_preserves_terminal_size(self, args_namespace, mock_api_key):
+        """Test interactive shell keeps the existing streaming path and dimensions."""
         args = args_namespace(
-            name="nonexistent",
+            name="test-sandbox",
             shell_command=[],
-            cols=None,
-            rows=None,
+            cols=120,
+            rows=40,
+            local=False,
         )
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.get_vm = AsyncMock(return_value={"status": "not_found"})
-
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_error") as mock_error:
-                with patch("sys.stdin") as mock_stdin:
-                    mock_stdin.isatty.return_value = False
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = True
+            with patch.object(
+                sandbox,
+                "_get_sandbox_api_url",
+                new_callable=AsyncMock,
+                return_value=("https://sandbox.example.com", "test-access-token"),
+            ):
+                with patch.object(
+                    sandbox, "_shell_interactive", new_callable=AsyncMock, return_value=0
+                ) as mock_interactive:
                     result = sandbox.cmd_shell(args)
 
-        assert result == 1
-        mock_error.assert_called()
+        assert result == 0
+        mock_interactive.assert_awaited_once_with(
+            "test-sandbox",
+            "https://sandbox.example.com",
+            "test-access-token",
+            None,
+            120,
+            40,
+        )
 
-    def test_shell_no_api_url(self, args_namespace, mock_api_key):
-        """Test shell when sandbox has no API URL."""
+    def test_shell_command_uses_fleet_sdk(self, args_namespace, mock_api_key, capsys):
+        """Test non-interactive shell commands run through the Fleet SDK."""
         args = args_namespace(
             name="test-sandbox",
             shell_command=["echo", "hello"],
             cols=None,
             rows=None,
+            local=False,
+        )
+        command_result = SimpleNamespace(stdout="hello\n", stderr="", returncode=0)
+        mock_sandbox = MagicMock()
+        mock_sandbox.shell.run = AsyncMock(return_value=command_result)
+        mock_sandbox.disconnect = AsyncMock()
+        mock_connect = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = mock_connect
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch("sys.stdin") as mock_stdin:
+                mock_stdin.isatty.return_value = False
+                result = sandbox.cmd_shell(args)
+
+        assert result == 0
+        mock_connect.assert_awaited_once_with(
+            "test-sandbox", local=False, api_key="test-access-token"
+        )
+        mock_sandbox.shell.run.assert_awaited_once_with("echo hello", timeout=120)
+        mock_sandbox.disconnect.assert_awaited_once_with()
+        assert capsys.readouterr().out == "hello\n"
+
+    def test_shell_command_failure(self, args_namespace, mock_api_key):
+        """Test command execution failures return a clear error."""
+        args = args_namespace(
+            name="test-sandbox",
+            shell_command=["false"],
+            cols=None,
+            rows=None,
+            local=False,
+        )
+        mock_sandbox = MagicMock()
+        mock_sandbox.shell.run = AsyncMock(side_effect=RuntimeError("command transport failed"))
+        mock_sandbox.disconnect = AsyncMock()
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = AsyncMock(return_value=mock_sandbox)
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch("sys.stdin") as mock_stdin:
+                mock_stdin.isatty.return_value = False
+                with patch.object(sandbox, "print_error") as mock_error:
+                    result = sandbox.cmd_shell(args)
+
+        assert result == 1
+        mock_error.assert_called_once_with("Failed to execute command: command transport failed")
+        mock_sandbox.disconnect.assert_awaited_once_with()
+
+    def test_shell_sandbox_not_found(self, args_namespace, mock_api_key):
+        """Test a nonexistent sandbox returns a connection error."""
+        args = args_namespace(
+            name="nonexistent",
+            shell_command=["echo", "hello"],
+            cols=None,
+            rows=None,
+            local=False,
+        )
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = AsyncMock(
+            side_effect=ValueError("Sandbox 'nonexistent' not found")
         )
 
-        mock_provider = MagicMock()
-        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
-        mock_provider.__aexit__ = AsyncMock(return_value=None)
-        mock_provider.get_vm = AsyncMock(return_value={"status": "stopped", "api_url": None})
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch("sys.stdin") as mock_stdin:
+                mock_stdin.isatty.return_value = False
+                with patch.object(sandbox, "print_error") as mock_error:
+                    result = sandbox.cmd_shell(args)
 
-        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
-            with patch.object(sandbox, "print_error") as mock_error:
+        assert result == 1
+        mock_error.assert_called_once_with(
+            "Failed to connect to sandbox: Sandbox 'nonexistent' not found"
+        )
+
+    def test_shell_local_mode(self, args_namespace, capsys):
+        """Test local shell commands connect without cloud authentication."""
+        args = args_namespace(
+            name="local-sandbox",
+            shell_command=["pwd"],
+            cols=None,
+            rows=None,
+            local=True,
+        )
+        command_result = SimpleNamespace(stdout="/workspace\n", stderr="", returncode=0)
+        mock_sandbox = MagicMock()
+        mock_sandbox.shell.run = AsyncMock(return_value=command_result)
+        mock_sandbox.disconnect = AsyncMock()
+        mock_connect = AsyncMock(return_value=mock_sandbox)
+        mock_sandbox_sdk = MagicMock()
+        mock_sandbox_sdk.Sandbox.connect = mock_connect
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sandbox_sdk}):
+            with patch.object(sandbox, "get_access_token", new_callable=AsyncMock) as mock_token:
                 with patch("sys.stdin") as mock_stdin:
                     mock_stdin.isatty.return_value = False
                     result = sandbox.cmd_shell(args)
 
-        assert result == 1
-        mock_error.assert_called()
+        assert result == 0
+        mock_token.assert_not_awaited()
+        mock_connect.assert_awaited_once_with("local-sandbox", local=True)
+        mock_sandbox.shell.run.assert_awaited_once_with("pwd", timeout=120)
+        mock_sandbox.disconnect.assert_awaited_once_with()
+        assert capsys.readouterr().out == "/workspace\n"
 
 
 class TestCmdExec:

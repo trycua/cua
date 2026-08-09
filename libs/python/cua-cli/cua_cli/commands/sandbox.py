@@ -902,30 +902,41 @@ def cmd_shell(args: argparse.Namespace) -> int:
     local = getattr(args, "local", False)
 
     async def _run() -> int:
-        try:
-            api_url, api_key = await _get_sandbox_api_url(args.name, local)
-        except ValueError as e:
-            print_error(str(e))
-            return 1
-
         if not sys.stdin.isatty():
             if not command:
                 print_error("No command provided for non-interactive mode")
                 return 1
-            result = await _exec_noninteractive(args.name, api_url, api_key, command)
-            if not result.get("success", True):
-                print_error(result.get("error", "Command failed"))
+
+            from cua_sandbox import Sandbox
+
+            try:
+                kwargs: dict[str, Any] = {}
+                if not local:
+                    kwargs["api_key"] = await get_access_token()
+                sb = await Sandbox.connect(args.name, local=local, **kwargs)
+            except Exception as e:
+                print_error(f"Failed to connect to sandbox: {e}")
                 return 1
-            stdout = result.get("stdout", "").strip()
-            stderr = result.get("stderr", "").strip()
-            returncode = result.get("returncode") or result.get("return_code") or 0
+
+            try:
+                result = await sb.shell.run(command, timeout=120)
+            except Exception as e:
+                print_error(f"Failed to execute command: {e}")
+                return 1
+            finally:
+                await sb.disconnect()
+
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
             if stdout:
                 print(stdout)
             if stderr:
                 print(stderr, file=sys.stderr)
-            return returncode
+            return result.returncode
 
+        # The SDK terminal API does not expose output streaming or resize yet.
         try:
+            api_url, api_key = await _get_sandbox_api_url(args.name, local)
             return await _shell_interactive(args.name, api_url, api_key, command, cols, rows)
         except ValueError as e:
             print_error(str(e))

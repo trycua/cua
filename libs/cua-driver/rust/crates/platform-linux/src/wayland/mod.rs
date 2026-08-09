@@ -877,21 +877,45 @@ pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
 /// output-level path used by `get_window_state`'s vision payload.
 pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
+        let geometry = capture_geometry(xid).ok_or_else(|| {
+            anyhow::anyhow!("Wayland window {xid} has no compositor-attested capture geometry")
+        })?;
         let bytes = screenshot_display_dispatch()?;
-        if let Some((x, y, width, height)) = window_geometry(xid) {
-            crop_png_to_rect(
-                &bytes,
-                x,
-                y,
-                width,
-                height,
-                &format!("Wayland window {xid}"),
-            )
-        } else {
-            Ok(bytes)
-        }
+        let (x, y, width, height) = geometry;
+        crop_png_to_rect(
+            &bytes,
+            x,
+            y,
+            width,
+            height,
+            &format!("Wayland window {xid}"),
+        )
     } else {
         crate::capture::screenshot_window_bytes(xid)
+    }
+}
+
+type CaptureGeometry = (i32, i32, u32, u32);
+
+fn capture_geometry(window_id: u64) -> Option<CaptureGeometry> {
+    let helper_available = shell_helper::available();
+    let helper_geometry = helper_available
+        .then(|| shell_helper::trusted_window_geometry(window_id))
+        .flatten();
+    select_capture_geometry(helper_available, helper_geometry, || {
+        window_geometry(window_id)
+    })
+}
+
+fn select_capture_geometry(
+    helper_available: bool,
+    helper_geometry: Option<CaptureGeometry>,
+    fallback_geometry: impl FnOnce() -> Option<CaptureGeometry>,
+) -> Option<CaptureGeometry> {
+    if helper_available {
+        helper_geometry
+    } else {
+        fallback_geometry()
     }
 }
 
@@ -996,7 +1020,7 @@ fn checked_shell_helper_capture(
 /// crop with.
 pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        if let Some((x, y, width, height)) = window_geometry(xid) {
+        if let Some((x, y, width, height)) = capture_geometry(xid) {
             return crop_png_to_rect(
                 &screenshot_display_dispatch()?,
                 x,
@@ -3336,6 +3360,30 @@ mod tests {
             crop_png_to_rect(encoded.get_ref(), 2, 1, 3, 4, "fixture").expect("crop fixture PNG");
         let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
         assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn compositor_helper_missing_target_rejects_fallback_geometry() {
+        let synthetic_atspi_geometry = Some((10, 10, 1440, 1000));
+        assert_eq!(
+            select_capture_geometry(true, None, || synthetic_atspi_geometry),
+            None
+        );
+    }
+
+    #[test]
+    fn compositor_helper_exact_target_wins_over_fallback_geometry() {
+        let exact = Some((1100, 428, 360, 616));
+        assert_eq!(
+            select_capture_geometry(true, exact, || Some((10, 10, 1440, 1000))),
+            exact
+        );
+    }
+
+    #[test]
+    fn non_helper_compositor_retains_existing_geometry_fallback() {
+        let fallback = Some((20, 30, 800, 600));
+        assert_eq!(select_capture_geometry(false, None, || fallback), fallback);
     }
 
     #[test]

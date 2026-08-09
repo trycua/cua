@@ -346,6 +346,17 @@ pub fn trusted_window_for_id(pid: u32, window_id: u64) -> Option<WindowInfo> {
         .map(|window| window.info)
 }
 
+/// Compositor-attested capture geometry for one exact GNOME window id.
+pub fn trusted_window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
+    trusted_shell_windows(None)?
+        .into_iter()
+        .find(|window| window.info.xid == window_id)
+        .map(|window| {
+            let info = window.info;
+            (info.x, info.y, info.width, info.height)
+        })
+}
+
 /// Enumerate exact browser-window ids for one process through the verified
 /// GNOME Shell helper. `None` means no trusted helper is available; an empty
 /// vector means the trusted helper found no owned windows.

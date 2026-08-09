@@ -543,10 +543,14 @@ SHA.
 The implementation uses these choices so work can begin without another design
 round:
 
-- Long-lived transport leases use a 30-minute default session idle TTL. Trusted
-  hosts may configure a shorter or longer value within documented bounds.
-  Transport close and revocation still clean up immediately. Cursor idle-hide
-  remains a separate setting.
+- Implicit and explicit lifecycle sessions use a five-minute default idle TTL.
+  Trusted hosts may configure a shorter or longer value within documented
+  bounds. A session cannot expire while one of its actions is in flight. Only
+  an admitted session-requiring call that reaches dispatch refreshes the TTL;
+  health reads, denied calls, transport keepalives, and cursor idle-hide do not.
+  Active recording does not suspend idle expiry, which stops the recording as
+  part of normal session cleanup. Transport close and revocation still clean up
+  immediately.
 - `start_session` accepts an optional public name. With no name, it creates or
   returns the transport's implicit session. `get_session` and `end_session`
   likewise default to the caller's attached implicit session when no visible
@@ -583,7 +587,7 @@ tested before the next lands.
 | --- | --- | --- |
 | 1. Contract and fixtures | Link this RFC, freeze 0.19.2 compatibility fixtures, and add failing target schemas and lifecycle cases. | Contract fixtures fail only for the intended missing behavior. |
 | 2. Ownership foundation | Add runtime namespace, transport lease, lifecycle key, and one dispatch context containing separate authorization and lifecycle references. | Unit tests reject cross-lease, cross-host, cross-generation, and concurrent-first-call substitution. |
-| 3. Lifecycle and cleanup | Add implicit creation, 30-minute idle expiry, disposable CLI sessions, attachment, revival, and one idempotent cleanup coordinator. | Lifecycle tests cover every start, reuse, end, expiry, revocation, disconnect, and shutdown path. |
+| 3. Lifecycle and cleanup | Add implicit creation, five-minute idle expiry, disposable CLI sessions, attachment, revival, and one idempotent cleanup coordinator. | Lifecycle tests cover every start, reuse, end, expiry, revocation, disconnect, and shutdown path. |
 | 4. Cursor correctness | Finish #2976 across macOS, Windows, X11, and supported Wayland paths; make move initialize the overlay and make render acknowledgement observable. | Platform overlay tests prove remove, late-command rejection, explicit revival, lazy recreation, and truthful state. |
 | 5. Public session API | Add `get_session`, scoped `list_sessions`, optional-name behavior, trusted host listing, operator CLI listing, redaction, pagination, and the `get_session_state` alias. | Contract and privacy tests prove each caller sees only its permitted summaries. |
 | 6. Per-call capture | Add the tagged target union, normalization, canonical authorization, and legacy session-capture adapter. Deprecate `escalate_session` and `capture_scope`. | Old-client fixtures retain behavior; new calls have no persistent capture transition; authorization monotonicity passes. |
@@ -676,6 +680,11 @@ or authorization.
   same cursor.
 - Connection or lease close, idle TTL, revocation, runtime shutdown, and
   explicit end invoke the same cleanup hooks exactly once.
+- An in-flight action cannot expire. Only an admitted session-requiring call
+  that reaches dispatch refreshes idle time; health reads, denied calls,
+  transport keepalives, and cursor idle-hide do not.
+- Active recording does not prevent idle expiry. Idle cleanup stops and
+  finalizes the recording exactly once.
 - A one-shot CLI command uses one disposable session and cannot observe state
   from an unrelated one-shot invocation.
 - Reusing an ended public ID revives core, cursor, recording, configuration,
@@ -749,3 +758,8 @@ review period reflects the prior shipped decisions, repository-wide issue and
 pull-request audit, and two-round adversarial architecture review. The separate
 implementation pull request remains subject to every compatibility, privacy,
 CI, and exact-candidate platform gate in this document.
+
+After acceptance, the maintainer shortened the default idle TTL from 30 minutes
+to five minutes for implicit and explicit sessions. The amendment also fixes
+which events refresh the TTL, protects in-flight actions from expiry, and keeps
+active recordings subject to normal idle cleanup.

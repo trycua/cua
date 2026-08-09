@@ -1,7 +1,6 @@
 name: "CI: cua-cli GitHub WIF token"
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
     paths:

@@ -123,7 +123,7 @@ fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
 /// unit-testable without any Win32 window.
 ///
 /// Returns the resolved cursor key for a `Cmd` (so the caller can track the
-/// last-active key for z-order pinning); `None` for a `Remove`.
+/// last-active key for z-order pinning); `None` for a lifecycle message.
 fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
     match msg {
         OverlayMsg::Remove(key) => {
@@ -142,6 +142,12 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
                 // Tombstone the key so a late in-flight Cmd from another task
                 // cannot re-create the just-removed cursor.
                 map.ended.insert(key);
+            }
+            None
+        }
+        OverlayMsg::Revive(key) => {
+            if key != "default" {
+                map.ended.remove(&key);
             }
             None
         }
@@ -292,6 +298,18 @@ pub fn remove_cursor(key: CursorKey) {
     }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Remove(key));
+        wake_overlay();
+    }
+}
+
+/// Clear the render-side tombstone after a successful explicit session
+/// revival. Cursor recreation remains lazy until the next render command.
+pub fn revive_cursor(key: CursorKey) {
+    if key.is_empty() {
+        return;
+    }
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(OverlayMsg::Revive(key));
         wake_overlay();
     }
 }
@@ -1709,6 +1727,22 @@ mod tests {
             "tombstone must block resurrection"
         );
         assert_eq!(map.cursors.len(), 1);
+    }
+
+    #[test]
+    fn explicit_revival_clears_tombstone_and_recreates_lazily() {
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
+        assert!(apply_msg(&mut map, move_msg("sessA", 20.0, 20.0)).is_none());
+
+        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
+        assert!(!map.cursors.contains_key("sessA"));
+        assert!(!map.ended.contains("sessA"));
+
+        let resolved = apply_msg(&mut map, move_msg("sessA", 30.0, 30.0));
+        assert_eq!(resolved.as_deref(), Some("sessA"));
+        assert!(map.cursors.contains_key("sessA"));
     }
 
     #[test]

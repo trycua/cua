@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use cua_driver_contract::{CaptureScope, EscalationReason};
 
 type SessionEndHook = Arc<dyn Fn(&str) + Send + Sync>;
+type SessionReviveHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionDeclaration {
@@ -217,6 +218,8 @@ impl SessionToolContext {
 
 static SESSION_END_HOOKS: OnceLock<Mutex<HashMap<u64, SessionEndHook>>> = OnceLock::new();
 static NEXT_SESSION_END_HOOK_ID: AtomicU64 = AtomicU64::new(1);
+static SESSION_REVIVE_HOOKS: OnceLock<Mutex<HashMap<u64, SessionReviveHook>>> = OnceLock::new();
+static NEXT_SESSION_REVIVE_HOOK_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Last-activity timestamp per live session id. A session is "touched" every
 /// time a tool call carries its explicit `session` id (see the daemon boundary
@@ -342,6 +345,10 @@ fn hooks() -> &'static Mutex<HashMap<u64, SessionEndHook>> {
     SESSION_END_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn revive_hooks() -> &'static Mutex<HashMap<u64, SessionReviveHook>> {
+    SESSION_REVIVE_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn ended_sessions() -> &'static Mutex<HashSet<String>> {
     ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
@@ -418,6 +425,42 @@ pub struct SessionEndHookRegistration {
 impl Drop for SessionEndHookRegistration {
     fn drop(&mut self) {
         hooks().lock().unwrap().remove(&self.id);
+    }
+}
+
+/// Register a runtime-owned callback for a successful explicit revival.
+/// Dropping the returned guard removes the callback.
+pub fn register_scoped_session_revive_hook(
+    hook: impl Fn(&str) + Send + Sync + 'static,
+) -> SessionReviveHookRegistration {
+    let id = NEXT_SESSION_REVIVE_HOOK_ID.fetch_add(1, Ordering::Relaxed);
+    revive_hooks().lock().unwrap().insert(id, Arc::new(hook));
+    SessionReviveHookRegistration { id }
+}
+
+pub struct SessionReviveHookRegistration {
+    id: u64,
+}
+
+impl Drop for SessionReviveHookRegistration {
+    fn drop(&mut self) {
+        revive_hooks().lock().unwrap().remove(&self.id);
+    }
+}
+
+/// Notify session-owned subsystems after `start_session` has successfully
+/// revived and rebound a recycled id. Unlike [`revive_session`], this does not
+/// alter core lifecycle state; it fans the completed transition out to
+/// platform-owned tombstones.
+pub fn fire_session_revive(session_id: &str) {
+    let registered = revive_hooks()
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for hook in registered {
+        hook(session_id);
     }
 }
 

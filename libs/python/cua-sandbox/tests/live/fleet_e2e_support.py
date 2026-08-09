@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from pathlib import Path
+import re
+import time
+from typing import Any
+
+import httpx
+from fleet_sdk import (
+    CyclopsClient,
+    CyclopsConfiguration,
+    CyclopsCredentials,
+    HttpClient,
+    HttpError,
+    HttpHeader,
+    HttpRequest,
+    HttpResponse,
+    SdkError,
+)
+
+DEFAULT_BASE_URL = "https://run.cua.ai"
+DEFAULT_TOKEN_URL = (
+    "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
+)
+
+
+class HttpxFleetClient(HttpClient):
+    def __init__(self) -> None:
+        self._client = httpx.AsyncClient(timeout=60.0)
+
+    async def execute(self, request: HttpRequest) -> HttpResponse:
+        try:
+            response = await self._client.request(
+                request.method,
+                request.url,
+                headers={header.name: header.value for header in request.headers},
+                content=request.body,
+            )
+        except httpx.TransportError as error:
+            raise HttpError.Transport(str(error)) from error
+        return HttpResponse(
+            status=response.status_code,
+            headers=[
+                HttpHeader(name=name, value=value)
+                for name, value in response.headers.multi_items()
+            ],
+            body=response.content,
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
+def build_namespace_name(lane: str, run_id: str, run_attempt: str) -> str:
+    raw = f"cua-live-{lane}-{run_id}-{run_attempt}".lower()
+    normalized = re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
+    return normalized[:63].rstrip("-")
+
+
+def build_fleet_client() -> tuple[CyclopsClient, HttpxFleetClient]:
+    client_id = os.environ["CUA_CLIENT_ID"]
+    client_secret = os.environ["CUA_CLIENT_SECRET"]
+    http_client = HttpxFleetClient()
+    configuration = CyclopsConfiguration(
+        base_url=os.environ.get("CUA_FLEET_BASE_URL", DEFAULT_BASE_URL),
+        token_url=os.environ.get("CUA_TOKEN_URL", DEFAULT_TOKEN_URL),
+        credentials=CyclopsCredentials(client_id, client_secret),
+        pool_poll_interval_ms=2000,
+        pool_poll_limit=300,
+        claim_poll_interval_ms=2000,
+        claim_poll_limit=300,
+    )
+    return CyclopsClient.connect(configuration, http_client), http_client
+
+
+def is_not_found_error(error: BaseException) -> bool:
+    return isinstance(error, SdkError.Status) and error.status == 404
+
+
+async def namespace_exists(client: CyclopsClient, name: str) -> bool:
+    try:
+        await client.get_namespace(name)
+    except Exception as error:
+        if is_not_found_error(error):
+            return False
+        raise
+    return True
+
+
+async def wait_namespace_absent(
+    client: CyclopsClient,
+    name: str,
+    *,
+    timeout: float = 180.0,
+    interval: float = 5.0,
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not await namespace_exists(client, name):
+            return True
+        await asyncio.sleep(interval)
+    return not await namespace_exists(client, name)
+
+
+async def collect_resource_inventory(
+    client: CyclopsClient, name: str
+) -> dict[str, list[str]]:
+    if not await namespace_exists(client, name):
+        return {"templates": [], "pools": [], "claims": []}
+    templates = await client.list_templates(name)
+    pools = await client.list_pools(name)
+    claims = await client.list_claims(name)
+    return {
+        "templates": [item.metadata.name for item in templates],
+        "pools": [item.metadata.name for item in pools],
+        "claims": [item.metadata.name for item in claims],
+    }
+
+
+def assert_template_contract(template: Any, expected_port: int) -> None:
+    vm_template = template.spec.vm_template
+    server = next(service for service in vm_template.services if service.name == "server")
+    assert server.target_port == expected_port, (
+        f"server target_port={server.target_port}, expected {expected_port}"
+    )
+    probes = json.loads(vm_template.probes.to_json())
+    observed = probes["readinessProbe"]["tcpSocket"]["port"]
+    assert observed == expected_port, (
+        f"readiness probe port={observed}, expected {expected_port}"
+    )
+
+
+def write_summary(path: Path, summary: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+
+
+async def cleanup_namespace(name: str) -> bool:
+    client, http_client = build_fleet_client()
+    try:
+        if not await namespace_exists(client, name):
+            return False
+        await client.delete_namespace(name)
+        return await wait_namespace_absent(client, name)
+    finally:
+        await http_client.aclose()

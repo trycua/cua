@@ -276,6 +276,9 @@ func (h Handlers) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]NamespaceResponse, 0, len(nsList.Items))
 	for _, ns := range nsList.Items {
+		if isGitHubPrincipal(user) && !namespaceAllowed(user, ns.Metadata.Name) {
+			continue
+		}
 		out = append(out, NamespaceResponse{
 			Name:      ns.Metadata.Name,
 			Status:    ns.Status.Phase,
@@ -410,6 +413,10 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name must be a DNS-1123 label (lowercase alphanumeric + dashes, max 63 chars)")
 		return
 	}
+	if isGitHubPrincipal(user) && !namespaceAllowed(user, req.Name) {
+		writeErr(w, http.StatusForbidden, "namespace is outside github trust policy scope")
+		return
+	}
 	ctx, span := handlerTracer().Start(r.Context(), "namespaces.create", trace.WithAttributes(
 		attribute.String("http.route", "/api/namespaces"),
 		attribute.String("user.id", user.ID),
@@ -542,6 +549,10 @@ func (h Handlers) DeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	if !dnsLabel.MatchString(name) || len(name) > 63 {
 		writeErr(w, http.StatusBadRequest, "invalid namespace name")
+		return
+	}
+	if isGitHubPrincipal(user) && !namespaceAllowed(user, name) {
+		writeErr(w, http.StatusForbidden, "namespace is outside github trust policy scope")
 		return
 	}
 	ctx, span := handlerTracer().Start(r.Context(), "namespaces.delete", trace.WithAttributes(

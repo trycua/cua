@@ -277,3 +277,53 @@ func TestBodyRequestsMacOS(t *testing.T) {
 		})
 	}
 }
+
+func TestK8sProxy_GitHubPrincipalAllowsNamespacedPoolCRUDPath(t *testing.T) {
+	var receivedPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
+
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodGet, "/api/k8s/apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools", nil)
+	r.SetPathValue("path", "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools")
+	r = withUser(r, &auth.User{
+		ID:                "user-123",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"ns-a"},
+	})
+	w := httptest.NewRecorder()
+
+	h.K8s(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	if receivedPath != "/apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools" {
+		t.Fatalf("upstream path = %q", receivedPath)
+	}
+}
+
+func TestK8sProxy_GitHubPrincipalRejectsClusterWidePath(t *testing.T) {
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodGet, "/api/k8s/api/v1/nodes", nil)
+	r.SetPathValue("path", "api/v1/nodes")
+	r = withUser(r, &auth.User{
+		ID:                "user-123",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"ns-a"},
+	})
+	w := httptest.NewRecorder()
+
+	h.K8s(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
+	}
+}

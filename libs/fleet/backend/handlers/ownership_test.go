@@ -216,6 +216,28 @@ func TestSvc_InvalidNamespace_BadRequest(t *testing.T) {
 	}
 }
 
+func TestRequireNamespaceAccess_GitHubPrincipalAllowedWithoutProbe(t *testing.T) {
+	resetOwnershipCache()
+	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status"}`)
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	h := testHandlers()
+	w := httptest.NewRecorder()
+	r := svcRequest(&auth.User{
+		ID:                "user-123",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"allowed-ns"},
+	}, "allowed-ns", "novnc")
+	if !h.requireNamespaceAccess(w, r, currentUser(r), "allowed-ns") {
+		t.Fatalf("authorized GitHub principal rejected; status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if len(fk.requests) != 0 {
+		t.Fatalf("expected no K8s probe, got %d request(s)", len(fk.requests))
+	}
+}
+
 func TestOrch_NonOwnedNamespace_Forbidden(t *testing.T) {
 	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status"}`)

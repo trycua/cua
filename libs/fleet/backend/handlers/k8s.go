@@ -60,6 +60,17 @@ func (h Handlers) K8s(w http.ResponseWriter, r *http.Request) {
 	// Extract the authenticated user for K8s impersonation — Capsule
 	// uses these headers to scope the request to the user's Tenant.
 	user := currentUser(r.WithContext(ctx))
+	if isGitHubPrincipal(user) {
+		namespace, ok := githubAllowedK8sPath(r.Method, strings.TrimPrefix(r.PathValue("path"), "/"))
+		if !ok {
+			writeErr(w, http.StatusForbidden, "k8s path is outside github trust policy scope")
+			return
+		}
+		if !namespaceAllowed(user, namespace) {
+			writeErr(w, http.StatusForbidden, "namespace is outside github trust policy scope")
+			return
+		}
+	}
 
 	if allowed, err := poolImagePullSecretAllowed(ctx, r); err != nil {
 		writeErr(w, http.StatusBadRequest, "could not inspect pool request")
@@ -210,6 +221,34 @@ func bodyRequestsMacOS(body []byte) bool {
 		}
 	}
 	return false
+}
+
+func githubAllowedK8sPath(method, path string) (string, bool) {
+	parts := strings.Split(path, "/")
+	if len(parts) >= 6 &&
+		parts[0] == "apis" &&
+		parts[1] == "cua.ai" &&
+		parts[2] == "v1" &&
+		parts[3] == "namespaces" &&
+		parts[5] == "osgymworkspacepools" {
+		switch method {
+		case http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete:
+			if len(parts) == 6 || len(parts) == 7 {
+				return parts[4], true
+			}
+		}
+	}
+	if len(parts) >= 6 &&
+		parts[0] == "apis" &&
+		parts[1] == "osgym.cua.ai" &&
+		parts[2] == "v1alpha1" &&
+		parts[3] == "namespaces" &&
+		parts[5] == "osgymsandboxclaims" {
+		if method == http.MethodGet && (len(parts) == 6 || len(parts) == 7) {
+			return parts[4], true
+		}
+	}
+	return "", false
 }
 
 // Orch godoc

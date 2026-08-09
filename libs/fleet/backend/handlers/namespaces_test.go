@@ -569,3 +569,69 @@ func TestListNamespaces_MissingUser(t *testing.T) {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestListNamespaces_GitHubPrincipalFiltersAllowedNamespaces(t *testing.T) {
+	fk := newFakeK8s(http.StatusOK, nsListResponse("ns-alpha", "ns-beta", "ns-gamma"))
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodGet, "/api/namespaces", nil)
+	r = withUser(r, &auth.User{
+		ID:                "test-uuid",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"ns-beta"},
+	})
+	w := httptest.NewRecorder()
+
+	h.ListNamespaces(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	var nsList []NamespaceResponse
+	if err := json.NewDecoder(w.Body).Decode(&nsList); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(nsList) != 1 || nsList[0].Name != "ns-beta" {
+		t.Fatalf("namespaces = %+v", nsList)
+	}
+}
+
+func TestCreateNamespace_GitHubPrincipalRejectsOutOfScopeNamespace(t *testing.T) {
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodPost, "/api/namespaces", strings.NewReader(`{"name":"other-ns"}`))
+	r = withUser(r, &auth.User{
+		ID:                "test-uuid",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"allowed-ns"},
+	})
+	w := httptest.NewRecorder()
+
+	h.CreateNamespace(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteNamespace_GitHubPrincipalRejectsOutOfScopeNamespace(t *testing.T) {
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodDelete, "/api/namespaces/other-ns", nil)
+	r.SetPathValue("name", "other-ns")
+	r = withUser(r, &auth.User{
+		ID:                "test-uuid",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"allowed-ns"},
+	})
+	w := httptest.NewRecorder()
+
+	h.DeleteNamespace(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
+	}
+}

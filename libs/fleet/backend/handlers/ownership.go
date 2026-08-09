@@ -98,6 +98,13 @@ func (h Handlers) isPerKeyClient(user *auth.User) bool {
 // RoleBinding probe. On deny/error it writes the response and returns
 // false; callers must return immediately.
 func (h Handlers) requireNamespaceAccess(w http.ResponseWriter, r *http.Request, user *auth.User, ns string) bool {
+	if isGitHubPrincipal(user) {
+		if namespaceAllowed(user, ns) {
+			return true
+		}
+		writeErr(w, http.StatusForbidden, "namespace access denied")
+		return false
+	}
 	// Per-key clients: bound to exactly one namespace by their token
 	// claim. No K8s call — the claim IS the grant.
 	if h.isPerKeyClient(user) {

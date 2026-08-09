@@ -100,6 +100,30 @@ allow {
     is_interactive_client
 }
 
+allow {
+    input.route == "/api/namespaces"
+    input.user.sub != ""
+    input.user.principal_type == "github_oidc"
+}
+
+allow {
+    input.route == "/api/namespaces/{name}"
+    input.user.sub != ""
+    input.user.principal_type == "github_oidc"
+}
+
+allow {
+    input.route == "/api/github-trust-policies"
+    input.user.sub != ""
+    is_interactive_client
+}
+
+allow {
+    input.route == "/api/github-trust-policies/{id}"
+    input.user.sub != ""
+    is_interactive_client
+}
+
 # /api/k8s/{path...} — kubectl-proxy passthrough.
 #
 # Any exact interactive client may read customer-facing resources (their pools, the pods
@@ -120,6 +144,13 @@ allow {
     input.user.sub != ""
     is_interactive_client
     is_admin
+}
+
+allow {
+    input.route == "/api/k8s/{path...}"
+    input.user.sub != ""
+    input.user.principal_type == "github_oidc"
+    is_github_k8s_candidate(input.params.path)
 }
 
 # is_infra_k8s_path matches the kubectl-proxy paths that expose cluster
@@ -167,6 +198,9 @@ is_infra_k8s_path(path) {
     parts[2] != ""
     parts[3] == "tenants"
 }
+
+is_github_k8s_candidate(path) { startswith(path, "apis/cua.ai/v1/namespaces/") }
+is_github_k8s_candidate(path) { startswith(path, "apis/osgym.cua.ai/v1alpha1/namespaces/") }
 
 # /api/orch/{namespace}/{service}/{path...} — per-namespace orchestrator
 # catalog read. Exact interactive clients only; namespace + service must be DNS-1123 labels.

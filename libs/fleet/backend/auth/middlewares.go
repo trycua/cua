@@ -351,7 +351,7 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		// ── JWT validation ─────────────────────────────────────────
-		user, err := validate(raw)
+		user, err := validateWithContext(r.Context(), raw)
 		if err != nil {
 			result = err.Error()
 			writeJSONErr(w, http.StatusUnauthorized, "auth token is invalid")
@@ -429,11 +429,14 @@ func buildUserInput(user *User) map[string]any {
 		return map[string]any{}
 	}
 	return map[string]any{
-		"sub":       user.ID,
-		"azp":       user.AZP,
-		"namespace": user.Namespace,
-		"email":     user.Email,
-		"groups":    user.Groups,
+		"sub":                user.ID,
+		"azp":                user.AZP,
+		"namespace":          user.Namespace,
+		"email":              user.Email,
+		"groups":             user.Groups,
+		"principal_type":     user.PrincipalType,
+		"repository":         user.Repository,
+		"allowed_namespaces": user.AllowedNamespaces,
 	}
 }
 

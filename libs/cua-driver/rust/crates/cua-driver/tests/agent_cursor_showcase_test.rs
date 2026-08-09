@@ -32,14 +32,11 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         let mut driver = spawn_driver();
         *evidence = recording_evidence(driver.recording_dir());
 
-        call_ok(
-            &mut driver,
-            "start_session",
-            serde_json::json!({
-                "session": SESSION
-            }),
-        );
-
+        // Capture the empty desktop before declaring the explicit session.
+        // `start_session` may revive and materialize the session-owned overlay
+        // at the current pointer position, which can otherwise put the badge
+        // in both frames when a previous showcase left the pointer at this
+        // deterministic target.
         let (baseline_png, width, height) = capture_desktop_png(&mut driver);
         let baseline = image::load_from_memory(&baseline_png)
             .expect("decode baseline desktop screenshot")
@@ -47,6 +44,14 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         assert!(
             width >= 640.0 && height >= 480.0,
             "showcase requires a normal desktop, got {width}x{height}"
+        );
+
+        call_ok(
+            &mut driver,
+            "start_session",
+            serde_json::json!({
+                "session": SESSION
+            }),
         );
 
         call_ok(

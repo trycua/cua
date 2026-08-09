@@ -524,7 +524,7 @@ requires-dist = [
     { name = "cua-cli", extras = ["mcp", "skills"], marker = "extra == 'all'" },
     { name = "cua-computer", specifier = ">=0.5.0" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
-    { name = "cua-sandbox", specifier = ">=0.1.27,<0.2.0" },
+    { name = "cua-sandbox", editable = "../cua-sandbox" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.0" },
     { name = "keyring", specifier = ">=25.0" },
     { name = "litellm", marker = "extra == 'skills'", specifier = "==1.86.2" },
@@ -571,20 +571,20 @@ wheels = [
 
 [[package]]
 name = "cua-fleet"
-version = "0.1.6"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.8"
+source = { registry = "https://wheels.cua.ai/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/d6/7795b42005eeedb80133175667a28a4f990e7af76318f2766e3f7ca858bf/cua_fleet-0.1.6-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:bce6c86535767f9e2ab547f482de1045532016d10e350076097c442eb8d56f81", size = 2115119, upload-time = "2026-08-05T21:50:23.957Z" },
-    { url = "https://files.pythonhosted.org/packages/60/82/027a3f0336ff636ff5d9b1c1bd04efac4d5b6fa53be033c6daad0f721f28/cua_fleet-0.1.6-py3-none-macosx_11_0_arm64.whl", hash = "sha256:8eba5d4c24769e949845c63d4ce9a35307900d6475531781f6b2fd3a1b93e537", size = 2067024, upload-time = "2026-08-05T21:50:25.413Z" },
-    { url = "https://files.pythonhosted.org/packages/84/bb/d54656d3e5e35eaf011b7359e175fba527d8a817782c642e08b5883b8e4a/cua_fleet-0.1.6-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:07e113e0fdbcd4b554a2b3f88411ac4eb691cd1be207dc62959c4f59c19b4e1b", size = 2416978, upload-time = "2026-08-05T21:50:26.815Z" },
-    { url = "https://files.pythonhosted.org/packages/20/82/af96a15bf10b273abc669b2d1eb403286d813e1336c85806329b99a88c94/cua_fleet-0.1.6-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:ef096dd2dae312a1eca6cbf08f8e1a78e32e5a7938418831f00c16be0663f23d", size = 2358990, upload-time = "2026-08-05T21:50:28.125Z" },
-    { url = "https://files.pythonhosted.org/packages/4b/24/488326167b4a7f41ef878d5966edd59fbec9879e7c2926edf9dcd6e03994/cua_fleet-0.1.6-py3-none-win_amd64.whl", hash = "sha256:230ebd003dee59b2d343b9ea136bd664c548afa3e5c1ad4cb44dad66b0816cea", size = 1925684, upload-time = "2026-08-05T21:50:29.42Z" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:20611a14c185157e6f41502e1bbdcc1e98663347e94463ca538755b0efc173bb" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7c21d0a36a8d74bfe0768422e4f3d9367ee51837920e2c22ee57521fc93c4f3b" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:d7604668a7186d06cefb2bd23974b033c0b2cda61ccbe88d944af622b37f58d3" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:0bac329552d351604ad15b7eb4f4f3ed944921083238d74f51277d657d8f0a34" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-win_amd64.whl", hash = "sha256:d78fe6934a2f650dcf5b105a08833418245c720765da9c3b40e160b86a3d203d" },
 ]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.1.27"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.28"
+source = { editable = "../cua-sandbox" }
 dependencies = [
     { name = "cua-auto" },
     { name = "cua-core" },
@@ -598,9 +598,32 @@ dependencies = [
     { name = "vncdotool" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/04/ec0a97917d99681a5d5fb7988a90a252510bf37f1d6f84423928839042f3/cua_sandbox-0.1.27.tar.gz", hash = "sha256:6d069ff37371bf23ed7749fb3a38ab5dc925acdf17023049db26f5bf76082e6d", size = 153656, upload-time = "2026-08-05T22:13:58.952Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/80/b696fb61ef28ad00b7fb1caa787544567ea5d9d733e944a24b13f42e8efa/cua_sandbox-0.1.27-py3-none-any.whl", hash = "sha256:1bf13bb7035f516670986067d36a2ea39986b441f3cd2cf993b0e9043e092680", size = 187145, upload-time = "2026-08-05T22:13:57.829Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "cua-auto", specifier = ">=0.1.2" },
+    { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
+    { name = "cua-fleet", specifier = "==0.1.8" },
+    { name = "grpcio", specifier = "==1.78.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "oras", specifier = ">=0.2.40" },
+    { name = "paramiko", specifier = ">=5.0.0" },
+    { name = "protobuf", specifier = "==6.33.6" },
+    { name = "pycdlib", specifier = ">=1.14.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "vncdotool", specifier = ">=1.2.0" },
+    { name = "webbrowser-open", marker = "extra == 'auth'", specifier = ">=0.0.1" },
+    { name = "websockets", specifier = ">=12.0" },
+]
+provides-extras = ["auth", "dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "cua-agent", editable = "../agent" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
 ]
 
 [[package]]

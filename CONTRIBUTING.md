@@ -38,6 +38,9 @@ when the problem and evidence are clear; until reviewed, that work is an
 unselected contribution. Work that needs an RFC waits for the recorded decision
 in [`rfcs/README.md`](rfcs/README.md) before implementation begins.
 
+Maintainers and coding agents choosing what to work on next should use the
+read-only polling ladder in [`MAINTAINERS.md`](MAINTAINERS.md).
+
 Once implementation starts, keep the issue or RFC as the problem and decision
 record and the pull request as the current execution record. Link them in both
 directions and keep the pull request description current as scope, validation,

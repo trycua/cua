@@ -25,6 +25,19 @@ internal refactors that preserve public behavior, or urgent private security
 response. Suspected vulnerabilities must use the repository's private security
 reporting path instead of a public RFC.
 
+### Security design versus vulnerability reports
+
+A public RFC is the right place to decide what a security boundary should be:
+which process holds a capability, what a permission prompt must state, which
+data must not be collected or exposed, and how authorization appears in a
+public contract. A vulnerability report describes a specific exploitable defect
+in shipped Cua code or configuration. Design the boundary in public; report the
+defect privately through [`SECURITY.md`](../SECURITY.md).
+
+If a hardening proposal cannot be described without disclosing an exploitable
+defect, report it privately first. Maintainers can open or unblock the public
+RFC after remediation is coordinated.
+
 ## Repository structure
 
 ```text
@@ -68,15 +81,15 @@ shorter window, record the reason in the decision summary.
 
 ## Status vocabulary
 
-| Status | Meaning |
-| --- | --- |
-| `draft` | The author is still shaping the proposal. |
-| `review` | The proposal is ready for technical and product feedback. |
-| `accepted` | The decision is approved; implementation may still be pending. |
-| `completed` | The accepted proposal's required implementation has shipped. |
-| `declined` | Review concluded that Cua should not adopt the proposal. |
-| `withdrawn` | The author stopped the proposal before a decision. |
-| `superseded` | A linked later RFC replaces this decision. |
+| Status       | Meaning                                                        |
+| ------------ | -------------------------------------------------------------- |
+| `draft`      | The author is still shaping the proposal.                      |
+| `review`     | The proposal is ready for technical and product feedback.      |
+| `accepted`   | The decision is approved; implementation may still be pending. |
+| `completed`  | The accepted proposal's required implementation has shipped.   |
+| `declined`   | Review concluded that Cua should not adopt the proposal.       |
+| `withdrawn`  | The author stopped the proposal before a decision.             |
+| `superseded` | A linked later RFC replaces this decision.                     |
 
 ## Review expectations
 

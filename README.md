@@ -174,6 +174,7 @@ of Setup Assistant on its first display boot; see [issue #2155](https://github.c
 - [Blog](https://cua.ai/blog) — Tutorials, updates, and research
 - [Discord](https://discord.com/invite/mVnXXpdE85) — Community support and discussions
 - [GitHub Issues](https://github.com/trycua/cua/issues) — Bug reports and feature requests
+- [Security](SECURITY.md) — Private vulnerability reporting
 
 ## Citation
 

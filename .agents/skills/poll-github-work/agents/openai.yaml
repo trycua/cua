@@ -1,0 +1,4 @@
+interface:
+  display_name: "Poll GitHub Work"
+  short_description: "Rank actionable issues and pull requests safely"
+  default_prompt: "Use $poll-github-work to rank the best repository work for this session without changing GitHub."

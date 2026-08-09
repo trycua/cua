@@ -946,31 +946,43 @@ def cmd_exec(args: argparse.Namespace) -> int:
         return 1
 
     async def _run() -> int:
+        from cua_sandbox import Sandbox
+
         try:
-            api_url, api_key = await _get_sandbox_api_url(args.name, local)
-        except ValueError as e:
-            print_error(str(e))
+            kwargs: dict[str, Any] = {}
+            if not local:
+                kwargs["api_key"] = await get_access_token()
+            sb = await Sandbox.connect(args.name, local=local, **kwargs)
+        except Exception as e:
+            print_error(f"Failed to connect to sandbox: {e}")
             return 1
 
-        result = await _exec_noninteractive(args.name, api_url, api_key, command)
+        try:
+            result = await sb.shell.run(command, timeout=120)
+        except Exception as e:
+            print_error(f"Failed to execute command: {e}")
+            return 1
+        finally:
+            await sb.disconnect()
 
+        output = {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+        }
         if getattr(args, "json", False):
-            print_json(result)
-            return result.get("returncode") or result.get("return_code") or 0
+            print_json(output)
+        else:
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            if stdout:
+                print(stdout)
+            if stderr:
+                print(stderr, file=sys.stderr)
 
-        if not result.get("success", True):
-            print_error(result.get("error", "Command failed"))
+        if result.returncode != 0:
+            print_error(f"Command failed with exit code {result.returncode}")
             return 1
-
-        stdout = result.get("stdout", "").strip()
-        stderr = result.get("stderr", "").strip()
-        returncode = result.get("returncode") or result.get("return_code") or 0
-
-        if stdout:
-            print(stdout)
-        if stderr:
-            print(stderr, file=sys.stderr)
-
-        return returncode
+        return 0
 
     return run_async(_run())

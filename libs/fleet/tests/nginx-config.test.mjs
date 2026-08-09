@@ -20,4 +20,9 @@ test("backend API nginx route includes GitHub trust policy endpoints", async () 
     /\bgithub-trust-policies\b/,
     "expected /api/github-trust-policies to proxy to cyclops-cs-backend",
   )
+  assert.match(
+    backendRoute[1],
+    /\bstate\b/,
+    "expected /api/state/query to proxy to cyclops-cs-backend",
+  )
 })

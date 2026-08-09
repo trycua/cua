@@ -137,9 +137,11 @@ def assert_template_contract(template: Any, expected_port: int) -> None:
 
 
 def _is_sensitive_summary_key(key: object) -> bool:
-    normalized = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
+    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(key))
+    normalized = re.sub(r"[^a-z0-9]+", "_", separated.lower()).strip("_")
     return (
         normalized in SENSITIVE_SUMMARY_KEY_NAMES
+        or normalized.endswith("_api_key")
         or any(part in SENSITIVE_SUMMARY_KEY_PARTS for part in normalized.split("_"))
     )
 

@@ -141,8 +141,12 @@ def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
             "token": "token-value",
             "client_secret": "client-secret-value",
             "api_key": "api-key-value",
+            "clientSecret": "camel-client-secret-value",
+            "accessToken": "access-token-value",
+            "refreshToken": "refresh-token-value",
             "nested": {
                 "Authorization": "Nested Bearer secret",
+                "x-api-key": "header-api-key-value",
                 "items": [{"TOKEN": "nested-token"}, {"safe": "visible"}],
             },
         },
@@ -156,6 +160,10 @@ def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
         "token-value",
         "client-secret-value",
         "api-key-value",
+        "camel-client-secret-value",
+        "access-token-value",
+        "refresh-token-value",
+        "header-api-key-value",
         "Nested Bearer secret",
         "nested-token",
     ):
@@ -164,7 +172,11 @@ def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
     assert summary["token"] == "<redacted>"
     assert summary["client_secret"] == "<redacted>"
     assert summary["api_key"] == "<redacted>"
+    assert summary["clientSecret"] == "<redacted>"
+    assert summary["accessToken"] == "<redacted>"
+    assert summary["refreshToken"] == "<redacted>"
     assert summary["nested"]["Authorization"] == "<redacted>"
+    assert summary["nested"]["x-api-key"] == "<redacted>"
     assert summary["nested"]["items"][0]["TOKEN"] == "<redacted>"
     assert summary["nested"]["items"][1]["safe"] == "visible"
 

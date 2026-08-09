@@ -49,6 +49,50 @@ def test_pool_request_uses_the_single_sandbox_name_and_requested_replicas():
     assert request.spec.sandbox_template_ref.name == "demo"
     assert request.spec.autoscaling is None
 
+@pytest.mark.parametrize("pool_length", [57, 58, 63])
+def test_deterministic_claim_name_obeys_dns_label_boundary(pool_length):
+    pool_name = "a" * pool_length
+
+    claim_name = fleet_cloud._claim_name(pool_name)
+
+    assert len(claim_name) <= 63
+    assert claim_name == claim_name.lower()
+    assert claim_name[0].isalnum()
+    assert claim_name[-1].isalnum()
+    assert all(character.islower() or character.isdigit() or character == "-" for character in claim_name)
+    if pool_length == 57:
+        assert claim_name == f"{pool_name}-claim"
+    else:
+        prefix, hash_suffix = claim_name.rsplit("-", 1)
+        assert pool_name.startswith(prefix)
+        assert len(hash_suffix) == 16
+        assert all(character in "0123456789abcdef" for character in hash_suffix)
+
+
+def test_deterministic_claim_name_distinguishes_long_pool_names():
+    first = fleet_cloud._claim_name(f"{'a' * 62}b")
+    second = fleet_cloud._claim_name(f"{'a' * 62}c")
+
+    assert first != second
+    assert first == fleet_cloud._claim_name(f"{'a' * 62}b")
+
+
+@pytest.mark.asyncio
+async def test_fleet_client_lookup_uses_bounded_deterministic_claim_name():
+    pool_name = "a" * 63
+    pool = _pool(pool_name)
+    claim = SimpleNamespace(metadata=SimpleNamespace(name=fleet_cloud._claim_name(pool_name)))
+    client = fleet_cloud._FleetClient.__new__(fleet_cloud._FleetClient)
+
+    class SDK:
+        async def list_claims(self, namespace):
+            assert namespace == pool_name
+            return [claim]
+
+    client._client = SDK()
+
+    assert await client.get_claim(pool) is claim
+
 
 @pytest.mark.parametrize(
     "image", [Image.linux(), Image.from_registry("example:latest").apt_install("curl")]
@@ -127,7 +171,9 @@ async def test_image_connect_reconciles_named_resources_without_namespace_calls(
 @pytest.mark.asyncio
 async def test_created_claim_is_resolved_by_later_connect_and_delete(monkeypatch):
     calls = []
-    pool = _pool()
+    pool_name = "a" * 63
+    expected_claim_name = fleet_cloud._claim_name(pool_name)
+    pool = _pool(pool_name)
     bound = _bound()
     created_claim = None
 
@@ -152,10 +198,11 @@ async def test_created_claim_is_resolved_by_later_connect_and_delete(monkeypatch
             return pool
 
         async def get_claim(self, existing_pool):
-            expected_name = f"{existing_pool.metadata.name}-claim"
-            calls.append(("get_claim", expected_name))
+            calls.append(("get_claim", fleet_cloud._claim_name(existing_pool.metadata.name)))
             assert created_claim is not None
-            assert created_claim.metadata.name == expected_name
+            assert created_claim.metadata.name == fleet_cloud._claim_name(
+                existing_pool.metadata.name
+            )
             return created_claim
 
         async def wait_claim(self, claim):
@@ -174,17 +221,19 @@ async def test_created_claim_is_resolved_by_later_connect_and_delete(monkeypatch
     client = Client()
     monkeypatch.setattr(fleet_cloud, "_FleetClient", lambda: client)
 
-    await FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo").connect()
-    await FleetCloudTransport(image=None, name="demo").connect()
-    await FleetCloudTransport.delete_sandbox("demo")
+    await FleetCloudTransport(
+        image=Image.from_registry("example:latest"), name=pool_name
+    ).connect()
+    await FleetCloudTransport(image=None, name=pool_name).connect()
+    await FleetCloudTransport.delete_sandbox(pool_name)
 
     assert calls == [
-        ("create_claim", "demo-claim"),
-        ("get_pool", "demo"),
-        ("get_claim", "demo-claim"),
-        ("get_pool", "demo"),
-        ("get_claim", "demo-claim"),
-        ("delete_claim", "demo-claim"),
+        ("create_claim", expected_claim_name),
+        ("get_pool", pool_name),
+        ("get_claim", expected_claim_name),
+        ("get_pool", pool_name),
+        ("get_claim", expected_claim_name),
+        ("delete_claim", expected_claim_name),
         ("close",),
     ]
 

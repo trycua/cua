@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import TYPE_CHECKING, Any, Mapping, Optional
@@ -43,6 +44,21 @@ if TYPE_CHECKING:
     from cua_sandbox.interfaces.tunnel import TunnelInfo
 
 logger = logging.getLogger(__name__)
+
+_DNS_LABEL_MAX_LENGTH = 63
+_CLAIM_HASH_LENGTH = 16
+
+
+def _claim_name(pool_name: str) -> str:
+    normalized_name = pool_name.lower()
+    legacy_name = f"{normalized_name}-claim"
+    if len(legacy_name) <= _DNS_LABEL_MAX_LENGTH:
+        return legacy_name
+
+    hash_suffix = hashlib.sha256(normalized_name.encode()).hexdigest()[:_CLAIM_HASH_LENGTH]
+    prefix_length = _DNS_LABEL_MAX_LENGTH - len(hash_suffix) - 1
+    prefix = normalized_name[:prefix_length].rstrip("-")
+    return f"{prefix}-{hash_suffix}"
 
 
 class _StaticAccessTokenProvider(AccessTokenProvider):
@@ -163,7 +179,7 @@ class _FleetClient:
         return await self._client.get_pool(name)
 
     async def get_claim(self, pool: Any) -> Any:
-        expected = f"{pool.metadata.name}-claim"
+        expected = _claim_name(pool.metadata.name)
         for claim in await self._client.list_claims(pool.metadata.namespace):
             if claim.metadata.name == expected:
                 return claim
@@ -305,7 +321,7 @@ class FleetCloudTransport(FleetTransport):
                     else:
                         self._claim = await self._sdk.create_claim(
                             CreateClaimRequest(
-                                pool=self._pool, spec=None, name=f"{self._name}-claim"
+                                pool=self._pool, spec=None, name=_claim_name(self._name)
                             )
                         )
                 bound = await self._sdk.wait_claim(self._claim)

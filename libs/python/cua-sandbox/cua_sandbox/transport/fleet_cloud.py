@@ -12,6 +12,7 @@ from cua_sandbox._config import (
     get_client_id,
     get_client_secret,
     get_fleet_base_url,
+    get_fleet_token,
     get_token_url,
 )
 from cua_sandbox.image import Image
@@ -23,9 +24,11 @@ from fleet_sdk import (
     CreatePoolRequestBuilder,
     CreateTemplateRequest,
     CreateTemplateRequestBuilder,
+    AccessTokenProvider,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
+    CyclopsTokenProviderConfiguration,
     HttpRequest,
     OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpecBuilder,
@@ -43,19 +46,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _StaticAccessTokenProvider(AccessTokenProvider):
+    """Return a configured Fleet workload token without attempting refresh."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    async def get_access_token(self, force_refresh: bool) -> str:
+        return self._token
+
+
 class _FleetClient:
     """Thin async facade over the generated Cyclops SDK."""
 
     def __init__(self) -> None:
-        client_id = get_client_id()
-        client_secret = get_client_secret()
-        if not client_id or not client_secret:
-            raise ValueError(
-                "Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, "
-                "or cua.configure(client_id=..., client_secret=...)."
-            )
+        fleet_token = get_fleet_token()
+        if not fleet_token:
+            client_id = get_client_id()
+            client_secret = get_client_secret()
+            if not client_id or not client_secret:
+                raise ValueError(
+                    "Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, "
+                    "or cua.configure(client_id=..., client_secret=...)."
+                )
         self._base_url = get_fleet_base_url().rstrip("/")
         self._http_client = CyclopsHttpClient()
+        if fleet_token:
+            configuration = CyclopsTokenProviderConfiguration(
+                base_url=self._base_url,
+                pool_poll_interval_ms=2000,
+                pool_poll_limit=300,
+                claim_poll_interval_ms=2000,
+                claim_poll_limit=300,
+            )
+            self._client = CyclopsClient.connect_with_access_token_provider(
+                configuration, _StaticAccessTokenProvider(fleet_token), self._http_client
+            )
+            return
         configuration = CyclopsConfiguration(
             base_url=self._base_url,
             token_url=get_token_url(),

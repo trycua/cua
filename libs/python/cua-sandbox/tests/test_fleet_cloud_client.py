@@ -118,3 +118,118 @@ async def test_service_request_delegates_to_generated_client():
     client._client = SDK()
     assert await client.service_request("sandbox", "server", "/status", "request") == "response"
     assert calls == [("sandbox", "server", "/status", "request")]
+
+
+@pytest.mark.asyncio
+async def test_fleet_client_uses_static_workload_token_and_closes_http_client(monkeypatch, caplog):
+    from cua_sandbox.transport import fleet_cloud
+    from fleet_sdk import AccessTokenProvider, CyclopsTokenProviderConfiguration
+
+    token = "fleet-workload-token"
+    calls = {}
+
+    class HttpClient:
+        close_calls = 0
+
+        async def aclose(self):
+            self.close_calls += 1
+
+    class Client:
+        @staticmethod
+        def connect_with_access_token_provider(configuration, provider, http_client):
+            calls.update(
+                configuration=configuration,
+                provider=provider,
+                http_client=http_client,
+            )
+            return "token-client"
+
+        @staticmethod
+        def connect(*args):
+            pytest.fail("client-credential connection must not be used with a Fleet token")
+
+    monkeypatch.setattr(fleet_cloud, "get_fleet_token", lambda: token)
+    monkeypatch.setattr(fleet_cloud, "get_fleet_base_url", lambda: "https://fleet.example/")
+    monkeypatch.setattr(fleet_cloud, "CyclopsHttpClient", HttpClient)
+    monkeypatch.setattr(fleet_cloud, "CyclopsClient", Client)
+
+    client = _FleetClient()
+
+    assert client._client == "token-client"
+    assert isinstance(calls["configuration"], CyclopsTokenProviderConfiguration)
+    assert vars(calls["configuration"]) == {
+        "base_url": "https://fleet.example",
+        "pool_poll_interval_ms": 2000,
+        "pool_poll_limit": 300,
+        "claim_poll_interval_ms": 2000,
+        "claim_poll_limit": 300,
+    }
+    assert isinstance(calls["provider"], AccessTokenProvider)
+    assert await calls["provider"].get_access_token(False) == token
+    assert await calls["provider"].get_access_token(True) == token
+    assert token not in caplog.text
+
+    await client.close()
+    assert calls["http_client"].close_calls == 1
+
+
+def test_fleet_client_falls_back_to_client_credentials_without_workload_token(monkeypatch):
+    from cua_sandbox.transport import fleet_cloud
+    from fleet_sdk import CyclopsConfiguration
+
+    calls = {}
+
+    class HttpClient:
+        async def aclose(self):
+            pass
+
+    class Client:
+        @staticmethod
+        def connect(configuration, http_client):
+            calls.update(configuration=configuration, http_client=http_client)
+            return "credential-client"
+
+        @staticmethod
+        def connect_with_access_token_provider(*args):
+            pytest.fail("token-provider connection requires a Fleet token")
+
+    monkeypatch.setattr(fleet_cloud, "get_fleet_token", lambda: None)
+    monkeypatch.setattr(fleet_cloud, "get_client_id", lambda: "client-id")
+    monkeypatch.setattr(fleet_cloud, "get_client_secret", lambda: "client-secret")
+    monkeypatch.setattr(fleet_cloud, "get_fleet_base_url", lambda: "https://fleet.example/")
+    monkeypatch.setattr(fleet_cloud, "get_token_url", lambda: "https://auth.example/token")
+    monkeypatch.setattr(fleet_cloud, "CyclopsHttpClient", HttpClient)
+    monkeypatch.setattr(fleet_cloud, "CyclopsClient", Client)
+
+    client = _FleetClient()
+
+    assert client._client == "credential-client"
+    assert isinstance(calls["configuration"], CyclopsConfiguration)
+    assert vars(calls["configuration"]) == {
+        "base_url": "https://fleet.example",
+        "token_url": "https://auth.example/token",
+        "credentials": calls["configuration"].credentials,
+        "pool_poll_interval_ms": 2000,
+        "pool_poll_limit": 300,
+        "claim_poll_interval_ms": 2000,
+        "claim_poll_limit": 300,
+    }
+
+
+def test_fleet_client_requires_credentials_when_no_workload_token_exists(monkeypatch):
+    from cua_sandbox.transport import fleet_cloud
+
+    monkeypatch.setattr(fleet_cloud, "get_fleet_token", lambda: None)
+    monkeypatch.setattr(fleet_cloud, "get_client_id", lambda: None)
+    monkeypatch.setattr(fleet_cloud, "get_client_secret", lambda: None)
+    monkeypatch.setattr(
+        fleet_cloud,
+        "CyclopsHttpClient",
+        lambda: pytest.fail("missing credentials must fail before creating an HTTP client"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET",
+    ):
+        _FleetClient()

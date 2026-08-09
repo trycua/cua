@@ -51,6 +51,7 @@ import (
 	"cyclops-cs-backend/keycloak"
 	"cyclops-cs-backend/metrics"
 	"cyclops-cs-backend/middlewares"
+	"cyclops-cs-backend/statequery"
 	"cyclops-cs-backend/telemetry"
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
@@ -98,6 +99,9 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// Feature flags / per-user config. SPA-only (same auth as /api/keys).
 	r.Handle("GET /api/config",
 		withMiddlewares("/api/config", nil, c.GetConfig))
+
+	r.Handle("POST /api/state/query",
+		withMiddlewares("/api/state/query", nil, c.QueryState))
 
 	// Stripe-hosted billing. Browser routes require the normal SPA JWT; the
 	// webhook uses Stripe signature verification as its authentication boundary.
@@ -316,6 +320,35 @@ func run() error {
 	h.WorkloadAdmin = workloadAdmin
 	h.WorkloadAudience = cfg.Keycloak.WorkloadAudience
 	h.WorkloadTokenURL = cfg.Keycloak.WorkloadTokenURL
+	stateSchemaReady := false
+	stateRoleURLs := statequery.FixedRoleURLs{
+		Writer:    cfg.Database.StateWriterURL,
+		Exporter:  cfg.Database.StateExporterURL,
+		Query:     cfg.Database.StateQueryURL,
+		RoleAdmin: cfg.Database.StateRoleAdminURL,
+	}
+	if stateRoleURLs.Writer != "" || stateRoleURLs.Exporter != "" || stateRoleURLs.Query != "" || stateRoleURLs.RoleAdmin != "" {
+		if err := statequery.ReconcileFixedRoles(ctx, cfg.Database.URL, stateRoleURLs); err != nil {
+			slog.Error("kubernetes state query: fixed-role reconciliation failed", "err", err)
+		} else if err := statequery.Migrate(ctx, cfg.Database.URL); err != nil {
+			slog.Error("kubernetes state query: schema migration failed", "err", err)
+		} else {
+			slog.Info("kubernetes state query: schema ready")
+			stateSchemaReady = true
+		}
+	} else {
+		slog.Info("kubernetes state query: disabled (restricted database URLs unset)")
+	}
+	if stateSchemaReady {
+		executor, err := statequery.NewExecutor(ctx, cfg.Database.StateQueryURL, cfg.Database.StateRoleAdminURL)
+		if err != nil {
+			slog.Error("kubernetes state query: executor init failed; /api/state/query will return 503", "err", err)
+		} else {
+			defer executor.Close()
+			h.StateQueryExecutor = executor
+			slog.Info("kubernetes state query: query endpoint enabled")
+		}
+	}
 	// Postgres-backed GitHub OIDC trust policies (CUA-675). A connection
 	// failure is non-fatal — the routes stay registered and reply 503 until
 	// the database is reachable, mirroring how the other optional surfaces

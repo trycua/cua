@@ -385,3 +385,16 @@ valid_dns_label(s) {
     count(s) <= 63
     regex.match(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, s)
 }
+
+# Read-only state SQL. PostgreSQL RLS remains the row-visibility boundary.
+allow {
+    input.route == "/api/state/query"
+    input.user.sub != ""
+    is_interactive_client
+}
+
+allow {
+    input.route == "/api/state/query"
+    input.user.sub != ""
+    is_user_key_client
+}

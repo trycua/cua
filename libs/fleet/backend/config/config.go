@@ -20,14 +20,15 @@ import (
 )
 
 type Configuration struct {
-	WebServer WebServerConfiguration
-	Auth      AuthConfiguration
-	Keycloak  KeycloakConfiguration
-	Gateway   GatewayConfiguration
-	Database  DatabaseConfiguration
-	Stripe    StripeConfiguration
-	Metrics   MetricsConfiguration
-	Telemetry TelemetryConfiguration
+	WebServer  WebServerConfiguration
+	Auth       AuthConfiguration
+	Keycloak   KeycloakConfiguration
+	Gateway    GatewayConfiguration
+	Database   DatabaseConfiguration
+	StateQuery StateQueryConfiguration
+	Stripe     StripeConfiguration
+	Metrics    MetricsConfiguration
+	Telemetry  TelemetryConfiguration
 }
 
 type WebServerConfiguration struct {
@@ -90,7 +91,17 @@ type StripeConfiguration struct {
 // GitHub OIDC trust policies). An empty URL disables those routes (503),
 // keeping the backend bootable without a database — see CUA-675.
 type DatabaseConfiguration struct {
-	URL string // DATABASE_URL — postgres://user:pass@host:5432/dbname?sslmode=require
+	URL               string // DATABASE_URL — migration/control and GitHub trust-policy storage
+	StateQueryURL     string // STATE_QUERY_DATABASE_URL — restricted query broker
+	StateWriterURL    string // STATE_WRITER_DATABASE_URL — restricted projector writer
+	StateExporterURL  string // STATE_EXPORTER_DATABASE_URL — restricted outbox exporter
+	StateRoleAdminURL string // STATE_ROLE_ADMIN_DATABASE_URL — tenant-role reconciler
+}
+
+type StateQueryConfiguration struct {
+	MaxRows     int
+	TimeoutMS   int
+	MaxSQLBytes int
 }
 
 type MetricsConfiguration struct {
@@ -134,6 +145,13 @@ var specs = []flagSpec{
 	{"gateway.port", "orch-port", "ORCH_PORT", "80", "orchestrator port"},
 	{"gateway.cluster-domain", "cluster-domain", "CLUSTER_DOMAIN", "svc.cluster.local", "in-cluster DNS domain"},
 	{"database.url", "database-url", "DATABASE_URL", "", "Postgres URL for trust-policy storage (enables /api/github-trust-policies)"},
+	{"database.state-query-url", "state-query-database-url", "STATE_QUERY_DATABASE_URL", "", "Restricted Postgres URL for Kubernetes state queries"},
+	{"database.state-writer-url", "state-writer-database-url", "STATE_WRITER_DATABASE_URL", "", "Restricted Postgres URL for Kubernetes state projection"},
+	{"database.state-exporter-url", "state-exporter-database-url", "STATE_EXPORTER_DATABASE_URL", "", "Restricted Postgres URL for Kubernetes state history export"},
+	{"database.state-role-admin-url", "state-role-admin-database-url", "STATE_ROLE_ADMIN_DATABASE_URL", "", "Restricted Postgres URL for Kubernetes tenant-role reconciliation"},
+	{"state-query.max-rows", "state-query-max-rows", "STATE_QUERY_MAX_ROWS", "1000", "Maximum rows returned by a state query"},
+	{"state-query.timeout-ms", "state-query-timeout-ms", "STATE_QUERY_TIMEOUT_MS", "5000", "State query statement timeout in milliseconds"},
+	{"state-query.max-sql-bytes", "state-query-max-sql-bytes", "STATE_QUERY_MAX_SQL_BYTES", "65536", "Maximum state query SQL size in bytes"},
 	{"stripe.secret-key", "stripe-secret-key", "STRIPE_SECRET_KEY", "", "Stripe secret key (server-only)"},
 	{"stripe.webhook-secret", "stripe-webhook-secret", "STRIPE_WEBHOOK_SECRET", "", "Stripe webhook signing secret"},
 	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
@@ -204,7 +222,18 @@ func LoadConfig() (*Configuration, error) {
 			Port:          viper.GetString("gateway.port"),
 			ClusterDomain: viper.GetString("gateway.cluster-domain"),
 		},
-		Database: DatabaseConfiguration{URL: viper.GetString("database.url")},
+		Database: DatabaseConfiguration{
+			URL:               viper.GetString("database.url"),
+			StateQueryURL:     viper.GetString("database.state-query-url"),
+			StateWriterURL:    viper.GetString("database.state-writer-url"),
+			StateExporterURL:  viper.GetString("database.state-exporter-url"),
+			StateRoleAdminURL: viper.GetString("database.state-role-admin-url"),
+		},
+		StateQuery: StateQueryConfiguration{
+			MaxRows:     viper.GetInt("state-query.max-rows"),
+			TimeoutMS:   viper.GetInt("state-query.timeout-ms"),
+			MaxSQLBytes: viper.GetInt("state-query.max-sql-bytes"),
+		},
 		Stripe: StripeConfiguration{
 			SecretKey:          viper.GetString("stripe.secret-key"),
 			WebhookSecret:      viper.GetString("stripe.webhook-secret"),

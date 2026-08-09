@@ -4,6 +4,7 @@ package handlers
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -24,10 +25,14 @@ type Handlers struct {
 	AuthCfg         config.AuthConfiguration
 	KC              config.KeycloakConfiguration
 	Stripe          config.StripeConfiguration
+	StateQuery      config.StateQueryConfiguration
 	Billing         BillingService
 	WebhookVerifier WebhookVerifier
 
 	GitHubTrustPolicies githubtrust.Store
+
+	StateQueryExecutor  StateQueryExecutor
+	StateQueryAuthorize func(context.Context, *auth.User) (bool, error)
 
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
@@ -46,6 +51,7 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		AuthCfg:    cfg.Auth,
 		KC:         cfg.Keycloak,
 		Stripe:     cfg.Stripe,
+		StateQuery: cfg.StateQuery,
 	}
 }
 

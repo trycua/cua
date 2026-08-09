@@ -36,8 +36,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             &mut driver,
             "start_session",
             serde_json::json!({
-                "session": SESSION,
-                "capture_scope": "auto"
+                "session": SESSION
             }),
         );
 
@@ -81,7 +80,10 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
                 "y": center_y - 80.0
             }),
         );
-        settle(900);
+        // move_cursor now waits for the configured glide to reach its target.
+        // Leave only a short compositor settle so the screenshot stays inside
+        // the session badge's two-second reveal window.
+        settle(100);
 
         let (cursor_png, cursor_width, cursor_height) = capture_desktop_png(&mut driver);
         assert_eq!(
@@ -109,20 +111,10 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
 
         call_ok(
             &mut driver,
-            "escalate_session",
-            serde_json::json!({
-                "session": SESSION,
-                "reason": "foreground_ineffective",
-                "detail": "cursor showcase switches from overlay positioning to desktop actions"
-            }),
-        );
-
-        call_ok(
-            &mut driver,
             "click",
             serde_json::json!({
                 "session": SESSION,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
                 "x": center_x,
                 "y": center_y,
                 "delivery_mode": "foreground"
@@ -135,7 +127,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "type_text",
             serde_json::json!({
                 "session": SESSION,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
                 "text": "cua",
                 "delivery_mode": "foreground"
             }),
@@ -147,7 +139,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "scroll",
             serde_json::json!({
                 "session": SESSION,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
                 "x": center_x,
                 "y": center_y,
                 "direction": "down",
@@ -162,7 +154,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "drag",
             serde_json::json!({
                 "session": SESSION,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
                 "from_x": center_x - 90.0,
                 "from_y": center_y + 80.0,
                 "to_x": center_x + 120.0,

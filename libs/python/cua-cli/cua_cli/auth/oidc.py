@@ -226,15 +226,35 @@ def _error_description(payload: Mapping[str, Any], fallback: str) -> str:
     return str(description) if description else fallback
 
 
-async def get_access_token() -> str:
+async def get_access_token(*, force_refresh: bool = False) -> str:
     """Return a valid access token, refreshing and persisting it when needed."""
     credentials = load_credentials()
     if credentials is None:
         raise OidcError("Not logged in. Run 'cua auth login' first.")
-    if credentials.expires_at > datetime.now(UTC) + timedelta(seconds=60):
+    if not force_refresh and credentials.expires_at > datetime.now(UTC) + timedelta(seconds=60):
         return credentials.access_token
 
     client = OidcClient()
     refreshed = await client.refresh(await client.discover(), credentials)
     save_credentials(refreshed)
     return refreshed.access_token
+
+
+def _fleet_access_token_provider_type() -> type[Any]:
+    try:
+        from cyclops_sdk import AccessTokenProvider
+    except (ImportError, OSError) as error:
+        raise OidcError(
+            "Fleet integration requires cua-cli[fleet] with its generated SDK bindings."
+        ) from error
+
+    class FleetAccessTokenProvider(AccessTokenProvider):
+        async def get_access_token(self, force_refresh: bool) -> str:
+            return await get_access_token(force_refresh=force_refresh)
+
+    return FleetAccessTokenProvider
+
+
+def FleetAccessTokenProvider() -> Any:
+    """Create a generated Fleet SDK token provider backed by CLI device credentials."""
+    return _fleet_access_token_provider_type()()

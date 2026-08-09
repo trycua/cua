@@ -428,6 +428,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "cua-train" },
     { name = "fastmcp" },
     { name = "litellm" },
 ]
@@ -437,6 +438,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "respx" },
     { name = "ruff" },
+]
+fleet = [
+    { name = "cua-train" },
 ]
 mcp = [
     { name = "fastmcp" },
@@ -449,9 +453,10 @@ skills = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "cua-auto", extras = ["all"], specifier = ">=0.1.0" },
-    { name = "cua-cli", extras = ["mcp", "skills"], marker = "extra == 'all'" },
+    { name = "cua-cli", extras = ["mcp", "skills", "fleet"], marker = "extra == 'all'" },
     { name = "cua-computer", specifier = ">=0.5.0" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
+    { name = "cua-train", marker = "extra == 'fleet'", specifier = "==0.1.1", index = "https://wheels.cua.ai/simple/" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.0" },
     { name = "keyring", specifier = ">=25.0" },
     { name = "litellm", marker = "extra == 'skills'", specifier = "==1.86.2" },
@@ -464,7 +469,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["mcp", "skills", "all", "dev"]
+provides-extras = ["mcp", "skills", "fleet", "all", "dev"]
 
 [[package]]
 name = "cua-computer"
@@ -494,6 +499,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f3/82/ec371bde395bbbd326a3467a1702b34ab629defa0cc89bd81ac78507ca5a/cua_core-0.3.1.tar.gz", hash = "sha256:a8fc4204981b9d5b604bd2a34de0bb41cf926309e4dd9f364c827750a86408da", size = 10710, upload-time = "2026-04-15T21:39:49.172Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/90/5148998a26671855539e2c3a620f72ef51f83118beffdfb7e77893d4730b/cua_core-0.3.1-py3-none-any.whl", hash = "sha256:9191b8abf5e02ea6bf8ba21237e747d4e3b319f6f24d4e66e04b7606fcc449f6", size = 10239, upload-time = "2026-04-15T21:39:48.265Z" },
+]
+
+[[package]]
+name = "cua-train"
+version = "0.1.1"
+source = { registry = "https://wheels.cua.ai/simple/" }
+dependencies = [
+    { name = "attrs" },
+    { name = "httpx" },
+    { name = "python-dateutil" },
+]
+wheels = [
+    { url = "https://wheels.cua.ai/simple/cua-train/cua_train-0.1.1-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:1822fb9a63c6566d2763a9fb2e384ba4cc6a3771d97fb2cd3f1f9af66916e6df" },
+    { url = "https://wheels.cua.ai/simple/cua-train/cua_train-0.1.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:045b51e3ebebc7bf2107ec5a97801250b551e9617bcbbeec97a1e4f4c2ebd884" },
+    { url = "https://wheels.cua.ai/simple/cua-train/cua_train-0.1.1-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:6f8eb7f450f05d4a495de70a0a8f7acdb3dce20d842bae96f2aec27e2869fb85" },
+    { url = "https://wheels.cua.ai/simple/cua-train/cua_train-0.1.1-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:9ab37ae89ef6f95a1c0e315226af7716625bc6225e54770f94315905a744c5ad" },
 ]
 
 [[package]]

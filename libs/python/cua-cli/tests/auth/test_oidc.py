@@ -1,10 +1,18 @@
 """Tests for the Keycloak OIDC device flow used by run.cua.ai."""
 
+import builtins
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 
 import pytest
-from cua_cli.auth.oidc import DEVICE_GRANT_TYPE, OidcClient
+from cua_cli.auth.oidc import (
+    DEVICE_GRANT_TYPE,
+    FleetAccessTokenProvider,
+    OidcClient,
+    OidcError,
+    get_access_token,
+)
 from cua_cli.auth.store import OAuthCredentials
 
 
@@ -142,3 +150,74 @@ async def test_poll_slow_down_increases_interval() -> None:
     await OidcClient(request=requester, sleep=sleep).poll_for_tokens(discovery, device_code)
 
     assert delays == [8]
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_forces_refresh_of_an_unexpired_token(monkeypatch) -> None:
+    credentials = OAuthCredentials(
+        access_token="cached-token",
+        refresh_token="refresh-token",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    refreshed = OAuthCredentials(
+        access_token="refreshed-token",
+        refresh_token="refresh-token",
+        expires_at=credentials.expires_at,
+    )
+    refresh_calls = []
+
+    class RefreshingClient:
+        async def discover(self):
+            return object()
+
+        async def refresh(self, discovery, received_credentials):
+            assert discovery is not None
+            assert received_credentials is credentials
+            refresh_calls.append(True)
+            return refreshed
+
+    monkeypatch.setattr("cua_cli.auth.oidc.load_credentials", lambda: credentials)
+    monkeypatch.setattr("cua_cli.auth.oidc.OidcClient", RefreshingClient)
+    monkeypatch.setattr("cua_cli.auth.oidc.save_credentials", lambda value: None)
+
+    assert await get_access_token(force_refresh=True) == refreshed.access_token
+    assert refresh_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_fleet_access_token_provider_forwards_force_refresh(monkeypatch) -> None:
+    from cyclops_sdk import AccessTokenProvider
+    from cyclops_sdk._sdk import _UniffiFfiConverterTypeAccessTokenProvider
+
+    refresh_requests = []
+
+    async def access_token(*, force_refresh: bool = False) -> str:
+        refresh_requests.append(force_refresh)
+        return "token"
+
+    monkeypatch.setattr("cua_cli.auth.oidc.get_access_token", access_token)
+    provider = FleetAccessTokenProvider()
+
+    assert isinstance(provider, AccessTokenProvider)
+    _UniffiFfiConverterTypeAccessTokenProvider.check_lower(provider)
+
+    await provider.get_access_token(False)
+    await provider.get_access_token(True)
+
+    assert refresh_requests == [False, True]
+
+
+def test_fleet_provider_fails_closed_without_its_generated_binding(monkeypatch) -> None:
+    assert version("cua-train") == "0.1.1"
+
+    original_import = builtins.__import__
+
+    def import_without_cyclops_sdk(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "cyclops_sdk" or name.startswith("cyclops_sdk."):
+            raise ModuleNotFoundError("No module named 'cyclops_sdk'", name="cyclops_sdk")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_cyclops_sdk)
+
+    with pytest.raises(OidcError, match=r"cua-cli\[fleet\]"):
+        FleetAccessTokenProvider()

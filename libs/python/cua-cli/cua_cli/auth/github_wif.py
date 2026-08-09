@@ -17,9 +17,7 @@ class GitHubWifError(RuntimeError):
 HttpRequest = Callable[[str, dict[str, str]], Awaitable[tuple[int, Mapping[str, Any]]]]
 
 
-async def _aiohttp_json_get(
-    url: str, headers: dict[str, str]
-) -> tuple[int, Mapping[str, Any]]:
+async def _aiohttp_json_get(url: str, headers: dict[str, str]) -> tuple[int, Mapping[str, Any]]:
     timeout = aiohttp.ClientTimeout(total=15)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -27,9 +25,7 @@ async def _aiohttp_json_get(
                 try:
                     payload = await response.json(content_type=None)
                 except (aiohttp.ClientError, ValueError) as error:
-                    raise GitHubWifError(
-                        "GitHub OIDC endpoint returned invalid JSON."
-                    ) from error
+                    raise GitHubWifError("GitHub OIDC endpoint returned invalid JSON.") from error
     except GitHubWifError:
         raise
     except (aiohttp.ClientError, TimeoutError) as error:
@@ -47,9 +43,7 @@ def _with_audience(request_url: str, audience: str) -> str:
         if key != "audience"
     ]
     query.append(("audience", audience))
-    return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
-    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 async def request_github_wif_token(

@@ -14,9 +14,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Request a workload identity federation token",
         description="Request a provider-issued workload identity token",
     )
-    providers = parser.add_subparsers(
-        dest="wif_token_provider", help="Workload identity provider"
-    )
+    providers = parser.add_subparsers(dest="wif_token_provider", help="Workload identity provider")
     providers.add_parser(
         "github",
         help="Request a GitHub Actions OIDC token for Fleets",

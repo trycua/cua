@@ -5,7 +5,6 @@ from pathlib import Path
 from cua_cli.auth.github_wif import GitHubWifError
 from cua_cli.commands import wif_token
 
-
 README = Path(__file__).parents[2] / "README.md"
 
 

@@ -156,7 +156,9 @@ def test_aiohttp_json_get_rejects_invalid_json_without_leaking_response_body(mon
     assert_sanitized_error(error.value, "GitHub OIDC endpoint returned invalid JSON.")
 
 
-def test_aiohttp_json_get_rejects_non_object_json_without_leaking_response_body(monkeypatch) -> None:
+def test_aiohttp_json_get_rejects_non_object_json_without_leaking_response_body(
+    monkeypatch,
+) -> None:
     mock_aiohttp_session(monkeypatch, payload=["response-secret"])
 
     with pytest.raises(GitHubWifError) as error:

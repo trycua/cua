@@ -124,11 +124,7 @@ def main() -> int:
         exit_code = 1
         return exit_code
     finally:
-        if (
-            args.command != "wif-token"
-            and _TELEMETRY_AVAILABLE
-            and is_telemetry_enabled()
-        ):
+        if args.command != "wif-token" and _TELEMETRY_AVAILABLE and is_telemetry_enabled():
             record_event(
                 "cli_command",
                 {

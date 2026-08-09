@@ -48,7 +48,8 @@ Add `.github/workflows/periodic-cua-sandbox-live.yml` with three triggers:
 2. `push` to `main`, path-filtered to the Fleet and sandbox SDK implementation,
    the live test, and the workflow itself.
 3. `workflow_dispatch` with a lane input supporting `both`, `main-source`, and
-   `published-package`.
+   `published-package`, plus a manual-only `force_failure` boolean used to
+   certify the Alertmanager route without provisioning a sandbox.
 
 A small preparation job produces the lane matrix:
 
@@ -67,8 +68,9 @@ run should finish so it retains useful certification evidence.
 Both lanes run the same stable test scenario but use separate Python
 environments:
 
-- `main-source` checks out the triggering `main` SHA and installs the local
-  `libs/python/cua-sandbox` package with its local `cua-fleet` dependency.
+- `main-source` checks out the triggering `main` SHA, installs the local
+  `libs/python/cua-sandbox` package, and resolves its declared `cua-fleet`
+  wheel dependency from the configured package indexes.
 - `published-package` checks out the repository only for the test harness, then
   installs the latest `cua-sandbox` release from PyPI without editable local
   SDK packages.

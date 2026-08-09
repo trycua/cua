@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -127,6 +128,7 @@ async def test_fleet_client_uses_static_workload_token_and_closes_http_client(mo
 
     token = "fleet-workload-token"
     calls = {}
+    caplog.set_level(logging.DEBUG)
 
     class HttpClient:
         close_calls = 0

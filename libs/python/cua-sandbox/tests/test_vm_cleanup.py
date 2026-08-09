@@ -325,17 +325,11 @@ class TestFleetServerPortForwarding:
 
         assert "server_port" not in fleet_transport.call_args.kwargs
 
-    @pytest.mark.parametrize(
-        "server_port", [True, False, 0, -1, 65536, 5000.0, "5000"]
-    )
-    async def test_create_rejects_invalid_server_port_before_local_provisioning(
-        self, server_port
-    ):
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_create_rejects_invalid_server_port_before_local_provisioning(self, server_port):
         runtime = AsyncMock()
 
-        with pytest.raises(
-            ValueError, match="server_port must be an integer between 1 and 65535"
-        ):
+        with pytest.raises(ValueError, match="server_port must be an integer between 1 and 65535"):
             await Sandbox.create(
                 Image.from_registry("registry.example/workspace:latest"),
                 local=True,
@@ -346,12 +340,8 @@ class TestFleetServerPortForwarding:
 
         runtime.start.assert_not_awaited()
 
-    @pytest.mark.parametrize(
-        "server_port", [True, False, 0, -1, 65536, 5000.0, "5000"]
-    )
-    async def test_invalid_server_port_rejects_before_legacy_cloud_provisioning(
-        self, server_port
-    ):
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_invalid_server_port_rejects_before_legacy_cloud_provisioning(self, server_port):
         with patch("cua_sandbox.sandbox._make_transport") as make_transport:
             with pytest.raises(
                 ValueError, match="server_port must be an integer between 1 and 65535"
@@ -365,12 +355,8 @@ class TestFleetServerPortForwarding:
 
         make_transport.assert_not_called()
 
-    @pytest.mark.parametrize(
-        "server_port", [True, False, 0, -1, 65536, 5000.0, "5000"]
-    )
-    async def test_invalid_server_port_rejects_before_fleet_provisioning(
-        self, server_port
-    ):
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_invalid_server_port_rejects_before_fleet_provisioning(self, server_port):
         with patch("cua_sandbox.sandbox.FleetCloudTransport") as fleet_transport:
             with pytest.raises(
                 ValueError, match="server_port must be an integer between 1 and 65535"

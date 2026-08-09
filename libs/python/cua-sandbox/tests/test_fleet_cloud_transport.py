@@ -52,7 +52,9 @@ def test_custom_services_include_configured_server_port():
         services={"metrics": 9000},
     )._template_request()
 
-    assert [(service.name, service.target_port) for service in request.spec.vm_template.services] == [
+    assert [
+        (service.name, service.target_port) for service in request.spec.vm_template.services
+    ] == [
         ("server", 5000),
         ("metrics", 9000),
     ]
@@ -66,7 +68,9 @@ def test_custom_server_service_cannot_override_configured_server_port():
         services={"server": 9000, "metrics": 9001},
     )._template_request()
 
-    assert [(service.name, service.target_port) for service in request.spec.vm_template.services] == [
+    assert [
+        (service.name, service.target_port) for service in request.spec.vm_template.services
+    ] == [
         ("server", 5000),
         ("metrics", 9001),
     ]
@@ -545,9 +549,7 @@ async def test_forward_tunnel_uses_server_service_for_custom_server_port():
         image=Image.from_registry("example:latest"), name="demo", server_port=5000
     )
     transport._provisioned = True
-    transport._bound = Sandbox(
-        namespace="demo", claim="claim", name="sandbox", services=["server"]
-    )
+    transport._bound = Sandbox(namespace="demo", claim="claim", name="sandbox", services=["server"])
 
     class Client:
         def service_url(self, sandbox, service):

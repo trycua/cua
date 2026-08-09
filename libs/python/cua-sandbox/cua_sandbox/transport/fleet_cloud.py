@@ -35,7 +35,6 @@ from fleet_sdk import (
     PreservedJson,
     SandboxServiceBuilder,
     SandboxTemplateRefBuilder,
-    SdkError,
     ServiceProtocol,
     VmTemplateBuilder,
 )
@@ -278,8 +277,6 @@ class FleetCloudTransport(FleetTransport):
         self._services = dict(services) if services is not None else None
         self._provisioned = False
         self._owns_resources = image is not None
-        self._namespace: Any = None
-        self._owns_namespace = False
         self._template: Any = None
         self._pool: Any = None
         self._claim: Any = None
@@ -299,9 +296,8 @@ class FleetCloudTransport(FleetTransport):
                         self._pool = await self._sdk.get_pool(self._name)
                     else:
                         self._validate_image(self._image)
-                        await self._ensure_namespace()
-                        self._template = await self._sdk.create_template(self._template_request())
-                        self._pool = await self._sdk.create_pool(self._pool_request())
+                        self._pool = await self._sdk.reconcile_pool(self._pool_request())
+                        self._template = await self._sdk.reconcile_template(self._template_request())
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
                     if self._image is None:
@@ -365,26 +361,7 @@ class FleetCloudTransport(FleetTransport):
         if self._template is not None:
             await self._sdk.delete_template(self._template)
             self._template = None
-        if self._owns_namespace:
-            await self._sdk.delete_namespace(self._name)
-            self._namespace = None
-            self._owns_namespace = False
         self._provisioned = False
-
-    async def _ensure_namespace(self) -> None:
-        try:
-            self._namespace = await self._sdk.get_namespace(self._name)
-        except SdkError.Status as error:
-            if error.status != 404:
-                raise
-            try:
-                self._namespace = await self._sdk.create_namespace(self._name)
-            except SdkError.Status as create_error:
-                if create_error.status != 409:
-                    raise
-                self._namespace = await self._sdk.get_namespace(self._name)
-            else:
-                self._owns_namespace = True
 
     @classmethod
     async def list_sandboxes(cls) -> list[Any]:

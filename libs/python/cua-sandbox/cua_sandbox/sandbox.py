@@ -56,7 +56,7 @@ except ImportError:
         pass
 
 
-from cua_sandbox._config import get_client_id, get_client_secret
+from cua_sandbox._config import has_fleet_auth
 from cua_sandbox.image import Image
 from cua_sandbox.interfaces import (
     Apps,
@@ -711,7 +711,7 @@ class Sandbox:
     @staticmethod
     def _uses_fleet(api_key: Optional[str]) -> bool:
         """Choose Fleet only for OAuth-configured calls without an explicit API key."""
-        return api_key is None and bool(get_client_id() and get_client_secret())
+        return api_key is None and has_fleet_auth()
 
     @classmethod
     async def _list_cloud(cls, *, api_key: Optional[str] = None) -> "list[SandboxInfo]":
@@ -1104,7 +1104,7 @@ class Sandbox:
             runtime = _auto_runtime(image)
         if image and not runtime and not local:
             # image without runtime and not local → cloud creation
-            if not any([ws_url, http_url]) and not api_key:
+            if not any([ws_url, http_url]) and cls._uses_fleet(api_key):
                 transport = FleetCloudTransport(
                     image=image,
                     name=name or _random_name(),
@@ -1140,7 +1140,7 @@ class Sandbox:
                     sb, image=image, local=False, ephemeral=bool(ephemeral), t_start=_t_start
                 )
                 return sb
-            if api_key and not any([ws_url, http_url]):
+            if not any([ws_url, http_url]):
                 transport = _make_transport(
                     api_key=api_key,
                     name=name,

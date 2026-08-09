@@ -74,6 +74,12 @@ class TestCreateParser:
         args = parser.parse_args(["serve-mcp"])
         assert args.command == "serve-mcp"
 
+    def test_has_wif_token_github_command(self):
+        parser = create_parser()
+        args = parser.parse_args(["wif-token", "github"])
+        assert args.command == "wif-token"
+        assert args.wif_token_provider == "github"
+
 
 class TestMain:
     """Tests for main function."""
@@ -139,6 +145,13 @@ class TestMain:
                 result = main()
 
         mock_execute.assert_called_once()
+        assert result == 0
+
+    def test_dispatch_to_wif_token(self):
+        with patch.object(sys, "argv", ["cua", "wif-token", "github"]):
+            with patch("cua_cli.commands.wif_token.execute", return_value=0) as execute:
+                result = main()
+        execute.assert_called_once()
         assert result == 0
 
     def test_keyboard_interrupt_returns_130(self):

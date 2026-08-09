@@ -39,7 +39,7 @@ export function Settings() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [oidc, setOidc] = useState({
     issuer: "https://token.actions.githubusercontent.com",
-    audience: "cyclops-cs",
+    audience: "fleets",
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -168,19 +168,25 @@ export function Settings() {
   contents: read
 
 steps:
-  - name: Request GitHub OIDC token for cyclops-cs
-    id: oidc
-    run: |
-      echo "token=$(curl -sSL \\
-        -H \\"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\\" \\
-        \\"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=${oidc.audience}\\" | jq -r '.value')" >> "$GITHUB_OUTPUT"
+  - uses: actions/setup-python@v5
+    with:
+      python-version: "3.12"
 
-  - name: Call cyclops-cs
-    env:
-      CYCLOPS_CS_TOKEN: \${{ steps.oidc.outputs.token }}
+  - name: Install Cua CLI
+    run: pip install cua-cli==0.1.13
+
+  - name: Get GitHub WIF token for Fleets
+    id: fleets-token
     run: |
-      curl -sSL https://cyclops.example.test/api/namespaces \\
-        -H "Authorization: Bearer $CYCLOPS_CS_TOKEN"`
+      token="$(cua wif-token github)"
+      printf 'token=%s\\n' "$token" >> "$GITHUB_OUTPUT"
+
+  - name: Call Fleets
+    env:
+      FLEETS_TOKEN: \${{ steps.fleets-token.outputs.token }}
+    run: |
+      curl --fail-with-body -sSL https://run.cua.ai/api/namespaces \\
+        -H "Authorization: Bearer $FLEETS_TOKEN"`
 
   return (
     <SpaceBetween size="l">
@@ -227,7 +233,7 @@ steps:
         header={
           <Header
             variant="h2"
-            description="Trust GitHub repositories to call cyclops-cs directly with GitHub Actions OIDC tokens."
+            description="Trust GitHub repositories to call Fleets directly with GitHub Actions OIDC tokens."
           >
             GitHub Actions OIDC
           </Header>
@@ -383,7 +389,7 @@ steps:
                   copyErrorText="Failed to copy audience"
                 />
               </FormField>
-              <FormField label="Example workflow">
+              <FormField label="Workflow job snippet">
                 <Box variant="code" padding="m">
                   <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
                     {workflowSnippet}

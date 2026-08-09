@@ -284,7 +284,7 @@ export async function mockGitHubTrustPoliciesApi(
           policies,
           oidc: {
             issuer: "https://token.actions.githubusercontent.com",
-            audience: "cyclops-cs",
+            audience: "fleets",
           },
         }),
       })

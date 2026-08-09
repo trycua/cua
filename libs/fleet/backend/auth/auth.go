@@ -1,10 +1,9 @@
 // Package auth — Keycloak JWT validation, adapted from r33drichards/grt.
 //
 // Differences from upstream:
-//   - Issuer-based validation (`iss` must match the configured realm)
-//     replaces grt's `aud`/scope checks — Keycloak service-account tokens
-//     don't carry a useful `aud`, but `iss` + signature are sufficient
-//     given we control the realm.
+//   - Keycloak validation uses the configured issuer because service-account
+//     tokens do not carry a useful `aud`; GitHub OIDC validates signed
+//     audiences separately.
 //   - OPA (Rego) is used for all route-level authorization via
 //     OpaMiddleware; see auth/authz.rego.  The gateway surface additionally
 //     enforces that the token's `namespace` claim equals "pool-{name}"
@@ -191,7 +190,6 @@ func validateGitHub(ctx context.Context, raw string) (*User, error) {
 	tok, err := jwt.Parse(raw, cachedGitHubJWKS.Keyfunc,
 		jwt.WithLeeway(30*time.Second),
 		jwt.WithIssuer(authConfig.GitHubOIDCIssuer),
-		jwt.WithAudience(authConfig.GitHubOIDCAudience),
 		jwt.WithValidMethods(authConfig.GitHubOIDCAlgs),
 	)
 	if err != nil {
@@ -203,6 +201,13 @@ func validateGitHub(ctx context.Context, raw string) (*User, error) {
 	claims, ok := tok.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, fmt.Errorf("unexpected claims type")
+	}
+	if err := validateGitHubAudience(
+		claims,
+		authConfig.GitHubOIDCAudience,
+		authConfig.GitHubOIDCLegacyAudiences,
+	); err != nil {
+		return nil, err
 	}
 	repository := str(claims, "repository")
 	if repository == "" {
@@ -253,6 +258,20 @@ func validateGitHub(ctx context.Context, raw string) (*User, error) {
 			"github_sub": str(claims, "sub"),
 		},
 	}, nil
+}
+
+func validateGitHubAudience(claims jwt.MapClaims, primary string, legacy []string) error {
+	audiences, err := claims.GetAudience()
+	if err != nil || len(audiences) == 0 {
+		return fmt.Errorf("missing or invalid github oidc audience")
+	}
+	accepted := append([]string{primary}, legacy...)
+	for _, audience := range audiences {
+		if slices.Contains(accepted, audience) {
+			return nil
+		}
+	}
+	return fmt.Errorf("github oidc audience is not accepted")
 }
 
 func parseUnverifiedClaims(raw string) (jwt.MapClaims, error) {

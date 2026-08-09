@@ -22,6 +22,26 @@ test.describe("Settings GitHub trust policies", () => {
     await expect(page.getByText("trycua/cloud")).toBeVisible()
     await expect(page.getByText("https://token.actions.githubusercontent.com")).toBeVisible()
     await expect(page.getByText("permissions:")).toBeVisible()
+    await expect(page.getByText("fleets", { exact: true })).toBeVisible()
+    await expect(page.getByText("Workflow job snippet", { exact: true })).toBeVisible()
+    const workflowSnippet = page.locator("pre").filter({
+      hasText: "Get GitHub WIF token for Fleets",
+    })
+    await expect(workflowSnippet).toContainText("pip install cua-cli==0.1.13")
+    await expect(workflowSnippet).toContainText('token="$(cua wif-token github)"')
+    await expect(workflowSnippet).toContainText(
+      'printf \'token=%s\\n\' "$token" >> "$GITHUB_OUTPUT"',
+    )
+    await expect(workflowSnippet).toContainText("curl --fail-with-body -sSL")
+    await expect(workflowSnippet).toContainText(
+      "https://run.cua.ai/api/namespaces",
+    )
+    await expect(workflowSnippet).toContainText("FLEETS_TOKEN")
+    await expect(workflowSnippet).toContainText("Get GitHub WIF token for Fleets")
+    await expect(workflowSnippet).not.toContainText(
+      "ACTIONS_ID_TOKEN_REQUEST_URL",
+    )
+    await expect(workflowSnippet).not.toContainText("CYCLOPS_CS_TOKEN")
   })
 
   test("can create, edit, disable, and delete a trust policy", async ({ page }) => {

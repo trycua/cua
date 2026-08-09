@@ -130,8 +130,8 @@ func TestListGitHubTrustPolicies_Success(t *testing.T) {
 	if resp.OIDC.Issuer != "https://token.actions.githubusercontent.com" {
 		t.Fatalf("issuer = %q", resp.OIDC.Issuer)
 	}
-	if resp.OIDC.Audience != "cyclops-cs" {
-		t.Fatalf("audience = %q", resp.OIDC.Audience)
+	if resp.OIDC.Audience != "fleets" {
+		t.Fatalf("audience = %q, want fleets", resp.OIDC.Audience)
 	}
 	if len(resp.Policies) != 1 || resp.Policies[0].Repository != "trycua/cloud" {
 		t.Fatalf("unexpected policies payload: %+v", resp.Policies)
@@ -224,7 +224,8 @@ func TestGitHubTrustPolicies_StoreError(t *testing.T) {
 
 func authConfigForHandlers() config.AuthConfiguration {
 	return config.AuthConfiguration{
-		GitHubOIDCIssuer:   "https://token.actions.githubusercontent.com",
-		GitHubOIDCAudience: "cyclops-cs",
+		GitHubOIDCIssuer:          "https://token.actions.githubusercontent.com",
+		GitHubOIDCAudience:        "fleets",
+		GitHubOIDCLegacyAudiences: []string{"cyclops-cs"},
 	}
 }

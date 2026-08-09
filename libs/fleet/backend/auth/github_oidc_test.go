@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 
 const (
 	testGitHubIssuer   = "https://token.actions.githubusercontent.com"
-	testGitHubAudience = "cyclops-cs"
+	testGitHubAudience = "fleets"
 	testGitHubKeyID    = "github-test-key"
 )
 
@@ -74,6 +75,73 @@ func TestValidate_GitHubOIDCResolvesOwnerAndNamespaces(t *testing.T) {
 	}
 	if got, want := user.AllowedNamespaces, []string{"ns-a", "ns-b"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("allowed_namespaces = %#v, want %#v", got, want)
+	}
+}
+
+func TestValidate_GitHubOIDCAcceptsMigratedAudiences(t *testing.T) {
+	signingKey, jwksURL := newGitHubJWKS(t)
+	t.Cleanup(func() {
+		SetGitHubTrustResolver(nil)
+	})
+	if err := Init(&config.AuthConfiguration{
+		Issuer:                    "https://issuer.example.test/realms/cyclops-cs",
+		JWKSUri:                   jwksURL,
+		SigningAlgs:               []string{"RS256"},
+		SPAClientID:               "cyclops-cs-spa",
+		KeyClientPfx:              "key-",
+		UserKeyClientPfx:          "ukey-",
+		GitHubOIDCIssuer:          testGitHubIssuer,
+		GitHubOIDCJWKSUri:         jwksURL,
+		GitHubOIDCAudience:        testGitHubAudience,
+		GitHubOIDCLegacyAudiences: []string{"cyclops-cs"},
+		GitHubOIDCEnabled:         true,
+		GitHubOIDCAlgs:            []string{"RS256"},
+	}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	SetGitHubTrustResolver(githubTrustResolverFunc(func(_ context.Context, repository string) ([]GitHubTrustPolicy, error) {
+		if repository != "trycua/cloud" {
+			t.Fatalf("repository = %q", repository)
+		}
+		return []GitHubTrustPolicy{{
+			ID:                "p1",
+			OwnerSub:          "user-123",
+			Repository:        "trycua/cloud",
+			AllowedNamespaces: []string{"ns-a"},
+			Enabled:           true,
+		}}, nil
+	}))
+
+	for _, tt := range []struct {
+		name     string
+		audience string
+		wantErr  string
+	}{
+		{name: "primary", audience: "fleets"},
+		{name: "legacy", audience: "cyclops-cs"},
+		{name: "rejected", audience: "unrelated-service", wantErr: "audience"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := signGitHubToken(t, signingKey, jwt.MapClaims{
+				"iss":        testGitHubIssuer,
+				"aud":        tt.audience,
+				"sub":        "repo:trycua/cloud:ref:refs/heads/main",
+				"repository": "trycua/cloud",
+				"exp":        time.Now().Add(time.Hour).Unix(),
+				"iat":        time.Now().Add(-time.Minute).Unix(),
+			})
+
+			_, err := validate(raw)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validate err = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validate err = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

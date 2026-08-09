@@ -13,6 +13,9 @@ use image::RgbaImage;
 
 const CELL_ID: &str = "desktop-agent-cursor-showcase-px";
 const SESSION: &str = "Cursor showcase";
+// MoveTo offsets the cursor artwork by 16 points so its tip lands on the
+// requested coordinate. The session badge follows that artwork anchor.
+const MAX_CURSOR_ANCHOR_OFFSET: f64 = 16.0;
 
 #[test]
 #[ignore]
@@ -213,8 +216,9 @@ fn assert_cursor_and_badge_pixels_changed(
     let badge_half_width = (f64::from(BADGE_MAX_WIDTH) * 0.5 * scale_x).ceil() as i64;
     let badge_cursor_exclusion = (34.0 * scale_x).ceil() as i64;
     let badge_top = center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64;
-    let badge_bottom =
-        center_y + (f64::from(BADGE_CURSOR_GAP + BADGE_HEIGHT) * scale_y).ceil() as i64;
+    let badge_bottom = center_y
+        + ((f64::from(BADGE_CURSOR_GAP + BADGE_HEIGHT) + MAX_CURSOR_ANCHOR_OFFSET) * scale_y).ceil()
+            as i64;
     // Ignore the center corridor where the pointer's lower edge or glow could
     // overlap the pill. Requiring changed pixels in the badge's outer wings
     // makes this an independent badge assertion.
@@ -326,6 +330,23 @@ mod pixel_oracle_tests {
         let mut overlay = baseline.clone();
         paint_changed_rect(&mut overlay, 196, 146, 200, 150);
         paint_changed_rect(&mut overlay, 150, 180, 156, 186);
+
+        assert_cursor_and_badge_pixels_changed(
+            &baseline,
+            &overlay,
+            CURSOR_X,
+            CURSOR_Y,
+            f64::from(WIDTH),
+            f64::from(HEIGHT),
+        );
+    }
+
+    #[test]
+    fn accepts_badge_at_shifted_cursor_artwork_anchor() {
+        let baseline = RgbaImage::new(WIDTH, HEIGHT);
+        let mut overlay = baseline.clone();
+        paint_changed_rect(&mut overlay, 196, 146, 200, 150);
+        paint_changed_rect(&mut overlay, 250, 204, 256, 210);
 
         assert_cursor_and_badge_pixels_changed(
             &baseline,

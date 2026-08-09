@@ -20,6 +20,9 @@ use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
 
 use super::engine::BrowserEngine;
+use super::interaction::{
+    BrowserFocusTool, BrowserPressKeyTool, BrowserScrollTool, BrowserSelectTool,
+};
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
@@ -55,6 +58,7 @@ struct FixtureState {
     oopif_sessions: u64,
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
+    selection_api_unsupported: bool,
     semantic_large_page: bool,
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
@@ -81,6 +85,7 @@ impl Default for FixtureState {
             oopif_sessions: 0,
             fail_key_down_after: None,
             completed_key_pairs: 0,
+            selection_api_unsupported: false,
             semantic_large_page: false,
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
@@ -160,6 +165,12 @@ fn main_document() -> Value {
                                 "attributes": ["role", "button"],
                             }]
                         }]
+                    },
+                    {
+                        "nodeType": 1,
+                        "nodeName": "SELECT",
+                        "backendNodeId": 24,
+                        "attributes": ["aria-label", "Example region"],
                     },
                     {
                         "nodeType": 1,
@@ -619,7 +630,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let known = if is_oopif {
                     backend == 100
                 } else {
-                    [10, 20, 21, 30].contains(&backend)
+                    [10, 20, 21, 24, 30].contains(&backend)
                 };
                 if known {
                     let (x, y) = ((backend * 10) as f64, (backend * 10) as f64);
@@ -651,7 +662,20 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
-            "Runtime.callFunctionOn" => MockReply::ok(json!({ "result": { "value": true } })),
+            "Runtime.callFunctionOn" => {
+                let function = call.params["functionDeclaration"]
+                    .as_str()
+                    .unwrap_or_default();
+                if st.selection_api_unsupported && function.contains("setSelectionRange") {
+                    MockReply::ok(json!({ "result": { "value": -3 } }))
+                } else if function.contains("HTMLSelectElement.prototype") {
+                    MockReply::ok(json!({
+                        "result": { "value": { "kind": "ok", "label": "Example Two" } }
+                    }))
+                } else {
+                    MockReply::ok(json!({ "result": { "value": true } }))
+                }
+            }
             other => MockReply::method_not_found(other),
         }
     })
@@ -661,6 +685,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
 /// Chromium browser owning native window 7 at (0,0,800,600).
 struct FixturePlatform {
     ws_url: String,
+    product_kind: BrowserProduct,
     trusted_input_limited: bool,
     managed_endpoint_visible: bool,
     existing_endpoint_visible: Arc<AtomicBool>,
@@ -680,7 +705,7 @@ impl BrowserPlatform for FixturePlatform {
         Ok(BrowserClassification {
             is_browser: true,
             engine: BrowserEngineFamily::Chromium,
-            product_kind: BrowserProduct::GoogleChrome,
+            product_kind: self.product_kind,
             product: Some("MockChrome".into()),
             channel: Some("stable".into()),
             supports_cdp: true,
@@ -860,6 +885,19 @@ async fn fixture_with_platform(
     configure: impl FnOnce(&mut FixtureState),
     trusted_input_limited: bool,
 ) -> Fixture {
+    fixture_with_product(
+        configure,
+        trusted_input_limited,
+        BrowserProduct::GoogleChrome,
+    )
+    .await
+}
+
+async fn fixture_with_product(
+    configure: impl FnOnce(&mut FixtureState),
+    trusted_input_limited: bool,
+    product_kind: BrowserProduct,
+) -> Fixture {
     let mut initial = FixtureState::default();
     configure(&mut initial);
     let state = Arc::new(StdMutex::new(initial));
@@ -867,7 +905,31 @@ async fn fixture_with_platform(
     let setup_invoked = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
         ws_url: server.ws_url(),
+        product_kind,
         trusted_input_limited,
+        managed_endpoint_visible: true,
+        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+        setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
+    }));
+    Fixture {
+        state,
+        _server: server,
+        engine,
+        setup_invoked,
+    }
+}
+
+async fn embedded_authorized_fixture(bearer: &str) -> Fixture {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server =
+        MockCdpServer::start_requiring_bearer(fixture_handler(state.clone()), bearer).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        ws_url: server.ws_url(),
+        product_kind: BrowserProduct::Electron,
+        trusted_input_limited: false,
         managed_endpoint_visible: true,
         existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
         setup_invoked: setup_invoked.clone(),
@@ -892,6 +954,7 @@ async fn existing_profile_only_fixture() -> Fixture {
     let setup_invoked = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
         ws_url: server.ws_url(),
+        product_kind: BrowserProduct::GoogleChrome,
         trusted_input_limited: false,
         managed_endpoint_visible: false,
         existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
@@ -939,6 +1002,7 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
     let engine = BrowserEngine::new_with_protected_consent_provider(
         Arc::new(FixturePlatform {
             ws_url: server.ws_url(),
+            product_kind: BrowserProduct::GoogleChrome,
             trusted_input_limited: false,
             managed_endpoint_visible: false,
             existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
@@ -965,6 +1029,7 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
     let setup_invoked = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
         ws_url: server.ws_url(),
+        product_kind: BrowserProduct::GoogleChrome,
         trusted_input_limited: false,
         managed_endpoint_visible: false,
         existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
@@ -1003,6 +1068,102 @@ async fn bind(f: &Fixture) -> (String, String) {
     let target_id = s["target_id"].as_str().unwrap().to_owned();
     let tab_id = s["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
     (target_id, tab_id)
+}
+
+#[tokio::test]
+async fn embedded_pane_authority_and_host_identity_are_connection_bound() {
+    const BEARER: &str = "embedded_pane_test_bearer_1234567890";
+    const HOST_SESSION: &str = "embedded-pane-host-session";
+    let host_authority = crate::embedded_browser_authority_from_bearer(BEARER.into()).unwrap();
+    let replacement_host_authority =
+        crate::embedded_browser_authority_from_bearer(BEARER.into()).unwrap();
+    let fixture = embedded_authorized_fixture(BEARER).await;
+    let state_tool = GetBrowserStateTool::new(fixture.engine.clone());
+
+    let bound = crate::with_embedded_browser_authority(host_authority.clone(), async {
+        state_tool
+            .invoke(json!({
+                "pid": 1,
+                "window_id": 7,
+                "session": HOST_SESSION,
+            }))
+            .await
+    })
+    .await;
+    let bound = structured(&bound);
+    assert_eq!(
+        bound["status"], "ok",
+        "trusted bind must authenticate: {bound}"
+    );
+    let target_id = bound["target_id"].as_str().unwrap().to_owned();
+    let tab_id = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+
+    let trusted_snapshot = crate::with_embedded_browser_authority(host_authority.clone(), async {
+        state_tool
+            .invoke(json!({
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "session": HOST_SESSION,
+                "snapshot_format": "semantic_v2",
+            }))
+            .await
+    })
+    .await;
+    let trusted_snapshot = structured(&trusted_snapshot);
+    assert_eq!(trusted_snapshot["status"], "ok", "{trusted_snapshot}");
+    assert!(
+        trusted_snapshot["refs"].as_array().is_some_and(|refs| refs
+            .iter()
+            .any(|entry| entry.get("host_identity").is_some())),
+        "the authenticated host snapshot must expose its exact private join"
+    );
+
+    let ordinary_reuse = state_tool
+        .invoke(json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": HOST_SESSION,
+            "snapshot_format": "semantic_v2",
+        }))
+        .await;
+    let ordinary_reuse = structured(&ordinary_reuse);
+    assert_eq!(ordinary_reuse["status"], "refused", "{ordinary_reuse}");
+    assert_eq!(ordinary_reuse["refusal"]["code"], "browser_binding_stale");
+    assert!(
+        !ordinary_reuse.to_string().contains("host_identity"),
+        "ordinary output must not disclose the host-only join"
+    );
+
+    let later_host_reuse =
+        crate::with_embedded_browser_authority(replacement_host_authority, async {
+            state_tool
+                .invoke(json!({
+                    "target_id": target_id,
+                    "tab_id": tab_id,
+                    "session": HOST_SESSION,
+                    "snapshot_format": "semantic_v2",
+                }))
+                .await
+        })
+        .await;
+    assert_eq!(
+        structured(&later_host_reuse)["refusal"]["code"],
+        "browser_binding_stale",
+        "a later authenticated connection must not inherit the original target"
+    );
+
+    let ordinary_bind = state_tool
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": "ordinary-same-runtime",
+        }))
+        .await;
+    assert_eq!(
+        structured(&ordinary_bind)["status"],
+        "refused",
+        "ordinary callers must neither reuse the trusted pooled socket nor authenticate the pane"
+    );
 }
 
 #[tokio::test]
@@ -1136,6 +1297,7 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
     });
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
         ws_url: format!("ws://{address}/devtools/browser"),
+        product_kind: BrowserProduct::GoogleChrome,
         trusted_input_limited: false,
         managed_endpoint_visible: false,
         existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
@@ -1182,6 +1344,7 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
     let setup_aborted = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
         ws_url: format!("ws://{address}/devtools/browser"),
+        product_kind: BrowserProduct::GoogleChrome,
         trusted_input_limited: false,
         managed_endpoint_visible: false,
         existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
@@ -1306,8 +1469,8 @@ async fn snapshot_composes_shadow_iframe_and_oopif_refs() {
         .collect();
     assert_eq!(
         frames,
-        vec!["main", "main", "main", "iframe", "oopif"],
-        "main button + shadow input + plain input, iframe button, oopif input: {snap}"
+        vec!["main", "main", "main", "main", "iframe", "oopif"],
+        "main button + shadow input + plain input + select, iframe button, oopif input: {snap}"
     );
     assert_eq!(snap["oopif"]["status"], "attached");
     assert_eq!(snap["oopif"]["frames"], 1);
@@ -1827,7 +1990,7 @@ async fn unproven_oopif_capability_is_omitted_not_guessed() {
         .collect();
     assert_eq!(
         frames,
-        vec!["main", "main", "main", "iframe"],
+        vec!["main", "main", "main", "main", "iframe"],
         "OOPIF content omitted, everything provable kept: {snap}"
     );
 }
@@ -2045,6 +2208,32 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
 }
 
 #[tokio::test]
+async fn trusted_click_uses_cdp_for_an_exact_electron_embedder() {
+    let f = fixture_with_product(|_| {}, true, BrowserProduct::Electron).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "trusted",
+            "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&clicked)["status"],
+        "ok",
+        "{}",
+        structured(&clicked)
+    );
+    assert_eq!(recorded_calls(&f, "Input.dispatchMouseEvent").len(), 2);
+}
+
+#[tokio::test]
 async fn main_frame_navigation_invalidates_refs_via_loader_identity() {
     let f = fixture().await;
     let (target, tab) = bind(&f).await;
@@ -2158,6 +2347,113 @@ async fn oopif_capability_regression_refuses_rather_than_reroutes() {
 // ── Typing routes ────────────────────────────────────────────────────────────
 
 #[tokio::test]
+async fn focus_scrolls_focuses_and_verifies_the_exact_ref() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserFocusTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+    assert_eq!(recorded_calls(&f, "DOM.scrollIntoViewIfNeeded").len(), 1);
+    assert_eq!(recorded_calls(&f, "DOM.focus").len(), 1);
+    assert!(recorded_calls(&f, "Runtime.callFunctionOn")
+        .iter()
+        .any(|(_, params)| params["functionDeclaration"]
+            .as_str()
+            .is_some_and(|function| function.contains("activeElement"))));
+}
+
+#[tokio::test]
+async fn press_key_dispatches_one_closed_trusted_key_pair() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "key": "ArrowDown", "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].1["type"], "keyDown");
+    assert_eq!(events[0].1["key"], "ArrowDown");
+    assert_eq!(events[0].1["windowsVirtualKeyCode"], 40);
+    assert_eq!(events[1].1["type"], "keyUp");
+}
+
+#[tokio::test]
+async fn native_select_matches_visible_label_and_verifies_postcondition() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let select_ref = ref_of(&snap, "main", "Example region");
+
+    let result = BrowserSelectTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": select_ref,
+            "option": "Example Two", "session": SESSION
+        }))
+        .await;
+    let output = structured(&result);
+    assert_eq!(output["status"], "ok", "{output}");
+    assert_eq!(output["option"], "Example Two");
+    let calls = recorded_calls(&f, "Runtime.callFunctionOn");
+    let select = calls
+        .iter()
+        .find(|(_, params)| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|function| function.contains("HTMLSelectElement.prototype"))
+        })
+        .expect("fixed native-select function");
+    assert_eq!(select.1["arguments"][0]["value"], "Example Two");
+}
+
+#[tokio::test]
+async fn scroll_supports_content_refs_and_viewport_directions() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let reveal = BrowserScrollTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&reveal)["status"], "ok");
+
+    let page = BrowserScrollTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "direction": "down",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&page)["status"], "ok");
+    let wheel = recorded_calls(&f, "Input.dispatchMouseEvent");
+    assert_eq!(wheel.len(), 1);
+    assert_eq!(wheel[0].1["type"], "mouseWheel");
+    assert_eq!(wheel[0].1["x"], 400.0);
+    assert_eq!(wheel[0].1["y"], 300.0);
+    assert_eq!(wheel[0].1["deltaY"], 480.0);
+    let focus = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus.len(), 2);
+    assert_eq!(focus[0].1["enabled"], true);
+    assert_eq!(focus[1].1["enabled"], false);
+}
+
+#[tokio::test]
 async fn typing_into_composed_shadow_input_uses_the_tab_session() {
     let f = fixture().await;
     let (target, tab) = bind(&f).await;
@@ -2213,6 +2509,41 @@ async fn typing_into_an_oopif_input_routes_to_the_child_session() {
     assert!(focuses
         .iter()
         .all(|(sess, _)| sess.as_deref().unwrap().starts_with("oopif-sess-")));
+}
+
+#[tokio::test]
+async fn replace_uses_trusted_select_all_when_the_dom_selection_api_is_unavailable() {
+    let f = fixture_with(|state| state.selection_api_unsupported = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": input_ref,
+            "text": "123456789",
+            "replace": true,
+            "mode": "keystrokes",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events[0].1["type"], "rawKeyDown");
+    assert_eq!(events[0].1["key"], "a");
+    assert_eq!(events[0].1["commands"], json!(["SelectAll"]));
+    assert!(matches!(
+        events[0].1["modifiers"].as_i64(),
+        Some(2) | Some(4)
+    ));
+    assert_eq!(events[1].1["type"], "keyUp");
+    assert_eq!(
+        events[2].1["key"], "1",
+        "the first requested digit must not be dropped"
+    );
 }
 
 #[tokio::test]

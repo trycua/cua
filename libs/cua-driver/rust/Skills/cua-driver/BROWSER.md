@@ -20,7 +20,8 @@ list_windows or launch_app
 get_browser_state(pid, window_id, session)       # bind
 get_browser_state(target_id, tab_id, session,
                   snapshot_format=semantic_v2)  # snapshot
-browser_navigate / browser_click / browser_type / browser_pointer
+browser_navigate / browser_click / browser_type
+browser_focus / browser_press_key / browser_select / browser_scroll / browser_pointer
 browser_dialog / browser_set_input_files / browser_download
 get_browser_state(target_id, tab_id, session,
                   snapshot_format=semantic_v2)  # verify and refresh refs
@@ -328,9 +329,55 @@ ownership, and reports requested versus delivered characters. Snapshot again
 to verify application state rather than treating transport completion as the
 task result.
 
+### Focus and control keys
+
+Use `browser_focus` when page logic requires a current action or content ref
+to become the active element without sending text. It scrolls the ref into
+view, focuses it in its exact frame, and verifies the active-element
+postcondition.
+
+Use `browser_press_key` for one closed control/navigation key after focusing a
+current ref. Supported keys are `Enter`, `NumpadEnter`, `Space`, `Backspace`,
+`Delete`, `Tab`, `Escape`, the four arrow keys, `Home`, `End`, `PageUp`, and
+`PageDown`. Arbitrary strings, modifiers, and chords are refused; use
+`browser_type` for text.
+
+```bash
+cua-driver browser_press_key \
+  '{"target_id":"<target>","tab_id":"<tab>","ref":"p4:2",
+    "key":"Enter","session":"browser-run-1"}'
+```
+
+### Native select controls
+
+Use `browser_select` only on a current semantic ref whose `actions` includes
+`select`. It matches one enabled native `<select>` option by its exact trimmed
+visible label, uses the native value setter, emits `input` and `change`, and
+verifies the selected-option postcondition. Custom combobox/listbox widgets
+are refused; operate those explicitly with click, key, and fresh-state steps.
+
+```bash
+cua-driver browser_select \
+  '{"target_id":"<target>","tab_id":"<tab>","ref":"p5:4",
+    "option":"Example Two","session":"browser-run-1"}'
+```
+
+### Direct scrolling
+
+Use `browser_scroll` with exactly one of `ref` or `direction`. A ref may be an
+action or passive content ref and is revealed with the DOM scroll-into-view
+route. `direction:"up"|"down"` dispatches a viewport-centered trusted wheel
+event of about 80% of the visible page height. The trusted page route keeps the
+same standalone-browser background limitations as other trusted input and has
+a bounded timeout; an unknown delivery must not be retried automatically.
+
+Use `browser_pointer(action="scroll")` instead when the task specifically
+needs wheel delivery at an element or coordinates, custom deltas, or the
+explicit synthetic DOM-event route.
+
 ### Extended pointer actions
 
-Use `browser_pointer` for `hover`, `right_click`, `double_click`, `scroll`, and
+Use `browser_pointer` for `hover`, `right_click`, `double_click`, targeted `scroll`, and
 `drag`. It uses the same `trusted` versus explicit `dom_event` distinction as
 `browser_click`. Hover, right-click, double-click, and drag require a ref that
 declares `pointer`. Scroll accepts either `scroll` or `pointer`; a plain

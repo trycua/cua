@@ -41,6 +41,7 @@ pub mod cdp_ws;
 pub mod download;
 pub mod engine;
 mod grant;
+mod interaction;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
 mod mutation;

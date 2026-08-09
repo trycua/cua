@@ -18,6 +18,9 @@ use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
+use super::interaction::{
+    BrowserFocusTool, BrowserPressKeyTool, BrowserScrollTool, BrowserSelectTool,
+};
 use super::platform::{
     BrowserVisualActionKind, PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy,
 };
@@ -35,6 +38,10 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
     registry.register(Box::new(BrowserClickTool::new(engine.clone())));
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
+    registry.register(Box::new(BrowserFocusTool::new(engine.clone())));
+    registry.register(Box::new(BrowserPressKeyTool::new(engine.clone())));
+    registry.register(Box::new(BrowserSelectTool::new(engine.clone())));
+    registry.register(Box::new(BrowserScrollTool::new(engine.clone())));
     registry.register(Box::new(BrowserDialogTool::new(engine.clone())));
     registry.register(Box::new(BrowserSetInputFilesTool::new(engine.clone())));
     registry.register(Box::new(BrowserDownloadTool::new(engine.clone())));
@@ -202,8 +209,11 @@ pub(crate) async fn browser_protected_resource_scope(
     Ok(Some(resource))
 }
 
-fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
-    json!({
+fn semantic_ref_value(
+    listed: &super::engine::SemanticListedRef,
+    expose_host_identity: bool,
+) -> Value {
+    let mut value = json!({
         "ref": listed.external,
         "role": listed.node.role,
         "name": listed.node.name,
@@ -212,7 +222,18 @@ fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
         "actions": listed.node.actions.iter().map(|action| action.as_str()).collect::<Vec<_>>(),
         "frame": listed.node.frame.kind.as_str(),
         "visibility": listed.node.visibility.as_str(),
-    })
+    });
+    // An embedding host already owns the page and needs one exact join between
+    // its governed accessibility snapshot and CUA's opaque action refs. Keep
+    // that join absent from ordinary browser-tool output: it is enabled only
+    // for the daemon that received the host-minted endpoint bearer, which MCP
+    // proxies and model-facing callers deliberately never inherit.
+    if expose_host_identity {
+        if let Some(backend_node_id) = listed.node.backend_node_id {
+            value["host_identity"] = json!({ "backend_node_id": backend_node_id });
+        }
+    }
+    value
 }
 
 fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot) -> ToolResult {
@@ -382,6 +403,7 @@ impl Tool for GetBrowserStateTool {
                 );
             }
             if snapshot_format == "semantic_v2" {
+                let expose_host_identity = crate::browser_endpoint_bearer().is_some();
                 let snapshot = match self
                     .engine
                     .snapshot_tab_semantic(
@@ -398,12 +420,12 @@ impl Tool for GetBrowserStateTool {
                         let refs = outcome
                             .refs
                             .iter()
-                            .map(semantic_ref_value)
+                            .map(|listed| semantic_ref_value(listed, expose_host_identity))
                             .collect::<Vec<_>>();
                         let content_refs = outcome
                             .content_refs
                             .iter()
-                            .map(semantic_ref_value)
+                            .map(|listed| semantic_ref_value(listed, expose_host_identity))
                             .collect::<Vec<_>>();
                         ToolResult::text(format!(
                             "semantic snapshot p{} of {}: {} action ref(s), {} content ref(s)",
@@ -1003,7 +1025,10 @@ impl Tool for BrowserClickTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
-        if route == "trusted" && validated.record.cdp_window_id.is_some() {
+        if route == "trusted"
+            && validated.record.cdp_window_id.is_some()
+            && validated.record.product_kind != super::types::BrowserProduct::Electron
+        {
             if let Some(limitation) = self
                 .engine
                 .platform
@@ -1351,11 +1376,13 @@ const FOCUS_EMULATION_READY_CHECK: &str = "function() { \
 const SELECT_ALL_IN_ELEMENT: &str = "function() { \
     if (this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') { \
         const value = this.value || ''; \
+        const length = Array.from(value).length; \
         try { this.setSelectionRange(0, value.length); } catch (e) { \
-            try { this.select(); } catch (_) { return -1; } \
+            try { this.select(); } catch (_) { return -(length + 1); } \
         } \
-        if (this.selectionStart !== 0 || this.selectionEnd !== value.length) return -1; \
-        return Array.from(value).length; \
+        if (this.selectionStart !== 0 || this.selectionEnd !== value.length) \
+            return -(length + 1); \
+        return length; \
     } \
     if (this.isContentEditable) { \
         const root = this.getRootNode(); \
@@ -1395,8 +1422,47 @@ async fn select_all_in_element(
         )
         .await
         .map_err(|error| error.to_string())?;
-    match selected["result"]["value"].as_i64() {
+    let selected_count = selected["result"]["value"].as_i64().or_else(|| {
+        selected["result"]["value"].as_f64().and_then(|value| {
+            (value.is_finite()
+                && value.fract() == 0.0
+                && value >= i64::MIN as f64
+                && value <= i64::MAX as f64)
+                .then_some(value as i64)
+        })
+    });
+    match selected_count {
         Some(n) if n >= 0 => Ok(n as usize),
+        Some(n) if n < 0 => {
+            // HTML number inputs deliberately do not expose the text-selection
+            // API, even though a user can replace their value with Select All.
+            // Keep replacement on Chromium's trusted Input path instead of
+            // assigning `value` or silently appending. The editing command is
+            // attached to the same platform shortcut a user would press.
+            let modifiers = if cfg!(target_os = "macos") { 4 } else { 2 };
+            for event_type in ["rawKeyDown", "keyUp"] {
+                conn.call(
+                    Some(cdp),
+                    "Input.dispatchKeyEvent",
+                    json!({
+                        "type": event_type,
+                        "key": "a",
+                        "code": "KeyA",
+                        "modifiers": modifiers,
+                        "windowsVirtualKeyCode": 65,
+                        "nativeVirtualKeyCode": 65,
+                        "commands": if event_type == "rawKeyDown" {
+                            json!(["SelectAll"])
+                        } else {
+                            json!([])
+                        },
+                    }),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            }
+            Ok((-n - 1) as usize)
+        }
         _ => Err("the ref is not a text input, textarea, or contenteditable \
                   element, so its content cannot be selected for replacement"
             .into()),
@@ -2476,7 +2542,12 @@ impl Tool for BrowserSetInputFilesTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    use crate::browser::engine::SemanticListedRef;
     use crate::browser::platform::{BrowserPlatform, PrepareOutcome, PrepareRequest};
+    use crate::browser::semantic::SemanticNode;
+    use crate::browser::store::{BrowserVisibility, FrameRef};
     use crate::browser::types::{
         BrowserClassification, BrowserEngineFamily, BrowserProduct, NativeWindowInfo,
         OwnedEndpoint, ProcessFingerprint,
@@ -2602,6 +2673,32 @@ mod tests {
     }
 
     #[test]
+    fn semantic_refs_expose_backend_identity_only_to_an_authenticated_host() {
+        let listed = SemanticListedRef {
+            external: "p7:2".into(),
+            node: SemanticNode {
+                ax_id: "ax-1".into(),
+                parent_ax_id: None,
+                child_ax_ids: Vec::new(),
+                backend_node_id: Some(41),
+                role: "button".into(),
+                name: Some("Continue".into()),
+                value: None,
+                states: BTreeMap::new(),
+                frame: FrameRef::main_unproven(),
+                visibility: BrowserVisibility::InViewport,
+                actions: vec![BrowserActionKind::Click],
+                document_order: 0,
+            },
+        };
+
+        let ordinary = semantic_ref_value(&listed, false);
+        assert!(ordinary.get("host_identity").is_none());
+        let embedded = semantic_ref_value(&listed, true);
+        assert_eq!(embedded["host_identity"]["backend_node_id"], 41);
+    }
+
+    #[test]
     fn tool_annotations_and_schemas() {
         let e = engine();
         let state = GetBrowserStateTool::new(e.clone());
@@ -2676,6 +2773,10 @@ mod tests {
             BrowserNavigateTool::new(e.clone()).def().clone(),
             BrowserClickTool::new(e.clone()).def().clone(),
             BrowserTypeTool::new(e.clone()).def().clone(),
+            BrowserFocusTool::new(e.clone()).def().clone(),
+            BrowserPressKeyTool::new(e.clone()).def().clone(),
+            BrowserSelectTool::new(e.clone()).def().clone(),
+            BrowserScrollTool::new(e.clone()).def().clone(),
             BrowserDialogTool::new(e.clone()).def().clone(),
             BrowserSetInputFilesTool::new(e.clone()).def().clone(),
             BrowserDownloadTool::new(e.clone()).def().clone(),
@@ -2700,6 +2801,10 @@ mod tests {
                 "browser_navigate",
                 "browser_click",
                 "browser_type",
+                "browser_focus",
+                "browser_press_key",
+                "browser_select",
+                "browser_scroll",
                 "browser_dialog",
                 "browser_set_input_files",
                 "browser_download",
@@ -2974,6 +3079,7 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                embedded_browser_authority: None,
                 generation: 0,
                 grant_transport_session: None,
                 fingerprint: ProcessFingerprint {
@@ -2984,6 +3090,7 @@ mod tests {
                 native_title: "Mock - Chrome".into(),
                 native_bounds: Rect::new(0.0, 0.0, 800.0, 600.0),
                 cdp_target_id: "CDPX".into(),
+                product_kind: BrowserProduct::GoogleChrome,
                 cdp_window_id: Some(5),
                 quality: BindingQuality::Heuristic,
                 tabs,
@@ -3032,6 +3139,7 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                embedded_browser_authority: None,
                 generation: 0,
                 grant_transport_session: None,
                 fingerprint: ProcessFingerprint {
@@ -3042,6 +3150,7 @@ mod tests {
                 native_title: "Mock - Chrome".into(),
                 native_bounds: Rect::new(0.0, 0.0, 800.0, 600.0),
                 cdp_target_id: "CDPX".into(),
+                product_kind: BrowserProduct::GoogleChrome,
                 cdp_window_id: Some(5),
                 quality: BindingQuality::Exact,
                 tabs,
@@ -3075,6 +3184,7 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                embedded_browser_authority: None,
                 generation: 0,
                 grant_transport_session: None,
                 fingerprint: ProcessFingerprint {
@@ -3085,6 +3195,7 @@ mod tests {
                 native_title: "T".into(),
                 native_bounds: Rect::new(0.0, 0.0, 1.0, 1.0),
                 cdp_target_id: "C".into(),
+                product_kind: BrowserProduct::GoogleChrome,
                 cdp_window_id: Some(1),
                 quality: BindingQuality::Exact,
                 tabs: HashMap::new(),

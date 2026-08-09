@@ -828,6 +828,9 @@ fn action_kinds(
     {
         actions.push(BrowserActionKind::Type);
     }
+    if tag == "select" {
+        actions.push(BrowserActionKind::Select);
+    }
     if actions.is_empty()
         && dom.is_some_and(|meta| {
             meta.attrs.contains_key("onclick")
@@ -1173,6 +1176,21 @@ mod tests {
             action_kinds("textbox", Some(&dom), &BTreeMap::new(), None),
             vec![BrowserActionKind::Upload]
         );
+    }
+
+    #[test]
+    fn native_selects_expose_the_select_action() {
+        let dom = DomMeta {
+            tag: "select".into(),
+            attrs: HashMap::new(),
+            order: 0,
+            css_hidden: false,
+            parent_backend_node_id: None,
+            frame_id: None,
+        };
+        let actions = action_kinds("combobox", Some(&dom), &BTreeMap::new(), None);
+        assert!(actions.contains(&BrowserActionKind::Click));
+        assert!(actions.contains(&BrowserActionKind::Select));
     }
     use crate::browser::store::FrameRef;
 

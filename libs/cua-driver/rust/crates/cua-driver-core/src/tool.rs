@@ -379,6 +379,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
+        "browser_focus" => &["browser.input.focus"],
+        "browser_press_key" => &["browser.input.key"],
+        "browser_select" => &["browser.input.select"],
+        "browser_scroll" => &["browser.input.scroll"],
         "browser_dialog" => &["browser.dialog"],
         "browser_set_input_files" => &["browser.input.files"],
         "browser_download" => &["browser.download"],
@@ -496,9 +500,21 @@ pub struct TrustedInvocationEvidence {
     transport_session_id: Option<String>,
     browser_prepare_mcp_host_approved: bool,
     browser_download_mcp_host_approved: bool,
+    embedded_browser_authority: Option<crate::EmbeddedBrowserAuthority>,
 }
 
 impl TrustedInvocationEvidence {
+    /// Attach process-local browser authority proved by the server transport.
+    /// It never enters the JSON argument envelope or serialized results.
+    #[doc(hidden)]
+    pub fn with_embedded_browser_authority(
+        mut self,
+        authority: crate::EmbeddedBrowserAuthority,
+    ) -> Self {
+        self.embedded_browser_authority = Some(authority);
+        self
+    }
+
     #[doc(hidden)]
     pub fn extract_from_adapter_args(args: &mut Value) -> Self {
         let mut evidence = Self::default();
@@ -899,20 +915,23 @@ impl ToolRegistry {
         evidence: TrustedInvocationEvidence,
     ) -> ToolResult {
         let runtime_scope = context.runtime_scope_key();
-        DISPATCH_RUNTIME_SCOPE
-            .scope(runtime_scope, async {
-                DISPATCH_TRUSTED_INVOCATION_EVIDENCE
-                    .scope(evidence.clone(), async {
-                        DISPATCH_AUTHORIZATION_CONTEXT
-                            .scope(
-                                context.clone(),
-                                self.invoke_authorized(name, args, context.as_ref(), &evidence),
-                            )
-                            .await
-                    })
-                    .await
-            })
-            .await
+        let embedded_browser_authority = evidence.embedded_browser_authority.clone();
+        let dispatch = DISPATCH_RUNTIME_SCOPE.scope(runtime_scope, async {
+            DISPATCH_TRUSTED_INVOCATION_EVIDENCE
+                .scope(evidence.clone(), async {
+                    DISPATCH_AUTHORIZATION_CONTEXT
+                        .scope(
+                            context.clone(),
+                            self.invoke_authorized(name, args, context.as_ref(), &evidence),
+                        )
+                        .await
+                })
+                .await
+        });
+        match embedded_browser_authority {
+            Some(authority) => crate::with_embedded_browser_authority(authority, dispatch).await,
+            None => dispatch.await,
+        }
     }
 
     async fn invoke_authorized(
@@ -4297,6 +4316,10 @@ mod capability_tests {
         "browser_navigate",
         "browser_click",
         "browser_type",
+        "browser_focus",
+        "browser_press_key",
+        "browser_select",
+        "browser_scroll",
         "browser_dialog",
         "browser_set_input_files",
         "browser_download",
@@ -4378,6 +4401,10 @@ mod capability_tests {
         "browser.navigate",
         "browser.input.click",
         "browser.input.type",
+        "browser.input.focus",
+        "browser.input.key",
+        "browser.input.select",
+        "browser.input.scroll",
         "browser.input.files",
         "browser.dialog",
         "browser.download",
@@ -4627,7 +4654,16 @@ mod capability_tests {
     fn action_tools_advertise_the_same_closed_output_schema() {
         let expected =
             <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema();
-        for name in ["click", "browser_click", "browser_pointer", "browser_type"] {
+        for name in [
+            "click",
+            "browser_click",
+            "browser_pointer",
+            "browser_type",
+            "browser_focus",
+            "browser_press_key",
+            "browser_select",
+            "browser_scroll",
+        ] {
             let entry = action_tool_entry(name);
             // The success variant is unchanged and still closed; it now sits
             // beside the refusal envelope instead of standing alone.

@@ -1156,6 +1156,37 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+        assert!(!allowed_environment_name(
+            "CUA_DRIVER_BROWSER_ENDPOINT_BEARER"
+        ));
+    }
+
+    #[test]
+    fn daemon_launch_and_mcp_configuration_never_contain_a_browser_bearer() {
+        let legacy_name = "CUA_DRIVER_BROWSER_ENDPOINT_BEARER";
+        let bearer = "abcdefghijklmnopqrstuvwxyz_123456";
+        let launch_environment = merge_safe_environment(
+            [(legacy_name.into(), bearer.into())],
+            &[EmbeddedEnvironmentVariable {
+                name: legacy_name.into(),
+                value: bearer.into(),
+            }],
+        );
+        assert!(!launch_environment
+            .iter()
+            .any(|variable| { variable.name == legacy_name || variable.value.contains(bearer) }));
+
+        let host = EmbeddedCuaDriverHost::with_options(options(EmbeddedPermissionMode::Standard))
+            .expect("embedded host");
+        let socket_path = "/tmp/cua-driver-no-browser-secret.sock";
+        let serve_args = host.serve_args(socket_path);
+        let mcp = host.mcp_configuration(socket_path);
+        assert!(!serve_args.iter().any(|value| value.contains(bearer)));
+        assert!(!mcp.args.iter().any(|value| value.contains(bearer)));
+        assert!(!mcp
+            .environment
+            .iter()
+            .any(|variable| { variable.name == legacy_name || variable.value.contains(bearer) }));
     }
 
     #[test]

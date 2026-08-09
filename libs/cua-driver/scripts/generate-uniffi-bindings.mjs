@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, isAbsolute, join, resolve } from "node:path"
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url))
@@ -23,9 +23,21 @@ const rustRoot = join(driverRoot, "rust")
 const pythonRoot = join(driverRoot, "python")
 const typescriptRoot = join(driverRoot, "typescript")
 const check = process.argv.includes("--check")
+const cargoExecutable = process.env.CUA_DRIVER_CARGO_EXECUTABLE ?? "cargo"
+const commandEnvironment =
+  cargoExecutable === "cargo"
+    ? process.env
+    : {
+        ...process.env,
+        PATH: [dirname(cargoExecutable), process.env.PATH].filter(Boolean).join(delimiter),
+      }
 
 function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit" })
+  const result = spawnSync(command, args, {
+    cwd,
+    env: commandEnvironment,
+    stdio: "inherit",
+  })
   if (result.error) throw result.error
   if (result.status !== 0) {
     throw new Error(`${command} exited with status ${result.status}`)
@@ -146,13 +158,13 @@ function applyGroup(root, inventoryName, files) {
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "cua-driver-uniffi-"))
 try {
-  run("cargo", ["build", "--locked", "--release", "-p", "cua-driver-sdk"], rustRoot)
+  run(cargoExecutable, ["build", "--locked", "--release", "-p", "cua-driver-sdk"], rustRoot)
   const library = nativeLibraryPath()
   if (!existsSync(library)) throw new Error(`missing built SDK library ${library}`)
 
   const pythonOutput = join(temporaryRoot, "python")
   run(
-    "cargo",
+    cargoExecutable,
     [
       "run",
       "--locked",

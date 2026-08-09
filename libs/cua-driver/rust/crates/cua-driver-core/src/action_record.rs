@@ -557,7 +557,13 @@ fn requested_delivery(tool_name: &str, args: &serde_json::Value) -> RequestedDel
         }
         _ if matches!(
             tool_name,
-            "browser_click" | "browser_pointer" | "browser_type"
+            "browser_click"
+                | "browser_pointer"
+                | "browser_type"
+                | "browser_focus"
+                | "browser_press_key"
+                | "browser_select"
+                | "browser_scroll"
         ) =>
         {
             RequestedDelivery::NotApplicable
@@ -701,6 +707,7 @@ fn transport_from_legacy(
             }
         }
         "dom_event" => ActionTransport::BrowserCdpRuntimeFunction,
+        "trusted" if tool_name == "browser_press_key" => ActionTransport::BrowserCdpInputKey,
         "trusted" => ActionTransport::BrowserCdpInputMouse,
         "key_events" | "key_events_fg" => {
             let foreground = path.ends_with("_fg")
@@ -761,6 +768,24 @@ fn transport_from_legacy(
             }
         }
         "" if tool_name == "browser_type" => ActionTransport::BrowserCdpInputKey,
+        "" if tool_name == "browser_press_key" => ActionTransport::BrowserCdpInputKey,
+        "" if matches!(tool_name, "browser_focus" | "browser_select") => {
+            ActionTransport::BrowserCdpRuntimeFunction
+        }
+        "" if tool_name == "browser_scroll" => {
+            if args
+                .get("ref")
+                .and_then(serde_json::Value::as_str)
+                .is_some()
+            {
+                ActionTransport::BrowserCdpRuntimeFunction
+            } else {
+                ActionTransport::BrowserCdpInputMouse
+            }
+        }
+        "dom_focus" | "dom_native_select" | "dom_scroll_into_view" => {
+            ActionTransport::BrowserCdpRuntimeFunction
+        }
         "" if tool_name == "move_cursor"
             && args.get("scope").and_then(serde_json::Value::as_str) != Some("desktop") =>
         {
@@ -860,7 +885,13 @@ fn actual_delivery_from_legacy(
     }
     if matches!(
         tool_name,
-        "browser_click" | "browser_pointer" | "browser_type"
+        "browser_click"
+            | "browser_pointer"
+            | "browser_type"
+            | "browser_focus"
+            | "browser_press_key"
+            | "browser_select"
+            | "browser_scroll"
     ) {
         return Some(ActualDelivery::Background);
     }
@@ -1627,6 +1658,64 @@ mod tests {
     }
 
     #[test]
+    fn browser_parity_tools_map_to_closed_routes_without_leaking_arguments() {
+        for (tool, args, route, expected) in [
+            (
+                "browser_focus",
+                serde_json::json!({"ref":"private-focus-ref"}),
+                "dom_focus",
+                cua_driver_contract::ActionRoute::Dom,
+            ),
+            (
+                "browser_press_key",
+                serde_json::json!({"ref":"private-key-ref","key":"Enter"}),
+                "trusted",
+                cua_driver_contract::ActionRoute::TrustedInput,
+            ),
+            (
+                "browser_select",
+                serde_json::json!({"ref":"private-select-ref","option":"private option"}),
+                "dom_native_select",
+                cua_driver_contract::ActionRoute::Dom,
+            ),
+            (
+                "browser_scroll",
+                serde_json::json!({"ref":"private-scroll-ref"}),
+                "dom_scroll_into_view",
+                cua_driver_contract::ActionRoute::Dom,
+            ),
+            (
+                "browser_scroll",
+                serde_json::json!({"direction":"down"}),
+                "trusted",
+                cua_driver_contract::ActionRoute::TrustedInput,
+            ),
+        ] {
+            let structured = serde_json::json!({"status":"ok","route":route});
+            let record = ActionExecutionRecord::from_legacy(tool, &args, &structured)
+                .expect("browser parity action should normalize");
+            let public = record
+                .public_result()
+                .expect("browser parity action should project");
+            assert_eq!(public.route, expected, "{tool} {route}");
+            assert_eq!(
+                public.delivery.as_ref().map(|delivery| delivery.mode),
+                Some(cua_driver_contract::ActionDeliveryMode::Background)
+            );
+            let rendered = serde_json::to_string(&public).expect("serialize ActionResult");
+            for forbidden in [
+                "private-focus-ref",
+                "private-key-ref",
+                "private-select-ref",
+                "private option",
+                "private-scroll-ref",
+            ] {
+                assert!(!rendered.contains(forbidden), "{tool} leaked {forbidden}");
+            }
+        }
+    }
+
+    #[test]
     fn browser_refusals_and_partial_delivery_survive_projection() {
         let refused = ActionExecutionRecord::from_legacy(
             "browser_click",
@@ -1842,6 +1931,10 @@ mod tests {
             "browser_click",
             "browser_pointer",
             "browser_type",
+            "browser_focus",
+            "browser_press_key",
+            "browser_select",
+            "browser_scroll",
         ];
 
         for tool in tools {

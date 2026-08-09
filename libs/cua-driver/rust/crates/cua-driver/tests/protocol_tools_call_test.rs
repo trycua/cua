@@ -702,11 +702,31 @@ fn type_text_chars_tool() {
         return;
     };
 
-    // type_text_chars with delay_ms=5 — just verify the tool invocation is accepted.
+    // A process can remain alive after its last document window closes. The
+    // test's contract is to skip unless a visible TextEdit window exists, so
+    // prove that condition instead of passing a process-only target and then
+    // treating the driver's exact-window refusal as a product failure.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{}}
+    }));
+    let windows = d.recv();
+    let textedit_window = windows["result"]["structuredContent"]["windows"]
+        .as_array()
+        .and_then(|items| {
+            items.iter().find(|window| window["pid"].as_i64() == Some(pid))
+        })
+        .and_then(|window| window["window_id"].as_u64());
+    let Some(window_id) = textedit_window else {
+        eprintln!("TextEdit has no visible window — skipping type_text_chars test");
+        return;
+    };
+
+    // type_text_chars with delay_ms=5 — just verify the tool invocation is accepted.
+    d.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
         "params":{"name":"type_text_chars","arguments":{
-            "pid": pid, "text": "hi", "delay_ms": 5
+            "pid": pid, "window_id": window_id, "text": "hi", "delay_ms": 5
         }}
     }));
     let resp = d.recv();

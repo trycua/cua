@@ -72,6 +72,21 @@ pub(crate) struct MockCdpServer {
 
 impl MockCdpServer {
     pub async fn start(handler: MockHandler) -> Self {
+        Self::start_with_authorization(handler, None).await
+    }
+
+    /// Start a mock endpoint that rejects the WebSocket upgrade unless the
+    /// exact bearer is present. This models a host-owned pane endpoint and is
+    /// used to prove an already-authenticated pooled socket cannot leak into an
+    /// ordinary caller authority domain.
+    pub async fn start_requiring_bearer(handler: MockHandler, bearer: &str) -> Self {
+        Self::start_with_authorization(handler, Some(format!("Bearer {bearer}"))).await
+    }
+
+    async fn start_with_authorization(
+        handler: MockHandler,
+        required_authorization: Option<String>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind loopback");
@@ -82,8 +97,33 @@ impl MockCdpServer {
                     break;
                 };
                 let handler = handler.clone();
+                let required_authorization = required_authorization.clone();
                 tokio::spawn(async move {
-                    let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
+                    let accepted = tokio_tungstenite::accept_hdr_async(
+                        stream,
+                        move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                              response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                            let authorized = required_authorization.as_ref().is_none_or(|expected| {
+                                request
+                                    .headers()
+                                    .get(tokio_tungstenite::tungstenite::http::header::AUTHORIZATION)
+                                    .and_then(|value| value.to_str().ok())
+                                    == Some(expected.as_str())
+                            });
+                            if authorized {
+                                Ok(response)
+                            } else {
+                                let mut denied = tokio_tungstenite::tungstenite::handshake::server::ErrorResponse::new(
+                                    Some("unauthorized".into()),
+                                );
+                                *denied.status_mut() =
+                                    tokio_tungstenite::tungstenite::http::StatusCode::UNAUTHORIZED;
+                                Err(denied)
+                            }
+                        },
+                    )
+                    .await;
+                    let Ok(mut ws) = accepted else {
                         return;
                     };
                     while let Some(Ok(msg)) = ws.next().await {

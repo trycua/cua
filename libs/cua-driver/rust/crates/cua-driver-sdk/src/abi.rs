@@ -1501,6 +1501,39 @@ impl NativeAbiSession {
             reason: format!("{name} returned invalid session JSON: {error}"),
         })
     }
+
+    /// Rust-only path used by the authenticated embedded daemon host. The
+    /// opaque authority cannot cross the public C/UniFFI ABI, so retain the
+    /// bound native session under the handle lock and dispatch it explicitly
+    /// inside the process.
+    pub(crate) async fn invoke_with_embedded_browser_authority(
+        &self,
+        name: &str,
+        arguments: Value,
+        authority: cua_driver_core::EmbeddedBrowserAuthority,
+    ) -> Result<Value, DriverError> {
+        let session = {
+            let handle = self.handle.lock().unwrap();
+            if handle.is_null() {
+                return Err(DriverError::Shutdown);
+            }
+            unsafe {
+                handle
+                    .cast::<CuaDriverSessionHandle>()
+                    .as_ref()
+                    .expect("live native session handle")
+                    .session
+                    .clone()
+            }
+        };
+        let result = session
+            .invoke_with_embedded_browser_authority(name, arguments, authority)
+            .await
+            .ok_or(DriverError::Shutdown)?;
+        serde_json::to_value(result).map_err(|error| DriverError::Protocol {
+            reason: format!("serialize {name} embedded browser result: {error}"),
+        })
+    }
 }
 
 impl Drop for NativeAbiSession {

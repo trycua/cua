@@ -74,7 +74,8 @@ cross-cutting guide needed for the task.
 Browser work starts from the same native `(pid, window_id)` selection as every
 other app. `get_browser_state` binds that exact window to a session-scoped
 target and tab, then returns short-lived page refs for `browser_click`,
-`browser_type`, and `browser_navigate`.
+`browser_type`, `browser_focus`, `browser_press_key`, `browser_select`,
+`browser_scroll`, and `browser_navigate`.
 
 Setup is never a hidden read side effect. `browser_prepare` requires explicit
 approval before launching a driver-managed profile or attaching to an existing

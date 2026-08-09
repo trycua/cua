@@ -23,6 +23,10 @@ use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{
+    client::IntoClientRequest,
+    http::{header::AUTHORIZATION, Request},
+};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -49,6 +53,16 @@ pub fn validate_loopback_ws_url(url: &str) -> Result<(), String> {
         "127.0.0.1" | "::1" | "localhost" => Ok(()),
         other => Err(format!("endpoint host {other:?} is not loopback: {url}")),
     }
+}
+
+fn cdp_connect_request(ws_url: &str, bearer: Option<&str>) -> anyhow::Result<Request<()>> {
+    let mut request = ws_url.into_client_request()?;
+    if let Some(token) = bearer {
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, format!("Bearer {token}").parse()?);
+    }
+    Ok(request)
 }
 
 /// An unsolicited CDP event as delivered by the browser endpoint.
@@ -205,8 +219,10 @@ impl Drop for CdpConnection {
 impl CdpConnection {
     pub async fn connect(ws_url: &str) -> anyhow::Result<Self> {
         validate_loopback_ws_url(ws_url).map_err(|e| anyhow::anyhow!(e))?;
+        let bearer = crate::browser_endpoint_bearer();
+        let request = cdp_connect_request(ws_url, bearer.as_deref())?;
         let (ws, _resp) =
-            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(ws_url))
+            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request))
                 .await
                 .map_err(|_| anyhow::anyhow!("CDP connect to {ws_url} timed out"))??;
         let (write, read) = ws.split();
@@ -342,6 +358,21 @@ struct PoolEntry {
     generation: Option<u64>,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct PoolKey {
+    ws_url: String,
+    embedded_browser_authority: Option<crate::EmbeddedBrowserAuthorityId>,
+}
+
+impl PoolKey {
+    fn current(ws_url: &str) -> Self {
+        Self {
+            ws_url: ws_url.to_owned(),
+            embedded_browser_authority: crate::embedded_browser_authority_id(),
+        }
+    }
+}
+
 fn claimed_ports() -> &'static StdMutex<HashMap<u16, usize>> {
     static CLAIMED: OnceLock<StdMutex<HashMap<u16, usize>>> = OnceLock::new();
     CLAIMED.get_or_init(|| StdMutex::new(HashMap::new()))
@@ -365,7 +396,7 @@ pub fn endpoint_port_is_grant_owned(url: &str) -> bool {
 /// One pooled browser-level connection per endpoint URL. Existing-profile
 /// entries are additionally owned by one explicit connection generation.
 pub struct CdpPool {
-    conns: Mutex<HashMap<String, PoolEntry>>,
+    conns: Mutex<HashMap<PoolKey, PoolEntry>>,
     claimed_loopback_ports: StdMutex<HashSet<u16>>,
 }
 
@@ -385,19 +416,20 @@ impl CdpPool {
                 "this DevTools endpoint is owned by a first-class existing-profile attachment"
             );
         }
+        let key = PoolKey::current(ws_url);
         let mut conns = self.conns.lock().await;
-        if let Some(existing) = conns.get(ws_url) {
+        if let Some(existing) = conns.get(&key) {
             if existing.generation.is_some() {
                 anyhow::bail!("this DevTools endpoint is owned by an attachment generation");
             }
             if !existing.conn.is_closed() {
                 return Ok(existing.conn.clone());
             }
-            conns.remove(ws_url);
+            conns.remove(&key);
         }
         let conn = Arc::new(CdpConnection::connect(ws_url).await?);
         conns.insert(
-            ws_url.to_owned(),
+            key,
             PoolEntry {
                 conn: conn.clone(),
                 generation: None,
@@ -415,14 +447,15 @@ impl CdpPool {
     ) -> anyhow::Result<Arc<CdpConnection>> {
         let port = loopback_port(ws_url)
             .ok_or_else(|| anyhow::anyhow!("existing-profile endpoint has no loopback port"))?;
+        let key = PoolKey::current(ws_url);
         let mut conns = self.conns.lock().await;
-        let conn = match conns.get(ws_url) {
+        let conn = match conns.get(&key) {
             Some(entry) if !entry.conn.is_closed() => entry.conn.clone(),
             Some(_) => anyhow::bail!("the approved browser socket closed before it was claimed"),
             None => Arc::new(CdpConnection::connect(ws_url).await?),
         };
         conns.insert(
-            ws_url.to_owned(),
+            key,
             PoolEntry {
                 conn: conn.clone(),
                 generation: Some(generation),
@@ -442,9 +475,10 @@ impl CdpPool {
         ws_url: &str,
         generation: u64,
     ) -> anyhow::Result<Arc<CdpConnection>> {
+        let key = PoolKey::current(ws_url);
         let conns = self.conns.lock().await;
         let entry = conns
-            .get(ws_url)
+            .get(&key)
             .ok_or_else(|| anyhow::anyhow!("the grant-owned browser socket is missing"))?;
         if entry.generation != Some(generation) {
             anyhow::bail!("the browser socket belongs to a different connection generation");
@@ -462,9 +496,10 @@ impl CdpPool {
         old_generation: u64,
         new_generation: u64,
     ) -> anyhow::Result<Arc<CdpConnection>> {
+        let key = PoolKey::current(ws_url);
         {
             let conns = self.conns.lock().await;
-            if let Some(entry) = conns.get(ws_url) {
+            if let Some(entry) = conns.get(&key) {
                 if entry
                     .generation
                     .is_some_and(|generation| generation > old_generation)
@@ -482,7 +517,7 @@ impl CdpPool {
         // able to remove the old generation when consent is refused.
         let conn = Arc::new(CdpConnection::connect(ws_url).await?);
         let mut conns = self.conns.lock().await;
-        if let Some(entry) = conns.get(ws_url) {
+        if let Some(entry) = conns.get(&key) {
             if entry
                 .generation
                 .is_some_and(|generation| generation > old_generation)
@@ -494,7 +529,7 @@ impl CdpPool {
             }
         }
         conns.insert(
-            ws_url.to_owned(),
+            key,
             PoolEntry {
                 conn: conn.clone(),
                 generation: Some(new_generation),
@@ -505,7 +540,7 @@ impl CdpPool {
 
     /// Drop a (likely dead) connection so the next call redials.
     pub async fn evict(&self, ws_url: &str) {
-        self.conns.lock().await.remove(ws_url);
+        self.conns.lock().await.remove(&PoolKey::current(ws_url));
     }
 
     pub fn release_claim_marker(&self, ws_url: &str) {
@@ -517,12 +552,13 @@ impl CdpPool {
     }
 
     pub async fn release_existing(&self, ws_url: &str, generation: u64) {
+        let key = PoolKey::current(ws_url);
         let mut conns = self.conns.lock().await;
         if conns
-            .get(ws_url)
+            .get(&key)
             .is_some_and(|entry| entry.generation == Some(generation))
         {
-            conns.remove(ws_url);
+            conns.remove(&key);
         }
         drop(conns);
         self.release_claim_marker(ws_url);
@@ -595,6 +631,23 @@ mod tests {
         ] {
             assert!(validate_loopback_ws_url(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn embedded_cdp_request_carries_the_exact_bearer_and_ordinary_request_does_not() {
+        let url = "ws://127.0.0.1:9222/devtools/browser/abc";
+        let ordinary = cdp_connect_request(url, None).expect("ordinary request");
+        assert!(ordinary.headers().get(AUTHORIZATION).is_none());
+
+        let embedded = cdp_connect_request(url, Some("abcdefghijklmnopqrstuvwxyz_123456"))
+            .expect("embedded request");
+        assert_eq!(
+            embedded
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer abcdefghijklmnopqrstuvwxyz_123456")
+        );
     }
 
     #[tokio::test]

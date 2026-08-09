@@ -234,7 +234,8 @@ cua-driver stop
 For Chromium page content, keep the same native window selection but switch to
 the browser capability loop: `start_session`, bind `(pid, window_id)` with
 `get_browser_state`, snapshot the returned tab, then use `browser_click`,
-`browser_type`, or `browser_navigate`. Read `BROWSER.md` before using this
+`browser_type`, `browser_focus`, `browser_press_key`, `browser_select`,
+`browser_scroll`, or `browser_navigate`. Read `BROWSER.md` before using this
 route. Browser target ids, tab ids, and refs are session-scoped and stale refs
 must be replaced by a fresh snapshot.
 

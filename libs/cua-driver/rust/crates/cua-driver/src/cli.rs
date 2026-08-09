@@ -595,18 +595,6 @@ pub fn parse_command() -> Command {
         std::process::exit(0);
     }
 
-    // Collect named flag values we care about.
-    let screenshot_out_file = flag_value(&args, "--screenshot-out-file");
-    let mcp_client = flag_value(&args, "--client");
-    let socket = flag_value(&args, "--socket");
-    let approval_pid = flag_value(&args, "--pid");
-    let approval_strategy = flag_value(&args, "--strategy");
-    let approval_window_id = flag_value(&args, "--window-id");
-    let approval_session = flag_value(&args, "--session");
-    let approval_profile_mode = flag_value(&args, "--profile-mode");
-    let approval_profile_name = flag_value(&args, "--profile-name");
-    let grants = flag_values(&args, "--grant");
-
     // `--embedded` / `--host-bundle-id` export to the environment rather
     // than threading through `Command`: all consumers read
     // `cua_driver_core::embedded_mode()` and children inherit the mode.
@@ -623,6 +611,25 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--parent-liveness-stdio") {
         std::env::set_var(cua_driver_core::PARENT_LIVENESS_STDIN_ENV, "1");
     }
+
+    // Collect named flag values we care about. An explicit argument always
+    // wins. The environment fallback lets an embedding host give an external
+    // MCP runtime only its private daemon endpoint while keeping host-only
+    // browser credentials out of that runtime's environment.
+    let screenshot_out_file = flag_value(&args, "--screenshot-out-file");
+    let mcp_client = flag_value(&args, "--client");
+    let socket = resolve_socket_arg(
+        &args,
+        cua_driver_core::embedded_mode(),
+        std::env::var(cua_driver_core::EMBEDDED_SOCKET_ENV).ok(),
+    );
+    let approval_pid = flag_value(&args, "--pid");
+    let approval_strategy = flag_value(&args, "--strategy");
+    let approval_window_id = flag_value(&args, "--window-id");
+    let approval_session = flag_value(&args, "--session");
+    let approval_profile_mode = flag_value(&args, "--profile-mode");
+    let approval_profile_name = flag_value(&args, "--profile-name");
+    let grants = flag_values(&args, "--grant");
 
     // Strip cursor-overlay flags (and their values) to expose the subcommand.
     let mut positionals: Vec<&str> = Vec::new();
@@ -1070,6 +1077,19 @@ fn flag_values(args: &[String], flag: &str) -> Vec<String> {
         index += 1;
     }
     values
+}
+
+fn resolve_socket_arg(
+    args: &[String],
+    embedded: bool,
+    embedded_socket: Option<String>,
+) -> Option<String> {
+    flag_value(args, "--socket").or_else(|| {
+        embedded
+            .then_some(embedded_socket)
+            .flatten()
+            .filter(|value| !value.is_empty())
+    })
 }
 
 /// Print all tools in the registry, one per line: `name: first sentence`.
@@ -3891,6 +3911,35 @@ mod tests {
         assert_eq!(
             finite_tool_name_from_args(&args(&["--socket", "/tmp/test", "click", "{}"])),
             Some("click".into())
+        );
+    }
+
+    #[test]
+    fn embedded_socket_is_a_fallback_and_never_changes_an_ordinary_client() {
+        let fallback = Some("/private/tmp/agente-cua.sock".to_owned());
+        assert_eq!(
+            resolve_socket_arg(&args(&["mcp"]), true, fallback.clone()),
+            fallback
+        );
+        assert_eq!(
+            resolve_socket_arg(
+                &args(&["mcp", "--socket", "/explicit.sock"]),
+                true,
+                Some("/embedded.sock".to_owned()),
+            ),
+            Some("/explicit.sock".to_owned())
+        );
+        assert_eq!(
+            resolve_socket_arg(
+                &args(&["mcp"]),
+                false,
+                Some("/ambient-but-untrusted.sock".to_owned()),
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_socket_arg(&args(&["mcp"]), true, Some(String::new())),
+            None
         );
     }
 

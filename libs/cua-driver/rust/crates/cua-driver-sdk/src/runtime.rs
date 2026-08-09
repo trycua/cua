@@ -107,7 +107,36 @@ pub(crate) struct RuntimeSession {
 }
 
 impl RuntimeSession {
-    pub(crate) async fn invoke(&self, name: &str, mut args: Value) -> Option<CoreToolResult> {
+    pub(crate) async fn invoke(&self, name: &str, args: Value) -> Option<CoreToolResult> {
+        self.invoke_with_evidence(
+            name,
+            args,
+            cua_driver_core::tool::TrustedInvocationEvidence::default(),
+        )
+        .await
+    }
+
+    pub(crate) async fn invoke_with_embedded_browser_authority(
+        &self,
+        name: &str,
+        args: Value,
+        authority: cua_driver_core::EmbeddedBrowserAuthority,
+    ) -> Option<CoreToolResult> {
+        self.invoke_with_evidence(
+            name,
+            args,
+            cua_driver_core::tool::TrustedInvocationEvidence::default()
+                .with_embedded_browser_authority(authority),
+        )
+        .await
+    }
+
+    async fn invoke_with_evidence(
+        &self,
+        name: &str,
+        mut args: Value,
+        evidence: cua_driver_core::tool::TrustedInvocationEvidence,
+    ) -> Option<CoreToolResult> {
         cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
         let Some(arguments) = args.as_object_mut() else {
             return Some(permission_denied_result(
@@ -130,7 +159,7 @@ impl RuntimeSession {
         );
         let result = self
             .runtime
-            .invoke_with_context(name, args, self.context.clone())
+            .invoke_with_context_and_evidence(name, args, self.context.clone(), evidence)
             .await;
         if name == "end_session" && result.is_some() {
             self.authorization_registry

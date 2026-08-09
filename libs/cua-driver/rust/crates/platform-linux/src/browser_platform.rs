@@ -74,6 +74,22 @@ fn browser_product(identity: &str) -> BrowserProduct {
     }
 }
 
+fn classify_chromium_identity(
+    identity: &str,
+    chromium_embedder: bool,
+    authenticated_embedded_host: bool,
+) -> (bool, BrowserProduct) {
+    let authorized_embedder_evidence = chromium_embedder && authenticated_embedded_host;
+    let chromium = is_chromium(identity) || authorized_embedder_evidence;
+    let product = browser_product(identity);
+    let product = if authorized_embedder_evidence && product == BrowserProduct::Other {
+        BrowserProduct::Electron
+    } else {
+        product
+    };
+    (chromium, product)
+}
+
 fn loopback_websocket_port(url: &str) -> Option<u16> {
     ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
         .iter()
@@ -124,6 +140,23 @@ fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)
     family
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EndpointOwnerScope {
+    ExactPid,
+    ProcessTree,
+}
+
+fn endpoint_owner_pids(
+    root: i64,
+    relationships: impl IntoIterator<Item = (i64, i64)>,
+    scope: EndpointOwnerScope,
+) -> HashSet<i64> {
+    match scope {
+        EndpointOwnerScope::ExactPid => HashSet::from([root]),
+        EndpointOwnerScope::ProcessTree => descendant_pids(root, relationships),
+    }
+}
+
 fn process_family_pids(root: i64) -> Result<HashSet<i64>, BrowserRefusal> {
     if !std::path::Path::new(&format!("/proc/{root}")).exists() {
         return Err(refusal(
@@ -146,13 +179,16 @@ fn process_family_pids(root: i64) -> Result<HashSet<i64>, BrowserRefusal> {
                 .ok()?;
             Some((pid, parent))
         });
-    Ok(descendant_pids(root, relationships))
+    Ok(endpoint_owner_pids(
+        root,
+        relationships,
+        EndpointOwnerScope::ProcessTree,
+    ))
 }
 
-fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
-    let process_family = process_family_pids(pid)?;
+fn socket_inodes_for_processes(process_pids: impl IntoIterator<Item = i64>) -> HashSet<u64> {
     let mut inodes = HashSet::new();
-    for owner_pid in process_family {
+    for owner_pid in process_pids {
         let Ok(directory) = std::fs::read_dir(format!("/proc/{owner_pid}/fd")) else {
             continue;
         };
@@ -169,15 +205,28 @@ fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefus
                 }),
         );
     }
-    Ok(inodes)
+    inodes
 }
 
-fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
-    // Chromium may delegate its DevTools listener to a utility child. Core's
-    // ownership contract explicitly accepts the approved browser PID or one
-    // of its children, so inspect the bounded descendant tree as well as the
-    // root process while still attributing the result to the approved root.
-    let owned = socket_inodes_for_process_tree(pid)?;
+fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
+    Ok(socket_inodes_for_processes(process_family_pids(pid)?))
+}
+
+fn socket_inodes_for_exact_pid(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
+    if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} is no longer available"),
+        ));
+    }
+    Ok(socket_inodes_for_processes(endpoint_owner_pids(
+        pid,
+        std::iter::empty(),
+        EndpointOwnerScope::ExactPid,
+    )))
+}
+
+fn loopback_ports_for_socket_inodes(owned: &HashSet<u64>) -> Vec<u16> {
     let mut listeners = Vec::new();
     for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
         if let Ok(text) = std::fs::read_to_string(path) {
@@ -191,7 +240,22 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     }
     listeners.sort_unstable();
     listeners.dedup();
-    Ok(listeners)
+    listeners
+}
+
+fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    // Standalone Chromium may delegate its DevTools listener to a utility
+    // child, so retain the established process-tree scope for ordinary and
+    // driver-owned browser routes.
+    Ok(loopback_ports_for_socket_inodes(
+        &socket_inodes_for_process_tree(pid)?,
+    ))
+}
+
+fn loopback_ports_for_exact_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    Ok(loopback_ports_for_socket_inodes(
+        &socket_inodes_for_exact_pid(pid)?,
+    ))
 }
 
 fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
@@ -347,8 +411,11 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .ok()?;
+        let authorization = cua_driver_core::browser_endpoint_bearer()
+            .map(|token| format!("Authorization: Bearer {token}\r\n"))
+            .unwrap_or_default();
         let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{authorization}Connection: close\r\n\r\n"
         );
         stream.write_all(request.as_bytes()).await.ok()?;
         let mut bytes = Vec::new();
@@ -386,6 +453,70 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
     .flatten()
 }
 
+fn select_unique_exact_pid_endpoint(
+    pid: i64,
+    discovered: Vec<(u16, String)>,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    match discovered.as_slice() {
+        [] => Ok(None),
+        [(port, ws_url)] => Ok(Some(OwnedEndpoint {
+            ws_url: ws_url.clone(),
+            http_port: Some(*port),
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                listener_pid: Some(pid),
+                detail: Some("exact /proc socket inode owner plus /json/version".to_owned()),
+            },
+        })),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "multiple browser-level DevTools endpoints are owned by the exact embedded host pid",
+        )
+        .with_detail(serde_json::json!({
+            "candidates": discovered
+                .iter()
+                .map(|(port, _ws_url)| serde_json::json!({
+                    "port": port,
+                    "listener_pid": pid,
+                }))
+                .collect::<Vec<_>>(),
+        }))),
+    }
+}
+
+async fn discover_exact_pid_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    let expected_start_time = process_identity(pid)?.0;
+    let ports = tokio::task::spawn_blocking(move || loopback_ports_for_exact_pid(pid))
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("exact listener inspection task failed: {error}"),
+            )
+        })??;
+    let mut discovered = Vec::new();
+    for port in ports {
+        if let Some(ws_url) = browser_websocket_url(port).await {
+            let still_owned = tokio::task::spawn_blocking(move || {
+                let same_process = process_identity(pid)?.0 == expected_start_time;
+                loopback_ports_for_exact_pid(pid).map(|ports| same_process && ports.contains(&port))
+            })
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("exact listener reproof task failed: {error}"),
+                )
+            })??;
+            if still_owned {
+                discovered.push((port, ws_url));
+            }
+        }
+    }
+    select_unique_exact_pid_endpoint(pid, discovered)
+}
+
 #[async_trait]
 impl BrowserPlatform for LinuxBrowserPlatform {
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
@@ -393,24 +524,29 @@ impl BrowserPlatform for LinuxBrowserPlatform {
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
+        let authenticated_embedded_host = cua_driver_core::browser_endpoint_bearer().is_some();
         let pid_u32 = u32::try_from(pid).map_err(|_| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        let (process, executable) = tokio::task::spawn_blocking(move || {
+        let (process, executable, chromium_embedder) = tokio::task::spawn_blocking(move || {
             let process = crate::proc_fs::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32);
             let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
                 .ok()
                 .map(|path| path.to_string_lossy().into_owned());
-            (process, executable)
+            let chromium_embedder =
+                authenticated_embedded_host && crate::proc_fs::is_chromium_embedder(pid_u32);
+            (process, executable, chromium_embedder)
         })
         .await
         .ok()
-        .and_then(|(process, executable)| process.map(|process| (process, executable)))
+        .and_then(|(process, executable, chromium_embedder)| {
+            process.map(|process| (process, executable, chromium_embedder))
+        })
         .ok_or_else(|| {
             refusal(
                 BrowserRefusalCode::BrowserBindingStale,
@@ -420,9 +556,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let identity = executable
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| process.name.clone());
-        let chromium = is_chromium(&identity);
+        let (chromium, product_kind) =
+            classify_chromium_identity(&identity, chromium_embedder, authenticated_embedded_host);
         let gecko = is_firefox(&identity);
-        let product_kind = browser_product(&identity);
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {
@@ -641,6 +777,14 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if cua_driver_core::browser_endpoint_bearer().is_some()
+            && self.classify_browser(pid).await?.product_kind == BrowserProduct::Electron
+        {
+            // An authenticated embedded Electron bridge is hosted by the
+            // exact Electron main process. Never probe descendants with the
+            // bearer, and never choose the first of several exact-pid routes.
+            return discover_exact_pid_endpoint(pid).await;
+        }
         if let Some(endpoint) = active_port_endpoint(pid)? {
             return Ok(Some(endpoint));
         }
@@ -1076,6 +1220,54 @@ mod tests {
     }
 
     #[test]
+    fn embedded_electron_endpoint_scope_rejects_descendant_listeners() {
+        let relationships = [(11, 10), (12, 11), (20, 1)];
+        assert_eq!(
+            endpoint_owner_pids(10, relationships, EndpointOwnerScope::ExactPid),
+            HashSet::from([10])
+        );
+        assert_eq!(
+            endpoint_owner_pids(10, relationships, EndpointOwnerScope::ProcessTree),
+            HashSet::from([10, 11, 12])
+        );
+    }
+
+    #[test]
+    fn embedded_electron_endpoint_selection_refuses_exact_pid_ambiguity() {
+        let selected = select_unique_exact_pid_endpoint(
+            10,
+            vec![(
+                9222,
+                "ws://127.0.0.1:9222/devtools/browser/owned".to_owned(),
+            )],
+        )
+        .expect("one exact-pid endpoint")
+        .expect("selected endpoint");
+        assert_eq!(selected.ownership.owner_pid, 10);
+        assert_eq!(selected.ownership.listener_pid, Some(10));
+
+        let error = select_unique_exact_pid_endpoint(
+            10,
+            vec![
+                (9222, "ws://127.0.0.1:9222/devtools/browser/a".to_owned()),
+                (9333, "ws://127.0.0.1:9333/devtools/browser/b".to_owned()),
+            ],
+        )
+        .expect_err("multiple exact-pid endpoints must be refused");
+        assert_eq!(error.code, BrowserRefusalCode::BrowserBindingAmbiguous);
+        let candidates = error
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.get("candidates"))
+            .and_then(serde_json::Value::as_array)
+            .expect("candidate details");
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate["listener_pid"] == 10));
+    }
+
+    #[test]
     fn classifier_covers_embedded_and_standalone_chromium() {
         assert!(is_chromium("CuaTestHarness.Electron"));
         assert!(is_chromium("chromium-browser"));
@@ -1084,6 +1276,27 @@ mod tests {
         assert!(!is_chromium("firefox"));
         assert!(!is_chromium("search-worker"));
         assert!(!is_chromium("ledger-service"));
+    }
+
+    #[test]
+    fn branded_electron_process_tree_evidence_requires_authenticated_authority() {
+        assert_eq!(
+            classify_chromium_identity("/opt/Agente/agente", true, true),
+            (true, BrowserProduct::Electron)
+        );
+        assert_eq!(
+            classify_chromium_identity("/opt/Agente/agente", true, false),
+            (false, BrowserProduct::Other)
+        );
+        assert_eq!(
+            classify_chromium_identity("/opt/Operator/operator", false, true),
+            (false, BrowserProduct::Other)
+        );
+        assert_eq!(
+            classify_chromium_identity("/opt/Electron/electron", true, false),
+            (true, BrowserProduct::Electron),
+            "known standalone Electron identity must not require embedded authority"
+        );
     }
 
     #[test]

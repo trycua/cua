@@ -3,6 +3,7 @@
 //! Each /proc/<pid>/status file contains Name:, Pid:, PPid: etc.
 //! /proc/<pid>/cmdline is the full command line (NUL-separated).
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
@@ -89,6 +90,70 @@ pub fn list_processes() -> Vec<ProcessInfo> {
 
     result.sort_by_key(|p| p.pid);
     result
+}
+
+/// Return whether `pid` owns a Chromium/Electron process tree.
+///
+/// Branded Electron applications commonly have no `electron` or browser token
+/// in their executable name. Their renderer/zygote/GPU descendants still carry
+/// Chromium's fixed `--type=` process-role arguments, which provide a
+/// conservative engine proof without naming a particular host application.
+pub fn is_chromium_embedder(pid: u32) -> bool {
+    fn argv_is_chromium_helper(pid: u32) -> bool {
+        fs::read(format!("/proc/{pid}/cmdline"))
+            .map(|raw| {
+                String::from_utf8_lossy(&raw).split('\0').any(|arg| {
+                    arg == "--type=renderer"
+                        || arg == "--type=zygote"
+                        || arg == "--type=gpu-process"
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    if argv_is_chromium_helper(pid) {
+        return true;
+    }
+
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    let entries = match fs::read_dir("/proc") {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let child = match entry.file_name().to_string_lossy().parse::<u32>() {
+            Ok(child) => child,
+            Err(_) => continue,
+        };
+        let status = match fs::read_to_string(format!("/proc/{child}/status")) {
+            Ok(status) => status,
+            Err(_) => continue,
+        };
+        if let Some(parent) = status
+            .lines()
+            .find_map(|line| line.strip_prefix("PPid:"))
+            .and_then(|value| value.trim().parse::<u32>().ok())
+        {
+            children.entry(parent).or_default().push(child);
+        }
+    }
+
+    let mut queue = VecDeque::from([pid]);
+    let mut seen = HashSet::new();
+    while let Some(parent) = queue.pop_front() {
+        if !seen.insert(parent) {
+            continue;
+        }
+        if let Some(descendants) = children.get(&parent) {
+            for &child in descendants {
+                if argv_is_chromium_helper(child) {
+                    return true;
+                }
+                queue.push_back(child);
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

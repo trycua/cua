@@ -135,12 +135,35 @@ fn browser_product(name: &str) -> BrowserProduct {
     }
 }
 
+fn classify_chromium_identity(
+    name: &str,
+    chromium_window: bool,
+    authenticated_embedded_host: bool,
+) -> (bool, BrowserProduct) {
+    let authorized_embedder_evidence = chromium_window && authenticated_embedded_host;
+    let chromium = is_chromium(name) || authorized_embedder_evidence;
+    let product = browser_product(name);
+    let product = if authorized_embedder_evidence && product == BrowserProduct::Other {
+        BrowserProduct::Electron
+    } else {
+        product
+    };
+    (chromium, product)
+}
+
 fn allows_embedded_descendant_endpoint(executable_path: &str) -> bool {
     let executable = executable_path
         .rsplit(['/', '\\'])
         .next()
         .unwrap_or(executable_path);
     browser_product(executable) == BrowserProduct::Other && !is_chromium(executable)
+}
+
+fn allows_embedded_descendant_endpoint_for_product(
+    executable_path: &str,
+    product: BrowserProduct,
+) -> bool {
+    product != BrowserProduct::Electron && allows_embedded_descendant_endpoint(executable_path)
 }
 
 fn is_embedded_webview_runtime(executable_path: &str) -> bool {
@@ -505,8 +528,11 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .ok()?;
+        let authorization = cua_driver_core::browser_endpoint_bearer()
+            .map(|token| format!("Authorization: Bearer {token}\r\n"))
+            .unwrap_or_default();
         let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{authorization}Connection: close\r\n\r\n"
         );
         stream.write_all(request.as_bytes()).await.ok()?;
         let mut bytes = Vec::new();
@@ -593,18 +619,47 @@ where
 async fn exact_browser_endpoints_for_pid(
     pid: u32,
 ) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
-    retry_empty_endpoint_discovery(
+    let discovered = retry_empty_endpoint_discovery(
         ENDPOINT_DISCOVERY_ATTEMPTS,
         ENDPOINT_DISCOVERY_RETRY_DELAY,
         || browser_endpoints_once(pid),
     )
-    .await
+    .await?;
+    Ok(retain_exact_pid_endpoints(pid, discovered))
+}
+
+fn retain_exact_pid_endpoints(
+    pid: u32,
+    discovered: Vec<(u16, String, u32)>,
+) -> Vec<(u16, String, u32)> {
+    discovered
+        .into_iter()
+        .filter(|(_port, _ws_url, listener_pid)| *listener_pid == pid)
+        .collect()
 }
 
 async fn root_can_use_embedded_descendant_endpoint(pid: u32) -> Result<bool, BrowserRefusal> {
+    let authenticated_embedded_host = cua_driver_core::browser_endpoint_bearer().is_some();
     tokio::task::spawn_blocking(move || {
         let (_started, executable) = process_identity(pid)?;
-        Ok(executable.is_some_and(|path| allows_embedded_descendant_endpoint(&path)))
+        let process_name = crate::win32::list_processes()
+            .into_iter()
+            .find(|process| process.pid == pid)
+            .map(|process| process.name)
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    format!("browser process {pid} is no longer available"),
+                )
+            })?;
+        let chromium_window = authenticated_embedded_host
+            && crate::win32::list_windows_via_win32(Some(pid))
+                .into_iter()
+                .any(|window| crate::input::is_chromium_target_window(window.hwnd));
+        let (_, product) =
+            classify_chromium_identity(&process_name, chromium_window, authenticated_embedded_host);
+        Ok(executable
+            .is_some_and(|path| allows_embedded_descendant_endpoint_for_product(&path, product)))
     })
     .await
     .map_err(|error| {
@@ -884,30 +939,36 @@ impl BrowserPlatform for WindowsBrowserPlatform {
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
+        let authenticated_embedded_host = cua_driver_core::browser_endpoint_bearer().is_some();
         let pid_u32 = u32::try_from(pid).map_err(|_| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let name = tokio::task::spawn_blocking(move || {
-            crate::win32::list_processes()
+        let (name, chromium_window) = tokio::task::spawn_blocking(move || {
+            let name = crate::win32::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32)
-                .map(|process| process.name)
+                .map(|process| process.name);
+            let chromium_window = authenticated_embedded_host
+                && crate::win32::list_windows_via_win32(Some(pid_u32))
+                    .into_iter()
+                    .any(|window| crate::input::is_chromium_target_window(window.hwnd));
+            (name, chromium_window)
         })
         .await
         .ok()
-        .flatten()
+        .and_then(|(name, chromium_window)| name.map(|name| (name, chromium_window)))
         .ok_or_else(|| {
             refusal(
                 BrowserRefusalCode::BrowserBindingStale,
                 format!("browser process {pid} is no longer available"),
             )
         })?;
-        let chromium = is_chromium(&name);
+        let (chromium, product_kind) =
+            classify_chromium_identity(&name, chromium_window, authenticated_embedded_host);
         let gecko = is_firefox(&name);
-        let product_kind = browser_product(&name);
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {
@@ -1456,6 +1517,27 @@ mod tests {
     }
 
     #[test]
+    fn branded_electron_window_evidence_requires_authenticated_authority() {
+        assert_eq!(
+            classify_chromium_identity("Agente.exe", true, true),
+            (true, BrowserProduct::Electron)
+        );
+        assert_eq!(
+            classify_chromium_identity("Agente.exe", true, false),
+            (false, BrowserProduct::Other)
+        );
+        assert_eq!(
+            classify_chromium_identity("Operator.exe", false, true),
+            (false, BrowserProduct::Other)
+        );
+        assert_eq!(
+            classify_chromium_identity("Electron.exe", true, false),
+            (true, BrowserProduct::Electron),
+            "known standalone Electron identity must not require embedded authority"
+        );
+    }
+
+    #[test]
     fn only_native_embedded_hosts_may_use_descendant_owned_devtools() {
         assert!(allows_embedded_descendant_endpoint(
             r"D:\fixtures\CuaTestHarness.Tauri.exe"
@@ -1469,12 +1551,78 @@ mod tests {
         assert!(!allows_embedded_descendant_endpoint(
             r"D:\fixtures\CuaTestHarness.Electron.exe"
         ));
+        assert!(!allows_embedded_descendant_endpoint_for_product(
+            r"C:\Program Files\Agente\Agente.exe",
+            BrowserProduct::Electron,
+        ));
+        assert!(allows_embedded_descendant_endpoint_for_product(
+            r"D:\fixtures\CuaTestHarness.Tauri.exe",
+            BrowserProduct::Other,
+        ));
         assert!(is_embedded_webview_runtime(
             r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application\msedgewebview2.exe"
         ));
         assert!(!is_embedded_webview_runtime(
             r"D:\fixtures\CuaTestHarness.Electron.exe"
         ));
+    }
+
+    #[test]
+    fn embedded_electron_exact_scope_drops_descendant_fake_endpoints() {
+        let retained = retain_exact_pid_endpoints(
+            42,
+            vec![
+                (
+                    9222,
+                    "ws://127.0.0.1:9222/devtools/browser/exact".to_owned(),
+                    42,
+                ),
+                (
+                    9333,
+                    "ws://127.0.0.1:9333/devtools/browser/descendant-fake".to_owned(),
+                    43,
+                ),
+            ],
+        );
+        assert_eq!(
+            retained,
+            vec![(
+                9222,
+                "ws://127.0.0.1:9222/devtools/browser/exact".to_owned(),
+                42,
+            )]
+        );
+        assert!(retain_exact_pid_endpoints(
+            42,
+            vec![(
+                9333,
+                "ws://127.0.0.1:9333/devtools/browser/descendant-only".to_owned(),
+                43,
+            )],
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn embedded_electron_exact_scope_refuses_two_exact_pid_endpoints() {
+        let error = select_unique_owned_endpoint(
+            42,
+            vec![
+                (
+                    9222,
+                    "ws://127.0.0.1:9222/devtools/browser/a".to_owned(),
+                    42,
+                ),
+                (
+                    9333,
+                    "ws://127.0.0.1:9333/devtools/browser/b".to_owned(),
+                    42,
+                ),
+            ],
+            "Windows exact embedded-Electron pid",
+        )
+        .expect_err("multiple exact-pid endpoints must be refused");
+        assert_eq!(error.code, BrowserRefusalCode::BrowserBindingAmbiguous);
     }
 
     #[test]

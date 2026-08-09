@@ -298,6 +298,11 @@ pub enum ToolOperation {
     BrowserClickDomEvent,
     BrowserTypeInsertText,
     BrowserTypeKeystrokes,
+    BrowserFocus,
+    BrowserPressKey,
+    BrowserSelect,
+    BrowserScrollToRef,
+    BrowserScrollPage,
     BrowserPrepareIsolated,
     BrowserPrepareExistingProfile,
     BrowserDialogInspect,
@@ -336,6 +341,11 @@ impl ToolOperation {
             Self::BrowserClickDomEvent => "browser_click_dom_event",
             Self::BrowserTypeInsertText => "browser_type_insert_text",
             Self::BrowserTypeKeystrokes => "browser_type_keystrokes",
+            Self::BrowserFocus => "browser_focus",
+            Self::BrowserPressKey => "browser_press_key",
+            Self::BrowserSelect => "browser_select",
+            Self::BrowserScrollToRef => "browser_scroll_to_ref",
+            Self::BrowserScrollPage => "browser_scroll_page",
             Self::BrowserPrepareIsolated => "browser_prepare_isolated",
             Self::BrowserPrepareExistingProfile => "browser_prepare_existing_profile",
             Self::BrowserDialogInspect => "browser_dialog_inspect",
@@ -399,6 +409,16 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
             Some("keystrokes") => ToolOperation::BrowserTypeKeystrokes,
             Some(_) => ToolOperation::Other,
         },
+        "browser_focus" => ToolOperation::BrowserFocus,
+        "browser_press_key" => ToolOperation::BrowserPressKey,
+        "browser_select" => ToolOperation::BrowserSelect,
+        "browser_scroll" => {
+            if string_arg("ref").is_some() {
+                ToolOperation::BrowserScrollToRef
+            } else {
+                ToolOperation::BrowserScrollPage
+            }
+        }
         "browser_prepare" => {
             let strategy = args
                 .and_then(|value| value.pointer("/strategy/kind"))
@@ -470,7 +490,13 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
     }
     if matches!(
         tool_name,
-        "browser_set_input_files" | "browser_download" | "browser_pointer"
+        "browser_set_input_files"
+            | "browser_download"
+            | "browser_pointer"
+            | "browser_focus"
+            | "browser_press_key"
+            | "browser_select"
+            | "browser_scroll"
     ) {
         return true;
     }
@@ -720,6 +746,10 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
             | "browser_navigate"
             | "browser_click"
             | "browser_type"
+            | "browser_focus"
+            | "browser_press_key"
+            | "browser_select"
+            | "browser_scroll"
             | "browser_dialog"
             | "browser_set_input_files"
             | "browser_download"
@@ -1107,6 +1137,31 @@ mod observation_tests {
                 "browser_type",
                 serde_json::json!({"mode": "keystrokes", "text": "private typed text"}),
                 ToolOperation::BrowserTypeKeystrokes,
+            ),
+            (
+                "browser_focus",
+                serde_json::json!({"ref": "private-ref"}),
+                ToolOperation::BrowserFocus,
+            ),
+            (
+                "browser_press_key",
+                serde_json::json!({"ref": "private-ref", "key": "Enter"}),
+                ToolOperation::BrowserPressKey,
+            ),
+            (
+                "browser_select",
+                serde_json::json!({"ref": "private-ref", "option": "private option"}),
+                ToolOperation::BrowserSelect,
+            ),
+            (
+                "browser_scroll",
+                serde_json::json!({"ref": "private-ref"}),
+                ToolOperation::BrowserScrollToRef,
+            ),
+            (
+                "browser_scroll",
+                serde_json::json!({"direction": "down"}),
+                ToolOperation::BrowserScrollPage,
             ),
             (
                 "browser_prepare",

@@ -364,7 +364,9 @@ impl BrowserPointerTool {
     }
 
     fn trusted_background_refusal(&self, validated: &ValidatedTab) -> Option<ToolResult> {
-        if validated.record.cdp_window_id.is_some() {
+        if validated.record.cdp_window_id.is_some()
+            && validated.record.product_kind != super::types::BrowserProduct::Electron
+        {
             if let Some(limitation) = self
                 .engine
                 .platform

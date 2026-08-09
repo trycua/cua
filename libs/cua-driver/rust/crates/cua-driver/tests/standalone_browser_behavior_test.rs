@@ -4576,32 +4576,29 @@ fn run_type_replace(spec: &BrowserSpec) {
                 cleared.raw
             );
 
-            // Input types without a real selection API must fail closed. If
-            // this silently proceeded, Input.insertText would append and turn
-            // 42 into 427 while reporting a successful replacement.
-            let unsupported = fixture.driver.call(
+            // Number inputs have no DOM text-selection API, but users can still
+            // replace them through the trusted Select All keyboard route. This
+            // is the tax-form shape: preserve the first digit and prove the
+            // complete value through an independent fixture readback.
+            let replaced_number = fixture.driver.call(
                 "browser_type",
                 serde_json::json!({
                     "target_id": target,
                     "tab_id": tab,
                     "ref": number_input_ref,
-                    "text": "7",
+                    "text": "123456789",
                     "replace": true,
+                    "mode": "keystrokes",
                     "session": session,
                 }),
             );
             assert_eq!(
-                unsupported.action_effect(),
-                Some("refused"),
+                replaced_number.action_effect(),
+                Some("unverifiable"),
                 "{}",
-                unsupported.raw
+                replaced_number.raw
             );
-            assert!(
-                unsupported.text().contains("browser_action_unavailable"),
-                "{}",
-                unsupported.raw
-            );
-            wait_for_value(&fixture.server, "number-input", "42");
+            wait_for_value(&fixture.server, "number-input", "123456789");
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })

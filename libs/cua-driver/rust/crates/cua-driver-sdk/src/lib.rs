@@ -1351,6 +1351,35 @@ impl CuaDriverSession {
 }
 
 impl CuaDriverSession {
+    /// Rust-only ingress for the daemon's authenticated embedded-host
+    /// connection. The opaque authority never enters JSON arguments or UniFFI
+    /// bindings; its task-local scope begins immediately around native runtime
+    /// dispatch and ends before the result is returned to the server.
+    #[doc(hidden)]
+    pub async fn call_tool_with_embedded_browser_authority(
+        &self,
+        name: String,
+        arguments_json: String,
+        authority: Option<cua_driver_core::EmbeddedBrowserAuthority>,
+    ) -> Result<ToolResult, DriverError> {
+        let arguments = parse_arguments(&name, &arguments_json)?;
+        let raw = match (&self.backend, authority) {
+            (SessionBackend::Embedded(runtime), Some(authority)) => {
+                runtime
+                    .invoke_with_embedded_browser_authority(&name, arguments, authority)
+                    .await?
+            }
+            (_, Some(_)) => {
+                return Err(DriverError::Configuration {
+                    reason: "embedded browser authority requires the daemon-owned native runtime"
+                        .into(),
+                })
+            }
+            (_, None) => return self.invoke(&name, arguments).await,
+        };
+        normalize_result(&name, raw)
+    }
+
     async fn invoke_typed<T: Serialize>(
         &self,
         name: &str,

@@ -560,6 +560,10 @@ impl AgentSessionState {
                 | "browser_navigate"
                 | "browser_click"
                 | "browser_type"
+                | "browser_focus"
+                | "browser_press_key"
+                | "browser_select"
+                | "browser_scroll"
                 | "browser_dialog"
                 | "browser_set_input_files"
                 | "browser_download"
@@ -3490,6 +3494,10 @@ mod tests {
                 "browser_pointer",
                 ToolOperation::BrowserPointerDoubleClickDomEvent,
             ),
+            ("browser_focus", ToolOperation::BrowserFocus),
+            ("browser_press_key", ToolOperation::BrowserPressKey),
+            ("browser_select", ToolOperation::BrowserSelect),
+            ("browser_scroll", ToolOperation::BrowserScrollPage),
         ] {
             let mut state = AgentSessionState::new(
                 Transport::McpStdio,

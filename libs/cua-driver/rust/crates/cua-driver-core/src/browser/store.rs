@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::SemanticDocument;
-use super::types::{BindingQuality, ProcessFingerprint, Rect};
+use super::types::{BindingQuality, BrowserProduct, ProcessFingerprint, Rect};
 
 /// Browser action kinds proven for one semantic page ref.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -32,6 +32,7 @@ use super::types::{BindingQuality, ProcessFingerprint, Rect};
 pub enum BrowserActionKind {
     Click,
     Type,
+    Select,
     Upload,
     Pointer,
     Scroll,
@@ -42,6 +43,7 @@ impl BrowserActionKind {
         match self {
             Self::Click => "click",
             Self::Type => "type",
+            Self::Select => "select",
             Self::Upload => "upload",
             Self::Pointer => "pointer",
             Self::Scroll => "scroll",
@@ -210,6 +212,10 @@ pub struct TargetRecord {
     pub window_id: u64,
     pub ws_url: String,
     pub endpoint_owner_pid: i64,
+    /// Opaque authority of the authenticated embedded-host connection that
+    /// minted this target. `None` is the ordinary browser-tool authority
+    /// domain. The two domains never share target capabilities.
+    pub embedded_browser_authority: Option<crate::EmbeddedBrowserAuthorityId>,
     /// CDP connection generation that minted this capability. Zero denotes
     /// the legacy/non-grant route.
     pub generation: u64,
@@ -219,6 +225,10 @@ pub struct TargetRecord {
     pub native_title: String,
     pub native_bounds: Rect,
     pub cdp_target_id: String,
+    /// Product identity captured with the native binding. Electron embeds use
+    /// Chromium's CDP protocol without inheriting standalone-browser input
+    /// posture limitations.
+    pub product_kind: BrowserProduct,
     /// CDP browser window id, or None for the exact single-page embedded route.
     pub cdp_window_id: Option<i64>,
     pub quality: BindingQuality,
@@ -302,7 +312,8 @@ impl BrowserStore {
         session: &str,
         target_id: &str,
     ) -> Result<TargetRecord, BrowserRefusal> {
-        self.inner
+        let record = self
+            .inner
             .lock()
             .unwrap()
             .get(session)
@@ -316,7 +327,17 @@ impl BrowserStore {
                          re-run get_browser_state with pid + window_id"
                     ),
                 )
-            })
+            })?;
+        if record.embedded_browser_authority != crate::embedded_browser_authority_id() {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserBindingStale,
+                format!(
+                    "target {target_id} belongs to a different browser authority domain — \
+                     re-bind it on this connection"
+                ),
+            ));
+        }
+        Ok(record)
     }
 
     /// Mutate a stored target in place. No-op if it disappeared.
@@ -328,7 +349,9 @@ impl BrowserStore {
             .get_mut(session)
             .and_then(|s| s.targets.get_mut(target_id))
         {
-            f(rec);
+            if rec.embedded_browser_authority == crate::embedded_browser_authority_id() {
+                f(rec);
+            }
         }
     }
 
@@ -468,6 +491,7 @@ mod tests {
             window_id: 7,
             ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
             endpoint_owner_pid: 42,
+            embedded_browser_authority: None,
             generation: 0,
             grant_transport_session: None,
             fingerprint: ProcessFingerprint {
@@ -478,6 +502,7 @@ mod tests {
             native_title: "Docs - Chrome".into(),
             native_bounds: Rect::new(0.0, 0.0, 800.0, 600.0),
             cdp_target_id: "CDP1".into(),
+            product_kind: BrowserProduct::GoogleChrome,
             cdp_window_id: Some(11),
             quality: BindingQuality::Exact,
             tabs: HashMap::new(),

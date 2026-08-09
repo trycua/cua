@@ -1575,60 +1575,7 @@ fn type_text_ax_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
 /// low false-positive). The single-process fallback also matches the embedder's
 /// own argv. Reads `/proc`; cheap and only invoked on the rare AT-SPI confirm.
 fn is_chromium_embedder(pid: u32) -> bool {
-    fn argv_is_chromium_helper(p: u32) -> bool {
-        match fs::read(format!("/proc/{p}/cmdline")) {
-            Ok(raw) => String::from_utf8_lossy(&raw).split('\0').any(|arg| {
-                arg == "--type=renderer" || arg == "--type=zygote" || arg == "--type=gpu-process"
-            }),
-            Err(_) => false,
-        }
-    }
-    // Single-process / the embedder itself carrying a Chromium switch.
-    if argv_is_chromium_helper(pid) {
-        return true;
-    }
-    // Build PPid → children across /proc, then BFS the descendants of `pid`
-    // looking for a Chromium helper. Same /proc-walk shape as
-    // `terminal_descendant_ttys`.
-    let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
-    let entries = match fs::read_dir("/proc") {
-        Ok(e) => e,
-        Err(_) => return false,
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let child: u32 = match name.to_string_lossy().parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        let status = match fs::read_to_string(format!("/proc/{child}/status")) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        if let Some(ppid) = status
-            .lines()
-            .find(|l| l.starts_with("PPid:"))
-            .and_then(|l| l[5..].trim().parse::<u32>().ok())
-        {
-            children.entry(ppid).or_default().push(child);
-        }
-    }
-    let mut queue = std::collections::VecDeque::from([pid]);
-    let mut seen = std::collections::HashSet::new();
-    while let Some(cur) = queue.pop_front() {
-        if !seen.insert(cur) {
-            continue;
-        }
-        if let Some(kids) = children.get(&cur) {
-            for &kid in kids {
-                if argv_is_chromium_helper(kid) {
-                    return true;
-                }
-                queue.push_back(kid);
-            }
-        }
-    }
-    false
+    crate::proc_fs::is_chromium_embedder(pid)
 }
 
 fn is_webkitgtk_embedder(pid: u32) -> bool {

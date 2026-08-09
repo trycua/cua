@@ -30,6 +30,36 @@ pub use cua_driver_core::daemon::{
 };
 
 static ACTIVE_PROXY_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+const TRUSTED_BROWSER_BEARER_FIELD: &str = "browser_endpoint_bearer";
+
+fn parse_trusted_session_begin(
+    args: Option<serde_json::Value>,
+) -> Result<
+    (
+        cua_driver_sdk::TrustedSessionOptions,
+        Option<cua_driver_core::EmbeddedBrowserAuthority>,
+    ),
+    String,
+> {
+    let mut args = args.ok_or_else(|| "trusted_session_begin omitted options".to_owned())?;
+    let object = args
+        .as_object_mut()
+        .ok_or_else(|| "trusted_session_begin options must be an object".to_owned())?;
+    let authority = match object.remove(TRUSTED_BROWSER_BEARER_FIELD) {
+        None => None,
+        Some(serde_json::Value::String(bearer)) => Some(
+            cua_driver_core::embedded_browser_authority_from_bearer(bearer).ok_or_else(|| {
+                "browser_endpoint_bearer must be 32-256 URL-safe characters".to_owned()
+            })?,
+        ),
+        Some(_) => {
+            return Err("browser_endpoint_bearer must be a string".to_owned());
+        }
+    };
+    let options = serde_json::from_value(args)
+        .map_err(|error| format!("invalid trusted session options: {error}"))?;
+    Ok((options, authority))
+}
 
 fn active_proxy_sessions() -> &'static Mutex<HashSet<String>> {
     ACTIVE_PROXY_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
@@ -490,6 +520,338 @@ mod peer_authentication_tests {
     }
 }
 
+#[cfg(all(test, unix))]
+mod embedded_browser_scope_tests {
+    use super::{run_serve, send_request, DaemonRequest, DaemonResponse};
+    use async_trait::async_trait;
+    use cua_driver_core::protocol::ToolResult;
+    use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
+    use serde_json::{json, Value};
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+
+    const TEST_BEARER: &str = "daemon_bound_browser_bearer_1234567890";
+
+    struct EmbeddedBrowserAuthorityProbe {
+        def: ToolDef,
+    }
+
+    impl EmbeddedBrowserAuthorityProbe {
+        fn new() -> Self {
+            Self {
+                def: ToolDef {
+                    // Reuse the reviewed R0 test-probe operation so this
+                    // transport fixture remains downstream of real daemon
+                    // authorization rather than adding a production tool.
+                    name: "probe".into(),
+                    description: "test-only process-local authority probe".into(),
+                    input_schema: json!({"type": "object"}),
+                    read_only: true,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Tool for EmbeddedBrowserAuthorityProbe {
+        fn def(&self) -> &ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, args: Value) -> ToolResult {
+            let pane_authenticated = cua_driver_core::browser_endpoint_bearer().is_some();
+            if let Some(hold_ms) = args.get("hold_ms").and_then(Value::as_u64) {
+                tokio::time::sleep(Duration::from_millis(hold_ms.min(2_000))).await;
+            }
+            let mut structured = json!({
+                "status": "ok",
+                "pane_authenticated": pane_authenticated,
+                "connection_bound": cua_driver_core::embedded_browser_authority_id().is_some(),
+            });
+            if pane_authenticated {
+                structured["host_identity"] = json!({"available": true});
+            }
+            ToolResult::text("embedded browser authority probe").with_structured(structured)
+        }
+    }
+
+    fn register_probe(registry: &mut ToolRegistry) {
+        registry.register(Box::new(EmbeddedBrowserAuthorityProbe::new()));
+    }
+
+    fn round_trip(
+        writer: &mut UnixStream,
+        reader: &mut BufReader<UnixStream>,
+        request: &DaemonRequest,
+    ) -> DaemonResponse {
+        writer
+            .write_all((serde_json::to_string(request).unwrap() + "\n").as_bytes())
+            .unwrap();
+        writer.flush().unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+
+    fn request(method: &str, name: Option<&str>, args: Option<Value>) -> DaemonRequest {
+        DaemonRequest {
+            method: method.into(),
+            name: name.map(str::to_owned),
+            args,
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    #[ignore = "subprocess-only embedded browser authority fixture"]
+    fn embedded_browser_authority_daemon_fixture() {
+        let socket = std::env::var("CUA_DRIVER_TEST_EMBEDDED_BROWSER_SOCKET").unwrap();
+        assert!(cua_driver_core::embedded_mode());
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async move {
+            let driver = cua_driver_sdk::CuaDriver::try_create_service_for_host(
+                cua_driver_sdk::DriverHostOptions {
+                    cursor: cursor_overlay::CursorConfig {
+                        enabled: false,
+                        ..cursor_overlay::CursorConfig::default()
+                    },
+                    host_owns_permission_ux: false,
+                    host_bundle_id: Some("com.trycua.embedded-browser-scope-test".into()),
+                    claude_code_compatibility: false,
+                    prepare_desktop_environment: false,
+                    register_host_tools: Some(register_probe),
+                    authorization_host: None,
+                    activity_observer: None,
+                },
+            )
+            .expect("trusted service runtime");
+            let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
+                .await
+                .expect("SDK adapter");
+            run_serve(sdk, &socket, None).await.expect("test daemon");
+        });
+    }
+
+    #[test]
+    fn same_daemon_scopes_pane_authority_only_to_trusted_session_calls() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("embedded-browser.sock");
+        let socket_text = socket.to_string_lossy().into_owned();
+        let exact_test =
+            "serve::embedded_browser_scope_tests::embedded_browser_authority_daemon_fixture";
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", exact_test, "--nocapture"])
+            .env(cua_driver_core::EMBEDDED_ENV, "1")
+            .env(cua_driver_core::PARENT_LIVENESS_STDIN_ENV, "1")
+            .env("CUA_DRIVER_TEST_EMBEDDED_BROWSER_SOCKET", &socket_text)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !socket.exists() && Instant::now() < deadline {
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("embedded browser fixture exited before binding: {status}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(socket.exists(), "embedded browser fixture did not bind");
+
+        let ordinary = send_request(
+            &socket_text,
+            &request("call", Some("probe"), Some(json!({}))),
+        )
+        .expect("ordinary probe response");
+        assert!(ordinary.ok, "ordinary probe envelope: {ordinary:?}");
+        let ordinary = ordinary.result.unwrap();
+        assert_eq!(
+            ordinary.pointer("/structuredContent/pane_authenticated"),
+            Some(&Value::Bool(false))
+        );
+        assert_eq!(
+            ordinary.pointer("/structuredContent/connection_bound"),
+            Some(&Value::Bool(false))
+        );
+        assert!(
+            ordinary
+                .pointer("/structuredContent/host_identity")
+                .is_none(),
+            "ordinary daemon calls must not see host_identity"
+        );
+
+        let invalid_bearer = "invalid bearer must never be echoed";
+        let mut invalid_writer = UnixStream::connect(&socket).unwrap();
+        let mut invalid_reader = BufReader::new(invalid_writer.try_clone().unwrap());
+        let invalid_begin = round_trip(
+            &mut invalid_writer,
+            &mut invalid_reader,
+            &request(
+                "trusted_session_begin",
+                None,
+                Some(json!({
+                    "public_session": "invalid-embedded-browser-host",
+                    "mode": "standard",
+                    "ttl_seconds": 60,
+                    "idle_ttl_seconds": 30,
+                    "bounded_manifest_path": null,
+                    "browser_endpoint_bearer": invalid_bearer,
+                })),
+            ),
+        );
+        assert!(!invalid_begin.ok);
+        assert!(
+            !serde_json::to_string(&invalid_begin)
+                .unwrap()
+                .contains(invalid_bearer),
+            "validation failures must not echo the submitted bearer"
+        );
+        drop(invalid_reader);
+        drop(invalid_writer);
+
+        let mut writer = UnixStream::connect(&socket).unwrap();
+        let mut reader = BufReader::new(writer.try_clone().unwrap());
+        let begin = round_trip(
+            &mut writer,
+            &mut reader,
+            &request(
+                "trusted_session_begin",
+                None,
+                Some(json!({
+                    "public_session": "embedded-browser-host",
+                    "mode": "standard",
+                    "ttl_seconds": 60,
+                    "idle_ttl_seconds": 30,
+                    "bounded_manifest_path": null,
+                    "browser_endpoint_bearer": TEST_BEARER,
+                })),
+            ),
+        );
+        assert!(begin.ok, "trusted session begin failed: {begin:?}");
+        assert!(
+            !serde_json::to_string(&begin).unwrap().contains(TEST_BEARER),
+            "trusted_session_begin must consume the bearer without echoing it"
+        );
+        let trusted_thread = std::thread::spawn(move || {
+            let trusted = round_trip(
+                &mut writer,
+                &mut reader,
+                &request(
+                    "trusted_session_call",
+                    Some("probe"),
+                    Some(json!({"hold_ms": 500})),
+                ),
+            );
+            (trusted, writer, reader)
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let concurrent_ordinary = send_request(
+            &socket_text,
+            &request("call", Some("probe"), Some(json!({}))),
+        )
+        .expect("concurrent ordinary probe response");
+        assert!(
+            concurrent_ordinary.ok,
+            "concurrent ordinary probe envelope: {concurrent_ordinary:?}"
+        );
+        let concurrent_ordinary = concurrent_ordinary.result.unwrap();
+        assert_eq!(
+            concurrent_ordinary.pointer("/structuredContent/pane_authenticated"),
+            Some(&Value::Bool(false))
+        );
+        assert_eq!(
+            concurrent_ordinary.pointer("/structuredContent/connection_bound"),
+            Some(&Value::Bool(false))
+        );
+        assert!(
+            concurrent_ordinary
+                .pointer("/structuredContent/host_identity")
+                .is_none(),
+            "a concurrent ordinary connection must not see host_identity"
+        );
+
+        let (trusted, mut writer, mut reader) = trusted_thread.join().unwrap();
+        assert!(trusted.ok, "trusted probe failed: {trusted:?}");
+        let trusted = trusted.result.unwrap();
+        assert_eq!(
+            trusted.pointer("/structuredContent/pane_authenticated"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            trusted.pointer("/structuredContent/connection_bound"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            trusted.pointer("/structuredContent/host_identity/available"),
+            Some(&Value::Bool(true))
+        );
+
+        let ended = round_trip(
+            &mut writer,
+            &mut reader,
+            &request("trusted_session_end", None, None),
+        );
+        assert!(ended.ok);
+
+        let rebound = round_trip(
+            &mut writer,
+            &mut reader,
+            &request(
+                "trusted_session_begin",
+                None,
+                Some(json!({
+                    "public_session": "embedded-browser-host-without-bearer",
+                    "mode": "standard",
+                    "ttl_seconds": 60,
+                    "idle_ttl_seconds": 30,
+                    "bounded_manifest_path": null,
+                })),
+            ),
+        );
+        assert!(rebound.ok, "second trusted session failed: {rebound:?}");
+        let rebound_probe = round_trip(
+            &mut writer,
+            &mut reader,
+            &request("trusted_session_call", Some("probe"), Some(json!({}))),
+        );
+        assert!(rebound_probe.ok);
+        let rebound_probe = rebound_probe.result.unwrap();
+        assert_eq!(
+            rebound_probe.pointer("/structuredContent/pane_authenticated"),
+            Some(&Value::Bool(false)),
+            "ending the trusted session must discard its browser bearer"
+        );
+        assert!(rebound_probe
+            .pointer("/structuredContent/host_identity")
+            .is_none());
+        let rebound_ended = round_trip(
+            &mut writer,
+            &mut reader,
+            &request("trusted_session_end", None, None),
+        );
+        assert!(rebound_ended.ok);
+        drop(reader);
+        drop(writer);
+
+        let shutdown = send_request(&socket_text, &request("shutdown", None, None))
+            .expect("shutdown response");
+        assert!(shutdown.ok);
+        let status = child.wait().unwrap();
+        assert!(
+            status.success(),
+            "embedded browser fixture failed: {status}"
+        );
+    }
+}
+
 /// Run the daemon server. Binds `socket_path`, writes `pid_file_path`,
 /// accepts connections, and serves requests until `{"method":"shutdown"}`.
 ///
@@ -574,6 +936,9 @@ pub async fn run_serve(
                     let mut control_session_id: Option<String> = None;
                     let mut trusted_session: Option<
                         std::sync::Arc<cua_driver_sdk::CuaDriverSession>,
+                    > = None;
+                    let mut embedded_browser_authority: Option<
+                        cua_driver_core::EmbeddedBrowserAuthority,
                     > = None;
 
                     while let Ok(Some(line)) = lines.next_line().await {
@@ -701,15 +1066,16 @@ pub async fn run_serve(
                                         65,
                                     )
                                 } else {
-                                    let options = req.args
-                                        .ok_or_else(|| "trusted_session_begin omitted options".to_owned())
-                                        .and_then(|value| {
-                                            serde_json::from_value(value)
-                                                .map_err(|error| format!("invalid trusted session options: {error}"))
-                                        });
-                                    match options.and_then(|options| reg.create_trusted_session(options)) {
-                                        Ok(session) => {
+                                    let session = parse_trusted_session_begin(req.args).and_then(
+                                        |(options, authority)| {
+                                            reg.create_trusted_session(options)
+                                                .map(|session| (session, authority))
+                                        },
+                                    );
+                                    match session {
+                                        Ok((session, authority)) => {
                                             trusted_session = Some(session);
+                                            embedded_browser_authority = authority;
                                             DaemonResponse::ok(serde_json::json!({
                                                 "bound": true,
                                                 "connection_bound": true,
@@ -729,7 +1095,14 @@ pub async fn run_serve(
                                         let arguments = req.args.unwrap_or_else(|| {
                                             serde_json::Value::Object(serde_json::Map::new())
                                         });
-                                        match session.call_tool(name, arguments.to_string()).await {
+                                        let result = session
+                                            .call_tool_with_embedded_browser_authority(
+                                                name,
+                                                arguments.to_string(),
+                                                embedded_browser_authority.clone(),
+                                            )
+                                            .await;
+                                        match result {
                                             Ok(result) => match serde_json::from_str(&result.raw_json) {
                                                 Ok(value) => DaemonResponse::ok(value),
                                                 Err(error) => DaemonResponse::err(
@@ -753,6 +1126,7 @@ pub async fn run_serve(
                                 if let Some(session) = trusted_session.take() {
                                     session.close();
                                 }
+                                embedded_browser_authority = None;
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"closed": true})
                                 );
@@ -1208,7 +1582,6 @@ pub async fn run_serve(
                         expected_host_process_id,
                         client_process_id,
                     );
-
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
 
@@ -1224,6 +1597,9 @@ pub async fn run_serve(
                     let mut control_session_id: Option<String> = None;
                     let mut trusted_session: Option<
                         std::sync::Arc<cua_driver_sdk::CuaDriverSession>,
+                    > = None;
+                    let mut embedded_browser_authority: Option<
+                        cua_driver_core::EmbeddedBrowserAuthority,
                     > = None;
 
                     while let Ok(Some(line)) = lines.next_line().await {
@@ -1332,15 +1708,16 @@ pub async fn run_serve(
                                         65,
                                     )
                                 } else {
-                                    let options = req.args
-                                        .ok_or_else(|| "trusted_session_begin omitted options".to_owned())
-                                        .and_then(|value| {
-                                            serde_json::from_value(value)
-                                                .map_err(|error| format!("invalid trusted session options: {error}"))
-                                        });
-                                    match options.and_then(|options| reg.create_trusted_session(options)) {
-                                        Ok(session) => {
+                                    let session = parse_trusted_session_begin(req.args).and_then(
+                                        |(options, authority)| {
+                                            reg.create_trusted_session(options)
+                                                .map(|session| (session, authority))
+                                        },
+                                    );
+                                    match session {
+                                        Ok((session, authority)) => {
                                             trusted_session = Some(session);
+                                            embedded_browser_authority = authority;
                                             DaemonResponse::ok(serde_json::json!({
                                                 "bound": true,
                                                 "connection_bound": true,
@@ -1360,7 +1737,14 @@ pub async fn run_serve(
                                         let arguments = req.args.unwrap_or_else(|| {
                                             serde_json::Value::Object(serde_json::Map::new())
                                         });
-                                        match session.call_tool(name, arguments.to_string()).await {
+                                        let result = session
+                                            .call_tool_with_embedded_browser_authority(
+                                                name,
+                                                arguments.to_string(),
+                                                embedded_browser_authority.clone(),
+                                            )
+                                            .await;
+                                        match result {
                                             Ok(result) => match serde_json::from_str(&result.raw_json) {
                                                 Ok(value) => DaemonResponse::ok(value),
                                                 Err(error) => DaemonResponse::err(
@@ -1384,6 +1768,7 @@ pub async fn run_serve(
                                 if let Some(session) = trusted_session.take() {
                                     session.close();
                                 }
+                                embedded_browser_authority = None;
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"closed": true})
                                 );

@@ -141,6 +141,23 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
     }
 }
 
+fn classify_chromium_identity(
+    name: &str,
+    bundle_id: &str,
+    electron_embedder: bool,
+    authenticated_embedded_host: bool,
+) -> (bool, BrowserProduct) {
+    let authorized_embedder_evidence = electron_embedder && authenticated_embedded_host;
+    let chromium = is_chromium(name, bundle_id) || authorized_embedder_evidence;
+    let product = browser_product(name, bundle_id);
+    let product = if authorized_embedder_evidence && product == BrowserProduct::Other {
+        BrowserProduct::Electron
+    } else {
+        product
+    };
+    (chromium, product)
+}
+
 fn loopback_websocket_port(url: &str) -> Option<u16> {
     ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
         .iter()
@@ -355,8 +372,11 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .ok()?;
+        let authorization = cua_driver_core::browser_endpoint_bearer()
+            .map(|token| format!("Authorization: Bearer {token}\r\n"))
+            .unwrap_or_default();
         let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{authorization}Connection: close\r\n\r\n"
         );
         stream.write_all(request.as_bytes()).await.ok()?;
         let mut bytes = Vec::new();
@@ -471,16 +491,22 @@ impl BrowserPlatform for MacOsBrowserPlatform {
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
-        let (app, fallback_name, fallback_bundle_id) = tokio::task::spawn_blocking(move || {
-            let app = crate::apps::list_running_apps()
-                .into_iter()
-                .find(|app| i64::from(app.pid) == pid);
-            let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
-            let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
-            (app, fallback_name, fallback_bundle_id)
-        })
-        .await
-        .unwrap_or((None, None, None));
+        let authenticated_embedded_host = cua_driver_core::browser_endpoint_bearer().is_some();
+        let (app, fallback_name, fallback_bundle_id, electron_embedder) =
+            tokio::task::spawn_blocking(move || {
+                let app = crate::apps::list_running_apps()
+                    .into_iter()
+                    .find(|app| i64::from(app.pid) == pid);
+                let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
+                let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
+                let electron_embedder = authenticated_embedded_host
+                    && i32::try_from(pid)
+                        .ok()
+                        .is_some_and(super::ElectronJs::is_electron);
+                (app, fallback_name, fallback_bundle_id, electron_embedder)
+            })
+            .await
+            .unwrap_or((None, None, None, false));
         let name = app
             .as_ref()
             .map(|app| app.name.as_str())
@@ -491,10 +517,14 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             .and_then(|app| app.bundle_id.as_deref())
             .or(fallback_bundle_id.as_deref())
             .unwrap_or("");
-        let chromium = is_chromium(name, bundle_id);
+        let (chromium, product_kind) = classify_chromium_identity(
+            name,
+            bundle_id,
+            electron_embedder,
+            authenticated_embedded_host,
+        );
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
         let gecko = is_firefox(name, bundle_id);
-        let product_kind = browser_product(name, bundle_id);
         Ok(BrowserClassification {
             is_browser: chromium || webkit || gecko,
             engine: if chromium {
@@ -585,7 +615,8 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        for port in loopback_ports_for_pid(pid).await? {
+        let ports = loopback_ports_for_pid(pid).await?;
+        for port in ports {
             if let Some(ws_url) = browser_websocket_url(port).await {
                 return Ok(Some(OwnedEndpoint {
                     ws_url,
@@ -1032,6 +1063,27 @@ mod tests {
         assert!(!is_chromium("Safari", "com.apple.Safari"));
         assert!(!is_chromium("Search", "com.example.Search"));
         assert!(!is_chromium("Operator", "com.example.Operator"));
+    }
+
+    #[test]
+    fn branded_electron_framework_evidence_requires_authenticated_authority() {
+        assert_eq!(
+            classify_chromium_identity("Agente", "com.agente.desktop", true, true),
+            (true, BrowserProduct::Electron)
+        );
+        assert_eq!(
+            classify_chromium_identity("Agente", "com.agente.desktop", true, false),
+            (false, BrowserProduct::Other)
+        );
+        assert_eq!(
+            classify_chromium_identity("Operator", "com.example.operator", false, true),
+            (false, BrowserProduct::Other)
+        );
+        assert_eq!(
+            classify_chromium_identity("Electron", "com.example.fixture", true, false),
+            (true, BrowserProduct::Electron),
+            "known standalone Electron identity must not require embedded authority"
+        );
     }
 
     #[test]

@@ -322,6 +322,10 @@ const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
     "browser_click",
     "browser_type",
     "browser_pointer",
+    "browser_focus",
+    "browser_press_key",
+    "browser_select",
+    "browser_scroll",
 ];
 const BROWSER_BOUND_INPUT_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -876,7 +880,11 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_navigate"
         | "browser_click"
         | "browser_type"
-        | "browser_pointer" => RiskClass::R2,
+        | "browser_pointer"
+        | "browser_focus"
+        | "browser_press_key"
+        | "browser_select"
+        | "browser_scroll" => RiskClass::R2,
 
         // External/file side effects or generic compound action surfaces.
         "get_desktop_state"

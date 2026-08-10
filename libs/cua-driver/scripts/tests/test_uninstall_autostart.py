@@ -155,8 +155,11 @@ def test_current_autostart_file_is_a_rust_install_marker(
     assert not skill_link.is_symlink()
 
 
-def test_release_uninstall_reports_and_preserves_local_product(tmp_path: Path) -> None:
-    home, _calls, env = _sandbox(tmp_path, "Linux")
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_release_uninstall_reports_and_preserves_local_product(
+    tmp_path: Path, os_name: str
+) -> None:
+    home, _calls, env = _sandbox(tmp_path, os_name)
     local_home = home / ".cua-driver-local"
     local_marker = local_home / "packages/current/cua-driver-local"
     local_marker.parent.mkdir(parents=True)

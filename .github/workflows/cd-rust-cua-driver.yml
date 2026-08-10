@@ -285,6 +285,31 @@ jobs:
           node scripts/build-node-runtime.mjs \
             --target "${{ matrix.target }}" \
             --output "rust/target/${{ matrix.target }}/release/cua_driver_node_runtime.node"
+      - name: Verify Node runtime is self-contained on Windows
+        working-directory: libs/cua-driver
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installation) { throw "Visual Studio Build Tools were not found" }
+          $dumpbin = Get-ChildItem `
+            "$installation\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+            Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe was not found" }
+
+          $runtime = "rust/target/${{ matrix.target }}/release/cua_driver_node_runtime.node"
+          $imports = & $dumpbin /DEPENDENTS $runtime 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            throw "dumpbin failed for $runtime with exit $LASTEXITCODE"
+          }
+          $imports | Write-Host
+          $dynamicCrt = $imports | Select-String -Pattern `
+            '(?i)\b(?:VCRUNTIME|MSVCP|CONCRT|UCRTBASE|api-ms-win-crt-)[^\s]*\.dll\b'
+          if ($dynamicCrt) {
+            throw "Windows Node runtime has a dynamic VC/UCRT dependency: $($dynamicCrt -join ', ')"
+          }
       - name: Package
         working-directory: libs/cua-driver/rust
         shell: pwsh

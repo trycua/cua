@@ -55,6 +55,16 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("os: windows-11-arm", workflow)
         self.assertEqual(workflow.count("os: windows-latest"), 1)
 
+    def test_windows_node_runtime_statically_links_and_verifies_the_crt(self) -> None:
+        build_script = self.read("libs/cua-driver/scripts/build-node-runtime.mjs")
+        release_workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn('target.endsWith("-pc-windows-msvc")', build_script)
+        self.assertIn('"-C target-feature=+crt-static"', build_script)
+        self.assertIn("Verify Node runtime is self-contained on Windows", release_workflow)
+        self.assertIn("dumpbin /DEPENDENTS", release_workflow)
+        self.assertIn("VCRUNTIME|MSVCP|CONCRT|UCRTBASE|api-ms-win-crt-", release_workflow)
+
     def test_npm_publish_uses_explicit_local_tarball_paths(self) -> None:
         workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
 

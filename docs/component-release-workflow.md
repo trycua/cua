@@ -90,9 +90,15 @@ For Lume, the version must agree in `VERSION`, `src/Main.swift`, the installer,
 generated reference docs, changelog, and release manifest.
 
 Do not hand-edit the release branch to correct a product entry. Fix the merged
-pull request metadata with the supported commit override when appropriate, then
-rerun Release Please. The release architecture plan documents the override
-format in [`release-attribution-and-announcements-plan.md`](release-attribution-and-announcements-plan.md#release-workflow).
+pull request body with the supported commit override when appropriate, then
+rerun Release Please. Replace the example entry with one or more Conventional
+Commit entries that Release Please should use for that squash commit:
+
+```text
+BEGIN_COMMIT_OVERRIDE
+fix(cua-driver): preserve keyboard input while the driver reconnects
+END_COMMIT_OVERRIDE
+```
 
 ## 3. Merge the component release pull request
 
@@ -165,9 +171,16 @@ Watch the SDK publisher before calling the component shipped:
 
 ```bash
 gh run list --repo trycua/cua \
-  --workflow cd-py-cua-driver.yml --limit 10
+  --workflow cd-py-cua-driver.yml --event workflow_run --limit 10 \
+  --json databaseId,createdAt,event,headSha,status,conclusion
+gh run view "$SDK_RUN_ID" --repo trycua/cua --json jobs,status,conclusion
 gh run watch "$SDK_RUN_ID" --repo trycua/cua --exit-status
 ```
+
+The candidate completion also starts this workflow, but its `get-version` job
+sets `should_publish=false` and skips publication. Select the later SDK run
+chained from the explicit publish dispatch. Require its wheel and npm build and
+publish jobs, not merely the candidate-triggered no-op run, to succeed.
 
 ## 5. Publish Lume
 
@@ -175,6 +188,7 @@ Lume uses a single tag-triggered publication run. Its CD workflow builds,
 notarizes, uploads assets, and publishes the verified Release Please draft.
 
 ```bash
+# Example only; replace this with the version in the Lume release pull request.
 VERSION=0.5.2
 TAG="lume-v${VERSION}"
 
@@ -201,9 +215,11 @@ npm view @trycua/cua-driver version
 npm view @trycua/cua-driver-win32-arm64-msvc version
 python3 -m pip index versions cua-driver
 
-rg -n 'CUA_DRIVER_RS_BAKED_VERSION|BakedVersion' \
-  libs/cua-driver/scripts/_install-rust.sh \
-  libs/cua-driver/scripts/install.ps1
+git fetch origin main
+git show origin/main:libs/cua-driver/scripts/_install-rust.sh | \
+  rg 'CUA_DRIVER_RS_BAKED_VERSION='
+git show origin/main:libs/cua-driver/scripts/install.ps1 | \
+  rg 'CuaDriverRsBakedVersion ='
 ```
 
 Require the expected archives, checksums, installers, skill pack, SDK packages,
@@ -212,8 +228,23 @@ component version. Cua Driver releases intentionally use GitHub's prerelease fla
 the component tag and canonical installer resolution determine whether the
 component has shipped.
 
-For Lume, require the tagged GitHub release, notarized archives, installer
-version, and canonical installer path to agree.
+For Lume:
+
+```bash
+gh release view "$TAG" --repo trycua/cua \
+  --json tagName,isDraft,isPrerelease,publishedAt,targetCommitish,url,assets
+
+git fetch origin main
+git show origin/main:libs/lume/scripts/install.sh | rg 'LUME_BAKED_VERSION='
+git show origin/main:libs/lume/src/Update/VersionCheck.swift | \
+  rg 'releaseTagPrefix|defaultInstallScriptURL'
+```
+
+Require the exact tagged GitHub release, notarized archives, baked installer
+version, and updater tag prefix and canonical installer path to agree. Unlike
+Cua Driver, Lume's installer may use the repository-wide latest release as a
+fallback after its explicit and baked-version paths; verify the exact tagged
+release and baked version rather than relying on that fallback alone.
 
 ## Failure recovery
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib.metadata import version
 import os
 from pathlib import Path
+import re
 import time
 
 import pytest
@@ -38,6 +39,12 @@ def selected_namespace() -> str:
     )
     if not namespace.startswith("cua-live-"):
         raise ValueError("CUA_LIVE_E2E_NAMESPACE must start with cua-live-")
+    if len(namespace) > 63 or re.fullmatch(
+        r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", namespace
+    ) is None:
+        raise ValueError(
+            "CUA_LIVE_E2E_NAMESPACE must be a DNS-1123 label of at most 63 characters"
+        )
     return namespace
 
 
@@ -65,12 +72,24 @@ async def run_fleet_ephemeral_live() -> None:
     }
     fleet, http_client = build_fleet_client()
     primary_error: BaseException | None = None
-    creation_attempted = False
+    cleanup_error: BaseException | None = None
+    close_error: BaseException | None = None
+    summary_error: BaseException | None = None
+    sandbox_yielded = False
+    owns_namespace = False
+
+    def record_cleanup_error(error: BaseException) -> None:
+        nonlocal cleanup_error
+        error_summary = {"type": type(error).__name__}
+        if cleanup_error is None:
+            cleanup_error = error
+            summary["cleanup_error"] = error_summary
+        else:
+            summary.setdefault("cleanup_secondary_errors", []).append(error_summary)
 
     try:
         if await namespace_exists(fleet, namespace):
             raise RuntimeError(f"namespace {namespace} already exists")
-        creation_attempted = True
         started = time.monotonic()
         async with Sandbox.ephemeral(
             Image.from_registry(IMAGE),
@@ -82,67 +101,84 @@ async def run_fleet_ephemeral_live() -> None:
             request_timeout=60,
             telemetry_enabled=False,
         ) as sandbox:
+            sandbox_yielded = True
+            owns_namespace = sandbox.owns_namespace
+            summary["owns_namespace"] = owns_namespace
             summary["provision_seconds"] = time.monotonic() - started
             summary["sandbox_name"] = sandbox.name
-            template = await fleet.get_template(namespace, namespace)
-            assert_template_contract(template, expected_port=8000)
-
-            width, height = await sandbox.screen.size()
-            summary["screen"] = {"width": width, "height": height}
-            assert (width, height) == (1024, 768)
-
-            screenshot = await sandbox.screenshot()
-            artifact_dir.mkdir(parents=True, exist_ok=True)
-            (artifact_dir / "screen.png").write_bytes(screenshot)
-            assert screenshot.startswith(b"\x89PNG\r\n\x1a\n")
-            assert len(screenshot) > 1000
-
-            result = await sandbox.shell.run("uname -s")
-            summary["shell"] = {
-                "success": result.success,
-                "stdout": result.stdout.strip(),
-                "stderr": result.stderr.strip(),
-            }
-            assert result.success
-            assert result.stdout.strip() == "Linux"
-    except BaseException as error:
-        primary_error = error
-        summary["error"] = {"type": type(error).__name__}
-        raise
-    finally:
-        try:
-            if creation_attempted:
-                cleanup_started = time.monotonic()
-                try:
-                    cleaned = await wait_namespace_absent(fleet, namespace)
-                    summary["automatic_cleanup"] = cleaned
-                    if not cleaned:
-                        summary["remaining_resources"] = await collect_resource_inventory(
-                            fleet, namespace
-                        )
-                        summary["emergency_cleanup"] = await cleanup_namespace(namespace)
-                        if primary_error is None:
-                            pytest.fail(f"namespace {namespace} leaked after Sandbox.ephemeral()")
-                    summary["cleanup_seconds"] = time.monotonic() - cleanup_started
-                except BaseException as cleanup_error:
-                    summary["cleanup_error"] = {"type": type(cleanup_error).__name__}
-                    if primary_error is None:
-                        raise
-        finally:
-            close_error: BaseException | None = None
             try:
-                await http_client.aclose()
+                template = await fleet.get_template(namespace, namespace)
+                assert_template_contract(template, expected_port=8000)
+
+                width, height = await sandbox.screen.size()
+                summary["screen"] = {"width": width, "height": height}
+                assert (width, height) == (1024, 768)
+
+                screenshot = await sandbox.screenshot()
+                artifact_dir.mkdir(parents=True, exist_ok=True)
+                (artifact_dir / "screen.png").write_bytes(screenshot)
+                assert screenshot.startswith(b"\x89PNG\r\n\x1a\n")
+                assert len(screenshot) > 1000
+
+                result = await sandbox.shell.run("uname -s")
+                summary["shell"] = {
+                    "success": result.success,
+                    "stdout": result.stdout.strip(),
+                    "stderr": result.stderr.strip(),
+                }
+                assert result.success
+                assert result.stdout.strip() == "Linux"
             except BaseException as error:
-                close_error = error
-                summary["close_error"] = {"type": type(error).__name__}
+                primary_error = error
+                summary["error"] = {"type": type(error).__name__}
+    except BaseException as error:
+        if primary_error is None:
+            if sandbox_yielded:
+                record_cleanup_error(error)
+            else:
+                primary_error = error
+                summary["error"] = {"type": type(error).__name__}
+        else:
+            summary["context_exit_error"] = {"type": type(error).__name__}
+    finally:
+        if sandbox_yielded:
+            cleanup_started = time.monotonic()
             try:
-                write_summary(artifact_dir / "summary.json", summary)
-            except BaseException as summary_error:
-                summary["summary_error"] = {"type": type(summary_error).__name__}
-                if primary_error is None and close_error is None:
-                    raise
-            if primary_error is None and close_error is not None:
-                raise close_error
+                cleaned = await wait_namespace_absent(fleet, namespace)
+                summary["automatic_cleanup"] = cleaned
+                if not cleaned:
+                    summary["remaining_resources"] = await collect_resource_inventory(
+                        fleet, namespace
+                    )
+                    if owns_namespace:
+                        summary["emergency_cleanup"] = await cleanup_namespace(namespace)
+                    pytest.fail(f"namespace {namespace} leaked after Sandbox.ephemeral()")
+                summary["cleanup_seconds"] = time.monotonic() - cleanup_started
+            except BaseException as error:
+                record_cleanup_error(error)
+        else:
+            summary["provisioning"] = {"sandbox_yielded": False}
+
+        try:
+            await http_client.aclose()
+        except BaseException as error:
+            close_error = error
+            summary["close_error"] = {"type": type(error).__name__}
+
+        try:
+            write_summary(artifact_dir / "summary.json", summary)
+        except BaseException as error:
+            summary_error = error
+            summary["summary_error"] = {"type": type(error).__name__}
+
+    if primary_error is not None:
+        raise primary_error
+    if cleanup_error is not None:
+        raise cleanup_error
+    if close_error is not None:
+        raise close_error
+    if summary_error is not None:
+        raise summary_error
 
 
 async def test_fleet_ephemeral_live() -> None:

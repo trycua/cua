@@ -274,6 +274,13 @@ class Sandbox:
         _os = _runtime_info.environment if _runtime_info and _runtime_info.environment else "linux"
         self.apps = Apps(transport, os_type=_os)
 
+    @property
+    def owns_namespace(self) -> bool:
+        """Whether this sandbox owns its Fleet namespace."""
+        if isinstance(self._transport, FleetCloudTransport):
+            return self._transport.owns_namespace
+        return False
+
     async def _connect(self) -> None:
         await self._transport.connect()
         # Update name from transport (e.g. CloudTransport resolves name after creating a VM)

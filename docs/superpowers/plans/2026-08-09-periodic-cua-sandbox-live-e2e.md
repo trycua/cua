@@ -887,8 +887,10 @@ only scheduled runs cancel an older scheduled run in the same lane. Fleet
 reconciliation preserves the namespace, pool, and template, all named after the
 namespace. `Sandbox.ephemeral()` is verified with claim-only cleanup: after
 exit the monitor polls until claims are absent, records persistent reconciled
-resources, and requires exactly the named pool/template with zero claims. It
-never explicitly deletes a namespace, pool, or template.
+resources, and requires exactly the named pool/template with zero claims. The
+read-only poll and inventory run after every provisioning attempt, including one
+that fails before yielding a sandbox. It never explicitly deletes a namespace,
+pool, or template.
 
 
 Workflow namespace expression: `cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`.

@@ -149,7 +149,7 @@ an unrelated default or stale resource.
 
 Fleet reconciliation intentionally preserves each dedicated namespace, pool, and
 template. After `Sandbox.ephemeral()` exits, the monitor performs claim-only
-cleanup verification:
+cleanup verification after every provisioning attempt, including a failure before the context yields:
 
 1. preserve the original scenario exception, if any;
 2. poll until claims are absent;
@@ -226,7 +226,7 @@ Scripts CI installs `pyyaml` and runs this contract when the workflow changes.
 - Every scheduled interval starts both lanes; a newer schedule can cancel only
   an older scheduled run of the same lane, while push and manual runs finish.
 - Port, screen, screenshot, and shell assertions all exercise the public SDK.
-- Normal and failing runs leave no test namespace behind.
+- Normal runs retain only the named persistent pool/template with no claims; failed provisioning records read-only claim and inventory diagnostics without deleting resources.
 - A forced failure produces one actionable, lane-specific Alertmanager alert
   and sanitized failure artifacts.
 

@@ -135,6 +135,9 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             "Emergency namespace cleanup",
             "namespace leak",
             "automatic namespace cleanup",
+            "leave no test namespace behind",
+            "no remaining namespace",
+            "namespace is absent",
         )
 
         for document in docs:

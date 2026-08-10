@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from cua_sandbox import Image
+from fleet_sdk import SdkError
 from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_namespace_name,
@@ -131,6 +132,57 @@ async def test_wait_claims_absent_polls_until_claims_are_gone() -> None:
 
     assert await wait_claims_absent(FakeClient(), "demo", timeout=1, interval=0)
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_wait_claims_absent_returns_true_for_public_sdk_404() -> None:
+    class FakeClient:
+        async def list_claims(self, name: str):
+            raise SdkError.Status("list claims", 404, b"not found")
+
+    assert await wait_claims_absent(FakeClient(), "demo", timeout=1, interval=0)
+
+
+@pytest.mark.asyncio
+async def test_wait_claims_absent_times_out_when_claims_remain() -> None:
+    class FakeClient:
+        async def list_claims(self, name: str):
+            return [SimpleNamespace(metadata=SimpleNamespace(name="claim-a"))]
+
+    assert not await wait_claims_absent(FakeClient(), "demo", timeout=0, interval=0)
+
+
+@pytest.mark.asyncio
+async def test_wait_claims_absent_propagates_non_404_sdk_errors() -> None:
+    class FakeClient:
+        async def list_claims(self, name: str):
+            raise SdkError.Status("list claims", 500, b"failure")
+
+    with pytest.raises(SdkError.Status):
+        await wait_claims_absent(FakeClient(), "demo", timeout=1, interval=0)
+
+
+@pytest.mark.asyncio
+async def test_collect_resource_inventory_returns_empty_for_public_sdk_404() -> None:
+    class FakeClient:
+        async def list_templates(self, name: str):
+            raise SdkError.Status("list templates", 404, b"not found")
+
+    assert await collect_resource_inventory(FakeClient(), "demo") == {
+        "templates": [],
+        "pools": [],
+        "claims": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_collect_resource_inventory_propagates_non_404_sdk_errors() -> None:
+    class FakeClient:
+        async def list_templates(self, name: str):
+            raise SdkError.Status("list templates", 500, b"failure")
+
+    with pytest.raises(SdkError.Status):
+        await collect_resource_inventory(FakeClient(), "demo")
 
 
 def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
@@ -506,7 +558,95 @@ async def test_provisioning_failure_before_yield_never_deletes_namespace(monkeyp
     with pytest.raises(ProvisioningFailure, match="provisioning failed"):
         await live_test.run_fleet_ephemeral_live()
 
-    assert summaries[-1]["provisioning"] == {"sandbox_yielded": False}
+    assert summaries[-1]["provisioning"] == {"attempted": True, "sandbox_yielded": False}
+
+
+@pytest.mark.asyncio
+async def test_pre_yield_claim_leak_is_recorded_without_masking_provisioning_error(
+    monkeypatch, tmp_path
+) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    class ProvisioningFailure(Exception):
+        pass
+
+    summaries = []
+
+    class FailingEphemeral:
+        async def __aenter__(self):
+            raise ProvisioningFailure("provisioning failed")
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+    async def wait_claims_absent(fleet, namespace: str) -> bool:
+        return False
+
+    async def collect_resource_inventory(fleet, namespace: str):
+        return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-pre-yield-claim")
+    monkeypatch.setenv("CUA_LIVE_E2E_ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
+    monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FailingEphemeral())
+    monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
+    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
+
+    with pytest.raises(ProvisioningFailure, match="provisioning failed"):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert summaries[-1]["claim_leak"] is True
+    assert summaries[-1]["persistent_resources"]["claims"] == ["claim-a"]
+    assert summaries[-1]["cleanup_error"] == {"type": "Failed"}
+
+
+@pytest.mark.asyncio
+async def test_pre_yield_missing_namespace_records_empty_inventory_without_cleanup_failure(
+    monkeypatch, tmp_path
+) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    class ProvisioningFailure(Exception):
+        pass
+
+    summaries = []
+
+    class FailingEphemeral:
+        async def __aenter__(self):
+            raise ProvisioningFailure("provisioning failed")
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+    async def wait_claims_absent(fleet, namespace: str) -> bool:
+        return True
+
+    async def collect_resource_inventory(fleet, namespace: str):
+        return {"templates": [], "pools": [], "claims": []}
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-pre-yield-missing")
+    monkeypatch.setenv("CUA_LIVE_E2E_ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
+    monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FailingEphemeral())
+    monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
+    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
+
+    with pytest.raises(ProvisioningFailure, match="provisioning failed"):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert summaries[-1]["provisioning"] == {"attempted": True, "sandbox_yielded": False}
+    assert summaries[-1]["persistent_resources"] == {"templates": [], "pools": [], "claims": []}
+    assert "cleanup_error" not in summaries[-1]
 
 
 @pytest.mark.asyncio

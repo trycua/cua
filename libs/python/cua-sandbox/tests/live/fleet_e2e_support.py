@@ -18,6 +18,7 @@ from fleet_sdk import (
     HttpHeader,
     HttpRequest,
     HttpResponse,
+    SdkError,
 )
 
 DEFAULT_BASE_URL = "https://run.cua.ai"
@@ -79,6 +80,10 @@ def build_fleet_client() -> tuple[CyclopsClient, HttpxFleetClient]:
     return CyclopsClient.connect(configuration, http_client), http_client
 
 
+def is_not_found_error(error: BaseException) -> bool:
+    return isinstance(error, SdkError.Status) and error.status == 404
+
+
 async def wait_claims_absent(
     client: CyclopsClient,
     name: str,
@@ -88,16 +93,31 @@ async def wait_claims_absent(
 ) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not await client.list_claims(name):
-            return True
+        try:
+            if not await client.list_claims(name):
+                return True
+        except Exception as error:
+            if is_not_found_error(error):
+                return True
+            raise
         await asyncio.sleep(interval)
-    return not await client.list_claims(name)
+    try:
+        return not await client.list_claims(name)
+    except Exception as error:
+        if is_not_found_error(error):
+            return True
+        raise
 
 
 async def collect_resource_inventory(client: CyclopsClient, name: str) -> dict[str, list[str]]:
-    templates = await client.list_templates(name)
-    pools = await client.list_pools(name)
-    claims = await client.list_claims(name)
+    try:
+        templates = await client.list_templates(name)
+        pools = await client.list_pools(name)
+        claims = await client.list_claims(name)
+    except Exception as error:
+        if is_not_found_error(error):
+            return {"templates": [], "pools": [], "claims": []}
+        raise
     return {
         "templates": [item.metadata.name for item in templates],
         "pools": [item.metadata.name for item in pools],

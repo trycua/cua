@@ -70,6 +70,7 @@ async def run_fleet_ephemeral_live() -> None:
     cleanup_error: BaseException | None = None
     close_error: BaseException | None = None
     summary_error: BaseException | None = None
+    provisioning_attempted = False
     sandbox_yielded = False
 
     def record_cleanup_error(error: BaseException) -> None:
@@ -82,6 +83,7 @@ async def run_fleet_ephemeral_live() -> None:
             summary.setdefault("cleanup_secondary_errors", []).append(error_summary)
 
     try:
+        provisioning_attempted = True
         started = time.monotonic()
         async with Sandbox.ephemeral(
             Image.from_registry(IMAGE),
@@ -131,27 +133,41 @@ async def run_fleet_ephemeral_live() -> None:
         else:
             summary["context_exit_error"] = {"type": type(error).__name__}
     finally:
-        if sandbox_yielded:
+        if provisioning_attempted:
             cleanup_started = time.monotonic()
+            claims_absent: bool | None = None
+            inventory: dict[str, list[str]] | None = None
             try:
                 claims_absent = await wait_claims_absent(fleet, namespace)
-                inventory = await collect_resource_inventory(fleet, namespace)
-                expected_inventory = {"templates": [namespace], "pools": [namespace], "claims": []}
                 summary["claims_absent"] = claims_absent
-                summary["persistent_resources"] = inventory
-                if not claims_absent:
-                    summary["claim_leak"] = True
-                    pytest.fail(f"claims remain in namespace {namespace} after Sandbox.ephemeral()")
-                if inventory != expected_inventory:
-                    summary["unexpected_inventory"] = True
-                    pytest.fail(
-                        f"unexpected reconciled resource inventory for namespace {namespace}: {inventory}"
-                    )
-                summary["cleanup_seconds"] = time.monotonic() - cleanup_started
             except BaseException as error:
                 record_cleanup_error(error)
-        else:
-            summary["provisioning"] = {"sandbox_yielded": False}
+            try:
+                inventory = await collect_resource_inventory(fleet, namespace)
+                summary["persistent_resources"] = inventory
+            except BaseException as error:
+                record_cleanup_error(error)
+
+            if claims_absent is False:
+                try:
+                    summary["claim_leak"] = True
+                    pytest.fail(f"claims remain in namespace {namespace} after Sandbox.ephemeral()")
+                except BaseException as error:
+                    record_cleanup_error(error)
+            if sandbox_yielded and inventory is not None:
+                expected_inventory = {"templates": [namespace], "pools": [namespace], "claims": []}
+                if inventory != expected_inventory:
+                    try:
+                        summary["unexpected_inventory"] = True
+                        pytest.fail(
+                            "unexpected reconciled resource inventory "
+                            f"for namespace {namespace}: {inventory}"
+                        )
+                    except BaseException as error:
+                        record_cleanup_error(error)
+            summary["cleanup_seconds"] = time.monotonic() - cleanup_started
+            if not sandbox_yielded:
+                summary["provisioning"] = {"attempted": True, "sandbox_yielded": False}
 
         try:
             await http_client.aclose()

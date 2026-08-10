@@ -225,26 +225,40 @@ func bodyRequestsMacOS(body []byte) bool {
 
 func githubAllowedK8sPath(method, path string) (string, bool) {
 	parts := strings.Split(path, "/")
-	if len(parts) >= 6 &&
-		parts[0] == "apis" &&
-		parts[1] == "cua.ai" &&
-		parts[2] == "v1" &&
-		parts[3] == "namespaces" &&
-		parts[5] == "osgymworkspacepools" {
+	if len(parts) != 6 && len(parts) != 7 {
+		return "", false
+	}
+	if len(parts) == 7 && parts[6] == "" {
+		return "", false
+	}
+	if parts[0] != "apis" || parts[3] != "namespaces" {
+		return "", false
+	}
+
+	if parts[1] == "cua.ai" && parts[2] == "v1" && parts[5] == "osgymworkspacepools" {
 		switch method {
 		case http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete:
-			if len(parts) == 6 || len(parts) == 7 {
-				return parts[4], true
-			}
+			return parts[4], true
 		}
 	}
-	if len(parts) >= 6 &&
-		parts[0] == "apis" &&
-		parts[1] == "osgym.cua.ai" &&
-		parts[2] == "v1alpha1" &&
-		parts[3] == "namespaces" &&
-		parts[5] == "osgymsandboxclaims" {
-		if method == http.MethodGet && (len(parts) == 6 || len(parts) == 7) {
+	if parts[1] != "osgym.cua.ai" || parts[2] != "v1alpha1" {
+		return "", false
+	}
+
+	resource := parts[5]
+	isItem := len(parts) == 7
+	switch resource {
+	case "osgymsandboxwarmpools", "osgymsandboxclaims":
+		switch method {
+		case http.MethodGet:
+			return parts[4], true
+		case http.MethodPost:
+			return parts[4], !isItem
+		case http.MethodPatch, http.MethodDelete:
+			return parts[4], isItem
+		}
+	case "osgymsandboxtemplates":
+		if method == http.MethodGet {
 			return parts[4], true
 		}
 	}

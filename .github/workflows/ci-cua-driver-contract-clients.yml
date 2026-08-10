@@ -106,7 +106,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            platform_package: platform-linux
+            list_windows_test: "list_windows_tests::"
+          - os: macos-latest
+            platform_package: platform-macos
+            list_windows_test: "tools::list_windows::tests::"
+          - os: windows-latest
+            platform_package: platform-windows
+            list_windows_test: "list_windows_z_index_tests::"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@stable
@@ -132,6 +141,11 @@ jobs:
         if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver --test schema_consistency_test portable_desktop_contracts_are_accepted_by_active_backend
+
+      - name: Validate active backend list_windows structured output
+        working-directory: libs/cua-driver/rust
+        run: >-
+          cargo test --locked -p ${{ matrix.platform_package }} ${{ matrix.list_windows_test }} --lib
 
       - name: Verify released CLI and MCP compatibility
         if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'

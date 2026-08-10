@@ -137,6 +137,17 @@ pub fn output_layout() -> Result<OutputLayout> {
     layout_from_monitors(&monitors).context("Hyprland reported no valid monitor layout")
 }
 
+/// Map one physical output capture to Hyprland's logical coordinate size.
+/// Returns `None` when dimensions do not identify exactly one output, so callers
+/// never guess on mirrored or otherwise ambiguous layouts.
+pub fn logical_output_size_for_capture(width: u32, height: u32) -> Option<(u32, u32)> {
+    if !is_session() {
+        return None;
+    }
+    let monitors: Vec<Monitor> = hyprctl_json("monitors").ok()?;
+    logical_output_size_from_monitors(&monitors, width, height)
+}
+
 /// Position the real Hyprland seat cursor in compositor-logical coordinates.
 /// Hyprland's compositor dispatcher is authoritative across mixed-scale and
 /// multi-monitor layouts; button and axis events still use the standard
@@ -156,6 +167,39 @@ pub fn move_cursor(x: i32, y: i32) -> Result<()> {
     Ok(())
 }
 
+fn monitor_physical_and_logical_size(monitor: &Monitor) -> Option<((u32, u32), (u32, u32))> {
+    if monitor.width == 0
+        || monitor.height == 0
+        || !monitor.scale.is_finite()
+        || monitor.scale <= 0.0
+    {
+        return None;
+    }
+    let physical = if monitor.transform % 2 == 0 {
+        (monitor.width, monitor.height)
+    } else {
+        (monitor.height, monitor.width)
+    };
+    let logical = (
+        (f64::from(physical.0) / monitor.scale).round() as u32,
+        (f64::from(physical.1) / monitor.scale).round() as u32,
+    );
+    (logical.0 > 0 && logical.1 > 0).then_some((physical, logical))
+}
+
+fn logical_output_size_from_monitors(
+    monitors: &[Monitor],
+    width: u32,
+    height: u32,
+) -> Option<(u32, u32)> {
+    let matches = monitors
+        .iter()
+        .filter_map(monitor_physical_and_logical_size)
+        .filter_map(|(physical, logical)| (physical == (width, height)).then_some(logical))
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then_some(matches[0])
+}
+
 fn layout_from_monitors(monitors: &[Monitor]) -> Option<OutputLayout> {
     let rectangles = monitors.iter().filter_map(|monitor| {
         if monitor.width == 0
@@ -165,13 +209,9 @@ fn layout_from_monitors(monitors: &[Monitor]) -> Option<OutputLayout> {
         {
             return None;
         }
-        let (physical_width, physical_height) = if monitor.transform % 2 == 0 {
-            (monitor.width, monitor.height)
-        } else {
-            (monitor.height, monitor.width)
-        };
-        let width = (f64::from(physical_width) / monitor.scale).round() as i64;
-        let height = (f64::from(physical_height) / monitor.scale).round() as i64;
+        let (_, (logical_width, logical_height)) = monitor_physical_and_logical_size(monitor)?;
+        let width = i64::from(logical_width);
+        let height = i64::from(logical_height);
         (width > 0 && height > 0).then_some((
             i64::from(monitor.x),
             i64::from(monitor.y),
@@ -515,6 +555,33 @@ mod tests {
                 width: 3640,
                 height: 1920,
             })
+        );
+    }
+
+    #[test]
+    fn physical_capture_size_maps_to_one_logical_output() {
+        let monitors = [
+            monitor(384, 288, 1920, 1080, 1.25),
+            monitor(1920, 0, 3840, 2160, 1.5),
+        ];
+        assert_eq!(
+            logical_output_size_from_monitors(&monitors, 1920, 1080),
+            Some((1536, 864))
+        );
+        assert_eq!(
+            logical_output_size_from_monitors(&monitors, 3840, 2160),
+            Some((2560, 1440))
+        );
+        assert_eq!(
+            logical_output_size_from_monitors(
+                &[
+                    monitor(0, 0, 1920, 1080, 1.0),
+                    monitor(1920, 0, 1920, 1080, 1.0)
+                ],
+                1920,
+                1080,
+            ),
+            None
         );
     }
 }

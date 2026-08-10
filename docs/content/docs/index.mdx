@@ -47,6 +47,32 @@ These recordings show agents operating desktop apps while the user's active wind
   </VideoDemo>
 </div>
 
+## Local models in action
+
+A local model can reach native applications through an agent harness that connects to Cua Driver.
+These recordings use Meta's Muse Glimmer 30B with Unsloth's `UD-Q4_K_XL` GGUF, served by
+llama.cpp on Apple Silicon. Claude Code is the harness, while Cua Driver runs and records inside a
+macOS Lume guest. See [Run a local model with Cua Driver](/how-to-guides/driver/run-with-local-model)
+for the tested setup and its context-saving configuration.
+
+<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial-poster.jpg"
+    title="Create a checklist in Apple Notes with a local model"
+  >
+    Muse Glimmer creates a note, checks one item, and verifies the final state through Cua Driver.
+  </VideoDemo>
+
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial-poster.jpg"
+    title="Schedule an Apple Reminder with a local model"
+  >
+    Muse Glimmer sets a due date and time, then confirms that the reminder remains incomplete.
+  </VideoDemo>
+</div>
+
 ## How these docs are organised
 
 Tutorials: learn by doing. Start with [Tutorials](/tutorials).

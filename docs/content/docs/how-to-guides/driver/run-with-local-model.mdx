@@ -1,0 +1,220 @@
+---
+title: Run a local model with Cua Driver
+description: Connect a locally served computer-use model to Cua Driver through Claude Code while keeping the model's tool context small.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide shows you how to serve Muse Glimmer 30B locally with llama.cpp, use Claude Code as the
+agent harness, and let the model operate desktop applications through Cua Driver. The same pattern
+works for another model when its serving layer provides multimodal input, tool calling, and an API
+that the chosen harness accepts.
+
+The configuration below reproduces the architecture used for these verified macOS runs:
+
+<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial-poster.jpg"
+    title="Create a checklist in Apple Notes"
+  >
+    The model mixes accessibility and pixel-grounded actions, then verifies the checklist state.
+  </VideoDemo>
+
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial-poster.jpg"
+    title="Schedule an Apple Reminder"
+  >
+    The model uses native controls and a menu, then verifies the title, date, time, and completion state.
+  </VideoDemo>
+</div>
+
+<Callout type="info" title="Tested configuration">
+  The recorded runs used Meta's Muse Glimmer 30B, Unsloth's `UD-Q4_K_XL` GGUF, llama.cpp's
+  Anthropic-compatible server, Claude Code, and Cua Driver inside a macOS Lume guest. This is a
+  tested configuration rather than a compatibility claim for every local model or inference server.
+</Callout>
+
+## Before you start
+
+You need:
+
+- [Cua Driver installed](/how-to-guides/driver/install) on the computer the model will operate;
+- Cua Driver's required operating-system permissions, confirmed with `cua-driver doctor`;
+- a current `llama-server` build with multimodal and tool-calling support;
+- Claude Code; and
+- enough memory and storage for the selected quant and context size.
+
+This guide uses the host desktop. To keep the task in a disposable macOS VM, first [run Cua Driver
+inside a Lume guest](/how-to-guides/driver/run-in-macos-lume-vm), then use the guest's MCP command as
+the filter's `--driver` value.
+
+## Install the MCP schema filter
+
+Local models pay a context cost for every exposed tool schema. Install the small filter used by this
+guide:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+curl -fsSL \
+  https://cua.ai/docs/examples/local-models/cua-mcp-filter.py \
+  -o "$HOME/.local/bin/cua-mcp-filter"
+chmod +x "$HOME/.local/bin/cua-mcp-filter"
+```
+
+The filter changes the `tools/list` response so the model sees only the named tools. It does not
+authorize those tools or block a caller that already knows another tool name. Use [permission
+policies](/concepts/how-permission-policies-work) when you need an enforcement boundary.
+
+Create `muse-cua-mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "cua-computer-use": {
+      "command": "cua-mcp-filter",
+      "args": [
+        "--allow",
+        "start_session,end_session,launch_app,list_apps,list_windows,get_window_state,get_accessibility_tree,move_cursor,click,type_text,press_key,hotkey,invoke_menu"
+      ]
+    }
+  }
+}
+```
+
+Keep the allowlist as small as the task permits. Add a tool only when the task needs it.
+
+## Start Muse Glimmer
+
+Run llama.cpp's server in a separate terminal:
+
+```bash
+llama-server \
+  --hf-repo "unsloth/Muse-Glimmer-30B-GGUF:UD-Q4_K_XL" \
+  --alias "muse-glimmer-local" \
+  --host 127.0.0.1 \
+  --port 8001 \
+  --ctx-size 131072 \
+  --parallel 1 \
+  --temp 1.0 \
+  --top-p 0.95 \
+  --top-k 64 \
+  --jinja \
+  --mmproj-auto \
+  --fit on \
+  --no-webui
+```
+
+The first start downloads the selected GGUF and vision projector. Keep the endpoint bound to
+`127.0.0.1` unless you have separately secured access to it.
+
+Wait for the server to finish loading, then check its health from another terminal:
+
+```bash
+curl -fsS http://127.0.0.1:8001/health
+```
+
+## Start Claude Code against the local endpoint
+
+From the directory that contains `muse-cua-mcp.json`, run:
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:8001 \
+ANTHROPIC_API_KEY=local-no-key-required \
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072 \
+claude \
+  --bare \
+  --strict-mcp-config \
+  --mcp-config ./muse-cua-mcp.json \
+  --tools "" \
+  --model muse-glimmer-local
+```
+
+`--bare` avoids loading unrelated project instructions and integrations. `--tools ""` removes
+Claude Code's built-in tools from this session, while the explicit MCP configuration keeps the
+Cua Driver tools available.
+
+## Run a bounded smoke task
+
+Start with a short task that has an observable result:
+
+```text
+Use only the cua-computer-use MCP tools. Launch Calculator, calculate 2 + 3,
+and verify from fresh state that the display shows 5. Take a fresh window
+state before every action and verify the result after every action. Keep
+get_window_state calls to max_elements=25 and max_depth=3 unless a deeper
+accessibility tree is required.
+```
+
+The model should launch Calculator, act through Cua Driver, read a fresh final state, and report the
+observed value. If it reports success without the final observation, ask it to verify again before
+accepting the result.
+
+## Keep context use under control
+
+For local computer use, the largest avoidable costs are tool schemas and repeated desktop state.
+Use these rules:
+
+- expose only the tools required by the task;
+- request window state instead of the entire desktop when the target window is known;
+- bound accessibility reads with `max_elements` and `max_depth`;
+- reuse the `pid` and `window_id` returned by fresh state; and
+- batch deterministic text entry when one `type_text` action can replace several inference turns.
+
+In the tested Calculator runs, filtering tools, bounding state, and batching input reduced uncached
+input from 71,088 tokens to 12,251 and elapsed time from 660 seconds to 224 seconds. Both runs
+independently verified the displayed value.
+
+## Run the model against a macOS Lume guest
+
+When the target is a Lume VM, run the exact Cua Driver executable inside the logged-in guest and
+grant permissions to that guest identity. Use SSH only to carry MCP stdio between the harness and
+the guest. This keeps screenshots, input, and recording attached to the macOS session being
+operated instead of relaying clicks through a VM viewer.
+
+Follow [Run Cua Driver in a macOS Lume VM](/how-to-guides/driver/run-in-macos-lume-vm) for the guest
+setup and SSH command. Save that SSH command as an executable `guest-cua-mcp` wrapper in the current
+directory, then pass the wrapper to the filter:
+
+```bash
+cua-mcp-filter \
+  --driver ./guest-cua-mcp \
+  --allow start_session,end_session,get_window_state,move_cursor,click,type_text,invoke_menu
+```
+
+## Record the run
+
+Use [Record and render a Cua Driver trajectory](/how-to-guides/driver/record-and-render-a-trajectory)
+to retain the raw display capture and per-action evidence. The two videos above add an editorial
+intro and summarized tool trace after Cua Driver finished the original recording.
+
+## Troubleshooting
+
+### Claude Code sees the full Cua Driver tool catalog
+
+Confirm that the session uses both `--strict-mcp-config` and the filtered `muse-cua-mcp.json`. A
+global Cua Driver registration can otherwise load alongside the filtered server.
+
+### The model stops after a few actions
+
+Reduce `max_elements` and `max_depth`, remove unused tools, and shorten the task. If llama.cpp lowers
+the usable context to fit memory, restart it with a context size the machine can hold reliably.
+
+### Screenshots do not reach the model
+
+Use a real MCP connection. Shell wrappers that flatten MCP image blocks into text remove the visual
+input that a multimodal model needs for pixel grounding.
+
+### macOS reports missing permissions
+
+Run `cua-driver permissions status` on the machine being operated. In a Lume VM, query the guest
+daemon and grant Accessibility and Screen Recording to the guest's Cua Driver identity.
+
+## Related guides
+
+- [Muse Glimmer model and quant documentation](https://unsloth.ai/docs/models/muse-glimmer)
+- [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent)
+- [Run Cua Driver in a macOS Lume VM](/how-to-guides/driver/run-in-macos-lume-vm)
+- [Record and render a Cua Driver trajectory](/how-to-guides/driver/record-and-render-a-trajectory)
+- [Agent action policy](/reference/cua-driver/agent-action-policy)

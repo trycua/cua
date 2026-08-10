@@ -68,6 +68,14 @@ impl Tool for ListWindowsTool {
             windows.retain(|w| w.pid == pid);
         }
 
+        // PID filtering can remove windows from the middle of the native
+        // front-to-back list. Re-normalize so the public result remains
+        // contiguous and zero-based.
+        let total = windows.len();
+        for (position, window) in windows.iter_mut().enumerate() {
+            window.z_index = total.saturating_sub(1).saturating_sub(position);
+        }
+
         let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
 
         ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(

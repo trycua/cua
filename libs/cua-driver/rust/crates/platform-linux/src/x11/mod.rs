@@ -55,11 +55,14 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
-    // Get _NET_CLIENT_LIST_STACKING (or fallback to _NET_CLIENT_LIST).
-    let windows = get_window_list(&conn, root)?;
+    // Prefer _NET_CLIENT_LIST_STACKING; unordered client lists report null z_index.
+    let WindowList {
+        windows,
+        stacking_known,
+    } = get_window_list(&conn, root)?;
 
     let mut result = Vec::new();
-    for (z_index, xid) in windows.into_iter().enumerate() {
+    for xid in windows.into_iter() {
         let pid = get_window_pid(&conn, xid).ok().flatten();
         if let Some(fp) = filter_pid {
             if pid != Some(fp) {
@@ -98,7 +101,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
             app_name,
             title,
             is_on_screen,
-            z_index: Some(z_index_from_bottom_to_top(z_index)),
+            z_index: None,
             x,
             y,
             width: w,
@@ -106,28 +109,53 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
         });
     }
 
+    if stacking_known {
+        for (z_index, window) in result.iter_mut().enumerate() {
+            window.z_index = Some(z_index);
+        }
+    }
+
     Ok(result)
 }
 
-fn z_index_from_bottom_to_top(position: usize) -> usize {
-    position
+struct WindowList {
+    windows: Vec<Window>,
+    stacking_known: bool,
 }
 
-fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
-    let atom_names = ["_NET_CLIENT_LIST_STACKING", "_NET_CLIENT_LIST"];
-    for name in &atom_names {
-        if let Ok(atom) = get_atom(conn, name) {
-            if let Ok(reply) = conn
-                .get_property(false, root, atom, AtomEnum::WINDOW, 0, u32::MAX)?
-                .reply()
-            {
-                let windows: Vec<Window> = reply
-                    .value32()
-                    .map(|iter| iter.collect())
-                    .unwrap_or_default();
-                if client_list_property(reply.type_, windows.as_slice()).is_some() {
-                    return Ok(windows);
-                }
+fn get_window_list(conn: &RustConnection, root: Window) -> Result<WindowList> {
+    if let Ok(atom) = get_atom(conn, "_NET_CLIENT_LIST_STACKING") {
+        if let Ok(reply) = conn
+            .get_property(false, root, atom, AtomEnum::WINDOW, 0, u32::MAX)?
+            .reply()
+        {
+            let windows: Vec<Window> = reply
+                .value32()
+                .map(|iter| iter.collect())
+                .unwrap_or_default();
+            if client_list_property(reply.type_, windows.as_slice()).is_some() {
+                return Ok(WindowList {
+                    windows,
+                    stacking_known: true,
+                });
+            }
+        }
+    }
+
+    if let Ok(atom) = get_atom(conn, "_NET_CLIENT_LIST") {
+        if let Ok(reply) = conn
+            .get_property(false, root, atom, AtomEnum::WINDOW, 0, u32::MAX)?
+            .reply()
+        {
+            let windows: Vec<Window> = reply
+                .value32()
+                .map(|iter| iter.collect())
+                .unwrap_or_default();
+            if client_list_property(reply.type_, windows.as_slice()).is_some() {
+                return Ok(WindowList {
+                    windows,
+                    stacking_known: false,
+                });
             }
         }
     }
@@ -136,17 +164,20 @@ fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
     // that case only expose mapped root children; unmapped Electron children
     // can otherwise be reported before a late-starting WM reparents them.
     let tree = conn.query_tree(root)?.reply()?;
-    Ok(tree
-        .children
-        .into_iter()
-        .filter(|window| {
-            conn.get_window_attributes(*window)
-                .ok()
-                .and_then(|cookie| cookie.reply().ok())
-                .map(|attributes| fallback_window_is_listable(attributes.map_state))
-                .unwrap_or(false)
-        })
-        .collect())
+    Ok(WindowList {
+        windows: tree
+            .children
+            .into_iter()
+            .filter(|window| {
+                conn.get_window_attributes(*window)
+                    .ok()
+                    .and_then(|cookie| cookie.reply().ok())
+                    .map(|attributes| fallback_window_is_listable(attributes.map_state))
+                    .unwrap_or(false)
+            })
+            .collect(),
+        stacking_known: true,
+    })
 }
 
 fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Window]> {
@@ -331,7 +362,7 @@ mod tests {
 
     #[test]
     fn ewmh_bottom_to_top_order_normalizes_to_higher_is_frontmost() {
-        let indices: Vec<_> = (0..3).map(z_index_from_bottom_to_top).collect();
+        let indices: Vec<_> = (0..3).collect();
         assert_eq!(indices, vec![0, 1, 2]);
         assert!(indices[2] > indices[0]);
     }

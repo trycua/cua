@@ -208,6 +208,7 @@ async def test_cloud_invalid_api_key_errors():
         await sb.screenshot()
         await sb.disconnect()
 
+
 async def test_pool_backed_create_persists_claim_pool_mapping(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 

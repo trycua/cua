@@ -20,5 +20,6 @@ type User struct {
 
 const (
 	PrincipalTypeUser       = "user"
+	PrincipalTypeUserKey    = "user_key"
 	PrincipalTypeGitHubOIDC = "github_oidc"
 )

@@ -124,6 +124,18 @@ allow {
     is_interactive_client
 }
 
+allow {
+    input.route == "/api/github-trust-policies"
+    input.user.sub != ""
+    is_verified_user_key_client
+}
+
+allow {
+    input.route == "/api/github-trust-policies/{id}"
+    input.user.sub != ""
+    is_verified_user_key_client
+}
+
 # /api/k8s/{path...} — kubectl-proxy passthrough.
 #
 # Any exact interactive client may read customer-facing resources (their pools, the pods
@@ -329,6 +341,11 @@ allow {
 # keys get the same access as SPA users for programmatic automation.
 
 is_user_key_client { startswith(input.user.azp, "ukey-") }
+
+is_verified_user_key_client {
+    is_user_key_client
+    input.user.principal_type == "user_key"
+}
 
 # Namespace management
 allow {

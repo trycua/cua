@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -367,17 +368,30 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 		if authConfig != nil && authConfig.UserKeyClientPfx != "" {
 			userKeyPfx = authConfig.UserKeyClientPfx
 		}
-		if strings.HasPrefix(user.AZP, userKeyPfx) {
-			if userSub := user.Claims["user_sub"]; userSub != "" {
-				user.ID = userSub
-			}
-			if userGroups := user.Claims["user_groups"]; userGroups != "" {
-				user.Groups = strings.Split(userGroups, ",")
-			}
+		if err := applyUserKeyIdentity(user, userKeyPfx); err != nil {
+			result = err.Error()
+			writeJSONErr(w, http.StatusUnauthorized, "auth token is invalid")
+			return
 		}
 
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserKey, user)))
 	})
+}
+
+func applyUserKeyIdentity(user *User, userKeyPfx string) error {
+	if !strings.HasPrefix(user.AZP, userKeyPfx) {
+		return nil
+	}
+	userSub := user.Claims["user_sub"]
+	if userSub == "" {
+		return fmt.Errorf("user-key token is missing user_sub")
+	}
+	user.ID = userSub
+	user.PrincipalType = PrincipalTypeUserKey
+	if userGroups := user.Claims["user_groups"]; userGroups != "" {
+		user.Groups = strings.Split(userGroups, ",")
+	}
+	return nil
 }
 
 // OpaMiddleware evaluates `data.authz.allow` against

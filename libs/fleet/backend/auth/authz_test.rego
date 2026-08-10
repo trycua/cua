@@ -869,6 +869,76 @@ test_user_api_key_namespaces_delete_allowed if {
 	}
 }
 
+test_user_api_key_github_trust_policies_allowed if {
+	authz.allow with input as {
+		"route": "/api/github-trust-policies",
+		"method": "POST",
+		"path": "/api/github-trust-policies",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "ukey-test123abc", "namespace": "", "email": "", "principal_type": "user_key"},
+	}
+}
+
+test_user_api_key_github_trust_policy_allowed if {
+	authz.allow with input as {
+		"route": "/api/github-trust-policies/{id}",
+		"method": "PATCH",
+		"path": "/api/github-trust-policies/policy-123",
+		"params": {"id": "policy-123"},
+		"user": {"sub": "user-123", "azp": "ukey-test123abc", "namespace": "", "email": "", "principal_type": "user_key"},
+	}
+}
+
+test_unverified_user_key_github_trust_policies_denied if {
+	not authz.allow with input as {
+		"route": "/api/github-trust-policies",
+		"method": "POST",
+		"path": "/api/github-trust-policies",
+		"params": {},
+		"user": {"sub": "service-account-ukey-rogue", "azp": "ukey-rogue", "namespace": "", "email": "", "principal_type": "user"},
+	}
+}
+
+test_per_key_github_trust_policies_denied if {
+	not authz.allow with input as {
+		"route": "/api/github-trust-policies",
+		"method": "POST",
+		"path": "/api/github-trust-policies",
+		"params": {},
+		"user": {"sub": "svc-123", "azp": "key-pool-foo", "namespace": "pool-foo", "email": ""},
+	}
+}
+
+test_per_key_github_trust_policy_denied if {
+	not authz.allow with input as {
+		"route": "/api/github-trust-policies/{id}",
+		"method": "DELETE",
+		"path": "/api/github-trust-policies/policy-123",
+		"params": {"id": "policy-123"},
+		"user": {"sub": "svc-123", "azp": "key-pool-foo", "namespace": "pool-foo", "email": ""},
+	}
+}
+
+test_untrusted_client_github_trust_policies_denied if {
+	not authz.allow with input as {
+		"route": "/api/github-trust-policies",
+		"method": "GET",
+		"path": "/api/github-trust-policies",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "untrusted-client", "namespace": "", "email": ""},
+	}
+}
+
+test_untrusted_client_github_trust_policy_denied if {
+	not authz.allow with input as {
+		"route": "/api/github-trust-policies/{id}",
+		"method": "GET",
+		"path": "/api/github-trust-policies/policy-123",
+		"params": {"id": "policy-123"},
+		"user": {"sub": "user-123", "azp": "untrusted-client", "namespace": "", "email": ""},
+	}
+}
+
 test_user_api_key_k8s_customer_path_allowed if {
 	authz.allow with input as {
 		"route": "/api/k8s/{path...}",

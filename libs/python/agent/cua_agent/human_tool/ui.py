@@ -10,7 +10,6 @@ import requests
 from PIL import Image
 
 
-
 class HumanCompletionUI:
     def __init__(self, server_url: str = "http://localhost:8002"):
         self.server_url = server_url

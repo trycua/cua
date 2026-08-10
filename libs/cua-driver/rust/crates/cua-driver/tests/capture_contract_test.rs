@@ -19,6 +19,8 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use base64::Engine as _;
 use cua_driver_testkit::e2e::{
     execute_case, native_readonly_case, recording_evidence, DriverRoute, Evidence, Observation,
     OracleKind, Targeting,
@@ -270,6 +272,128 @@ fn resolve_new_window(
     None
 }
 
+#[cfg(target_os = "linux")]
+fn web_snapshot_settled_default(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolResponse {
+    let arguments = serde_json::json!({ "pid": pid, "window_id": window_id });
+    let mut response = driver.call("get_window_state", arguments.clone());
+    for _ in 0..16 {
+        if response.tree_text().contains("WEB_HARNESS_MARKER_v1") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        response = driver.call("get_window_state", arguments.clone());
+    }
+    response
+}
+
+#[cfg(target_os = "linux")]
+fn hyprctl_json(query: &str) -> serde_json::Value {
+    let output = Command::new("hyprctl")
+        .args(["-j", query])
+        .output()
+        .unwrap_or_else(|error| panic!("hyprctl -j {query} failed: {error}"));
+    assert!(
+        output.status.success(),
+        "hyprctl -j {query} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("hyprctl -j {query} returned invalid JSON: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn hyprland_client_for_pid(pid: u32) -> (String, i64) {
+    let clients = hyprctl_json("clients");
+    let mut candidates = clients
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|client| {
+            client["pid"].as_u64() == Some(u64::from(pid))
+                && client["mapped"].as_bool().unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|client| {
+        let size = client["size"].as_array();
+        size.and_then(|size| Some(size.first()?.as_i64()? * size.get(1)?.as_i64()?))
+            .unwrap_or_default()
+    });
+    let client = candidates
+        .pop()
+        .unwrap_or_else(|| panic!("Hyprland exposed no mapped client for pid {pid}"));
+    let address = client["address"]
+        .as_str()
+        .filter(|address| address.starts_with("0x"))
+        .unwrap_or_else(|| panic!("Hyprland client for pid {pid} omitted its address"));
+    let workspace = client["workspace"]["id"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("Hyprland client for pid {pid} omitted its workspace"));
+    (address.to_owned(), workspace)
+}
+
+#[cfg(target_os = "linux")]
+fn move_hyprland_client_silently(pid: u32, address: &str, workspace: i64) {
+    let target = format!("{workspace},address:{address}");
+    let output = Command::new("hyprctl")
+        .args(["dispatch", "movetoworkspacesilent", &target])
+        .output()
+        .expect("move Hyprland fixture to inactive workspace");
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "ok",
+        "Hyprland could not move {address} to workspace {workspace}: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout).trim(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if hyprland_client_for_pid(pid).1 == workspace {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Hyprland client {address} did not reach workspace {workspace}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn response_png(response: &ToolResponse) -> Vec<u8> {
+    let image = response.raw["result"]["content"]
+        .as_array()
+        .and_then(|content| {
+            content.iter().find_map(|item| {
+                (item["type"].as_str() == Some("image")
+                    && item["mimeType"].as_str() == Some("image/png"))
+                .then(|| item["data"].as_str())
+                .flatten()
+            })
+        })
+        .expect("get_window_state returned no PNG content");
+    base64::engine::general_purpose::STANDARD
+        .decode(image)
+        .expect("decode get_window_state PNG")
+}
+
+#[cfg(target_os = "linux")]
+fn assert_web_harness_pixels(png: &[u8]) {
+    let image = image::load_from_memory(png)
+        .expect("Hyprland toplevel capture is not a readable image")
+        .to_rgb8();
+    let blue = image
+        .pixels()
+        .filter(|pixel| pixel[0] < 60 && (70..=150).contains(&pixel[1]) && pixel[2] > 170)
+        .count();
+    let green = image
+        .pixels()
+        .filter(|pixel| pixel[0] < 70 && pixel[1] > 100 && pixel[2] < 100)
+        .count();
+    assert!(
+        blue > 100 && green > 100,
+        "off-workspace capture omitted target-specific blue/green harness surfaces: blue={blue} green={green}"
+    );
+}
+
 fn run_capture_case(
     action: &str,
     oracles: Vec<OracleKind>,
@@ -379,6 +503,136 @@ fn deprecated_capture_mode_is_ignored() {
             );
         },
     );
+}
+
+/// Hyprland must capture the named XWayland toplevel itself after it leaves the
+/// active workspace. Returning the current desktop or an unrelated app is a
+/// contract failure, not a degraded success.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn hyprland_off_workspace_xwayland_capture_is_target_bound() {
+    if std::env::var("CUA_E2E_WAYLAND_SESSION").as_deref() != Ok("hyprland") {
+        return;
+    }
+
+    let case = native_readonly_case(
+        "electron",
+        "hyprland_off_workspace_xwayland_capture",
+        Targeting::NotApplicable,
+        DriverRoute::LinuxHyprlandToplevelExport,
+        vec![
+            OracleKind::AxState,
+            OracleKind::Pixels,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = test_driver("linux-electron-hyprland-off-workspace-xwayland-capture")
+            .expect("required capture driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let executable = harness_app("harness-electron", "CuaTestHarness.Electron");
+        assert!(
+            executable.exists(),
+            "required Electron fixture is missing: {executable:?}"
+        );
+        let before = harness_pids(&mut driver, "CuaTestHarness Electron");
+        let user_data = tempfile::Builder::new()
+            .prefix("cua-e2e-hyprland-xwayland-")
+            .tempdir()
+            .expect("create XWayland fixture user data");
+        driver
+            .reaper()
+            .spawn(
+                Command::new(&executable)
+                    .env_remove("WAYLAND_DISPLAY")
+                    .env("ELECTRON_OZONE_PLATFORM_HINT", "x11")
+                    .env("CUA_E2E_USER_DATA_DIR", user_data.path())
+                    .args([
+                        "--ozone-platform=x11",
+                        "--no-sandbox",
+                        "--disable-gpu",
+                        "--force-renderer-accessibility",
+                    ])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null()),
+            )
+            .expect("launch XWayland Electron fixture");
+        let (pid, window_id) = resolve_new_window(&mut driver, "CuaTestHarness Electron", &before)
+            .expect("XWayland Electron fixture did not expose a driver window");
+
+        let settled = web_snapshot_settled_default(&mut driver, pid, window_id);
+        assert!(
+            settled.tree_text().contains("WEB_HARNESS_MARKER_v1"),
+            "XWayland fixture did not publish its accessibility marker"
+        );
+        assert_web_harness_pixels(&response_png(&settled));
+
+        let active_workspaces = hyprctl_json("monitors")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|monitor| monitor["activeWorkspace"]["id"].as_i64())
+            .collect::<std::collections::HashSet<_>>();
+        let inactive_workspace = (90..=99)
+            .find(|workspace| !active_workspaces.contains(workspace))
+            .expect("Hyprland representative session has no free inactive test workspace");
+        let (address, _) = hyprland_client_for_pid(pid);
+        move_hyprland_client_silently(pid, &address, inactive_workspace);
+
+        driver.start_behavior_recording();
+        // Recording attachment is setup, not part of the read-only capture
+        // boundary. Snapshot compositor state only after it has initialized.
+        let active_before = hyprctl_json("activewindow")["address"].clone();
+        let workspaces_before = active_workspaces;
+        let response = web_snapshot_settled_default(&mut driver, pid, window_id);
+        let active_after = hyprctl_json("activewindow")["address"].clone();
+        let workspaces_after = hyprctl_json("monitors")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|monitor| monitor["activeWorkspace"]["id"].as_i64())
+            .collect::<std::collections::HashSet<_>>();
+
+        assert!(
+            !response.is_error(),
+            "off-workspace Hyprland capture failed: {}",
+            response.text()
+        );
+        assert!(
+            response.tree_text().contains("WEB_HARNESS_MARKER_v1"),
+            "off-workspace capture lost the target accessibility tree"
+        );
+        assert_web_harness_pixels(&response_png(&response));
+        assert_eq!(
+            active_after, active_before,
+            "off-workspace capture changed Hyprland focus"
+        );
+        assert_eq!(
+            workspaces_after, workspaces_before,
+            "off-workspace capture changed active Hyprland workspaces"
+        );
+        assert_eq!(
+            hyprland_client_for_pid(pid).1,
+            inactive_workspace,
+            "capture moved the XWayland target back to an active workspace"
+        );
+
+        let observation = Observation::delivered(
+            vec![
+                OracleKind::AxState,
+                OracleKind::Pixels,
+                OracleKind::Focus,
+                OracleKind::ZOrder,
+            ],
+            Evidence::default(),
+        );
+        drop(driver);
+        drop(user_data);
+        observation
+    });
 }
 
 /// Capturing an occluded background window is a read-only operation: it must

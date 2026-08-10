@@ -154,7 +154,7 @@ cleanup verification after every provisioning attempt, including a failure befor
 1. preserve the original scenario exception, if any;
 2. poll until claims are absent;
 3. collect a sanitized inventory; and
-4. require exactly the pool/template named after the namespace and zero claims.
+4. after successful provisioning, require exactly the pool/template named after the namespace and zero claims; pre-yield failures retain diagnostic inventory without imposing that invariant.
 
 A remaining claim or any unexpected inventory is a diagnostic failure. The test
 and workflow never explicitly delete a namespace, pool, or template: name-only

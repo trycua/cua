@@ -17,7 +17,7 @@
 - Provision with `cpu=4`, `memory_mb=4096`, `server_port=8000`, `time_to_start=900`, `request_timeout=60`, and `telemetry_enabled=False`.
 - Authenticate only with `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, `CUA_FLEET_BASE_URL=https://run.cua.ai`, and the default Cyclops token endpoint.
 - Do not use `CUA_API_KEY`, legacy `/api/keys`, namespace-scoped key creation, repository-private SDK helpers, or mutable image tags.
-- A leaked namespace is a test failure even when emergency deletion succeeds.
+- A leaked namespace is a test failure; collect sanitized diagnostics without explicit deletion.
 - Upload diagnostics only on failure and never include credentials, tokens, or authorization headers.
 - Pin `actions/checkout`, `actions/setup-python`, and `actions/upload-artifact` by full commit SHA.
 - No nightly suite and no required pull request live check.

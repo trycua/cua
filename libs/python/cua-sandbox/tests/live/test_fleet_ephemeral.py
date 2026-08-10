@@ -7,6 +7,7 @@ import re
 import time
 
 import pytest
+import cua_sandbox
 from cua_sandbox import Image, Sandbox
 
 from tests.live.fleet_e2e_support import (
@@ -67,6 +68,9 @@ async def run_fleet_ephemeral_live() -> None:
         "packages": {
             "cua-sandbox": version("cua-sandbox"),
             "cua-fleet": version("cua-fleet"),
+        },
+        "module_origins": {
+            "cua_sandbox": str(Path(cua_sandbox.__file__).resolve()),
         },
     }
     fleet, http_client = build_fleet_client()

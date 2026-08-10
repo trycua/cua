@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - "libs/python/cua-sandbox/**"
+      - "libs/python/cua-fleet/**"
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/scripts/tests/test_periodic_cua_sandbox_live.py"
   workflow_dispatch:
@@ -56,7 +57,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     concurrency:
-      group: periodic-cua-sandbox-live-${{ matrix.lane }}
+      group: periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}
       cancel-in-progress: ${{ github.event_name == 'schedule' }}
     env:
       CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
@@ -67,6 +68,15 @@ jobs:
       CUA_LIVE_E2E_ARTIFACT_DIR: /tmp/cua-live-e2e
       CUA_TELEMETRY_ENABLED: "false"
     steps:
+      - name: Check Fleet OAuth credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$CUA_CLIENT_ID" || -z "$CUA_CLIENT_SECRET" ]]; then
+            echo "CUA_CLIENT_ID and CUA_CLIENT_SECRET must both be configured."
+            exit 1
+          fi
+
       - name: Checkout main
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -96,16 +106,51 @@ jobs:
             --default-index https://pypi.org/simple \
             --upgrade cua-sandbox pytest pytest-asyncio
 
+      - name: Prepare isolated live test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          suite_root="$(mktemp -d /tmp/cua-live-e2e-suite.XXXXXX)"
+          mkdir -p "$suite_root/tests/live"
+          cp libs/python/cua-sandbox/tests/__init__.py "$suite_root/tests/"
+          cp libs/python/cua-sandbox/tests/live/*.py "$suite_root/tests/live/"
+          echo "CUA_LIVE_E2E_TEST_ROOT=$suite_root" >> "$GITHUB_ENV"
+
       - name: Record installed versions
         id: versions
+        shell: bash
         run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
+          set -o pipefail
+          python - <<'PY' | tee -a "$GITHUB_OUTPUT"
           from importlib.metadata import version
           print("sandbox=" + version("cua-sandbox"))
           print("fleet=" + version("cua-fleet"))
           PY
-          echo "cua-sandbox=${{ steps.versions.outputs.sandbox }}"
-          echo "cua-fleet=${{ steps.versions.outputs.fleet }}"
+
+      - name: Write controlled failure diagnostics
+        if: github.event_name == 'workflow_dispatch' && inputs.force_failure
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          artifact_dir = Path(os.environ["CUA_LIVE_E2E_ARTIFACT_DIR"])
+          artifact_dir.mkdir(parents=True, exist_ok=True)
+          (artifact_dir / "summary.json").write_text(
+              json.dumps(
+                  {
+                      "lane": os.environ["CUA_LIVE_E2E_LANE"],
+                      "namespace": os.environ["CUA_LIVE_E2E_NAMESPACE"],
+                      "source_sha": os.environ.get("GITHUB_SHA"),
+                      "error": {"type": "ControlledFailure"},
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n"
+          )
+          PY
 
       - name: Controlled alert test failure
         if: github.event_name == 'workflow_dispatch' && inputs.force_failure
@@ -114,8 +159,8 @@ jobs:
       - name: Run live Fleet smoke
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.force_failure) }}
         run: |
-          python -m pytest -q -s \
-            libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py
+          PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT" python -m pytest -q -s \
+            "$CUA_LIVE_E2E_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
 
       - name: Upload failure diagnostics
         if: failure()

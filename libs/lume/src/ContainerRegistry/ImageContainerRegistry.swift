@@ -142,7 +142,11 @@ enum OCIMediaType {
         guard mediaType.base.lowercased() == standardTarLayer,
             let partNumberText = mediaType.parameters["part.number"],
             let partNumber = Int(partNumberText),
-            partNumber > 0
+            partNumber > 0,
+            let totalPartsText = mediaType.parameters["part.total"],
+            let totalParts = Int(totalPartsText),
+            totalParts > 0,
+            partNumber <= totalParts
         else {
             return nil
         }
@@ -154,8 +158,40 @@ enum OCIMediaType {
             return nil
         }
 
-        let totalParts = mediaType.parameters["part.total"].flatMap(Int.init)
         return OCIDiskPartInfo(partNumber: partNumber, totalParts: totalParts)
+    }
+
+    static func isRawDiskPartLayer(_ layer: Layer) -> Bool {
+        let mediaType = parse(layer.mediaType)
+        return mediaType.base.lowercased() == standardTarLayer
+            && layer.annotations?["org.opencontainers.image.title"]?.hasPrefix(
+                "disk.img.part.") == true
+    }
+
+    static func validateRawDiskParts(_ parts: [OCIDiskPartInfo]) throws {
+        guard !parts.isEmpty else { return }
+
+        let totals = Swift.Set(parts.map(\.totalParts))
+        guard totals.count == 1, let totalParts = totals.first else {
+            throw PullError.reassemblyFailed(
+                "raw OCI disk parts declare inconsistent part.total values")
+        }
+
+        let partNumbers = parts.map(\.partNumber)
+        guard Swift.Set(partNumbers).count == partNumbers.count else {
+            throw PullError.reassemblyFailed(
+                "raw OCI disk parts contain duplicate part.number values")
+        }
+
+        let expectedPartNumbers = Swift.Set(1...totalParts)
+        let actualPartNumbers = Swift.Set(partNumbers)
+        guard actualPartNumbers == expectedPartNumbers else {
+            if let missingPart = expectedPartNumbers.subtracting(actualPartNumbers).min() {
+                throw PullError.missingPart(missingPart)
+            }
+            throw PullError.reassemblyFailed(
+                "raw OCI disk parts contain a part.number outside the declared range")
+        }
     }
 
     private static func parse(_ mediaType: String) -> OCIMediaTypeComponents {
@@ -192,7 +228,7 @@ struct OCIMediaTypeComponents: Equatable {
 
 struct OCIDiskPartInfo: Equatable {
     let partNumber: Int
-    let totalParts: Int?
+    let totalParts: Int
 }
 
 /// Annotation keys for multi-layer chunked disk images.
@@ -1849,9 +1885,18 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         // Instantiate collector
         let diskPartsCollector = DiskPartsCollector()
+        let malformedRawDiskLayers = manifest.layers.filter {
+            OCIMediaType.isRawDiskPartLayer($0)
+                && OCIMediaType.rawDiskPartInfo(for: $0) == nil
+        }
+        guard malformedRawDiskLayers.isEmpty else {
+            throw PullError.reassemblyFailed("raw OCI disk part metadata is invalid")
+        }
+        let rawDiskPartsInManifest = manifest.layers.compactMap {
+            OCIMediaType.rawDiskPartInfo(for: $0)
+        }
+        try OCIMediaType.validateRawDiskParts(rawDiskPartsInManifest)
         var lz4LayerCount = 0  // Count lz4 layers found
-        var rawDiskPartCount = 0
-        var expectedRawDiskParts: Int?
         var hasNvram = false
         var configPath: URL? = nil
 
@@ -1861,11 +1906,6 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             // Identify disk parts simply by media type
             if let rawDiskPart = OCIMediaType.rawDiskPartInfo(for: layer) {
-                rawDiskPartCount += 1
-                if let totalParts = rawDiskPart.totalParts {
-                    expectedRawDiskParts = max(expectedRawDiskParts ?? 0, totalParts)
-                }
-
                 if !FileManager.default.fileExists(atPath: cachedLayer.path) {
                     Logger.info("Raw disk part not found in cache: \(cachedLayer.path) - skipping")
                     continue
@@ -1876,15 +1916,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     url: cachedLayer,
                     compression: .raw
                 )
-                if let totalParts = rawDiskPart.totalParts {
-                    Logger.info(
-                        "Adding cached raw OCI disk part \(collectorPartNum)/\(totalParts): \(cachedLayer.lastPathComponent)"
-                    )
-                } else {
-                    Logger.info(
-                        "Adding cached raw OCI disk part \(collectorPartNum): \(cachedLayer.lastPathComponent)"
-                    )
-                }
+                Logger.info(
+                    "Adding cached raw OCI disk part \(collectorPartNum)/\(rawDiskPart.totalParts): \(cachedLayer.lastPathComponent)"
+                )
             } else if layer.mediaType == "application/octet-stream+lz4" {
                 lz4LayerCount += 1  // Increment count
 
@@ -1942,16 +1976,18 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         let totalParts = await diskPartsCollector.getTotalParts()  // Get total count from collector
 
         Logger.info("Found \(totalParts) disk parts in cache to reassemble.")
-        if rawDiskPartCount > 0 {
-            Logger.info("Found \(rawDiskPartCount) raw OCI disk parts in cache to reassemble.")
-        }
-        if let expectedRawDiskParts {
-            let rawPartNumbers = Swift.Set(
+        if !rawDiskPartsInManifest.isEmpty {
+            let expectedRawPartNumbers = Swift.Set(rawDiskPartsInManifest.map(\.partNumber))
+            let cachedRawPartNumbers = Swift.Set(
                 diskPartSources.filter { $0.compression == .raw }.map(\.partNumber))
-            for partNumber in 1...expectedRawDiskParts where !rawPartNumbers.contains(partNumber) {
-                Logger.error("Missing raw OCI disk part \(partNumber) of \(expectedRawDiskParts).")
-                throw PullError.missingPart(partNumber)
+            guard cachedRawPartNumbers == expectedRawPartNumbers else {
+                if let missingPart = expectedRawPartNumbers.subtracting(cachedRawPartNumbers).min() {
+                    throw PullError.missingPart(missingPart)
+                }
+                throw PullError.reassemblyFailed(
+                    "cached raw OCI disk parts do not match the manifest")
             }
+            Logger.info("Found \(cachedRawPartNumbers.count) raw OCI disk parts in cache to reassemble.")
         }
         // --- End retrieving parts ---
 

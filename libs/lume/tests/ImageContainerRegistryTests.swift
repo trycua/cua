@@ -122,3 +122,54 @@ func testRawDiskPartWriterThrowsForMissingSource() throws {
 
     #expect(didThrow)
 }
+
+@Test("raw disk part validation rejects duplicate part numbers")
+func testRawDiskPartValidationRejectsDuplicateParts() throws {
+    let parts = [
+        OCIDiskPartInfo(partNumber: 1, totalParts: 2),
+        OCIDiskPartInfo(partNumber: 1, totalParts: 2),
+    ]
+
+    var didThrow = false
+    do {
+        try OCIMediaType.validateRawDiskParts(parts)
+    } catch {
+        didThrow = true
+    }
+
+    #expect(didThrow)
+}
+
+@Test("raw disk part validation rejects inconsistent totals")
+func testRawDiskPartValidationRejectsInconsistentTotals() throws {
+    let parts = [
+        OCIDiskPartInfo(partNumber: 1, totalParts: 2),
+        OCIDiskPartInfo(partNumber: 2, totalParts: 3),
+    ]
+
+    var didThrow = false
+    do {
+        try OCIMediaType.validateRawDiskParts(parts)
+    } catch {
+        didThrow = true
+    }
+
+    #expect(didThrow)
+}
+
+@Test("raw disk part validation rejects incomplete ranges")
+func testRawDiskPartValidationRejectsIncompleteRanges() throws {
+    let parts = [
+        OCIDiskPartInfo(partNumber: 1, totalParts: 3),
+        OCIDiskPartInfo(partNumber: 2, totalParts: 3),
+    ]
+
+    var didThrow = false
+    do {
+        try OCIMediaType.validateRawDiskParts(parts)
+    } catch {
+        didThrow = true
+    }
+
+    #expect(didThrow)
+}

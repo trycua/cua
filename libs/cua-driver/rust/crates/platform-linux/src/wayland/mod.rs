@@ -1707,10 +1707,10 @@ fn scroll_vptr(
         other => anyhow::bail!("unknown scroll direction: {other}"),
     };
     // axis_discrete: `value` is logical units (the wayland-rs wrapper
-    // converts to wl_fixed internally); `discrete` is the tick count. Fifteen
+    // converts to wl_fixed internally); `discrete` is the tick count. Sixteen
     // units matches a conventional wheel notch and advances Chromium/WebKit by
-    // more than one 128 px fixture viewport across two requested ticks.
-    let value: f64 = (sign as f64) * 15.0;
+    // at least one 128 px fixture viewport across two requested ticks.
+    let value: f64 = (sign as f64) * 16.0;
     for i in 0..amount.max(1) {
         if i > 0 {
             std::thread::sleep(std::time::Duration::from_millis(25));

@@ -107,10 +107,20 @@ fn resolve_window_for_recording(
     window_id: Option<u64>,
 ) -> Option<crate::x11::WindowInfo> {
     let windows = crate::wayland::list_windows_dispatch(Some(pid));
-    if crate::wayland::is_wayland() {
-        // Foreign-toplevel protocol object ids are scoped to one Wayland
-        // connection. Recording hooks open a fresh connection, so re-resolve
-        // the target by pid instead of comparing an id from the action call.
+    if crate::wayland::hyprland::is_session() {
+        // Hyprland enumeration publishes the compositor's stable 64-bit client
+        // address, not a connection-local foreign-toplevel object id. Preserve
+        // it so evidence for same-process child windows and popovers captures
+        // the action's exact surface instead of whichever sibling was listed
+        // first.
+        match window_id {
+            Some(window_id) => windows.into_iter().find(|window| window.xid == window_id),
+            None => windows.into_iter().next(),
+        }
+    } else if crate::wayland::is_wayland() {
+        // Generic foreign-toplevel protocol object ids are scoped to one
+        // Wayland connection. Recording hooks open a fresh connection, so
+        // re-resolve the target by pid instead of comparing an action-call id.
         windows.into_iter().next()
     } else if let Some(window_id) = window_id {
         windows.into_iter().find(|window| window.xid == window_id)

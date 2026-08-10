@@ -897,3 +897,65 @@ class TestCmdExec:
         mock_sandbox.shell.run.assert_awaited_once_with("echo hello", timeout=120)
         mock_sandbox.disconnect.assert_awaited_once_with()
         assert capsys.readouterr().out == "hello\n"
+
+
+class TestPoolBackedLaunch:
+    def test_parser_accepts_pool_without_image(self):
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers()
+        sandbox.register_parser(subparsers)
+
+        args = parser.parse_args(
+            ["sb", "launch", "--name", "wif-smoke-123", "--pool", "cua-cli-wif-smoke"]
+        )
+
+        assert args.image is None
+        assert args.pool == "cua-cli-wif-smoke"
+        assert args.name == "wif-smoke-123"
+
+    def test_launch_rejects_image_and_pool(self, args_namespace):
+        args = args_namespace(
+            image="ubuntu:24.04",
+            pool="cua-cli-wif-smoke",
+            name="wif-smoke-123",
+            local=False,
+            vm=False,
+            cpu=None,
+            memory=None,
+            disk=None,
+            region=None,
+            json=False,
+        )
+
+        with patch.object(sandbox, "print_error") as mock_error:
+            result = sandbox.cmd_launch(args)
+
+        assert result == 1
+        mock_error.assert_called_once_with("Specify exactly one of IMAGE or --pool")
+
+    def test_launch_claims_named_sandbox_from_pool(self, args_namespace, monkeypatch):
+        monkeypatch.setenv("FLEETS_TOKEN", "github-token")
+        args = args_namespace(
+            image=None,
+            pool="cua-cli-wif-smoke",
+            name="wif-smoke-123",
+            local=False,
+            vm=False,
+            cpu=None,
+            memory=None,
+            disk=None,
+            region=None,
+            json=False,
+        )
+        claimed = SimpleNamespace(name="wif-smoke-123", disconnect=AsyncMock())
+        create = AsyncMock(return_value=claimed)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.create = create
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_success"):
+                result = sandbox.cmd_launch(args)
+
+        assert result == 0
+        create.assert_awaited_once_with(pool="cua-cli-wif-smoke", name="wif-smoke-123")
+        claimed.disconnect.assert_awaited_once()

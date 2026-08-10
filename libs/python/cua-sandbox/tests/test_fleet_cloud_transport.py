@@ -732,3 +732,101 @@ async def test_snapshot_is_unsupported():
     transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
     with pytest.raises(NotImplementedError, match="Snapshots are not supported"):
         await transport.create_snapshot()
+
+
+@pytest.mark.asyncio
+async def test_existing_pool_claim_uses_distinct_pool_and_sandbox_names(monkeypatch):
+    calls = []
+    pool = _pool("cua-cli-wif-smoke")
+    claim = SimpleNamespace(metadata=SimpleNamespace(name="wif-smoke-123"))
+    bound = _bound()
+
+    class Client:
+        async def get_pool(self, name):
+            calls.append(("get_pool", name))
+            return pool
+
+        async def set_pool_replicas(self, existing_pool, replicas):
+            calls.append(("set_pool_replicas", existing_pool.metadata.name, replicas))
+            return existing_pool
+
+        async def wait_pool(self, existing_pool):
+            calls.append(("wait_pool", existing_pool.metadata.name))
+            return existing_pool
+
+        async def create_claim(self, request):
+            calls.append(("create_claim", request.name, request.pool.metadata.name))
+            return claim
+
+        async def wait_claim(self, existing_claim):
+            calls.append(("wait_claim", existing_claim.metadata.name))
+            return bound
+
+        async def wait_service_ready(self, sandbox, service, time_to_start):
+            calls.append(("wait_service_ready", service))
+
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", Client)
+
+    transport = FleetCloudTransport(
+        image=None,
+        name="wif-smoke-123",
+        pool_name="cua-cli-wif-smoke",
+        create_claim=True,
+    )
+    await transport.connect()
+
+    assert calls == [
+        ("get_pool", "cua-cli-wif-smoke"),
+        ("set_pool_replicas", "cua-cli-wif-smoke", 1),
+        ("wait_pool", "cua-cli-wif-smoke"),
+        ("create_claim", "wif-smoke-123", "cua-cli-wif-smoke"),
+        ("wait_claim", "wif-smoke-123"),
+        ("wait_service_ready", "server"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_existing_pool_claim_reconnect_and_delete_use_exact_claim_name(monkeypatch):
+    calls = []
+    pool = _pool("cua-cli-wif-smoke")
+    claim = SimpleNamespace(metadata=SimpleNamespace(name="wif-smoke-123"))
+    bound = _bound()
+
+    class Client:
+        async def get_pool(self, name):
+            calls.append(("get_pool", name))
+            return pool
+
+        async def get_claim(self, existing_pool, name=None):
+            calls.append(("get_claim", existing_pool.metadata.name, name))
+            return claim
+
+        async def wait_claim(self, existing_claim):
+            return bound
+
+        async def wait_service_ready(self, sandbox, service, time_to_start):
+            return None
+
+        async def delete_claim(self, existing_claim):
+            calls.append(("delete_claim", existing_claim.metadata.name))
+
+        async def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", Client)
+
+    await FleetCloudTransport(
+        image=None,
+        name="wif-smoke-123",
+        pool_name="cua-cli-wif-smoke",
+    ).connect()
+    await FleetCloudTransport.delete_sandbox("wif-smoke-123", pool_name="cua-cli-wif-smoke")
+
+    assert calls == [
+        ("get_pool", "cua-cli-wif-smoke"),
+        ("get_claim", "cua-cli-wif-smoke", "wif-smoke-123"),
+        ("get_pool", "cua-cli-wif-smoke"),
+        ("get_claim", "cua-cli-wif-smoke", "wif-smoke-123"),
+        ("delete_claim", "wif-smoke-123"),
+        ("close",),
+    ]

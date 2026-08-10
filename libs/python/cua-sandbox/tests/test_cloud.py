@@ -207,3 +207,107 @@ async def test_cloud_invalid_api_key_errors():
         sb = await Sandbox.connect(VM_NAME, api_key=reversed_key)
         await sb.screenshot()
         await sb.disconnect()
+
+
+async def test_pool_backed_create_persists_claim_pool_mapping(monkeypatch, tmp_path):
+    from cua_sandbox import sandbox_state
+
+    created = []
+    monkeypatch.setattr(sandbox_state, "SANDBOX_STATE_DIR", tmp_path)
+
+    class FleetTransport:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+            self.name = kwargs["name"]
+
+        async def connect(self):
+            return None
+
+        async def disconnect(self):
+            return None
+
+    monkeypatch.setattr(sandbox_module, "FleetCloudTransport", FleetTransport)
+
+    await Sandbox.create(pool="cua-cli-wif-smoke", name="wif-smoke-123")
+
+    assert created == [
+        {
+            "image": None,
+            "name": "wif-smoke-123",
+            "pool_name": "cua-cli-wif-smoke",
+            "create_claim": True,
+            "region": "us-east-1",
+            "time_to_start": None,
+            "request_timeout": None,
+            "server_port": 8000,
+        }
+    ]
+    assert sandbox_state.load("wif-smoke-123")["pool_name"] == "cua-cli-wif-smoke"
+
+
+async def test_pool_backed_connect_loads_claim_pool_mapping(monkeypatch, tmp_path):
+    from cua_sandbox import sandbox_state
+
+    created = []
+    monkeypatch.setattr(sandbox_state, "SANDBOX_STATE_DIR", tmp_path)
+    sandbox_state.save_fleet_claim("wif-smoke-123", "cua-cli-wif-smoke")
+    monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: True))
+
+    class FleetTransport:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+            self.name = kwargs["name"]
+
+        async def connect(self):
+            return None
+
+        async def disconnect(self):
+            return None
+
+    monkeypatch.setattr(sandbox_module, "FleetCloudTransport", FleetTransport)
+
+    await Sandbox.connect("wif-smoke-123")
+
+    assert created[0]["name"] == "wif-smoke-123"
+    assert created[0]["pool_name"] == "cua-cli-wif-smoke"
+
+
+async def test_pool_backed_delete_removes_mapping_only_after_success(monkeypatch, tmp_path):
+    from cua_sandbox import sandbox_state
+
+    calls = []
+    monkeypatch.setattr(sandbox_state, "SANDBOX_STATE_DIR", tmp_path)
+    sandbox_state.save_fleet_claim("wif-smoke-123", "cua-cli-wif-smoke")
+    monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: True))
+
+    class FleetTransport:
+        @classmethod
+        async def delete_sandbox(cls, name, *, pool_name=None):
+            calls.append((name, pool_name))
+
+    monkeypatch.setattr(sandbox_module, "FleetCloudTransport", FleetTransport)
+
+    await Sandbox.delete("wif-smoke-123")
+
+    assert calls == [("wif-smoke-123", "cua-cli-wif-smoke")]
+    assert sandbox_state.load("wif-smoke-123") is None
+
+
+async def test_pool_backed_delete_keeps_mapping_when_claim_delete_fails(monkeypatch, tmp_path):
+    from cua_sandbox import sandbox_state
+
+    monkeypatch.setattr(sandbox_state, "SANDBOX_STATE_DIR", tmp_path)
+    sandbox_state.save_fleet_claim("wif-smoke-123", "cua-cli-wif-smoke")
+    monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: True))
+
+    class FleetTransport:
+        @classmethod
+        async def delete_sandbox(cls, name, *, pool_name=None):
+            raise RuntimeError("claim delete failed")
+
+    monkeypatch.setattr(sandbox_module, "FleetCloudTransport", FleetTransport)
+
+    with pytest.raises(RuntimeError, match="claim delete failed"):
+        await Sandbox.delete("wif-smoke-123")
+
+    assert sandbox_state.load("wif-smoke-123")["pool_name"] == "cua-cli-wif-smoke"

@@ -178,8 +178,8 @@ class _FleetClient:
     async def get_pool(self, name: str) -> Any:
         return await self._client.get_pool(name)
 
-    async def get_claim(self, pool: Any) -> Any:
-        expected = _claim_name(pool.metadata.name)
+    async def get_claim(self, pool: Any, name: str | None = None) -> Any:
+        expected = name or _claim_name(pool.metadata.name)
         for claim in await self._client.list_claims(pool.metadata.namespace):
             if claim.metadata.name == expected:
                 return claim
@@ -223,7 +223,7 @@ class _FleetClient:
 
 
 class FleetCloudTransport(FleetTransport):
-    """Provision and manage registry-image sandboxes through Fleet."""
+    """Provision image-backed pools or claim pre-created pools through Fleet."""
 
     def __init__(
         self,
@@ -237,6 +237,8 @@ class FleetCloudTransport(FleetTransport):
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         server_port: int = 8000,
+        pool_name: str | None = None,
+        create_claim: bool = False,
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
     ) -> None:
@@ -268,6 +270,10 @@ class FleetCloudTransport(FleetTransport):
             raise ValueError("services must map non-empty names to TCP ports")
         self._image = image
         self._name = name
+        self._explicit_pool = pool_name is not None
+        self._pool_name = pool_name or name
+        self._create_claim = create_claim
+        self._claim_name = name if pool_name else _claim_name(name)
         self._cpu = cpu
         self._memory_mb = memory_mb
         self._time_to_start = time_to_start if time_to_start is not None else 600.0
@@ -276,7 +282,7 @@ class FleetCloudTransport(FleetTransport):
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
         self._provisioned = False
-        self._owns_resources = image is not None
+        self._owns_resources = image is not None or create_claim
         self._template: Any = None
         self._pool: Any = None
         self._claim: Any = None
@@ -293,7 +299,10 @@ class FleetCloudTransport(FleetTransport):
             try:
                 if self._pool is None:
                     if self._image is None:
-                        self._pool = await self._sdk.get_pool(self._name)
+                        self._pool = await self._sdk.get_pool(self._pool_name)
+                        if self._create_claim:
+                            self._pool = await self._sdk.set_pool_replicas(self._pool, 1)
+                            self._pool = await self._sdk.wait_pool(self._pool)
                     else:
                         self._validate_image(self._image)
                         self._pool = await self._sdk.reconcile_pool(self._pool_request())
@@ -302,18 +311,18 @@ class FleetCloudTransport(FleetTransport):
                         )
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
-                    if self._image is None:
-                        self._claim = await self._sdk.get_claim(self._pool)
+                    if self._image is None and not self._create_claim:
+                        self._claim = await self._get_claim()
                     else:
                         try:
                             self._claim = await self._sdk.create_claim(
                                 CreateClaimRequest(
-                                    pool=self._pool, spec=None, name=_claim_name(self._name)
+                                    pool=self._pool, spec=None, name=self._claim_name
                                 )
                             )
                         except Exception as create_error:
                             try:
-                                self._claim = await self._sdk.get_claim(self._pool)
+                                self._claim = await self._get_claim()
                             except Exception as lookup_error:
                                 raise create_error from lookup_error
                 bound = await self._sdk.wait_claim(self._claim)
@@ -413,13 +422,22 @@ class FleetCloudTransport(FleetTransport):
         await cls.resume_sandbox(name, time_to_start)
 
     @classmethod
-    async def delete_sandbox(cls, name: str) -> None:
+    async def delete_sandbox(cls, name: str, *, pool_name: str | None = None) -> None:
         sdk = _FleetClient()
         try:
-            pool = await sdk.get_pool(name)
-            await sdk.delete_claim(await sdk.get_claim(pool))
+            pool = await sdk.get_pool(pool_name or name)
+            if pool_name is not None:
+                claim = await sdk.get_claim(pool, name)
+            else:
+                claim = await sdk.get_claim(pool)
+            await sdk.delete_claim(claim)
         finally:
             await sdk.close()
+
+    async def _get_claim(self) -> Any:
+        if self._explicit_pool:
+            return await self._sdk.get_claim(self._pool, self._claim_name)
+        return await self._sdk.get_claim(self._pool)
 
     def _template_request(self) -> CreateTemplateRequest:
         assert self._image is not None
@@ -464,21 +482,21 @@ class FleetCloudTransport(FleetTransport):
         )
         return (
             CreateTemplateRequestBuilder()
-            .namespace(self._name)
-            .name(self._name)
+            .namespace(self._pool_name)
+            .name(self._pool_name)
             .spec(template_spec)
             .build()
         )
 
     def _pool_request(self) -> CreatePoolRequest:
-        template_ref = SandboxTemplateRefBuilder().name(self._name).build()
+        template_ref = SandboxTemplateRefBuilder().name(self._pool_name).build()
         pool_spec = (
             OsGymSandboxWarmPoolSpecBuilder()
             .replicas(self._replicas)
             .sandbox_template_ref(template_ref)
             .build()
         )
-        return CreatePoolRequestBuilder().namespace(self._name).spec(pool_spec).build()
+        return CreatePoolRequestBuilder().namespace(self._pool_name).spec(pool_spec).build()
 
     @staticmethod
     def _service_names(template: Any) -> list[str]:

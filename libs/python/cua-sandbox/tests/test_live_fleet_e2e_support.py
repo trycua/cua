@@ -245,3 +245,157 @@ async def test_cleanup_namespace_propagates_non_404_delete_error(monkeypatch) ->
         await cleanup_namespace("demo")
     assert error.value.status == 500
     assert http_client.closed
+
+
+def test_selected_namespace_rejects_unsafe_override(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "shared-production")
+
+    with pytest.raises(ValueError, match="must start with cua-live-"):
+        live_test.selected_namespace()
+
+
+@pytest.mark.asyncio
+async def test_existing_safe_namespace_never_provisions_or_deletes(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    calls: list[str] = []
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            calls.append("close")
+
+    async def namespace_exists(fleet, namespace: str) -> bool:
+        calls.append(f"exists:{namespace}")
+        return True
+
+    def ephemeral(*args, **kwargs):
+        calls.append("provision")
+        raise AssertionError("pre-existing namespace must not be provisioned")
+
+    async def cleanup_namespace(namespace: str) -> bool:
+        calls.append(f"cleanup:{namespace}")
+        return True
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-existing")
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
+    monkeypatch.setattr(live_test, "namespace_exists", namespace_exists)
+    monkeypatch.setattr(live_test.Sandbox, "ephemeral", ephemeral)
+    monkeypatch.setattr(live_test, "cleanup_namespace", cleanup_namespace)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: None)
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert calls == ["exists:cua-live-existing", "close"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_stage", ["poll", "inventory"])
+async def test_cleanup_failure_does_not_mask_primary_failure(
+    monkeypatch, cleanup_stage: str
+) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    class PrimaryFailure(Exception):
+        pass
+
+    class CleanupFailure(Exception):
+        pass
+
+    class FailingEphemeral:
+        async def __aenter__(self):
+            raise PrimaryFailure("provision failed")
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+    summaries = []
+
+    async def namespace_exists(fleet, namespace: str) -> bool:
+        return False
+
+    async def wait_namespace_absent(fleet, namespace: str) -> bool:
+        if cleanup_stage == "poll":
+            raise CleanupFailure("poll failed")
+        return False
+
+    async def collect_resource_inventory(fleet, namespace: str):
+        raise CleanupFailure("inventory failed")
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-primary-failure")
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
+    monkeypatch.setattr(live_test, "namespace_exists", namespace_exists)
+    monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FailingEphemeral())
+    monkeypatch.setattr(live_test, "wait_namespace_absent", wait_namespace_absent)
+    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
+
+    with pytest.raises(PrimaryFailure, match="provision failed"):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert summaries[-1]["cleanup_error"] == {"type": "CleanupFailure"}
+
+
+@pytest.mark.asyncio
+async def test_summary_write_failure_still_closes_and_preserves_primary_error(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    class SummaryWriteFailure(Exception):
+        pass
+
+    class FakeHttpClient:
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    http_client = FakeHttpClient()
+
+    async def namespace_exists(fleet, namespace: str) -> bool:
+        return True
+
+    def write_summary(path, summary) -> None:
+        raise SummaryWriteFailure("disk unavailable")
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-summary-failure")
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), http_client))
+    monkeypatch.setattr(live_test, "namespace_exists", namespace_exists)
+    monkeypatch.setattr(live_test, "write_summary", write_summary)
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert http_client.closed
+
+
+@pytest.mark.asyncio
+async def test_close_failure_does_not_mask_primary_error(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    class CloseFailure(Exception):
+        pass
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            raise CloseFailure("close failed")
+
+    summaries = []
+
+    async def namespace_exists(fleet, namespace: str) -> bool:
+        return True
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-close-failure")
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
+    monkeypatch.setattr(live_test, "namespace_exists", namespace_exists)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert summaries[-1]["close_error"] == {"type": "CloseFailure"}

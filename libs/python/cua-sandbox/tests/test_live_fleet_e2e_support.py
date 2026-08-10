@@ -255,7 +255,9 @@ def test_selected_namespace_rejects_unsafe_override(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_existing_safe_namespace_is_reused_without_explicit_deletion(monkeypatch, tmp_path) -> None:
+async def test_existing_safe_namespace_is_reused_without_explicit_deletion(
+    monkeypatch, tmp_path
+) -> None:
     from tests.live import test_fleet_ephemeral as live_test
 
     calls: list[str] = []

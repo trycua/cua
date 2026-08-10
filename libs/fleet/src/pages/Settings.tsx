@@ -174,7 +174,7 @@ steps:
       python-version: "3.12"
 
   - name: Install Cua CLI
-    run: pip install cua-cli==0.1.14 --extra-index-url https://wheels.cua.ai/simple
+    run: pip install cua-cli==0.1.14
 
   - name: Get GitHub WIF token for Fleets
     id: fleets-token

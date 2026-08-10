@@ -30,8 +30,9 @@ test.describe("Settings GitHub trust policies", () => {
       hasText: "Get GitHub WIF token for Fleets",
     })
     await expect(workflowSnippet).toContainText(
-      "pip install cua-cli==0.1.14 --extra-index-url https://wheels.cua.ai/simple",
+      "pip install cua-cli==0.1.14",
     )
+    await expect(workflowSnippet).not.toContainText("--extra-index-url")
     await expect(workflowSnippet).toContainText('token="$(cua wif-token github)"')
     await expect(workflowSnippet).toContainText('echo "::add-mask::$token"')
     await expect(workflowSnippet).toContainText(

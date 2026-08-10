@@ -24,8 +24,8 @@ resource "fleets_pool" "cua_cli_wif_smoke" {
   replicas             = 0
   cpu_cores            = 4
   memory               = "8Gi"
-  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest"
-  readiness_probe_json = jsonencode({ tcpSocket = { port = 3000 } })
+  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:latest"
+  readiness_probe_json = jsonencode({ tcpSocket = { port = 8000 } })
 
   autoscaling {
     min_pool_size     = 0
@@ -35,7 +35,7 @@ resource "fleets_pool" "cua_cli_wif_smoke" {
 
   service {
     name        = "server"
-    target_port = 3000
+    target_port = 8000
     protocol    = "TCP"
   }
 }

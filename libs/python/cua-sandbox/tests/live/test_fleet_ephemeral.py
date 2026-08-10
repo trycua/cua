@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from importlib.metadata import version
 import os
-from pathlib import Path
 import re
 import time
+from importlib.metadata import version
+from pathlib import Path
 
-import pytest
 import cua_sandbox
+import pytest
 from cua_sandbox import Image, Sandbox
 
 from tests.live.fleet_e2e_support import (
@@ -99,12 +99,12 @@ async def run_fleet_ephemeral_live() -> None:
             summary["provision_seconds"] = time.monotonic() - started
             summary["sandbox_name"] = sandbox.name
             try:
-                assert isinstance(sandbox.name, str) and sandbox.name, (
-                    "sandbox name must be a non-empty string"
-                )
-                assert sandbox.name == namespace, (
-                    f"sandbox name {sandbox.name!r} must equal namespace {namespace!r}"
-                )
+                assert (
+                    isinstance(sandbox.name, str) and sandbox.name
+                ), "sandbox name must be a non-empty string"
+                assert (
+                    sandbox.name == namespace
+                ), f"sandbox name {sandbox.name!r} must equal namespace {namespace!r}"
 
                 template = await fleet.get_template(namespace, namespace)
                 assert_template_contract(template, expected_port=8000)

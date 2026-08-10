@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -129,9 +129,9 @@ def assert_template_contract(template: Any, expected_port: int) -> None:
     vm_template = template.spec.vm_template
     server = next((service for service in vm_template.services if service.name == "server"), None)
     assert server is not None, "server service is required"
-    assert server.target_port == expected_port, (
-        f"server target_port={server.target_port}, expected {expected_port}"
-    )
+    assert (
+        server.target_port == expected_port
+    ), f"server target_port={server.target_port}, expected {expected_port}"
     probes = json.loads(vm_template.probes.to_json())
     observed = probes["readinessProbe"]["tcpSocket"]["port"]
     assert observed == expected_port, f"readiness probe port={observed}, expected {expected_port}"

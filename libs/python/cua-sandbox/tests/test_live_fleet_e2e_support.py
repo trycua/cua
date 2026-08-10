@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from cua_sandbox import Image
 from fleet_sdk import SdkError
+
 from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_namespace_name,
@@ -237,7 +238,9 @@ def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
 def test_live_cleanup_exposes_no_explicit_namespace_deletion_api() -> None:
     from cua_sandbox import Sandbox as CuaSandbox
     from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
-    from tests.live import fleet_e2e_support, test_fleet_ephemeral as live_test
+
+    from tests.live import fleet_e2e_support
+    from tests.live import test_fleet_ephemeral as live_test
 
     assert not hasattr(fleet_e2e_support, "cleanup_namespace")
     assert not hasattr(live_test, "cleanup_namespace")

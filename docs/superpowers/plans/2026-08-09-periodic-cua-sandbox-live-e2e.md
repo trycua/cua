@@ -4,7 +4,7 @@
 
 **Goal:** Add a 15-minute live Fleet smoke that independently certifies repository `main` and the latest published `cua-sandbox`, verifies explicit port `8000`, screen and shell access, detects namespace leaks, and alerts Alertmanager on failure.
 
-**Architecture:** A public-API-only Python support module owns Fleet inspection, diagnostics, and emergency cleanup; a thin opt-in pytest test owns the live scenario. One trigger-aware GitHub Actions workflow selects source and published lanes, while a repository-side contract test locks down schedule, security, cleanup, and alerting behavior.
+**Architecture:** A public-API-only Python support module owns Fleet inspection and diagnostic-only leak detection; a thin opt-in pytest test owns the live scenario. One trigger-aware GitHub Actions workflow selects source and published lanes, while a repository-side contract test locks down schedule, security, cleanup, and alerting behavior.
 
 **Tech Stack:** Python 3.12, pytest/pytest-asyncio, `cua-sandbox`, `fleet_sdk`, httpx, GitHub Actions, Alertmanager v2 API.
 
@@ -33,11 +33,11 @@
 
 **Interfaces:**
 - Consumes: public `fleet_sdk` records and exceptions; no `cua_sandbox` private modules.
-- Produces: `HttpxFleetClient`, `build_fleet_client()`, `namespace_exists()`, `wait_namespace_absent()`, `collect_resource_inventory()`, `assert_template_contract()`, `write_summary()`, and `cleanup_namespace()` for the live pytest and workflow cleanup step.
+- Produces: `HttpxFleetClient`, `build_fleet_client()`, `namespace_exists()`, `wait_namespace_absent()`, `collect_resource_inventory()`, `assert_template_contract()`, and `write_summary()` for diagnostic-only live pytest cleanup verification.
 
 - [ ] **Step 1: Create the live test package marker**
 
-Create an empty `libs/python/cua-sandbox/tests/live/__init__.py` so support code can be imported consistently by pytest and the workflow cleanup command.
+Create an empty `libs/python/cua-sandbox/tests/live/__init__.py` so support code can be imported consistently by pytest.
 
 - [ ] **Step 2: Write failing unit tests for naming, template assertions, and cleanup polling**
 
@@ -310,17 +310,6 @@ def assert_template_contract(template: Any, expected_port: int) -> None:
 def write_summary(path: Path, summary: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-
-
-async def cleanup_namespace(name: str) -> bool:
-    client, http_client = build_fleet_client()
-    try:
-        if not await namespace_exists(client, name):
-            return False
-        await client.delete_namespace(name)
-        return await wait_namespace_absent(client, name)
-    finally:
-        await http_client.aclose()
 ```
 
 - [ ] **Step 5: Run the focused test and verify it passes**
@@ -404,7 +393,6 @@ from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_fleet_client,
     build_namespace_name,
-    cleanup_namespace,
     collect_resource_inventory,
     wait_namespace_absent,
     write_summary,
@@ -497,12 +485,7 @@ async def test_fleet_ephemeral_live() -> None:
                 summary["remaining_resources"] = await collect_resource_inventory(
                     fleet, namespace
                 )
-                try:
-                    summary["emergency_cleanup"] = await cleanup_namespace(namespace)
-                except Exception as cleanup_error:
-                    summary["cleanup_error"] = {"type": type(cleanup_error).__name__}
-                    if primary_error is None:
-                        raise
+                summary["namespace_leak"] = True
                 if primary_error is None:
                     pytest.fail(f"namespace {namespace} leaked after Sandbox.ephemeral()")
             summary["cleanup_seconds"] = time.monotonic() - cleanup_started
@@ -591,7 +574,10 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         self.assertIn("CUA_CLIENT_ID", workflow)
         self.assertIn("CUA_CLIENT_SECRET", workflow)
         self.assertNotIn("CUA_API_KEY", workflow)
-        self.assertIn("cleanup_namespace", workflow)
+        self.assertNotIn("cleanup_namespace", workflow)
+        self.assertNotIn("delete_namespace", workflow)
+        self.assertIn("namespace_leak", LIVE_TEST.read_text())
+        self.assertIn("remaining_resources", LIVE_TEST.read_text())
         self.assertIn("if: failure()", workflow)
         self.assertIn("PeriodicCuaSandboxLiveE2EFailed", workflow)
         self.assertIn('lane": "${{ matrix.lane }}"', workflow)
@@ -773,18 +759,6 @@ jobs:
         run: |
           python -m pytest -q -s \
             libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py
-
-      - name: Emergency namespace cleanup
-        if: always()
-        env:
-          PYTHONPATH: libs/python/cua-sandbox
-        run: |
-          python - <<'PY'
-          import asyncio
-          import os
-          from tests.live.fleet_e2e_support import cleanup_namespace
-          asyncio.run(cleanup_namespace(os.environ["CUA_LIVE_E2E_NAMESPACE"]))
-          PY
 
       - name: Upload failure diagnostics
         if: failure()

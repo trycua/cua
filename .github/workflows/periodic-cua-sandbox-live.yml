@@ -1,0 +1,153 @@
+name: "Periodic: Cua Sandbox Live Fleet E2E"
+
+on:
+  schedule:
+    - cron: "7/15 * * * *"
+  push:
+    branches: [main]
+    paths:
+      - "libs/python/cua-sandbox/**"
+      - ".github/workflows/periodic-cua-sandbox-live.yml"
+      - ".github/scripts/tests/test_periodic_cua_sandbox_live.py"
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "Lane to run"
+        required: true
+        default: both
+        type: choice
+        options: [both, main-source, published-package]
+      force_failure:
+        description: "Fail after setup to certify alerting"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_LANE: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            matrix='{"include":[{"lane":"main-source"}]}'
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" && "$REQUESTED_LANE" != "both" ]]; then
+            matrix="{\"include\":[{\"lane\":\"$REQUESTED_LANE\"}]}"
+          else
+            matrix='{"include":[{"lane":"main-source"},{"lane":"published-package"}]}'
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  live:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    concurrency:
+      group: periodic-cua-sandbox-live-${{ matrix.lane }}
+      cancel-in-progress: ${{ github.event_name == 'schedule' }}
+    env:
+      CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+      CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
+      CUA_FLEET_BASE_URL: https://run.cua.ai
+      CUA_LIVE_E2E_LANE: ${{ matrix.lane }}
+      CUA_LIVE_E2E_NAMESPACE: cua-live-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+      CUA_LIVE_E2E_ARTIFACT_DIR: /tmp/cua-live-e2e
+      CUA_TELEMETRY_ENABLED: "false"
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install main source
+        if: matrix.lane == 'main-source'
+        run: |
+          uv pip install --system \
+            --index https://wheels.cua.ai/simple \
+            --default-index https://pypi.org/simple \
+            -e libs/python/cua-sandbox pytest pytest-asyncio
+
+      - name: Install published package
+        if: matrix.lane == 'published-package'
+        run: |
+          uv pip install --system \
+            --index https://wheels.cua.ai/simple \
+            --default-index https://pypi.org/simple \
+            --upgrade cua-sandbox pytest pytest-asyncio
+
+      - name: Record installed versions
+        id: versions
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from importlib.metadata import version
+          print("sandbox=" + version("cua-sandbox"))
+          print("fleet=" + version("cua-fleet"))
+          PY
+          echo "cua-sandbox=${{ steps.versions.outputs.sandbox }}"
+          echo "cua-fleet=${{ steps.versions.outputs.fleet }}"
+
+      - name: Controlled alert test failure
+        if: github.event_name == 'workflow_dispatch' && inputs.force_failure
+        run: exit 1
+
+      - name: Run live Fleet smoke
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.force_failure) }}
+        run: |
+          python -m pytest -q -s \
+            libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-sandbox-live-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/cua-live-e2e
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Alert Alertmanager
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --silent --show-error --fail \
+            -X POST https://am.cua.ai/api/v2/alerts \
+            -H 'Content-Type: application/json' \
+            -d '[{
+              "labels": {
+                "alertname": "PeriodicCuaSandboxLiveE2EFailed",
+                "severity": "critical",
+                "service": "cua-sandbox",
+                "job": "periodic-cua-sandbox-live",
+                "lane": "${{ matrix.lane }}"
+              },
+              "annotations": {
+                "summary": "Cua Sandbox live Fleet E2E failed (${{ matrix.lane }})",
+                "description": "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                "source_sha": "${{ github.sha }}",
+                "package_version": "${{ steps.versions.outputs.sandbox }}",
+                "image_digest": "sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
+              },
+              "generatorURL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }]'

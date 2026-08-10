@@ -152,18 +152,17 @@ exits, the test polls Fleet until the owned namespace is absent. Namespace
 absence is the terminal cleanup assertion because deletion also removes the
 template, pool, claim, sandbox, VMI, pod, and Service resources beneath it.
 
-Cleanup follows a fail-detecting, leak-safe sequence:
+Cleanup follows a diagnostic-only, leak-safe sequence:
 
 1. preserve the original scenario exception, if any;
 2. wait a bounded period for automatic namespace deletion;
-3. if the namespace remains, collect a sanitized resource inventory;
-4. call Fleet `delete_namespace()` as emergency cleanup;
-5. fail the test explicitly as an SDK cleanup regression, even if emergency
-   cleanup succeeds.
+3. if the namespace remains, collect a sanitized resource inventory; and
+4. fail the test explicitly as an SDK cleanup regression.
 
-The emergency path must not hide the original failure. Cleanup errors are
-reported alongside the primary exception, and the workflow still attempts a
-final best-effort namespace deletion in an `always()` step.
+The test and workflow never call Fleet namespace deletion directly. Fleet
+namespace deletion is name-only and can race with namespace recreation, so
+`Sandbox.ephemeral()` remains the sole cleanup authority. Cleanup errors are
+reported alongside the primary exception.
 
 ## Diagnostics And Artifacts
 
@@ -211,7 +210,7 @@ It verifies that the workflow retains:
 - manual lane selection;
 - pinned image digest and explicit port `8000`;
 - bounded job timeout and per-lane concurrency;
-- automatic plus emergency cleanup;
+- automatic cleanup plus diagnostic-only leak detection;
 - failure-only diagnostics upload;
 - lane-labeled Alertmanager notification;
 - commit-SHA-pinned GitHub Actions dependencies.

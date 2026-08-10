@@ -105,6 +105,11 @@ impl ForegroundSentinel {
         };
         reaper.track_pid(target.pid);
 
+        #[cfg(target_os = "linux")]
+        if wayland_e2e_session_is("hyprland") {
+            prepare_hyprland_sentinel(target)?;
+        }
+
         let focus_deadline = Instant::now() + Duration::from_secs(10);
         if is_wayland_session() {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
@@ -579,6 +584,25 @@ fn focus_hyprland_target(target: TargetWindow) -> Result<(), String> {
     let address = crate::observer::linux::hyprland_client_address(target.pid)
         .map_err(|error| error.to_string())?;
     run_hyprland_dispatch("focuswindow", &format!("address:{address}"))
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_hyprland_sentinel(target: TargetWindow) -> Result<(), String> {
+    let address = crate::observer::linux::hyprland_client_address(target.pid)
+        .map_err(|error| error.to_string())?;
+    // Keep the long-lived oracle window out of Hyprland's tiling tree. If it
+    // consumes half the output, otherwise-correct fixture controls below that
+    // reduced viewport are unmapped and cannot provide representative PX
+    // evidence. Fullscreen canaries still temporarily expand this surface.
+    // User rules may initially fullscreen Electron, so clear that state before
+    // asking Hyprland to resize the floating sentinel.
+    set_hyprland_fullscreen(target, false)?;
+    run_hyprland_dispatch("setfloating", &format!("address:{address}"))?;
+    run_hyprland_dispatch(
+        "resizewindowpixel",
+        &format!("exact 960 720,address:{address}"),
+    )?;
+    set_hyprland_fullscreen(target, true)
 }
 
 #[cfg(target_os = "linux")]

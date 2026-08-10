@@ -174,6 +174,10 @@ OS and CPU. It does not bundle the `cua-driver` executable: ship that executable
 outside ASAR, preserve its executable bit, and sign it before signing and
 notarizing the enclosing app.
 
+Windows native packages statically link the Microsoft C runtime, so importing
+the SDK on a clean x64 or ARM64 Windows installation does not require a separate
+Visual C++ Redistributable installation.
+
 Each native package also carries Cua's copy-mode build of the pinned
 `@ubjs/node` N-API runtime. Upstream `0.31.0-3` returns Rust-owned memory through
 external ArrayBuffers, which Electron 20 and newer intentionally reject because

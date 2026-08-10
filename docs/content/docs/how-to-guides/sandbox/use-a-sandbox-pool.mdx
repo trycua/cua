@@ -1,0 +1,139 @@
+---
+title: How to use a sandbox pool
+description: Reconcile a warm run.cua.ai sandbox pool, claim a sandbox, and save a screenshot with Python.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A sandbox pool keeps reusable cloud sandboxes warm. Reconcile the pool once,
+then claim a sandbox whenever your program needs one. The claim is released
+automatically when its context manager exits.
+
+## Create OAuth credentials
+
+Open [User API keys](https://run.cua.ai/#/user-keys), select **Create key**, and
+copy the Client ID and Client Secret. The Client Secret is shown only once.
+
+Keep both values in a password manager or secret manager. Do not commit them,
+paste them into source code, or include them in logs. Export them in the shell
+where you will run the example:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+```
+
+<Callout type="warn">
+  Replace the placeholders locally. Never put real credentials in a script, `.env` file committed to
+  Git, issue, or support message.
+</Callout>
+
+## Install uv
+
+On macOS or Linux, use uv's official standalone installer:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+On Windows, run the official installer in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+See the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+for package-manager and version-pinning options.
+
+## Reconcile and claim a pool
+
+Save the following script as `sandbox_pool.py`. Change `CUA_POOL_NAME` if you
+need a different DNS-compatible namespace and pool name.
+
+```python title="sandbox_pool.py"
+import os
+from pathlib import Path
+
+from cua_sandbox import (
+    CreatePoolRequestBuilder,
+    CreateTemplateRequestBuilder,
+    OsGymSandboxTemplateSpecBuilder,
+    OsGymSandboxWarmPoolSpecBuilder,
+    SandboxServiceBuilder,
+    SandboxTemplateRefBuilder,
+    ServiceProtocol,
+    VmTemplateBuilder,
+)
+from cua_sandbox.sync import Pool, Template
+
+POOL_NAME = os.environ.get("CUA_POOL_NAME", "my-sandbox-pool")
+IMAGE = (
+    "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo"
+    "@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
+)
+
+server = (
+    SandboxServiceBuilder()
+    .name("server")
+    .target_port(8000)
+    .protocol(ServiceProtocol.TCP)
+    .build()
+)
+vm = (
+    VmTemplateBuilder()
+    .container_disk_image(IMAGE)
+    .image_pull_secret("ecr-credentials")
+    .cpu_cores(4)
+    .memory("4Gi")
+    .services([server])
+    .build()
+)
+template_request = (
+    CreateTemplateRequestBuilder()
+    .namespace(POOL_NAME)
+    .name("workspace")
+    .spec(OsGymSandboxTemplateSpecBuilder().vm_template(vm).build())
+    .build()
+)
+pool_request = (
+    CreatePoolRequestBuilder()
+    .namespace(POOL_NAME)
+    .spec(
+        OsGymSandboxWarmPoolSpecBuilder()
+        .replicas(1)
+        .sandbox_template_ref(SandboxTemplateRefBuilder().name("workspace").build())
+        .build()
+    )
+    .build()
+)
+
+Template.reconcile(template_request)
+pool = Pool.reconcile(pool_request)
+
+output = Path("sandbox.png")
+with pool.claim() as sandbox:
+    output.write_bytes(sandbox.screenshot())
+
+print(f"Saved screenshot to {output.resolve()}")
+```
+
+Run it with Python 3.12, the published `cua-sandbox` package, and the Cua wheel
+index used for its Fleet dependency:
+
+```bash
+uv run --python 3.12 \
+  --extra-index-url https://wheels.cua.ai/simple \
+  --with cua-sandbox \
+  sandbox_pool.py
+```
+
+The first run creates or updates the template and one-replica warm pool. It can
+take several minutes for the sandbox to become ready. The claim context waits
+for a sandbox, saves the PNG bytes returned by `screenshot()` to `sandbox.png`,
+and releases the claim on exit. Reconciliation is idempotent, so later runs
+update the same named resources instead of creating duplicates.
+
+<Callout type="info">
+  Exiting the claim releases the sandbox but does not delete the warm pool. Remove pools you no
+  longer need in [run.cua.ai](https://run.cua.ai/#/pools) to avoid keeping resources allocated.
+</Callout>

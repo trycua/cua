@@ -109,7 +109,7 @@ impl CyclopsClient {
 
     pub async fn update_pool(self: Arc<Self>, pool: Pool) -> Result<Pool, SdkError> {
         let item_url = self.pool_item_url(&pool)?;
-        let body = to_json(&pool)?;
+        let body = pool_merge_patch_json(&pool)?;
         self.send_json_crud(
             "update pool",
             merge_patch_request(item_url, Some(body)),
@@ -257,6 +257,16 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
         ],
         body,
     }
+}
+
+fn pool_merge_patch_json(pool: &Pool) -> Result<Vec<u8>, SdkError> {
+    let mut value = serde_json::to_value(pool).map_err(|error| SdkError::Body {
+        reason: error.to_string(),
+    })?;
+    if pool.spec.autoscaling.is_none() {
+        value["spec"]["autoscaling"] = serde_json::Value::Null;
+    }
+    to_json(&value)
 }
 
 fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>, SdkError> {

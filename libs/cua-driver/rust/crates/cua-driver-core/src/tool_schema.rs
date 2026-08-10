@@ -28,8 +28,9 @@ use serde_json::{json, Value};
 pub fn session_schema() -> Value {
     json!({
         "type": "string",
-        "description": "Optional public session label. Omit it to use the \
-            authenticated transport's implicit lifecycle session."
+        "description": "For multi-call work, prefer a short public session label and \
+            repeat it on every call that accepts it. Omit it to use the authenticated transport's \
+            implicit lifecycle session."
     })
 }
 
@@ -223,6 +224,17 @@ mod tests {
         let with_prose = json!({ "type": "string", "enum": ["a", "b"], "description": "x" });
         let s = structural(&with_prose);
         assert_eq!(s, json!({ "type": "string", "enum": ["a", "b"] }));
+    }
+
+    #[test]
+    fn session_description_prefers_named_multi_call_runs() {
+        let schema = session_schema();
+        let description = schema["description"]
+            .as_str()
+            .expect("session schema should carry agent guidance");
+        assert!(description.contains("prefer a short public session label"));
+        assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("implicit lifecycle session"));
     }
 
     #[test]

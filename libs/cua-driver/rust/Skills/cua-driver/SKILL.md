@@ -376,11 +376,13 @@ The window target uses window-local coordinates and the background/foreground
 delivery ladder. The desktop target uses screen coordinates and foreground
 delivery. A desktop action does not disable window tools for later calls.
 
-`start_session` is optional. The first admitted stateful call with a public
-`session` label creates or reuses that named session. Without a label, it
-creates one implicit session for the authenticated transport, and later unnamed
-calls on that transport reuse it. The default idle TTL is five minutes. Call
-`start_session(session)` before acting when useful, or to revive an ended name.
+`start_session` is optional. For a multi-call run, prefer a short public
+`session` label and pass the same label on every call that accepts it. The label
+is call-scoped: if a later call omits it, that call uses the authenticated
+transport's implicit session instead. Unnamed calls on one transport reuse that
+implicit identity. The default idle TTL is five minutes. Call
+`start_session(session)` to name or configure a run before acting, or to revive
+an ended name.
 
 Do not use `config set capture_scope` or `set_config`; that key is retired and
 stale values on disk are ignored. `start_session.capture_scope`,
@@ -640,8 +642,8 @@ last resort.
 ## The canonical loop
 
 ```
-# pass session on an action to name it, or omit it to reuse the implicit session
-launch_app(target)
+# for multi-call work, repeat the same session label on every call that accepts it
+launch_app(target, session)
   → pick window_id from the returned `windows` array
     (or call list_windows(pid) separately)
   → get_window_state(pid, window_id)
@@ -659,13 +661,16 @@ full-display image.
 common case collapses to two calls (`launch_app` → `get_window_state`)
 without a separate `list_windows` hop.
 
-**Name a session only when useful.** Pass `session` on the first action (for
-example, `session: "research-1"`) to create it there, or call
-`start_session(session)` before acting. Use `start_session` to revive a name
-after `end_session`. An unnamed transport still gets one private lifecycle
-identity and visible agent cursor. A public label makes explicit inspection and
-cleanup easier, but it is not a credential. End with `end_session` when useful;
-transport close or the five-minute idle TTL also reclaims it.
+**Prefer a named session for multi-call work.** Choose a short label (for
+example, `session: "research-1"`) and pass the same value on every call that
+accepts it. Passing it once is not sticky: a later call that omits `session`
+uses the transport's implicit session. Call `start_session(session)` when you
+need to name or configure the run before acting, or to revive a name after
+`end_session`. For one-off or deliberately unlabeled work, omission is valid
+and the transport still gets one private lifecycle identity and visible agent
+cursor. A public label makes inspection and cleanup easier, but it is not a
+credential. End with `end_session` when useful; transport close or the
+five-minute idle TTL also reclaims it.
 
 **Concurrent runs/subagents:** each transport gets its own implicit session.
 Also,

@@ -921,9 +921,11 @@ mod tests {
 
         for required in [
             "Choose the target on each action",
-            "implicit session for the authenticated transport",
-            "Pass `session` on the first action",
-            "Use `start_session` to revive a name",
+            "transport's implicit session",
+            "prefer a short public",
+            "pass the same label on every call that accepts it",
+            "Passing it once is not sticky",
+            "revive a name after",
             "There is no `deescalate_session`",
             "--capability-manifest",
             "--approve-capability-manifest",
@@ -935,7 +937,11 @@ mod tests {
                 "skill lost required lifecycle/authorization guidance: {required}"
             );
         }
-        for forbidden in ["one-way session phase", "if session policy allows"] {
+        for forbidden in [
+            "one-way session phase",
+            "if session policy allows",
+            "Pass `session` on the first action",
+        ] {
             assert!(
                 !skill.contains(forbidden),
                 "skill restored stale session-state guidance: {forbidden}"
@@ -944,8 +950,9 @@ mod tests {
         for required in [
             "start_session(session?)",
             "optional; can name before acting",
-            "Pass `session` on the first action",
-            "CLI calls use disposable transports",
+            "prefer a short `session` label",
+            "Passing it once is not sticky",
+            "one-shot CLI calls use disposable transports",
         ] {
             assert!(
                 browser.contains(required),

@@ -47,9 +47,12 @@ visibility only. A call in flight cannot expire, and a completed call refreshes
 the lifecycle timer once. Transport close, explicit end, revocation, and idle
 expiry use the same cleanup hooks.
 
-Pass `session` on the first action to create a named run directly, or use
-`start_session` to name it before acting or set its initial cursor theme. Only
-`start_session` revives a public name after it has ended.
+For multi-call work, prefer a short public `session` label and pass the same
+value on every call that accepts it. Passing it once is not sticky: a later call
+that omits the field uses the transport's implicit session instead. Use
+`start_session` to name or configure a run before acting, or to revive a public
+name after it has ended. For one-off or deliberately unlabeled work, omitting
+`session` is valid.
 `get_session` reads one visible session, and `list_sessions` returns content-free
 summaries scoped to the caller's transport. Trusted host code has a separate
 operator listing. `get_session_state` and `escalate_session` remain deprecated

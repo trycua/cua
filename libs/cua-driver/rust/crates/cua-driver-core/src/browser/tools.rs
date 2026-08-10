@@ -90,7 +90,7 @@ fn schema_ref() -> Value {
 fn schema_session() -> Value {
     json!({
         "type": "string",
-        "description": "Optional public session label. Browser targets, tabs, and refs use the authenticated transport's implicit lifecycle session when omitted."
+        "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs use the authenticated transport's implicit lifecycle session when omitted."
     })
 }
 

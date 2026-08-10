@@ -374,7 +374,7 @@ Before starting UI work, classify the desired postcondition. For a non-GUI outco
 For an app or window outcome, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
 
 Workflow per turn:
-0. `start_session` is optional; unnamed calls create and reuse the transport's implicit session. Pass `session` on an action or call `start_session(session)` to name a run. Only `start_session` revives an ended name; `end_session` explicitly cleans up.
+0. `start_session` is optional. For multi-call work, prefer a short `session` label and repeat it on every call that accepts it. Unnamed calls use the transport's implicit session. Only `start_session` revives an ended name; `end_session` explicitly cleans up.
 1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
 2. Act with the fresh index.
 3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
@@ -499,8 +499,9 @@ mod agent_instruction_tests {
             .expect("initialize result should carry agent instructions");
 
         assert!(instructions.contains("`start_session` is optional"));
+        assert!(instructions.contains("prefer a short `session` label"));
+        assert!(instructions.contains("repeat it on every call that accepts it"));
         assert!(instructions.contains("transport's implicit session"));
-        assert!(instructions.contains("Pass `session` on an action"));
         assert!(instructions.contains("Only `start_session` revives an ended name"));
         assert!(instructions.contains("`end_session` explicitly cleans up"));
         assert!(

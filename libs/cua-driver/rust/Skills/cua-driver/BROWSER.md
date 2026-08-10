@@ -27,14 +27,14 @@ get_browser_state(target_id, tab_id, session?,
 end_session(session?)                                     # optional cleanup
 ```
 
-Pass `session` on the first action to create a named lifecycle session without
-calling `start_session`. One long-lived MCP or SDK transport may instead omit
-`session`; its first admitted call
-creates one implicit session and later unnamed calls reuse it. Direct one-shot
-CLI calls use disposable transports, so name a session for a multi-call browser
-workflow and pass that label throughout. Never substitute a raw CDP target id,
-tab ordinal, URL match, or remembered ref for a capability returned by
-`get_browser_state`.
+For a multi-call browser workflow, prefer a short `session` label and pass the
+same value on every call that accepts it. Passing it once is not sticky; a later
+omitted value uses the transport's implicit session. One long-lived MCP or SDK
+transport may omit `session` for one-off or deliberately unlabeled work; its
+first admitted call creates one implicit session and later unnamed calls reuse
+it. Direct one-shot CLI calls use disposable transports. Never substitute a raw
+CDP target id, tab ordinal, URL match, or remembered ref for a capability
+returned by `get_browser_state`.
 
 ### Copy page content to the system clipboard
 

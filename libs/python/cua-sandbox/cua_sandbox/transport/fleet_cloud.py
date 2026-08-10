@@ -186,25 +186,9 @@ class _FleetClient:
         raise LookupError(f"Fleet claim {expected!r} was not found")
 
     async def list_pools(self) -> list[Any]:
-        response = await self._http_client.execute(
-            HttpRequest(method="GET", url=f"{self._base_url}/api/namespaces", headers=[], body=None)
+        raise NotImplementedError(
+            "Fleet sandbox listing requires namespace discovery; use an exact sandbox name instead"
         )
-        if not 200 <= response.status < 300:
-            raise RuntimeError(f"Fleet namespace listing failed with HTTP {response.status}")
-        payload = json.loads(response.body)
-        items = payload if isinstance(payload, list) else payload.get("items", [])
-        namespaces = [
-            (
-                item
-                if isinstance(item, str)
-                else item.get("name") or item.get("metadata", {}).get("name")
-            )
-            for item in items
-        ]
-        pools = await asyncio.gather(
-            *(self._client.list_pools(namespace) for namespace in namespaces if namespace)
-        )
-        return [pool for namespace_pools in pools for pool in namespace_pools]
 
     async def set_pool_replicas(self, pool: Any, replicas: int) -> Any:
         pool.spec.replicas = replicas
@@ -313,17 +297,25 @@ class FleetCloudTransport(FleetTransport):
                     else:
                         self._validate_image(self._image)
                         self._pool = await self._sdk.reconcile_pool(self._pool_request())
-                        self._template = await self._sdk.reconcile_template(self._template_request())
+                        self._template = await self._sdk.reconcile_template(
+                            self._template_request()
+                        )
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
                     if self._image is None:
                         self._claim = await self._sdk.get_claim(self._pool)
                     else:
-                        self._claim = await self._sdk.create_claim(
-                            CreateClaimRequest(
-                                pool=self._pool, spec=None, name=_claim_name(self._name)
+                        try:
+                            self._claim = await self._sdk.create_claim(
+                                CreateClaimRequest(
+                                    pool=self._pool, spec=None, name=_claim_name(self._name)
+                                )
                             )
-                        )
+                        except Exception as create_error:
+                            try:
+                                self._claim = await self._sdk.get_claim(self._pool)
+                            except Exception as lookup_error:
+                                raise create_error from lookup_error
                 bound = await self._sdk.wait_claim(self._claim)
                 await self._sdk.wait_service_ready(bound, "server", self._time_to_start)
             except BaseException as provisioning_error:

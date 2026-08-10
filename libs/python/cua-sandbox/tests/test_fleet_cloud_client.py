@@ -86,24 +86,23 @@ async def test_namespace_calls_delegate_to_generated_client():
 
 
 @pytest.mark.asyncio
-async def test_list_pools_enumerates_namespaces(monkeypatch):
+async def test_list_pools_does_not_discover_namespaces():
     client = _FleetClient.__new__(_FleetClient)
 
     class Http:
         async def execute(self, request):
-            assert request.url.endswith("/api/namespaces")
-            return type(
-                "Response", (), {"status": 200, "body": b'{"items":[{"name":"one"},"two"]}'}
-            )()
+            pytest.fail("Fleet listing must not discover namespaces")
 
     class SDK:
         async def list_pools(self, namespace):
-            return [namespace]
+            pytest.fail("Fleet listing requires an explicit namespace")
 
     client._base_url = "https://fleet.example"
     client._http_client = Http()
     client._client = SDK()
-    assert await client.list_pools() == ["one", "two"]
+
+    with pytest.raises(NotImplementedError, match="exact sandbox name"):
+        await client.list_pools()
 
 
 @pytest.mark.asyncio

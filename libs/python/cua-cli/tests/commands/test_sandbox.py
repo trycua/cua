@@ -140,6 +140,22 @@ class TestCmdLs:
             [("name", "NAME"), ("status", "STATUS"), ("source", "SOURCE")],
         )
 
+    def test_ls_wif_requires_exact_sandbox_name(self, args_namespace, monkeypatch):
+        args = args_namespace(json=False, local=False, all=False)
+        monkeypatch.setenv("FLEETS_TOKEN", "github-token")
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = AsyncMock()
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
+                result = sandbox.cmd_ls(args)
+
+        assert result == 1
+        mock_sdk.Sandbox.list.assert_not_awaited()
+        mock_error.assert_called_once_with(
+            "Listing Fleet sandboxes is not supported; use 'cua sb info NAME'."
+        )
+
     def test_ls_local_sandboxes(self, args_namespace):
         """Test --local lists only local sandboxes without cloud auth."""
         args = args_namespace(json=False, local=True, all=False)
@@ -261,13 +277,21 @@ class TestCmdLaunch:
         created.disconnect.assert_awaited_once_with()
         mock_success.assert_called_once_with("Sandbox 'local-sandbox' is ready")
 
-
-    def test_launch_with_wif_omits_legacy_key_and_interactive_token(self, args_namespace, monkeypatch):
+    def test_launch_with_wif_omits_legacy_key_and_interactive_token(
+        self, args_namespace, monkeypatch
+    ):
         """Test workload identity selects the Fleet SDK transport."""
         monkeypatch.setenv("FLEETS_TOKEN", "github-token")
         args = args_namespace(
-            image="ubuntu:24.04", local=False, name="fleet-sandbox", vm=False, cpu=None,
-            memory=None, disk=None, region=None, json=False,
+            image="ubuntu:24.04",
+            local=False,
+            name="fleet-sandbox",
+            vm=False,
+            cpu=None,
+            memory=None,
+            disk=None,
+            region=None,
+            json=False,
         )
         image = object()
         created = MagicMock(name="created")
@@ -289,6 +313,7 @@ class TestCmdLaunch:
         mock_token.assert_not_awaited()
         mock_create.assert_awaited_once_with(image, name="fleet-sandbox")
         created.disconnect.assert_awaited_once_with()
+
 
 class TestCmdInfo:
     """Tests for cmd_info function."""
@@ -474,7 +499,6 @@ class TestCmdDelete:
         mock_delete.assert_awaited_once_with("localbox", local=True)
         mock_token.assert_not_awaited()
 
-
     def test_delete_with_wif_omits_legacy_key_and_interactive_token(
         self, args_namespace, monkeypatch
     ):
@@ -486,15 +510,14 @@ class TestCmdDelete:
         mock_sdk.Sandbox.delete = mock_delete
 
         with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
-            with patch.object(
-                sandbox, "get_access_token", new_callable=AsyncMock
-            ) as mock_token:
+            with patch.object(sandbox, "get_access_token", new_callable=AsyncMock) as mock_token:
                 with patch.object(sandbox, "print_success"):
                     result = sandbox.cmd_delete(args)
 
         assert result == 0
         mock_token.assert_not_awaited()
         mock_delete.assert_awaited_once_with("fleet-sandbox", local=False)
+
 
 class TestCmdVnc:
     """Tests for cmd_vnc function."""
@@ -504,9 +527,7 @@ class TestCmdVnc:
         args = args_namespace(name="test-sandbox")
 
         mock_sandbox = MagicMock()
-        mock_sandbox.get_display_url = AsyncMock(
-            return_value="https://vnc.example.com/test"
-        )
+        mock_sandbox.get_display_url = AsyncMock(return_value="https://vnc.example.com/test")
         mock_sandbox.disconnect = AsyncMock()
         mock_connect = AsyncMock(return_value=mock_sandbox)
         mock_sdk = MagicMock()
@@ -647,9 +668,7 @@ class TestCmdShell:
             sandbox,
             "_get_sandbox_api_url",
             new_callable=AsyncMock,
-            side_effect=ValueError(
-                "Sandbox 'test-sandbox' has no API URL (is it running?)"
-            ),
+            side_effect=ValueError("Sandbox 'test-sandbox' has no API URL (is it running?)"),
         ) as mock_api_url:
             with patch.object(sandbox, "print_error") as mock_error:
                 with patch("sys.stdin") as mock_stdin:
@@ -771,7 +790,7 @@ class TestCmdExec:
             with patch.object(sandbox, "print_error") as mock_error:
                 result = sandbox.cmd_exec(args)
 
-        assert result == 1
+        assert result == 7
         mock_error.assert_called_once_with("Command failed with exit code 7")
         assert capsys.readouterr().err == "command failed\n"
         mock_sandbox.disconnect.assert_awaited_once_with()

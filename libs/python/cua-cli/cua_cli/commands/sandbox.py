@@ -497,6 +497,9 @@ def cmd_ls(args: argparse.Namespace) -> int:
                 pass
 
         if show_all or not local:
+            if get_fleets_token():
+                print_error("Listing Fleet sandboxes is not supported; use 'cua sb info NAME'.")
+                return 1
             try:
                 cloud_list = await Sandbox.list(local=False, **await _cloud_auth_kwargs())
                 for s in cloud_list:
@@ -974,7 +977,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
 
         if result.returncode != 0:
             print_error(f"Command failed with exit code {result.returncode}")
-            return 1
+            return result.returncode
         return 0
 
     return run_async(_run())

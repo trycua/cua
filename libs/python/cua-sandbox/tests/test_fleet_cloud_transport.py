@@ -1,10 +1,17 @@
 from types import SimpleNamespace
 
 import pytest
-from cua_sandbox import Image
+from cua_sandbox import Image, Sandbox as CuaSandbox
 from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
-from fleet_sdk import Sandbox
+from fleet_sdk import (
+    OsGymSandboxWarmPoolSpecBuilder,
+    OsGymSandboxWarmPoolStatus,
+    Pool,
+    ResourceMetadata,
+    Sandbox,
+    SandboxTemplateRefBuilder,
+)
 
 
 def _pool(name="demo"):
@@ -16,6 +23,33 @@ def _pool(name="demo"):
 
 def _bound():
     return Sandbox(namespace="demo", claim="demo-claim", name="sandbox", services=["server"])
+
+
+def test_generated_pool_converts_to_sandbox_info():
+    pool = Pool(
+        api_version="osgym.cua.ai/v1alpha1",
+        kind="OSGymSandboxWarmPool",
+        metadata=ResourceMetadata(
+            namespace="demo",
+            name="demo",
+            labels=None,
+            creation_timestamp="2026-08-09T00:00:00Z",
+        ),
+        spec=(
+            OsGymSandboxWarmPoolSpecBuilder()
+            .replicas(1)
+            .sandbox_template_ref(SandboxTemplateRefBuilder().name("demo").build())
+            .build()
+        ),
+        status=OsGymSandboxWarmPoolStatus(replicas=1, ready_replicas=1, selector=None),
+    )
+
+    info = CuaSandbox._fleet_sandbox_info(pool)
+
+    assert info.name == "demo"
+    assert info.status == "running"
+    assert info.source == "fleet"
+    assert info.created_at == "2026-08-09T00:00:00Z"
 
 
 def test_registry_image_becomes_typed_template_request():
@@ -49,6 +83,7 @@ def test_pool_request_uses_the_single_sandbox_name_and_requested_replicas():
     assert request.spec.sandbox_template_ref.name == "demo"
     assert request.spec.autoscaling is None
 
+
 @pytest.mark.parametrize("pool_length", [57, 58, 63])
 def test_deterministic_claim_name_obeys_dns_label_boundary(pool_length):
     pool_name = "a" * pool_length
@@ -59,7 +94,9 @@ def test_deterministic_claim_name_obeys_dns_label_boundary(pool_length):
     assert claim_name == claim_name.lower()
     assert claim_name[0].isalnum()
     assert claim_name[-1].isalnum()
-    assert all(character.islower() or character.isdigit() or character == "-" for character in claim_name)
+    assert all(
+        character.islower() or character.isdigit() or character == "-" for character in claim_name
+    )
     if pool_length == 57:
         assert claim_name == f"{pool_name}-claim"
     else:
@@ -168,6 +205,7 @@ async def test_image_connect_reconciles_named_resources_without_namespace_calls(
     assert claim_request.name == "demo-claim"
     assert calls[-1] == ("wait_service_ready", bound, "server", 600.0)
 
+
 @pytest.mark.asyncio
 async def test_created_claim_is_resolved_by_later_connect_and_delete(monkeypatch):
     calls = []
@@ -221,9 +259,7 @@ async def test_created_claim_is_resolved_by_later_connect_and_delete(monkeypatch
     client = Client()
     monkeypatch.setattr(fleet_cloud, "_FleetClient", lambda: client)
 
-    await FleetCloudTransport(
-        image=Image.from_registry("example:latest"), name=pool_name
-    ).connect()
+    await FleetCloudTransport(image=Image.from_registry("example:latest"), name=pool_name).connect()
     await FleetCloudTransport(image=None, name=pool_name).connect()
     await FleetCloudTransport.delete_sandbox(pool_name)
 
@@ -300,6 +336,52 @@ async def test_retry_reruns_full_image_reconciliation_order(monkeypatch, failure
         "create_claim",
         "wait_claim",
         "service_ready",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_claim_creation_recovers_deterministic_claim(monkeypatch):
+    calls = []
+    pool = _pool()
+    bound = _bound()
+    created_claim = SimpleNamespace(metadata=SimpleNamespace(name="demo-claim"))
+
+    class Client:
+        async def reconcile_pool(self, request):
+            return pool
+
+        async def reconcile_template(self, request):
+            return "template"
+
+        async def wait_pool(self, reconciled_pool):
+            return reconciled_pool
+
+        async def create_claim(self, request):
+            calls.append(("create_claim", request.name))
+            raise RuntimeError("response lost after claim creation")
+
+        async def get_claim(self, existing_pool):
+            calls.append(("get_claim", existing_pool.metadata.name))
+            return created_claim
+
+        async def wait_claim(self, claim):
+            calls.append(("wait_claim", claim.metadata.name))
+            return bound
+
+        async def wait_service_ready(self, sandbox, service, time_to_start):
+            calls.append(("wait_service_ready", sandbox, service, time_to_start))
+
+    monkeypatch.setattr(fleet_cloud, "_FleetClient", Client)
+
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
+    await transport.connect()
+
+    assert transport._claim is created_claim
+    assert calls == [
+        ("create_claim", "demo-claim"),
+        ("get_claim", "demo"),
+        ("wait_claim", "demo-claim"),
+        ("wait_service_ready", bound, "server", 600.0),
     ]
 
 

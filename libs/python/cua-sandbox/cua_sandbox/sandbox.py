@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import (
@@ -734,18 +735,29 @@ class Sandbox:
         return [cls._fleet_sandbox_info(pool) for pool in pools]
 
     @staticmethod
-    def _fleet_sandbox_info(pool: dict[str, Any]) -> SandboxInfo:
-        metadata = pool.get("metadata") or {}
-        spec = pool.get("spec") or {}
-        status = pool.get("status") or {}
-        replicas = spec.get("replicas", 1)
-        ready = status.get("readyReplicas", 0)
+    def _fleet_sandbox_info(pool: Any) -> SandboxInfo:
+        if isinstance(pool, Mapping):
+            metadata = pool.get("metadata") or {}
+            spec = pool.get("spec") or {}
+            status = pool.get("status") or {}
+            name = metadata.get("name", "")
+            replicas = spec.get("replicas", 1)
+            ready = status.get("readyReplicas", 0)
+            created_at = metadata.get("creationTimestamp")
+        else:
+            metadata = pool.metadata
+            spec = pool.spec
+            status = pool.status
+            name = metadata.name
+            replicas = spec.replicas
+            ready = status.ready_replicas if status else 0
+            created_at = metadata.creation_timestamp
         state = "suspended" if replicas == 0 else "running" if ready else "provisioning"
         return SandboxInfo(
-            name=metadata.get("name", ""),
+            name=name,
             status=state,
             source="fleet",
-            created_at=metadata.get("creationTimestamp"),
+            created_at=created_at,
         )
 
     @classmethod

@@ -5383,7 +5383,9 @@ impl Tool for MouseButtonDownTool {
                 Does not release the button; pair with mouse_drag / mouse_button_up. \
                 Returns the current held-button state.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id","x","y"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
@@ -5531,7 +5533,9 @@ impl Tool for MouseDragTool {
                 Requires an active mouse_button_down state; does not release the button. \
                 Returns the updated held-button state.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
@@ -5735,7 +5739,9 @@ impl Tool for MouseButtonUpTool {
             description: "Release a previously-held mouse button via background X11 delivery. \
                 If x/y are omitted, releases at the last held position. Returns the current held-button state.".into(),
             input_schema: json!({"type":"object","properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},

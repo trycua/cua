@@ -51,7 +51,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -267,7 +267,7 @@
             "type": "boolean"
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           }
         },
@@ -350,7 +350,7 @@
             "type": "string"
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "text": {
@@ -447,7 +447,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "steps": {
@@ -1050,7 +1050,7 @@
         "additionalProperties": false,
         "properties": {
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           }
         },
@@ -1106,7 +1106,7 @@
             "type": "string"
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           }
         },
@@ -1187,7 +1187,7 @@
         "additionalProperties": false,
         "properties": {
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           }
         },
@@ -1451,7 +1451,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -1670,7 +1670,7 @@
             "type": "integer"
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "window_id": {
@@ -1966,7 +1966,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -2191,7 +2191,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -2420,7 +2420,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -2947,7 +2947,7 @@
             "type": "integer"
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "width": {
@@ -3258,7 +3258,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "Optional session id.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -3588,7 +3588,7 @@
             "type": "integer"
           },
           "session": {
-            "description": "Optional public session label for lifecycle continuity. It never selects\ncapture modality or authorization.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session. This\nfield never selects capture modality or authorization.",
             "type": "string"
           },
           "stable_samples": {

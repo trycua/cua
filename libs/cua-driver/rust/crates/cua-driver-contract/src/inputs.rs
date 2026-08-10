@@ -58,6 +58,10 @@ fn string_schema(generator: &mut SchemaGenerator) -> Schema {
     String::json_schema(generator)
 }
 
+pub const MULTI_CALL_SESSION_DESCRIPTION: &str =
+    "For multi-call work, prefer a short public session label and repeat it on every call that \
+     accepts it. Omit it to use the authenticated transport's implicit lifecycle session.";
+
 fn string_list_schema(generator: &mut SchemaGenerator) -> Schema {
     Vec::<String>::json_schema(generator)
 }
@@ -439,7 +443,8 @@ impl ToolInput for EndSessionInput {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetDesktopStateInput {
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -456,7 +461,8 @@ impl ToolInput for GetDesktopStateInput {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetScreenSizeInput {
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -469,7 +475,8 @@ impl ToolInput for GetScreenSizeInput {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetCursorPositionInput {
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -493,7 +500,8 @@ pub struct MoveCursorInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -514,7 +522,8 @@ pub struct SetWindowFrameInput {
     pub width: f64,
     #[schemars(schema_with = "positive_number_schema")]
     pub height: f64,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -536,7 +545,8 @@ pub struct InvokeMenuInput {
     pub window_id: u64,
     #[schemars(schema_with = "menu_path_schema")]
     pub path: Vec<String>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -563,7 +573,8 @@ pub struct ClickInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -596,7 +607,8 @@ pub struct DragInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -632,7 +644,8 @@ pub struct ScrollInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -658,7 +671,8 @@ pub struct TypeTextInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -675,7 +689,8 @@ pub struct ClipboardReadInput {
     /// Clipboard content is privacy-sensitive and is never retained in telemetry.
     #[serde(default)]
     pub include_text: bool,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -700,7 +715,8 @@ pub struct ClipboardWriteInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub file_path: Option<String>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -720,7 +736,8 @@ pub struct PressKeyInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -744,7 +761,8 @@ pub struct HotkeyInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
-    /// Optional session id.
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,

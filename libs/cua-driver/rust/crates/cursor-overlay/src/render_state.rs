@@ -52,8 +52,8 @@ pub struct RenderStateCore {
     pub cfg: CursorConfig,
     /// Current motion / timing config (mutable via [`OverlayCommand::SetMotion`]).
     pub motion: MotionConfig,
-    /// Current rendered position in screen / overlay-window coordinates.
-    pub pos: (f64, f64),
+    /// Current rendered position, or `None` until the cursor is first placed.
+    pub pos: Option<(f64, f64)>,
     /// Visual heading in radians (tip direction = motion_dir + π).
     pub heading: f64,
     /// In-flight planned path; `None` = at rest.
@@ -100,9 +100,7 @@ pub struct RenderStateCore {
 
 impl RenderStateCore {
     /// Build the core from a launch-time CursorConfig.
-    /// `pos` starts at the off-screen sentinel `(-200, -200)` to indicate
-    /// "never placed on screen yet" — the click path uses this to detect
-    /// first-placement and snap rather than animate.
+    /// `pos` starts empty so the first placement can snap rather than animate.
     pub fn new(cfg: CursorConfig) -> Self {
         let motion = cfg.motion.clone();
         let visual = CursorVisualState {
@@ -126,7 +124,7 @@ impl RenderStateCore {
             visual,
             theme,
             theme_fallback,
-            pos: (-200.0, -200.0),
+            pos: None,
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
             dist: 0.0,
@@ -146,8 +144,9 @@ impl RenderStateCore {
         }
     }
 
-    fn cursor_is_revealed(&self) -> bool {
-        self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+    /// Return whether cursor pixels and related UI may be shown.
+    pub fn cursor_is_revealed(&self) -> bool {
+        self.visible && self.pos.is_some() && self.idle_alpha >= 0.004
     }
 
     fn reveal_session_badge(&mut self) {
@@ -207,36 +206,39 @@ impl RenderStateCore {
 
     /// Update hover state from a platform-native hardware pointer sample.
     ///
-    /// `self.pos` is the centre of the cursor artwork. The hit radius is a
+    /// The placed position is the centre of the cursor artwork. The hit radius is a
     /// little larger than the 42 point production artwork so the interaction
     /// remains comfortable around the white outline and glow.
     pub fn update_session_badge_hover(&mut self, pointer: Option<(f64, f64)>) -> bool {
         const HOVER_RADIUS: f64 = crate::theme::DISPLAY_SIZE as f64 * 0.82;
         let hovered = self.session_badge_needs_hover_poll()
-            && pointer.is_some_and(|(x, y)| {
-                let dx = x - self.pos.0;
-                let dy = y - self.pos.1;
-                if dx * dx + dy * dy <= HOVER_RADIUS * HOVER_RADIUS {
-                    return true;
-                }
-                crate::session_badge_layout(crate::SessionBadgeInput {
-                    label: self.session_label.as_deref(),
-                    delivery: self.badge_modifiers.and_then(|modifiers| modifiers.0),
-                    target: self.badge_modifiers.and_then(|modifiers| modifiers.1),
-                    cursor: (self.pos.0 as f32, self.pos.1 as f32),
-                    backing_scale: 1.0,
-                    label_alpha: self.session_badge_alpha(),
-                    chip_alpha: self.session_badge_chip_alpha(),
-                    clip: None,
-                })
-                .is_some_and(|layout| {
-                    let rect = layout.rect;
-                    x >= rect.x() as f64
-                        && x <= (rect.x() + rect.width()) as f64
-                        && y >= rect.y() as f64
-                        && y <= (rect.y() + rect.height()) as f64
-                })
-            });
+            && self
+                .pos
+                .zip(pointer)
+                .is_some_and(|((cursor_x, cursor_y), (x, y))| {
+                    let dx = x - cursor_x;
+                    let dy = y - cursor_y;
+                    if dx * dx + dy * dy <= HOVER_RADIUS * HOVER_RADIUS {
+                        return true;
+                    }
+                    crate::session_badge_layout(crate::SessionBadgeInput {
+                        label: self.session_label.as_deref(),
+                        delivery: self.badge_modifiers.and_then(|modifiers| modifiers.0),
+                        target: self.badge_modifiers.and_then(|modifiers| modifiers.1),
+                        cursor: (cursor_x as f32, cursor_y as f32),
+                        backing_scale: 1.0,
+                        label_alpha: self.session_badge_alpha(),
+                        chip_alpha: self.session_badge_chip_alpha(),
+                        clip: None,
+                    })
+                    .is_some_and(|layout| {
+                        let rect = layout.rect;
+                        x >= rect.x() as f64
+                            && x <= (rect.x() + rect.width()) as f64
+                            && y >= rect.y() as f64
+                            && y <= (rect.y() + rect.height()) as f64
+                    })
+                });
         let changed = hovered != self.session_badge_hovered;
         self.session_badge_hovered = hovered;
         changed
@@ -320,14 +322,14 @@ impl RenderStateCore {
                     vy: impulse * 0.5 * vh.sin(),
                 });
                 self.spring_tgt = Some((end.x, end.y, end_heading));
-                self.pos = (end.x, end.y);
+                self.pos = Some((end.x, end.y));
                 self.heading = end_heading;
                 self.path = None;
                 self.dist = 0.0;
                 fire_arrival = true;
             } else {
                 let s: PathState = p.sample(self.dist);
-                self.pos = (s.x, s.y);
+                self.pos = Some((s.x, s.y));
                 // Point the arrow exactly along the path tangent (the renderer
                 // adds π, so we store tangent+π). Assigned directly rather than
                 // rate-limited toward it, so the tip actually tracks the
@@ -344,10 +346,10 @@ impl RenderStateCore {
                     s.ox += s.vx * sdt;
                     s.oy += s.vy * sdt;
                 }
-                self.pos = (tx + s.ox, ty + s.oy);
+                self.pos = Some((tx + s.ox, ty + s.oy));
                 self.heading = th;
                 if s.ox.hypot(s.oy) < 0.3 && s.vx.hypot(s.vy) < 2.0 {
-                    self.pos = (tx, ty);
+                    self.pos = Some((tx, ty));
                     self.spring = None;
                 } else {
                     self.spring = Some(s);
@@ -432,14 +434,14 @@ impl RenderStateCore {
                     vy: impulse * SPRING_OVERSHOOT * vh.sin(),
                 });
                 self.spring_tgt = Some((end.x, end.y, end_heading));
-                self.pos = (end.x, end.y);
+                self.pos = Some((end.x, end.y));
                 self.heading = end_heading;
                 self.path = None;
                 self.dist = 0.0;
                 fire_arrival = true;
             } else {
                 let s: PathState = p.sample(self.dist);
-                self.pos = (s.x, s.y);
+                self.pos = Some((s.x, s.y));
                 // Point the arrow exactly along the path tangent (renderer adds
                 // π, so store tangent+π). Direct assignment, not rate-limited, so
                 // the tip tracks the trajectory instead of lagging on fast moves.
@@ -455,10 +457,10 @@ impl RenderStateCore {
                     s.ox += s.vx * sdt;
                     s.oy += s.vy * sdt;
                 }
-                self.pos = (tx + s.ox, ty + s.oy);
+                self.pos = Some((tx + s.ox, ty + s.oy));
                 self.heading = th;
                 if s.ox.hypot(s.oy) < 0.3 && s.vx.hypot(s.vy) < 2.0 {
-                    self.pos = (tx, ty);
+                    self.pos = Some((tx, ty));
                     self.spring = None;
                 } else {
                     self.spring = Some(s);
@@ -533,22 +535,10 @@ impl RenderStateCore {
     /// for variants the platform must handle itself (e.g. macOS's
     /// `ShowFocusRect`).
     ///
-    /// `move_to_snap_sentinel` controls macOS-only behaviour: when `true`,
-    /// `MoveTo` snaps `self.pos` to the offset target if the cursor is
-    /// still at the off-screen sentinel (`pos.0 < -50.0`).  Windows/Linux
-    /// pass `false` here.
-    ///
-    /// `click_pulse_sentinel_only` likewise controls macOS-only behaviour:
-    /// when `true`, `ClickPulse` only updates `self.pos` if the cursor is
-    /// still at the sentinel (the animation already landed it there
-    /// otherwise).  Windows/Linux pass `false`, which always snaps
-    /// `self.pos` to the click point.
-    pub fn apply_command_base(
-        &mut self,
-        cmd: OverlayCommand,
-        move_to_snap_sentinel: bool,
-        click_pulse_sentinel_only: bool,
-    ) -> bool {
+    /// `click_repositions` is false on macOS, where a completed glide already
+    /// owns the cursor position, and true on Windows/Linux, where click pulses
+    /// snap to their command coordinates.
+    pub fn apply_command_base(&mut self, cmd: OverlayCommand, click_repositions: bool) -> bool {
         match cmd {
             OverlayCommand::MoveTo {
                 x,
@@ -565,12 +555,8 @@ impl RenderStateCore {
                 let tx = x + end_heading_radians.cos() * CLICK_OFFSET;
                 let ty = y + end_heading_radians.sin() * CLICK_OFFSET;
 
-                // macOS-only: if the cursor is still at the initial off-screen
-                // sentinel, snap it to the offset target so the path starts on-screen.
-                if move_to_snap_sentinel && self.pos.0 < -50.0 {
-                    self.pos = (tx, ty);
-                }
-                let (x0, y0) = self.pos;
+                let (x0, y0) = self.pos.unwrap_or((tx, ty));
+                self.pos = Some((x0, y0));
                 let th0 = self.heading + std::f64::consts::PI;
                 let th1 = end_heading_radians + std::f64::consts::PI;
                 let plan =
@@ -600,7 +586,7 @@ impl RenderStateCore {
                 heading_radians,
             } => {
                 let reveal_badge = !self.cursor_is_revealed();
-                self.pos = (x, y);
+                self.pos = Some((x, y));
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
                 }
@@ -625,20 +611,20 @@ impl RenderStateCore {
             }
             OverlayCommand::ClickPulse { x, y } => {
                 let reveal_badge = !self.cursor_is_revealed();
-                if click_pulse_sentinel_only {
-                    // macOS: only snap position on first placement (sentinel state).
-                    // After that the cursor stays where the animation landed.
-                    if self.pos.0 < -50.0 {
-                        // Apply same click offset so tip lands at click point.
+                if click_repositions || self.pos.is_none() {
+                    let position = if click_repositions {
+                        (x, y)
+                    } else {
+                        // macOS applies the MoveTo offset on first placement
+                        // so the cursor tip lands at the click point.
                         const CLICK_OFFSET: f64 = 16.0;
                         let angle = std::f64::consts::FRAC_PI_4;
-                        self.pos = (
+                        (
                             x + angle.cos() * CLICK_OFFSET,
                             y + angle.sin() * CLICK_OFFSET,
-                        );
-                    }
-                } else {
-                    self.pos = (x, y);
+                        )
+                    };
+                    self.pos = Some(position);
                 }
                 self.click_t = Some(0.0);
                 if matches!(
@@ -754,7 +740,7 @@ pub struct FocusRect {
 /// Render the cursor + bloom + click-pulse + (optional) focus-rect into a
 /// fresh tiny-skia [`tiny_skia::Pixmap`] of `(width, height)`.
 ///
-/// `origin_x`, `origin_y` are subtracted from the cursor `core.pos` before
+/// `origin_x`, `origin_y` are subtracted from the cursor position before
 /// drawing — Windows passes the virtual-screen `(virt_x, virt_y)` so the
 /// pixmap is laid out in window-local coordinates.  macOS / Linux pass
 /// `(0.0, 0.0)`.
@@ -785,9 +771,9 @@ pub fn render_frame(
 /// them with later calls drawn on top — this is what lets the macOS overlay
 /// render N owned cursors into one buffer / one NSWindow.
 ///
-/// `origin_x` / `origin_y` are subtracted from `core.pos` before drawing
+/// `origin_x` / `origin_y` are subtracted from the placed position before drawing
 /// (Windows passes the virtual-screen origin; macOS / Linux pass `(0.0, 0.0)`).
-/// Both are in **logical** screen points, just like `core.pos`.
+/// Both are in **logical** screen points, just like the cursor position.
 ///
 /// `backing_scale` is the destination-pixmap-pixels per logical-point ratio.
 /// On a 2× retina macOS display the caller sizes the pixmap at the screen's
@@ -810,16 +796,19 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
-    if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
+    if !core.cursor_is_revealed() {
         return;
     }
+    let Some((cursor_x, cursor_y)) = core.pos else {
+        return;
+    };
 
     let s = backing_scale.max(1.0) as f64; // logical-pt → pixmap-pixel scale
     let sf = s as f32;
 
     // Cursor anchor in pixmap-pixel space: subtract the (logical) origin
     // first, then scale into pixmap pixels.
-    let (px, py) = ((core.pos.0 - origin_x) * s, (core.pos.1 - origin_y) * s);
+    let (px, py) = ((cursor_x - origin_x) * s, (cursor_y - origin_y) * s);
     let heading = core.heading;
     let alpha_scale = core.idle_alpha as f32;
 
@@ -926,6 +915,55 @@ pub fn paint_cursor(
 }
 
 #[cfg(test)]
+mod placement_tests {
+    use super::*;
+    use crate::CursorConfig;
+
+    #[test]
+    fn only_unplaced_cursors_are_unrevealed() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        assert_eq!(core.pos, None);
+        assert!(!core.cursor_is_revealed());
+
+        for position in [(-867.0, 400.0), (400.0, -867.0), (-200.0, -200.0)] {
+            core.pos = Some(position);
+            assert!(core.cursor_is_revealed(), "position={position:?}");
+        }
+    }
+
+    #[test]
+    fn macos_commands_preserve_a_placed_cursor_on_a_left_display() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = Some((-867.0, 400.0));
+
+        assert!(core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 40.0,
+                y: 60.0,
+                end_heading_radians: 0.0,
+            },
+            false,
+        ));
+        assert_eq!(core.pos, Some((-867.0, 400.0)));
+
+        assert!(core.apply_command_base(OverlayCommand::ClickPulse { x: 40.0, y: 60.0 }, false,));
+
+        assert_eq!(core.pos, Some((-867.0, 400.0)));
+    }
+
+    #[test]
+    fn paint_cursor_renders_negative_global_x_with_a_virtual_screen_origin() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = Some((-867.0, 120.0));
+        let mut pixmap = tiny_skia::Pixmap::new(400, 300).unwrap();
+
+        paint_cursor(&mut pixmap, &core, -1000.0, 0.0, None, 1.0);
+
+        assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+}
+
+#[cfg(test)]
 mod glide_duration_tests {
     use super::*;
     use crate::{CursorConfig, PathPlanner};
@@ -937,7 +975,7 @@ mod glide_duration_tests {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.motion.glide_duration_ms = glide_ms;
         core.motion.idle_hide_ms = 0.0;
-        core.pos = (0.0, 0.0);
+        core.pos = Some((0.0, 0.0));
         // Aligned headings → an effectively straight path of length ~dist_pts.
         core.path = Some(PathPlanner::plan(
             0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0,
@@ -994,11 +1032,7 @@ mod session_badge_and_action_tests {
     fn session_badge_holds_then_fades_once() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         assert_eq!(core.session_badge_alpha(), 0.0);
-        assert!(core.apply_command_base(
-            OverlayCommand::SetSessionLabel("Research".into()),
-            false,
-            false,
-        ));
+        assert!(core.apply_command_base(OverlayCommand::SetSessionLabel("Research".into()), true,));
         assert_eq!(core.session_badge_alpha(), 1.0);
 
         core.tick_motion(SESSION_BADGE_HOLD_SECS - 0.05);
@@ -1013,37 +1047,21 @@ mod session_badge_and_action_tests {
     #[test]
     fn repeated_session_label_metadata_does_not_restart_badge_timer() {
         let mut core = RenderStateCore::new(CursorConfig::default());
-        core.apply_command_base(
-            OverlayCommand::SetSessionLabel("Research".into()),
-            false,
-            false,
-        );
+        core.apply_command_base(OverlayCommand::SetSessionLabel("Research".into()), true);
         core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
         assert_eq!(core.session_badge_alpha(), 0.0);
 
-        core.apply_command_base(
-            OverlayCommand::SetSessionLabel("Research".into()),
-            false,
-            false,
-        );
+        core.apply_command_base(OverlayCommand::SetSessionLabel("Research".into()), true);
         assert_eq!(core.session_badge_alpha(), 0.0);
 
-        core.apply_command_base(
-            OverlayCommand::SetSessionLabel("Writing".into()),
-            false,
-            false,
-        );
+        core.apply_command_base(OverlayCommand::SetSessionLabel("Writing".into()), true);
         assert_eq!(core.session_badge_alpha(), 1.0);
     }
 
     #[test]
     fn revealing_hidden_cursor_restarts_badge_without_restarting_on_every_move() {
         let mut core = RenderStateCore::new(CursorConfig::default());
-        core.apply_command_base(
-            OverlayCommand::SetSessionLabel("Research".into()),
-            false,
-            false,
-        );
+        core.apply_command_base(OverlayCommand::SetSessionLabel("Research".into()), true);
         core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
         assert_eq!(core.session_badge_alpha(), 0.0);
 
@@ -1053,8 +1071,7 @@ mod session_badge_and_action_tests {
                 y: 100.0,
                 heading_radians: None,
             },
-            false,
-            false,
+            true,
         );
         assert_eq!(core.session_badge_alpha(), 1.0);
         assert!(core.session_badge_needs_frame_tick());
@@ -1066,8 +1083,7 @@ mod session_badge_and_action_tests {
                 y: 120.0,
                 heading_radians: None,
             },
-            false,
-            false,
+            true,
         );
         assert_eq!(core.session_badge_secs, elapsed);
         core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
@@ -1077,12 +1093,8 @@ mod session_badge_and_action_tests {
     #[test]
     fn hardware_pointer_hover_reveals_only_while_over_cursor() {
         let mut core = RenderStateCore::new(CursorConfig::default());
-        core.pos = (300.0, 240.0);
-        core.apply_command_base(
-            OverlayCommand::SetSessionLabel("Research".into()),
-            false,
-            false,
-        );
+        core.pos = Some((300.0, 240.0));
+        core.apply_command_base(OverlayCommand::SetSessionLabel("Research".into()), true);
         core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
         assert_eq!(core.session_badge_alpha(), 0.0);
         assert!(core.session_badge_needs_hover_poll());
@@ -1099,15 +1111,14 @@ mod session_badge_and_action_tests {
     #[test]
     fn movement_preserves_the_active_semantic_action() {
         let mut core = RenderStateCore::new(CursorConfig::default());
-        core.pos = (20.0, 20.0);
+        core.pos = Some((20.0, 20.0));
         core.apply_command_base(
             OverlayCommand::BeginAction {
                 action: CursorAction::Text,
                 delivery: None,
                 target: Some(TargetModifier::Ax),
             },
-            false,
-            false,
+            true,
         );
         core.apply_command_base(
             OverlayCommand::MoveTo {
@@ -1115,16 +1126,11 @@ mod session_badge_and_action_tests {
                 y: 100.0,
                 end_heading_radians: 0.0,
             },
-            false,
-            false,
+            true,
         );
         assert_eq!(core.visual.resolved_action, CursorAction::Text);
         assert_eq!(core.visual.target, Some(TargetModifier::Ax));
-        core.apply_command_base(
-            OverlayCommand::ClickPulse { x: 200.0, y: 100.0 },
-            false,
-            false,
-        );
+        core.apply_command_base(OverlayCommand::ClickPulse { x: 200.0, y: 100.0 }, true);
         assert_eq!(core.visual.resolved_action, CursorAction::Text);
         assert_eq!(core.visual.target, Some(TargetModifier::Ax));
     }
@@ -1132,15 +1138,14 @@ mod session_badge_and_action_tests {
     #[test]
     fn modifiers_live_in_the_badge_then_fade_after_action_completion() {
         let mut core = RenderStateCore::new(CursorConfig::default());
-        core.pos = (200.0, 200.0);
+        core.pos = Some((200.0, 200.0));
         core.apply_command_base(
             OverlayCommand::BeginAction {
                 action: CursorAction::Click,
                 delivery: Some(DeliveryModifier::Foreground),
                 target: Some(TargetModifier::Pixel),
             },
-            false,
-            false,
+            true,
         );
         assert_eq!(
             core.badge_modifiers,
@@ -1174,8 +1179,7 @@ mod session_badge_and_action_tests {
                 delivery: Some(DeliveryModifier::Background),
                 target: Some(TargetModifier::Ax),
             },
-            false,
-            false,
+            true,
         );
         core.apply_command_base(
             OverlayCommand::BeginAction {
@@ -1183,8 +1187,7 @@ mod session_badge_and_action_tests {
                 delivery: Some(DeliveryModifier::Foreground),
                 target: Some(TargetModifier::Browser),
             },
-            false,
-            false,
+            true,
         );
         assert_eq!(
             core.badge_modifiers,
@@ -1206,14 +1209,9 @@ mod session_badge_and_action_tests {
                 delivery: Some(DeliveryModifier::Background),
                 target: Some(TargetModifier::Ax),
             },
-            false,
-            false,
+            true,
         );
-        core.apply_command_base(
-            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
-            false,
-            false,
-        );
+        core.apply_command_base(OverlayCommand::ClickPulse { x: 40.0, y: 60.0 }, true);
         assert_eq!(
             (core.visual.delivery, core.visual.target),
             (Some(DeliveryModifier::Background), Some(TargetModifier::Ax))
@@ -1262,7 +1260,7 @@ mod backing_scale_tests {
         // Place the cursor at the centre of the logical area and disable
         // idle-fade so the arrow paints at full alpha regardless of timing.
         let centre = logical_size as f64 / 2.0;
-        core.pos = (centre, centre);
+        core.pos = Some((centre, centre));
         core.idle_alpha = 1.0;
         core.visible = true;
 

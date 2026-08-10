@@ -25,7 +25,7 @@
 //! Animation state + render pipeline live in `cursor_overlay::render_state`
 //! (`RenderStateCore`, `tick_swift_constants`, `apply_command_base`,
 //! `render_frame`).  macOS uses the hardcoded Swift reference constants
-//! (peakSpeed=900, springK=400, overshoot=0.8) and the sentinel-snap
+//! (peakSpeed=900, springK=400, overshoot=0.8) and first-placement
 //! variants of MoveTo / ClickPulse — see the wrapper around
 //! `apply_command_base` below.
 
@@ -313,19 +313,19 @@ pub fn current_theme_state(
     Some((id, version, profile, fallback, state.core.visual.clone()))
 }
 
-/// Seed a brand-new (sentinel-positioned) cursor at an on-screen start point
+/// Seed a brand-new cursor at an on-screen start point
 /// offset up-left of `(target_x, target_y)` so the immediately-following
 /// `MoveTo` glides INTO the target instead of silently snapping. Without this,
 /// a cursor's very first action (common on a pure-AX run — launch app, AX-press
 /// a button) produces no visible motion: `animate_cursor_to` early-returned at
-/// the sentinel and only `ClickPulse` snapped a static arrow, which is easy to
+/// no position and only `ClickPulse` placed a static arrow, which is easy to
 /// miss. See the AX-no-glide report.
 ///
-/// No-op when the cursor is already on-screen (pos.0 > -50.0) or absent. The
+/// No-op when the cursor is already placed or absent. The
 /// seed is clamped to the main screen frame so it never starts off-display.
-/// Returns true if a seed was applied (i.e. the cursor was at the sentinel and
+/// Returns true if a seed was applied (i.e. the cursor was unplaced and
 /// is now primed to glide).
-fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
         return false;
@@ -334,7 +334,7 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
 }
 
 /// Pure seed step operating on a borrowed [`RenderMap`] — factored out of
-/// `seed_start_if_sentinel` so the get-or-create + clamp logic is unit-testable
+/// `seed_start_if_unplaced` so the get-or-create + clamp logic is unit-testable
 /// without the global `RENDER` static or AppKit.
 fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     // Offset the start up-left of the target so the Dubins path has room to
@@ -356,7 +356,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
+    if !(rs.core.cfg.enabled && rs.core.pos.is_none()) {
         return false;
     }
     let mut sx = target_x - SEED_OFFSET;
@@ -374,7 +374,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
             sy = (target_y + SEED_OFFSET).min(win_h - 2.0);
         }
     }
-    rs.core.pos = (sx, sy);
+    rs.core.pos = Some((sx, sy));
     true
 }
 
@@ -383,8 +383,8 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
 ///
 /// Mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
 /// Returns immediately (no animation) only when the overlay is disabled for
-/// this cursor. A brand-new cursor still at the off-screen sentinel is first
-/// seeded on-screen via [`seed_start_if_sentinel`] so its FIRST action glides
+/// this cursor. A brand-new cursor is first seeded on-screen via
+/// [`seed_start_if_unplaced`] so its first action glides
 /// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
 /// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
@@ -392,10 +392,10 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     if key.is_empty() {
         return;
     }
-    // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
-    // being short-circuited. After this the cursor's pos.0 > -50.0, so the
-    // should-animate check passes on the first action just like later ones.
-    seed_start_if_sentinel(&key, x, y);
+    // Seed an unplaced cursor on-screen so the MoveTo below glides instead of
+    // being short-circuited. After this the cursor has a position, so
+    // the should-animate check passes on the first action just like later ones.
+    seed_start_if_unplaced(&key, x, y);
 
     // Check whether animation should run for THIS cursor. A disabled cursor
     // never animates; an absent cursor (seed found nothing to prime) is skipped.
@@ -403,7 +403,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0
+            Some(rs) if rs.core.cfg.enabled && rs.core.pos.is_some()
         )
     };
     if !should_animate {
@@ -529,25 +529,21 @@ impl RenderState {
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) {
-        // macOS uses the sentinel-snap variants of MoveTo / ClickPulse:
-        //   - MoveTo only snaps `self.pos` if the cursor is still at the
-        //     off-screen sentinel `(-200, -200)` (otherwise the path starts
-        //     from the current position so the animation is continuous).
-        //   - ClickPulse only updates `self.pos` if the cursor is still at
-        //     the sentinel (otherwise the animation already landed it there).
+        // A macOS click pulse preserves the position reached by its glide.
+        // The shared core places an unplaced cursor on first use.
         match cmd {
             OverlayCommand::ShowFocusRect(rect) => {
                 self.focus_rect = rect;
                 self.focus_rect_t = 0.0; // reset fade to fully visible
             }
             other => {
-                let _ = self.core.apply_command_base(other, true, true);
+                let _ = self.core.apply_command_base(other, false);
             }
         }
     }
 
     /// True while the render loop must wake at frame cadence because the next
-    /// tick can change pixels. A brand-new sentinel cursor is deliberately
+    /// tick can change pixels. A brand-new unplaced cursor is deliberately
     /// quiescent, so `serve` with no agent activity can block on the command
     /// channel instead of compositing an empty fullscreen pixmap at 60fps.
     fn needs_frame_tick(&self) -> bool {
@@ -556,10 +552,7 @@ impl RenderState {
             || self.core.click_t.is_some()
             || self.focus_rect.is_some()
             || self.core.session_badge_needs_frame_tick()
-            || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.visible
-                && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004)
+            || (self.core.motion.idle_hide_ms > 0.0 && self.core.cursor_is_revealed())
     }
 }
 
@@ -926,11 +919,7 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 }
 
 fn cursor_is_externally_visible(state: &RenderState) -> bool {
-    state.core.cfg.enabled
-        && state.core.visible
-        && state.core.pos.0 > -50.0
-        && state.core.pos.1 > -50.0
-        && state.core.idle_alpha >= 0.004
+    state.core.cfg.enabled && state.core.cursor_is_revealed()
 }
 
 /// Convert a `tiny_skia::Pixmap` to a `CGImage` and set it as the contents
@@ -1446,15 +1435,15 @@ mod tests {
     }
 
     #[test]
-    fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
-        // BUG 2 regression: a brand-new session cursor at the sentinel must be
+    fn seed_places_cursor_on_screen_for_first_action() {
+        // BUG 2 regression: a brand-new session cursor without a position must be
         // seeded on-screen (pos.0 > -50) so the immediately-following MoveTo
         // glides instead of silently snapping via ClickPulse.
         let mut map = empty_map(); // 100x100 frame
                                    // No "sessA" cursor exists yet — the seed must get-or-create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        assert!(seeded, "sentinel cursor must be seeded");
-        let pos = map.cursors["sessA"].core.pos;
+        assert!(seeded, "unplaced cursor must be seeded");
+        let pos = map.cursors["sessA"].core.pos.expect("seeded position");
         assert!(
             pos.0 > -50.0 && pos.1 > -50.0,
             "seed must be on-screen, got {pos:?}"
@@ -1473,14 +1462,30 @@ mod tests {
         let mut map = empty_map();
         // Put sessA on-screen first.
         seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
+        map.cursors.get_mut("sessA").unwrap().core.pos = Some((30.0, 30.0));
         let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
         assert!(!seeded_again, "on-screen cursor must not be re-seeded");
         assert_eq!(
             map.cursors["sessA"].core.pos,
-            (30.0, 30.0),
+            Some((30.0, 30.0)),
             "pos must be untouched"
         );
+    }
+
+    #[test]
+    fn negative_display_coordinates_are_visible_and_not_reseeded() {
+        let mut map = empty_map();
+        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-867.0, 400.0));
+
+        assert!(!seed_start_in_map(
+            &mut map,
+            &"sessA".to_owned(),
+            80.0,
+            80.0
+        ));
+        assert_eq!(map.cursors["sessA"].core.pos, Some((-867.0, 400.0)));
+        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
     }
 
     #[test]
@@ -1498,7 +1503,7 @@ mod tests {
     }
 
     #[test]
-    fn sentinel_default_cursor_does_not_require_frame_ticks() {
+    fn unplaced_default_cursor_does_not_require_frame_ticks() {
         // Regression for idle CPU: a freshly-started serve daemon seeds only the
         // off-screen default cursor. With no commands in flight, the render loop
         // should be able to block on rx.recv() instead of repainting at 60fps.

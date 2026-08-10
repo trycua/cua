@@ -1,5 +1,6 @@
 """Contract tests for the periodic Cua Sandbox live Fleet workflow."""
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -31,6 +32,29 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             if isinstance(step, dict) and "name" in step
         }
 
+    def run_prepare_matrix(self, event_name: str, requested_lane: str) -> dict[str, object]:
+        prepare_script = self.workflow()["jobs"]["prepare"]["steps"][0]["run"]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            github_output = Path(temporary_directory) / "github-output"
+            environment = os.environ | {
+                "EVENT_NAME": event_name,
+                "REQUESTED_LANE": requested_lane,
+                "GITHUB_OUTPUT": str(github_output),
+            }
+            subprocess.run(
+                ["bash", "-c", prepare_script],
+                env=environment,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            outputs = dict(
+                line.split("=", 1)
+                for line in github_output.read_text().splitlines()
+                if "=" in line
+            )
+        return json.loads(outputs["matrix"])
+
     def test_trigger_and_lane_structure(self) -> None:
         workflow = self.workflow()
         triggers = workflow["on"]
@@ -58,6 +82,64 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         self.assertIn('[[ "$EVENT_NAME" == "push" ]]', prepare_script)
         self.assertIn('"lane":"main-source"', prepare_script)
         self.assertIn('"lane":"published-package"', prepare_script)
+
+    def test_prepare_matrix_selects_lanes_for_each_trigger(self) -> None:
+        expected_matrices = {
+            ("push", "both"): {"include": [{"lane": "main-source"}]},
+            ("push", "published-package"): {"include": [{"lane": "main-source"}]},
+            ("schedule", "main-source"): {
+                "include": [
+                    {"lane": "main-source"},
+                    {"lane": "published-package"},
+                ]
+            },
+            ("workflow_dispatch", "both"): {
+                "include": [
+                    {"lane": "main-source"},
+                    {"lane": "published-package"},
+                ]
+            },
+            ("workflow_dispatch", "main-source"): {
+                "include": [{"lane": "main-source"}]
+            },
+            ("workflow_dispatch", "published-package"): {
+                "include": [{"lane": "published-package"}]
+            },
+        }
+
+        for inputs, expected_matrix in expected_matrices.items():
+            with self.subTest(event_name=inputs[0], requested_lane=inputs[1]):
+                self.assertEqual(self.run_prepare_matrix(*inputs), expected_matrix)
+
+    def test_docs_describe_the_remediated_workflow(self) -> None:
+        docs = (
+            REPO_ROOT
+            / "docs/superpowers/specs/2026-08-09-periodic-cua-sandbox-live-e2e-design.md",
+            REPO_ROOT / "docs/superpowers/plans/2026-08-09-periodic-cua-sandbox-live-e2e.md",
+        )
+        required_contract = (
+            "libs/python/cua-fleet/**",
+            "Check Fleet OAuth credentials",
+            "periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}",
+            "Prepare isolated live test suite",
+            "CUA_LIVE_E2E_TEST_ROOT",
+            'tee -a "$GITHUB_OUTPUT"',
+            "Write controlled failure diagnostics",
+            "without explicit deletion",
+        )
+        stale_contract = (
+            "Concurrency is scoped\nper lane",
+            "python - <<'PY' >> \"$GITHUB_OUTPUT\"",
+            "Emergency namespace cleanup",
+        )
+
+        for document in docs:
+            content = document.read_text()
+            with self.subTest(document=document):
+                for expected in required_contract:
+                    self.assertIn(expected, content)
+                for stale in stale_contract:
+                    self.assertNotIn(stale, content)
 
     def test_live_job_security_and_execution_structure(self) -> None:
         workflow = self.workflow()

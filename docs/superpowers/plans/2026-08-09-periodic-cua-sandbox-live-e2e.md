@@ -536,113 +536,15 @@ git commit -m "test(cua-sandbox): add live Fleet ephemeral smoke"
 - Create: `.github/scripts/tests/test_periodic_cua_sandbox_live.py`
 - Create: `.github/workflows/periodic-cua-sandbox-live.yml`
 - Modify: `.github/workflows/ci-test-scripts.yml`
+- Modify: `libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py`
 - Test: `.github/scripts/tests/test_periodic_cua_sandbox_live.py`
 
-**Interfaces:**
-- Consumes: literal workflow contract from the approved design.
-- Produces: CI-enforced checks for trigger selection, pinned actions, live parameters, cleanup, artifacts, and Alertmanager labels.
-
-- [ ] **Step 1: Write the failing workflow contract test**
-
-Create `.github/scripts/tests/test_periodic_cua_sandbox_live.py`:
-
-```python
-from pathlib import Path
-import unittest
-
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = REPO_ROOT / ".github/workflows/periodic-cua-sandbox-live.yml"
-LIVE_TEST = REPO_ROOT / "libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py"
-
-
-class TestPeriodicCuaSandboxLive(unittest.TestCase):
-    def test_trigger_and_lane_contract(self) -> None:
-        workflow = WORKFLOW.read_text()
-        self.assertIn('cron: "7/15 * * * *"', workflow)
-        self.assertIn("published-package", workflow)
-        self.assertIn("main-source", workflow)
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("force_failure:", workflow)
-        self.assertIn("github.event_name == 'push'", workflow)
-        self.assertIn("fromJSON(needs.prepare.outputs.matrix)", workflow)
-        self.assertIn("timeout-minutes: 25", workflow)
-        self.assertIn("cancel-in-progress:", workflow)
-
-    def test_security_and_cleanup_contract(self) -> None:
-        workflow = WORKFLOW.read_text()
-        self.assertIn("CUA_CLIENT_ID", workflow)
-        self.assertIn("CUA_CLIENT_SECRET", workflow)
-        self.assertNotIn("CUA_API_KEY", workflow)
-        self.assertNotIn("cleanup_namespace", workflow)
-        self.assertNotIn("delete_namespace", workflow)
-        self.assertIn("namespace_leak", LIVE_TEST.read_text())
-        self.assertIn("remaining_resources", LIVE_TEST.read_text())
-        self.assertIn("if: failure()", workflow)
-        self.assertIn("PeriodicCuaSandboxLiveE2EFailed", workflow)
-        self.assertIn('lane": "${{ matrix.lane }}"', workflow)
-        self.assertIn("retention-days: 7", workflow)
-
-    def test_actions_are_pinned(self) -> None:
-        workflow = WORKFLOW.read_text()
-        self.assertIn(
-            "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
-            workflow,
-        )
-        self.assertIn(
-            "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
-            workflow,
-        )
-        self.assertIn(
-            "actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08",
-            workflow,
-        )
-
-    def test_live_parameters_are_pinned(self) -> None:
-        live_test = LIVE_TEST.read_text()
-        self.assertIn("desktop-workspace-duo", live_test)
-        self.assertIn("5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180", live_test)
-        for expected in (
-            "cpu=4",
-            "memory_mb=4096",
-            "server_port=8000",
-            "time_to_start=900",
-            "request_timeout=60",
-            "telemetry_enabled=False",
-        ):
-            self.assertIn(expected, live_test)
-
-
-if __name__ == "__main__":
-    unittest.main()
-```
-
-- [ ] **Step 2: Wire workflow changes into scripts CI path filtering**
-
-Add this path under `pull_request.paths` in `.github/workflows/ci-test-scripts.yml`:
+**Implementation contract:** The workflow runs every 15 minutes, has one source
+lane for relevant `main` pushes, and uses the selected manual lane or both
+lanes. It never explicitly deletes a namespace: `Sandbox.ephemeral()` cleanup
+is verified with diagnostic-only leak detection.
 
 ```yaml
-      - ".github/workflows/periodic-cua-sandbox-live.yml"
-```
-
-- [ ] **Step 3: Run the contract test and verify it fails**
-
-Run:
-
-```bash
-python -m pytest -q .github/scripts/tests/test_periodic_cua_sandbox_live.py
-```
-
-Expected: FAIL with `FileNotFoundError` for `.github/workflows/periodic-cua-sandbox-live.yml`.
-
-
-- [ ] **Step 4: Create the workflow with dynamic lane preparation**
-
-Create `.github/workflows/periodic-cua-sandbox-live.yml` with this structure:
-
-```yaml
-name: "Periodic: Cua Sandbox Live Fleet E2E"
-
 on:
   schedule:
     - cron: "7/15 * * * *"
@@ -650,187 +552,111 @@ on:
     branches: [main]
     paths:
       - "libs/python/cua-sandbox/**"
+      - "libs/python/cua-fleet/**"
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/scripts/tests/test_periodic_cua_sandbox_live.py"
-  workflow_dispatch:
-    inputs:
-      lane:
-        description: "Lane to run"
-        required: true
-        default: both
-        type: choice
-        options: [both, main-source, published-package]
-      force_failure:
-        description: "Fail after setup to certify alerting"
-        required: true
-        default: false
-        type: boolean
-
-permissions:
-  contents: read
-
-jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-    steps:
-      - id: matrix
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          REQUESTED_LANE: ${{ inputs.lane }}
-        run: |
-          set -euo pipefail
-          if [[ "$EVENT_NAME" == push ]]; then
-            matrix='{"include":[{"lane":"main-source"}]}'
-          elif [[ "$EVENT_NAME" == workflow_dispatch && "$REQUESTED_LANE" != both ]]; then
-            matrix="{\"include\":[{\"lane\":\"$REQUESTED_LANE\"}]}"
-          else
-            matrix='{"include":[{"lane":"main-source"},{"lane":"published-package"}]}'
-          fi
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-
-  live:
-    needs: prepare
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    concurrency:
-      group: periodic-cua-sandbox-live-${{ matrix.lane }}
-      cancel-in-progress: ${{ github.event_name == 'schedule' }}
-    env:
-      CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
-      CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
-      CUA_FLEET_BASE_URL: https://run.cua.ai
-      CUA_LIVE_E2E_LANE: ${{ matrix.lane }}
-      CUA_LIVE_E2E_NAMESPACE: cua-live-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
-      CUA_LIVE_E2E_ARTIFACT_DIR: /tmp/cua-live-e2e
-      CUA_TELEMETRY_ENABLED: "false"
-    steps:
-      - name: Checkout main
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
-
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        run: python -m pip install uv
-
-      - name: Install main source
-        if: matrix.lane == 'main-source'
-        run: |
-          uv pip install --system \
-            --index https://wheels.cua.ai/simple \
-            --default-index https://pypi.org/simple \
-            -e libs/python/cua-sandbox pytest pytest-asyncio
-
-      - name: Install published package
-        if: matrix.lane == 'published-package'
-        run: |
-          uv pip install --system \
-            --index https://wheels.cua.ai/simple \
-            --default-index https://pypi.org/simple \
-            --upgrade cua-sandbox pytest pytest-asyncio
-
-      - name: Record installed versions
-        id: versions
-        run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          from importlib.metadata import version
-          print("sandbox=" + version("cua-sandbox"))
-          print("fleet=" + version("cua-fleet"))
-          PY
-          echo "cua-sandbox=${{ steps.versions.outputs.sandbox }}"
-          echo "cua-fleet=${{ steps.versions.outputs.fleet }}"
-
-      - name: Controlled alert test failure
-        if: github.event_name == 'workflow_dispatch' && inputs.force_failure
-        run: exit 1
-
-      - name: Run live Fleet smoke
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.force_failure) }}
-        run: |
-          python -m pytest -q -s \
-            libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py
-
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
-        with:
-          name: cua-sandbox-live-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: /tmp/cua-live-e2e
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Alert Alertmanager
-        if: failure()
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --silent --show-error --fail \
-            -X POST https://am.cua.ai/api/v2/alerts \
-            -H 'Content-Type: application/json' \
-            -d '[{
-              "labels": {
-                "alertname": "PeriodicCuaSandboxLiveE2EFailed",
-                "severity": "critical",
-                "service": "cua-sandbox",
-                "job": "periodic-cua-sandbox-live",
-                "lane": "${{ matrix.lane }}"
-              },
-              "annotations": {
-                "summary": "Cua Sandbox live Fleet E2E failed (${{ matrix.lane }})",
-                "description": "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-                "source_sha": "${{ github.sha }}",
-                "package_version": "${{ steps.versions.outputs.sandbox }}",
-                "image_digest": "sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
-              },
-              "generatorURL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }]'
 ```
 
-- [ ] **Step 5: Run the workflow contract test and verify it passes**
+The `prepare` job emits `main-source` for every `push`, both lanes for
+`schedule`, and the requested `workflow_dispatch` lane. The contract test
+extracts this shell script from parsed YAML, runs it with a temporary
+`GITHUB_OUTPUT`, parses its JSON matrix, and covers push, schedule, and every
+manual selection. This makes a push-to-both or ignored manual selection fail
+CI.
 
-Run:
+```yaml
+concurrency:
+  group: periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}
+  cancel-in-progress: ${{ github.event_name == 'schedule' }}
+```
+
+The event-and-lane group lets a new schedule cancel only an older schedule for
+the same lane. Push and manual evidence use separate groups and are never
+cancelled by a schedule.
+
+```yaml
+steps:
+  - name: Check Fleet OAuth credentials
+    run: |
+      if [[ -z "$CUA_CLIENT_ID" || -z "$CUA_CLIENT_SECRET" ]]; then
+        exit 1
+      fi
+  - name: Prepare isolated live test suite
+    run: |
+      suite_root="$(mktemp -d /tmp/cua-live-e2e-suite.XXXXXX)"
+      mkdir -p "$suite_root/tests/live"
+      cp libs/python/cua-sandbox/tests/__init__.py "$suite_root/tests/"
+      cp libs/python/cua-sandbox/tests/live/*.py "$suite_root/tests/live/"
+      echo "CUA_LIVE_E2E_TEST_ROOT=$suite_root" >> "$GITHUB_ENV"
+  - name: Record installed versions
+    run: |
+      python - <<'PY' | tee -a "$GITHUB_OUTPUT"
+      from importlib.metadata import version
+      print("sandbox=" + version("cua-sandbox"))
+      print("fleet=" + version("cua-fleet"))
+      PY
+  - name: Write controlled failure diagnostics
+    if: github.event_name == 'workflow_dispatch' && inputs.force_failure
+    run: |
+      python - <<'PY'
+      import json
+      import os
+      from pathlib import Path
+
+      artifact_dir = Path(os.environ["CUA_LIVE_E2E_ARTIFACT_DIR"])
+      artifact_dir.mkdir(parents=True, exist_ok=True)
+      (artifact_dir / "summary.json").write_text(
+          json.dumps(
+              {
+                  "lane": os.environ["CUA_LIVE_E2E_LANE"],
+                  "namespace": os.environ["CUA_LIVE_E2E_NAMESPACE"],
+                  "source_sha": os.environ.get("GITHUB_SHA"),
+                  "error": {"type": "ControlledFailure"},
+              },
+              indent=2,
+              sort_keys=True,
+          )
+          + "\n"
+      )
+      PY
+  - name: Run live Fleet smoke
+    run: PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT" python -m pytest -q -s "$CUA_LIVE_E2E_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
+```
+
+Both lanes install their respective SDK package before this copied suite runs.
+The source lane resolves `cua_sandbox` through its editable install; the
+published lane resolves it from site-packages because the checkout package root
+is absent from `PYTHONPATH`. The live summary records the resolved
+`cua_sandbox` module origin. Forced failures create a sanitized `summary.json`
+before the failure-only artifact upload; the versions step writes outputs for
+the later Alertmanager payload without reading `steps.versions.outputs` inside
+its own step.
+
+The repository-side contract parses YAML with `yaml.BaseLoader`, rejects
+unpinned actions and any `cleanup_namespace` or `delete_namespace` workflow
+reference, executes the matrix preparation script, and verifies credentials,
+isolation, diagnostics, and lane-specific Alertmanager payloads. Scripts CI
+installs `pyyaml` and path-filters both the contract and workflow.
+
+- [ ] **Validation**
 
 ```bash
 python -m pytest -q .github/scripts/tests/test_periodic_cua_sandbox_live.py
-```
-
-Expected: `4 passed`.
-
-- [ ] **Step 6: Validate workflow syntax and formatting**
-
-Run:
-
-```bash
-python -m pip install pyyaml
+python -m pytest -q .github/scripts/tests
 python - <<'PY'
 from pathlib import Path
 import yaml
-yaml.safe_load(Path('.github/workflows/periodic-cua-sandbox-live.yml').read_text())
+yaml.load(
+    Path('.github/workflows/periodic-cua-sandbox-live.yml').read_text(),
+    Loader=yaml.BaseLoader,
+)
 PY
+actionlint .github/workflows/periodic-cua-sandbox-live.yml
 git diff --check
 ```
 
-Expected: PyYAML installs successfully, workflow parsing exits `0`, and `git diff --check` reports no errors.
-
-- [ ] **Step 7: Commit the workflow and its contract**
-
-```bash
-git add \
-  .github/scripts/tests/test_periodic_cua_sandbox_live.py \
-  .github/workflows/ci-test-scripts.yml \
-  .github/workflows/periodic-cua-sandbox-live.yml
-git commit -m "ci(cua-sandbox): monitor live Fleet every 15 minutes"
-```
+Expected: the workflow contracts, scripts tests, YAML parse, actionlint, and
+whitespace check pass without contacting live infrastructure.
 
 ---
 
@@ -951,11 +777,16 @@ export CUA_FLEET_BASE_URL=https://run.cua.ai
 export CUA_LIVE_E2E_LANE=main-source
 export CUA_LIVE_E2E_NAMESPACE="cua-live-main-source-$(date -u +%Y%m%d%H%M%S)"
 export CUA_LIVE_E2E_ARTIFACT_DIR=/tmp/cua-live-main-source
-cd libs/python/cua-sandbox
-.venv/bin/python -m pytest -q -s tests/live/test_fleet_ephemeral.py
+LIVE_TEST_ROOT=$(mktemp -d /tmp/cua-live-e2e-suite.XXXXXX)
+mkdir -p "$LIVE_TEST_ROOT/tests/live"
+cp libs/python/cua-sandbox/tests/__init__.py "$LIVE_TEST_ROOT/tests/"
+cp libs/python/cua-sandbox/tests/live/*.py "$LIVE_TEST_ROOT/tests/live/"
+PYTHONPATH="$LIVE_TEST_ROOT" \
+  libs/python/cua-sandbox/.venv/bin/python -m pytest -q -s \
+  "$LIVE_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
 ```
 
-Expected: PASS; summary reports `1024x768`, `Linux`, port `8000`, and automatic namespace cleanup.
+Expected: PASS; summary reports `1024x768`, `Linux`, port `8000`, the editable `cua_sandbox` module origin, and automatic namespace cleanup.
 
 - [ ] **Step 3: Run the published lane in an isolated environment**
 
@@ -974,9 +805,13 @@ export CUA_FLEET_BASE_URL=https://run.cua.ai
 export CUA_LIVE_E2E_LANE=published-package
 export CUA_LIVE_E2E_NAMESPACE="cua-live-published-$(date -u +%Y%m%d%H%M%S)"
 export CUA_LIVE_E2E_ARTIFACT_DIR=/tmp/cua-live-published-package
-PYTHONPATH="$PWD/libs/python/cua-sandbox" \
+LIVE_TEST_ROOT=$(mktemp -d /tmp/cua-live-e2e-suite.XXXXXX)
+mkdir -p "$LIVE_TEST_ROOT/tests/live"
+cp libs/python/cua-sandbox/tests/__init__.py "$LIVE_TEST_ROOT/tests/"
+cp libs/python/cua-sandbox/tests/live/*.py "$LIVE_TEST_ROOT/tests/live/"
+PYTHONPATH="$LIVE_TEST_ROOT" \
   "$PUBLISHED_ROOT/venv/bin/python" -m pytest -q -s \
-  libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py
+  "$LIVE_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
 ```
 
 Expected: PASS with the installed package version in `summary.json` and no remaining namespace.
@@ -1044,7 +879,7 @@ Expected: the workflow fails intentionally and Alertmanager returns one matching
 
 - [ ] **Step 7: Observe two consecutive scheduled intervals**
 
-After merge, inspect two consecutive `:07/:22/:37/:52` runs. Confirm both lanes pass, concurrency prevents overlap, artifacts are absent on success, and no `cua-live-*` namespace remains after either run.
+After merge, inspect two consecutive `:07/:22/:37/:52` runs. Confirm both lanes pass, a newer schedule cancels only an older scheduled run of the same lane, artifacts are absent on success, and no `cua-live-*` namespace remains after either run.
 
 - [ ] **Step 8: Record rollout evidence**
 

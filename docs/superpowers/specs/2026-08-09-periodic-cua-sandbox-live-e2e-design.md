@@ -41,63 +41,63 @@ testing the current Fleet-backed public SDK contract.
 
 ## Trigger And Lane Model
 
-Add `.github/workflows/periodic-cua-sandbox-live.yml` with three triggers:
+`.github/workflows/periodic-cua-sandbox-live.yml` has three triggers:
 
-1. `schedule` using `7/15 * * * *`, preserving the previous offset cadence at
-   `:07`, `:22`, `:37`, and `:52` each hour.
-2. `push` to `main`, path-filtered to the Fleet and sandbox SDK implementation,
-   the live test, and the workflow itself.
-3. `workflow_dispatch` with a lane input supporting `both`, `main-source`, and
-   `published-package`, plus a manual-only `force_failure` boolean used to
-   certify the Alertmanager route without provisioning a sandbox.
+1. `schedule` uses `7/15 * * * *`, preserving the `:07`, `:22`, `:37`, and
+   `:52` cadence.
+2. `push` is limited to `main` and these paths: `libs/python/cua-sandbox/**`,
+   `libs/python/cua-fleet/**`,
+   `.github/workflows/periodic-cua-sandbox-live.yml`, and
+   `.github/scripts/tests/test_periodic_cua_sandbox_live.py`.
+3. `workflow_dispatch` accepts `both`, `main-source`, or `published-package`,
+   plus manual-only `force_failure`.
 
-A small preparation job produces the lane matrix:
+The preparation script emits a JSON matrix: every `push` selects only
+`main-source`; every `schedule` selects both lanes; manual runs select their
+requested lane or both. The workflow contract executes this extracted shell
+script in `bash` with a temporary `GITHUB_OUTPUT` and parses the emitted JSON,
+so a push-to-both mutation or ignored manual selection fails CI.
 
-- scheduled runs execute `main-source` and `published-package`;
-- relevant pushes to `main` execute only `main-source`, because the matching
-  package may not have reached PyPI yet;
-- manual runs execute the selected lane or both lanes.
+The two lanes use `fail-fast: false` and this concurrency contract:
 
-The two lanes run independently with `fail-fast: false`. Concurrency is scoped
-per lane so a slow or stuck scheduled run cannot overlap the next run for the
-same lane. A superseded scheduled run may be cancelled, but a push or manual
-run should finish so it retains useful certification evidence.
+```yaml
+concurrency:
+  group: periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}
+  cancel-in-progress: ${{ github.event_name == 'schedule' }}
+```
+
+The event-and-lane grouping means a new schedule can cancel only an older
+schedule for the same lane. Push and manual runs use distinct groups and are
+allowed to finish.
 
 ## Installation Isolation
 
-Both lanes run the same stable test scenario but use separate Python
-environments:
+`main-source` installs `libs/python/cua-sandbox` editable;
+`published-package` installs the current published `cua-sandbox` wheel. Both
+lanes then run `Prepare isolated live test suite`, which copies only
+`tests/__init__.py` and `tests/live/*.py` into a temporary
+`CUA_LIVE_E2E_TEST_ROOT`, then runs:
 
-- `main-source` checks out the triggering `main` SHA, installs the local
-  `libs/python/cua-sandbox` package, and resolves its declared `cua-fleet`
-  wheel dependency from the configured package indexes.
-- `published-package` checks out the repository only for the test harness, then
-  installs the latest `cua-sandbox` release from PyPI without editable local
-  SDK packages.
+```bash
+PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT" python -m pytest -q -s \
+  "$CUA_LIVE_E2E_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
+```
 
-The workflow logs the exact Git SHA for `main-source` and the installed
-`cua-sandbox` plus `cua-fleet` versions for `published-package`. This makes it
-clear whether a failure belongs to unreleased source, a published artifact, or
-shared live infrastructure.
-
-The published lane is intentionally a public-package consumer. The test must
-not import repository-private helpers or rely on editable-package behavior.
+The checkout package root is not on that test path. Therefore the source lane
+uses its editable install while the published lane imports `cua_sandbox` from
+site-packages. The live summary records the resolved `cua_sandbox` module
+origin alongside package versions and source SHA.
 
 ## Authentication And Secrets
 
-Fleet authentication uses OAuth client credentials exposed only as masked
-GitHub Actions secrets:
-
-- `CUA_CLIENT_ID`
-- `CUA_CLIENT_SECRET`
-
-The backing user key is unrestricted (`scope=[]`) so the test may create and
-delete its uniquely named namespace across all namespaces owned by the CI user.
-The workflow sets `CUA_FLEET_BASE_URL=https://run.cua.ai` explicitly.
+Fleet authentication uses only masked GitHub Actions secrets `CUA_CLIENT_ID`
+and `CUA_CLIENT_SECRET`, with `CUA_FLEET_BASE_URL=https://run.cua.ai`. Before
+checkout, installation, or pytest, `Check Fleet OAuth credentials` exits with
+an error if either value is empty. This prevents production monitoring from
+passing through the live test's credential-free pytest skip.
 
 No credential value, access token, or authorization header is written to logs
-or uploaded artifacts. The test does not create a temporary user key during
-each run; key rotation is an operational concern outside this workflow.
+or uploaded artifacts. The workflow does not create temporary user keys.
 
 ## Live Scenario
 
@@ -166,19 +166,20 @@ reported alongside the primary exception.
 
 ## Diagnostics And Artifacts
 
-The test writes a sanitized JSON summary containing:
+The live test writes a sanitized JSON summary containing lane, source SHA,
+installed package versions, the resolved `cua_sandbox` module origin, namespace
+and resource names, assertion timing, screen and shell observations, automatic
+cleanup results, and remaining resources on a leak. On failure only, the
+workflow uploads this summary and related diagnostics with short retention.
 
-- lane, source SHA, and installed package versions;
-- namespace and resource names;
-- provisioning, readiness, assertion, and cleanup timings;
-- observed screen dimensions;
-- shell exit status;
-- cleanup result and any remaining resource kinds.
+A manual `force_failure` first runs `Write controlled failure diagnostics` to
+create a sanitized `summary.json` containing `ControlledFailure`, then exits
+nonzero so the failure-only artifact path is itself certifiable. The versions
+step uses `tee -a "$GITHUB_OUTPUT"` to log and publish `sandbox` and `fleet`
+outputs for the Alertmanager payload; it never reads its own step outputs.
 
-On failure only, upload the JSON summary, relevant sanitized logs, resource
-inventory, and final screenshot with short retention. Successful scheduled runs
-keep their evidence in the GitHub Actions log without producing recurring
-artifacts.
+Cleanup remains diagnostic-only and without explicit deletion: the workflow
+never calls `cleanup_namespace` or `delete_namespace`.
 
 ## Alertmanager
 
@@ -201,22 +202,12 @@ source regression with a published-package or shared-infrastructure failure.
 
 ## Workflow Contract Coverage
 
-Add a repository-side workflow contract test under `.github/scripts/tests/`.
-It verifies that the workflow retains:
-
-- the 15-minute offset schedule;
-- scheduled execution of both lanes;
-- source-only execution for relevant pushes to `main`;
-- manual lane selection;
-- pinned image digest and explicit port `8000`;
-- bounded job timeout and per-lane concurrency;
-- automatic cleanup plus diagnostic-only leak detection;
-- failure-only diagnostics upload;
-- lane-labeled Alertmanager notification;
-- commit-SHA-pinned GitHub Actions dependencies.
-
-This test runs in the existing scripts CI and prevents a workflow refactor from
-silently weakening its operational contract.
+The repository-side contract parses the workflow with `yaml.BaseLoader` and
+asserts triggers, path filters, the executed preparation matrix, checkout ref,
+event-and-lane concurrency, credential preflight, copied-suite isolation,
+version output handling, controlled-failure diagnostics, failure-only artifacts,
+Alertmanager labels, full-SHA action pins, and absence of explicit deletion.
+Scripts CI installs `pyyaml` and runs this contract when the workflow changes.
 
 ## Rollout
 
@@ -236,8 +227,8 @@ silently weakening its operational contract.
 
 - Both lanes pass against live Fleet infrastructure with the pinned Duo image.
 - A relevant merge to `main` receives an immediate source-lane result.
-- Every scheduled interval starts both lanes without overlapping a previous run
-  of the same lane.
+- Every scheduled interval starts both lanes; a newer schedule can cancel only
+  an older scheduled run of the same lane, while push and manual runs finish.
 - Port, screen, screenshot, and shell assertions all exercise the public SDK.
 - Normal and failing runs leave no test namespace behind.
 - A forced failure produces one actionable, lane-specific Alertmanager alert

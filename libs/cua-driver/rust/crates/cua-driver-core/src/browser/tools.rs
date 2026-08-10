@@ -82,8 +82,6 @@ const DOM_CLICK_READBACK_INTERVAL: Duration = Duration::from_millis(25);
 
 struct DomClickObservation {
     effect: ActionEffect,
-    observed: Option<Value>,
-    observed_after_ms: u64,
     readback_available: bool,
 }
 
@@ -103,22 +101,11 @@ async fn read_dom_click_state(conn: &CdpConnection, cdp: &str, object_id: &str) 
     .filter(Value::is_object)
 }
 
-fn dom_click_delta(before: &Value, after: &Value) -> Option<Value> {
-    let (Some(before), Some(after)) = (before.as_object(), after.as_object()) else {
-        return None;
-    };
-    let mut observed = serde_json::Map::new();
-    for key in before.keys().chain(after.keys()) {
-        if observed.contains_key(key) {
-            continue;
-        }
-        let old = before.get(key).unwrap_or(&Value::Null);
-        let new = after.get(key).unwrap_or(&Value::Null);
-        if old != new {
-            observed.insert(key.clone(), json!([old, new]));
-        }
-    }
-    (!observed.is_empty()).then_some(Value::Object(observed))
+fn dom_click_state_changed(before: &Value, after: &Value) -> bool {
+    before
+        .as_object()
+        .zip(after.as_object())
+        .is_some_and(|(before, after)| before != after)
 }
 
 async fn observe_dom_click(
@@ -130,8 +117,6 @@ async fn observe_dom_click(
     let Some(before) = before else {
         return DomClickObservation {
             effect: effect_from_value_readback(false, false, false),
-            observed: None,
-            observed_after_ms: 0,
             readback_available: false,
         };
     };
@@ -140,11 +125,9 @@ async fn observe_dom_click(
     loop {
         if let Some(after) = read_dom_click_state(conn, cdp, object_id).await {
             readable_after = true;
-            if let Some(observed) = dom_click_delta(&before, &after) {
+            if dom_click_state_changed(&before, &after) {
                 return DomClickObservation {
                     effect: effect_from_value_readback(true, true, true),
-                    observed: Some(observed),
-                    observed_after_ms: started.elapsed().as_millis() as u64,
                     readback_available: true,
                 };
             }
@@ -152,22 +135,10 @@ async fn observe_dom_click(
         if started.elapsed() >= DOM_CLICK_READBACK_DEADLINE {
             return DomClickObservation {
                 effect: effect_from_value_readback(false, false, readable_after),
-                observed: readable_after.then(|| json!({})),
-                observed_after_ms: started.elapsed().as_millis() as u64,
                 readback_available: readable_after,
             };
         }
         tokio::time::sleep(DOM_CLICK_READBACK_INTERVAL).await;
-    }
-}
-
-fn dom_click_effect_name(effect: ActionEffect) -> &'static str {
-    match effect {
-        ActionEffect::Confirmed => "confirmed",
-        ActionEffect::SuspectedNoop => "suspected_noop",
-        ActionEffect::Unverifiable => "unverifiable",
-        ActionEffect::Partial => "partial",
-        ActionEffect::Refused => "refused",
     }
 }
 
@@ -1310,7 +1281,6 @@ impl Tool for BrowserClickTool {
             {
                 Ok(_) => {
                     let observation = observe_dom_click(conn, cdp, &object_id, before).await;
-                    let effect = dom_click_effect_name(observation.effect);
                     let text = match observation.effect {
                         ActionEffect::Confirmed => format!(
                             "dispatched synthetic DOM click on {} in {tab_id}; bounded semantic \
@@ -1331,32 +1301,8 @@ impl Tool for BrowserClickTool {
                             ext_ref.as_deref().unwrap_or("?")
                         ),
                     };
-                    let escalation = (observation.effect != ActionEffect::Confirmed).then(|| {
-                        json!({
-                            "recommended": "page",
-                            "reason": if observation.effect == ActionEffect::SuspectedNoop {
-                                "bounded semantic target state remained unchanged; this is advisory, not proof of failure"
-                            } else {
-                                "semantic target readback was unavailable"
-                            },
-                        })
-                    });
                     let action_record = dom_click_action_record(&observation);
-                    ToolResult::text(text)
-                        .with_structured(json!({
-                            "status": "ok",
-                            "effect": effect,
-                            "route": "dom_event",
-                            "target_id": target_id,
-                            "tab_id": tab_id,
-                            "ref": ext_ref,
-                            "frame": frame_kind,
-                            "observed": observation.observed,
-                            "observed_after_ms": observation.observed_after_ms,
-                            "readback_available": observation.readback_available,
-                            "escalation": escalation,
-                        }))
-                        .with_action_record(action_record)
+                    ToolResult::text(text).with_action_record(action_record)
                 }
                 Err(e) => ToolResult::error(format!("DOM click failed: {e}")),
             };

@@ -1685,10 +1685,8 @@ async fn browser_visual_feedback_probes_live_tab_visibility_without_activating_i
         .await;
 
     assert_eq!(
-        structured(&result)["status"],
-        "ok",
-        "{}",
-        structured(&result)
+        result.action_record.as_ref().map(|record| record.effect),
+        Some(crate::action_record::ActionEffect::Confirmed)
     );
     let visibility = recorded_calls(&f, "Runtime.evaluate");
     assert_eq!(visibility.len(), 1, "{visibility:?}");
@@ -2036,15 +2034,8 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         "input_route": "dom_event", "session": SESSION
     });
     let synthetic = BrowserClickTool::new(f.engine.clone())
-        .invoke(synthetic_args.clone())
+        .invoke(synthetic_args)
         .await;
-    assert_eq!(structured(&synthetic)["status"], "ok");
-    assert_eq!(structured(&synthetic)["effect"], "confirmed");
-    assert_eq!(
-        structured(&synthetic)["observed"]["innerText"],
-        json!(["counter=0", "counter=1"])
-    );
-    assert!(structured(&synthetic)["escalation"].is_null());
     assert!(synthetic.content.iter().any(|content| matches!(
         content,
         crate::protocol::Content::Text { text, .. }
@@ -2085,9 +2076,6 @@ async fn dom_event_click_reports_suspected_noop_for_readable_unchanged_target_st
         }))
         .await;
 
-    assert_eq!(structured(&result)["effect"], "suspected_noop");
-    assert_eq!(structured(&result)["observed"], json!({}));
-    assert_eq!(structured(&result)["readback_available"], true);
     assert!(result.content.iter().any(|content| matches!(
         content,
         Content::Text { text, .. }
@@ -2123,9 +2111,6 @@ async fn dom_event_click_remains_unverifiable_when_semantic_readback_is_unavaila
         }))
         .await;
 
-    assert_eq!(structured(&result)["effect"], "unverifiable");
-    assert!(structured(&result)["observed"].is_null());
-    assert_eq!(structured(&result)["readback_available"], false);
     assert!(result.content.iter().any(|content| matches!(
         content,
         Content::Text { text, .. }

@@ -517,7 +517,7 @@ pub fn parse_command() -> Command {
         println!("                          CUA_DRIVER_EMBEDDED=1). Without --direct, the host");
         println!("                          must start `cua-driver serve --embedded` and pass");
         println!("                          its private endpoint with --socket.");
-        println!("                          See Skills/cua-driver/EMBEDDING.md.");
+        println!("                          See AgentPlugin/skills/cua-driver/EMBEDDING.md.");
         println!(
             "  --host-bundle-id <id>   Advisory host bundle id label for check_permissions output."
         );

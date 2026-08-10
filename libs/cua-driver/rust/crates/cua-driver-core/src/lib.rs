@@ -15,7 +15,7 @@ pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DI
 /// Embedded mode (`CUA_DRIVER_EMBEDDED=1` / `--embedded`): the daemon runs as
 /// a direct child of a host app and stays in its TCC responsibility chain —
 /// no disclaim re-exec, standalone-app relaunch, or permission prompts.
-/// See `Skills/cua-driver/EMBEDDING.md`.
+/// See `AgentPlugin/skills/cua-driver/EMBEDDING.md`.
 ///
 /// Caller-controlled, which is safe only because embedded mode strictly
 /// REMOVES capability claims; it must never feed into the `driver-daemon`

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "cua-driver",
+  "version": "0.19.2",
+  "description": "Cross-platform background computer-use automation with Agent Skills and an MCP server.",
+  "author": {
+    "name": "Cua AI",
+    "url": "https://cua.ai"
+  },
+  "homepage": "https://cua.ai/docs/cua-driver",
+  "repository": "https://github.com/trycua/cua",
+  "license": "MIT",
+  "keywords": [
+    "computer-use",
+    "desktop-automation",
+    "mcp",
+    "agent-skills"
+  ]
+}

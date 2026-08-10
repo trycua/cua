@@ -778,27 +778,23 @@ jobs:
           cp libs/cua-driver/scripts/uninstall.sh       release-upload/uninstall.sh
           cp libs/cua-driver/scripts/uninstall.ps1      release-upload/uninstall.ps1
 
-          # Skill pack — single platform-agnostic tarball fetched by
-          # `cua-driver skills install`. The .md files are identical across
-          # OS so we publish one asset per release tag. Naming matches the
-          # versioned binary tarballs.
-          # Asset name keeps the `cua-driver-rs-v*` prefix for backward
-          # compat with the URL skills.rs constructs.
-          #
-          # Staging layout = one wrapper directory, flat .md files under
-          # it. extract_tar_gz strips that single wrapper and lands files
-          # directly in <HomeDir>/skills/cua-driver/. v0.2.19 and earlier
-          # had a second `cua-driver/` (or `cua-driver-rs/`) dir inside
-          # the wrapper — the extractor sees that and strips it too for
-          # backward compat with already-published releases.
+          # Agent Plugin package — one platform-agnostic tarball consumed both
+          # by Agent Plugins v1 clients and by `cua-driver skills install`.
+          # The package root carries plugin.json, mcp.json, and the skill at
+          # the standard fixed path skills/cua-driver/. The direct installer
+          # flattens that skill into <HomeDir>/skills/cua-driver/ so existing
+          # Claude Code, Codex, Prime Agent, OpenClaw, OpenCode, Antigravity,
+          # and Hermes installs keep their current behavior.
+          # Asset naming retains the `cua-driver-rs-v*` prefix for backward
+          # compatibility with the URL skills.rs constructs.
           SKILLS_STAGE="cua-driver-rs-v${VERSION}-skills"
-          if [ -d libs/cua-driver/rust/Skills/cua-driver ]; then
+          if [ -d libs/cua-driver/rust/AgentPlugin/skills/cua-driver ]; then
             mkdir -p "${SKILLS_STAGE}"
-            cp -R libs/cua-driver/rust/Skills/cua-driver/. "${SKILLS_STAGE}/"
+            cp -R libs/cua-driver/rust/AgentPlugin/. "${SKILLS_STAGE}/"
             tar -czf "release-upload/${SKILLS_STAGE}.tar.gz" "${SKILLS_STAGE}"
-            echo "Packaged skill pack: release-upload/${SKILLS_STAGE}.tar.gz"
+            echo "Packaged Agent Plugin: release-upload/${SKILLS_STAGE}.tar.gz"
           else
-            echo "Note: libs/cua-driver/rust/Skills/cua-driver not present; skipping skill-pack asset."
+            echo "Note: libs/cua-driver/rust/AgentPlugin not present; skipping Agent Plugin asset."
           fi
 
           echo "Release files:"

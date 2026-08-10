@@ -341,7 +341,7 @@ pub fn initialize_result() -> Value {
 /// connecting client. The spec frames this as a "hint... MAY be added
 /// to the system prompt" — eager, every-turn cost. We keep it under
 /// the community-recommended ~200-word ceiling and host the long-form
-/// workflow in `Skills/cua-driver/SKILL.md`.
+/// workflow in `AgentPlugin/skills/cua-driver/SKILL.md`.
 ///
 /// Templated per-host: the accessibility-tree provider name (AX on
 /// macOS, UIA on Windows, AT-SPI on Linux) is injected so a connecting

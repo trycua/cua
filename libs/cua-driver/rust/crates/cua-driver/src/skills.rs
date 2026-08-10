@@ -34,7 +34,7 @@
 //!
 //! `--from <tag>` lets the user pin a different release tag.
 //! `--from main` fetches the latest from the `main` branch via the
-//! `Skills/cua-driver/` directory (one HTTP call per file — used
+//! `AgentPlugin/skills/cua-driver/` directory (one HTTP call per file — used
 //! for bleeding-edge dev validation; not the default).
 //!
 //! ## Agent detection
@@ -527,7 +527,7 @@ fn fetch_into(dest: &Path, from_main: bool, all_platforms: bool) -> Result<()> {
 
     if from_main {
         // Per-file raw GitHub fetch — used for bleeding-edge dev validation.
-        let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/rust/Skills/cua-driver";
+        let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/rust/AgentPlugin/skills/cua-driver";
         for f in SKILL_FILES {
             if is_excluded_platform_doc(f, all_platforms) {
                 continue;
@@ -578,12 +578,14 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path, all_platforms: bool) -> Result<()> 
     // Tarball shape across versions:
     //   v0.2.18 and earlier: cua-driver-rs-v<v>-skills/cua-driver-rs/<file>
     //   v0.2.19 (briefly):   cua-driver-rs-v<v>-skills/cua-driver/<file>
-    //   v0.2.20+:            cua-driver-rs-v<v>-skills/<file>     (CD workflow now flattens)
+    //   v0.2.20-v0.19.x:     cua-driver-rs-v<v>-skills/<file>
+    //   Agent Plugins v1:    cua-driver-rs-v<v>-skills/skills/cua-driver/<file>
+    //                         plus root plugin.json and mcp.json
     //
     // Strip the outer staging dir always; additionally strip a SECOND
     // wrapping dir IF it's named `cua-driver` or `cua-driver-rs` — that
     // covers the legacy double-wrap without losing files in the
-    // (now-canonical) single-wrap shape.
+    // previously-canonical single-wrap shape.
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
@@ -600,9 +602,34 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path, all_platforms: bool) -> Result<()> 
                 components.next();
             }
         }
-        let stripped: PathBuf = components.collect();
+        let mut stripped: PathBuf = components.collect();
         if stripped.as_os_str().is_empty() {
             continue;
+        }
+        // Agent Plugins v1 packages keep skills under the fixed
+        // `skills/<name>/` component path. The direct installer still links
+        // a bare skill directory into legacy/nonconforming agents, so flatten
+        // that prefix and ignore the package-level manifests.
+        if stripped == Path::new("plugin.json") || stripped == Path::new("mcp.json") {
+            continue;
+        }
+        let plugin_relative = {
+            let mut plugin_components = stripped.components();
+            if plugin_components.next().map(|part| part.as_os_str())
+                == Some(std::ffi::OsStr::new("skills"))
+                && plugin_components.next().map(|part| part.as_os_str())
+                    == Some(std::ffi::OsStr::new(SKILL_PACK_NAME))
+            {
+                Some(plugin_components.collect::<PathBuf>())
+            } else {
+                None
+            }
+        };
+        if let Some(plugin_relative) = plugin_relative {
+            stripped = plugin_relative;
+            if stripped.as_os_str().is_empty() {
+                continue;
+            }
         }
         // Per-host filter: skip the other platforms' .md files unless
         // the user opted into the full set with --all-platforms.
@@ -818,8 +845,74 @@ mod tests {
     }
 
     #[test]
+    fn canonical_agent_plugin_declares_versioned_skill_and_stdio_mcp() {
+        let plugin_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../AgentPlugin");
+        let plugin: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(plugin_root.join("plugin.json"))
+                .expect("canonical plugin.json must be readable"),
+        )
+        .expect("plugin.json must be valid JSON");
+        let mcp: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(plugin_root.join("mcp.json"))
+                .expect("canonical mcp.json must be readable"),
+        )
+        .expect("mcp.json must be valid JSON");
+
+        assert_eq!(
+            plugin["$schema"],
+            "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+        );
+        assert_eq!(plugin["name"], "cua-driver");
+        assert_eq!(plugin["version"], env!("CARGO_PKG_VERSION"));
+        assert!(plugin_root.join("skills/cua-driver/SKILL.md").is_file());
+        assert_eq!(
+            mcp["$schema"],
+            "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
+        );
+        assert_eq!(mcp["mcpServers"]["cua-driver"]["type"], "stdio");
+        assert_eq!(mcp["mcpServers"]["cua-driver"]["command"], "cua-driver");
+        assert_eq!(mcp["mcpServers"]["cua-driver"]["args"], serde_json::json!(["mcp"]));
+    }
+
+    #[test]
+    fn extract_agent_plugin_tarball_flattens_skill_for_legacy_agent_links() {
+        let bytes = build_tarball(&[
+            (
+                "cua-driver-rs-v0.20.0-skills/plugin.json",
+                br#"{"name":"cua-driver"}"#,
+            ),
+            (
+                "cua-driver-rs-v0.20.0-skills/mcp.json",
+                br#"{"mcpServers":{}}"#,
+            ),
+            (
+                "cua-driver-rs-v0.20.0-skills/skills/cua-driver/SKILL.md",
+                b"portable-skill",
+            ),
+            (
+                "cua-driver-rs-v0.20.0-skills/skills/cua-driver/MACOS.md",
+                b"portable-macos",
+            ),
+        ]);
+        let dest = tempdir().unwrap();
+        extract_tar_gz(&bytes, dest.path(), true).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap(),
+            "portable-skill"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.path().join("MACOS.md")).unwrap(),
+            "portable-macos"
+        );
+        assert!(!dest.path().join("plugin.json").exists());
+        assert!(!dest.path().join("mcp.json").exists());
+        assert!(!dest.path().join("skills").exists());
+    }
+
+    #[test]
     fn from_main_manifest_matches_canonical_markdown_files() {
-        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Skills/cua-driver");
+        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../AgentPlugin/skills/cua-driver");
         let mut canonical = std::fs::read_dir(&skill_dir)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", skill_dir.display()))
             .map(|entry| entry.unwrap().path())
@@ -843,7 +936,7 @@ mod tests {
     #[test]
     fn macos_skill_keeps_ax_only_and_non_prompting_permission_guidance() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let macos = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/MACOS.md"))
+        let macos = std::fs::read_to_string(crate_dir.join("../../AgentPlugin/skills/cua-driver/MACOS.md"))
             .expect("canonical macOS skill must be readable");
 
         for required in [
@@ -862,7 +955,7 @@ mod tests {
     #[test]
     fn bundled_skill_keeps_filesystem_outcome_ladder_and_gui_proof_boundaries() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+        let skill = std::fs::read_to_string(crate_dir.join("../../AgentPlugin/skills/cua-driver/SKILL.md"))
             .expect("canonical skill must be readable");
 
         for required in [
@@ -883,9 +976,9 @@ mod tests {
     #[test]
     fn bundled_skill_keeps_semantic_clipboard_outcome_ladder() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+        let skill = std::fs::read_to_string(crate_dir.join("../../AgentPlugin/skills/cua-driver/SKILL.md"))
             .expect("canonical skill must be readable");
-        let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
+        let browser = std::fs::read_to_string(crate_dir.join("../../AgentPlugin/skills/cua-driver/BROWSER.md"))
             .expect("canonical browser skill must be readable");
 
         for required in [

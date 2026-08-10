@@ -29,6 +29,30 @@ import (
 	"github.com/trycua/cloud/pkg/featureflags"
 )
 
+func TestGatewayRoutesAreRemoved(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+
+	for _, path := range []string{"/api/gateway/mypool", "/api/gateway/mypool/step"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404; body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestSwaggerOmitsGatewayRoute(t *testing.T) {
+	data, err := os.ReadFile("docs/swagger.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"/api/gateway/`) {
+		t.Fatal("swagger.json still exposes the removed gateway route")
+	}
+}
+
 // TestDeprecatedRoutes asserts that every deprecated batch/label endpoint
 // returns HTTP 410 Gone with the canonical deprecation message.  Each route
 // is exercised individually so a regression on any single path is immediately

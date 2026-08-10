@@ -529,38 +529,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/gateway/{name}/{path}": {
-            "get": {
-                "description": "The per-pool HTTP orchestrator has been deprecated and removed. All pools now use OSGymSandboxClaim CRs exclusively (Path B). This endpoint returns 410 Gone for any request. See CUA-609.",
-                "tags": [
-                    "gateway"
-                ],
-                "summary": "DEPRECATED: Per-pool orchestrator reverse-proxy (CUA-609)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name (DNS-1123 label)",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Upstream path (ignored)",
-                        "name": "path",
-                        "in": "path"
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Orchestrator HTTP layer deprecated (CUA-609)",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/k8s/{path}": {
             "get": {
                 "security": [
@@ -1597,7 +1565,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). /api/gateway/{name} requires a per-key token whose ` + "`" + `namespace` + "`" + ` claim equals \"pool-{name}\" (enforced by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.",
+            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"
@@ -1612,7 +1580,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "Cyclops CS Backend API",
-	Description:      "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), namespace management, and deprecated gateway / batch / label routes that now return 410 Gone. All pool operations use OSGymSandboxClaim CRs (Path B).",
+	Description:      "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), namespace management, and deprecated batch / label routes that now return 410 Gone. All pool operations use OSGymSandboxClaim CRs (Path B).",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

@@ -14,17 +14,6 @@
 #                       rather than 410, preserving the auth boundary
 #                       even for a retired surface.
 #
-#   /api/gateway/{name} — orchestrator proxy. Requires a token issued to
-#                         a per-key client (azp starts with "key-") with:
-#                           • a non-empty `namespace` claim
-#                           • `namespace` == "{name}" (the token's
-#                             hardcoded-claim mapper must name the exact pool
-#                             the client belongs to, so one compromised key
-#                             cannot reach another pool)
-#                         Per-pool orchestrators no longer have a direct
-#                         Tailscale Ingress — all traffic MUST flow through
-#                         this proxy (CUA-527).
-#
 # Data-visibility filtering (which events/env-vars the caller may see) lives
 # in filters.rego, not here.  authz.rego decides allow/deny only.
 package authz
@@ -256,23 +245,6 @@ is_batch_route { input.route == "/api/label/{pool}/{label}/batch" }
 is_batch_route { input.route == "/api/label/{pool}/{label}/status" }
 is_batch_route { input.route == "/api/label/{pool}/{label}/results" }
 is_batch_route { input.route == "/api/label/{pool}/{label}" }
-
-# /api/gateway/{name}[/{path...}].
-#
-# The JWT `namespace` claim is set by a hardcoded-claim protocol mapper on
-# the per-key Keycloak client.  Pool name = namespace name (1:1), so we
-# enforce the exact match here: a token for pool "foo" carries
-# namespace="foo" and may only reach /api/gateway/foo/…
-allow {
-    is_gateway_route
-    is_per_key_client
-    valid_dns_label(input.params.name)
-    input.user.namespace != ""
-    input.user.namespace == input.params.name
-}
-
-is_gateway_route { input.route == "/api/gateway/{name}" }
-is_gateway_route { input.route == "/api/gateway/{name}/{path...}" }
 
 # /api/svc/{namespace}/{service}[/{path...}] — generic service proxy.
 #

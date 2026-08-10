@@ -46,87 +46,6 @@ test_keys_non_spa_denied if {
 	}
 }
 
-# ── /api/gateway ──────────────────────────────────────────────────────────────
-#
-# Policy (CUA-527): token's `namespace` claim MUST equal the pool name.
-# A per-key client holds exactly one pool; namespace is set by the Keycloak
-# hardcoded-claim mapper.
-
-test_gateway_exact_namespace_allowed if {
-	authz.allow with input as {
-		"route": "/api/gateway/{name}",
-		"method": "GET",
-		"path": "/api/gateway/mypool",
-		"params": {"name": "mypool"},
-		"user": {"sub": "svc-123", "azp": "key-mypool", "namespace": "mypool", "email": ""},
-	}
-}
-
-test_gateway_path_exact_namespace_allowed if {
-	authz.allow with input as {
-		"route": "/api/gateway/{name}/{path...}",
-		"method": "GET",
-		"path": "/api/gateway/mypool/step",
-		"params": {"name": "mypool", "path": "step"},
-		"user": {"sub": "svc-123", "azp": "key-mypool", "namespace": "mypool", "email": ""},
-	}
-}
-
-# Wrong namespace — must be rejected (cross-pool attack).
-test_gateway_wrong_namespace_denied if {
-	not authz.allow with input as {
-		"route": "/api/gateway/{name}",
-		"method": "GET",
-		"path": "/api/gateway/mypool",
-		"params": {"name": "mypool"},
-		"user": {"sub": "svc-123", "azp": "key-mypool", "namespace": "otherpool", "email": ""},
-	}
-}
-
-# Namespace matches pool name — allowed (1:1 mapping).
-test_gateway_matching_name_namespace_allowed if {
-	authz.allow with input as {
-		"route": "/api/gateway/{name}",
-		"method": "GET",
-		"path": "/api/gateway/mypool",
-		"params": {"name": "mypool"},
-		"user": {"sub": "svc-123", "azp": "key-mypool", "namespace": "mypool", "email": ""},
-	}
-}
-
-# Empty namespace — denied.
-test_gateway_empty_namespace_denied if {
-	not authz.allow with input as {
-		"route": "/api/gateway/{name}",
-		"method": "GET",
-		"path": "/api/gateway/mypool",
-		"params": {"name": "mypool"},
-		"user": {"sub": "svc-123", "azp": "key-mypool", "namespace": "", "email": ""},
-	}
-}
-
-# SPA token on gateway route — denied (must use per-key client).
-test_gateway_spa_token_denied if {
-	not authz.allow with input as {
-		"route": "/api/gateway/{name}",
-		"method": "GET",
-		"path": "/api/gateway/mypool",
-		"params": {"name": "mypool"},
-		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "mypool", "email": "u@example.com"},
-	}
-}
-
-# Invalid pool name (contains uppercase) — denied by DNS-label check.
-test_gateway_invalid_pool_name_denied if {
-	not authz.allow with input as {
-		"route": "/api/gateway/{name}",
-		"method": "GET",
-		"path": "/api/gateway/MyPool",
-		"params": {"name": "MyPool"},
-		"user": {"sub": "svc-123", "azp": "key-mypool", "namespace": "MyPool", "email": ""},
-	}
-}
-
 # ── /api/k8s ──────────────────────────────────────────────────────────────────
 
 test_k8s_spa_allowed if {
@@ -174,8 +93,7 @@ test_orch_cua_cli_allowed if {
 # ── /api/batch and /api/label ────────────────────────────────────────────────
 #
 # Pool is in the URL path. A per-key token's `namespace` claim MUST equal
-# the pool name, mirroring /api/gateway/{name}. SPA tokens can target any
-# pool.
+# the pool name. SPA tokens can target any pool.
 
 test_batch_submit_spa_allowed if {
 	authz.allow with input as {

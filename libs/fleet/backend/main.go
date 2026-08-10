@@ -9,14 +9,6 @@
 //	/api/keys[/{id}]            — SPA-authenticated CRUD on per-user
 //	                              service-account clients in Keycloak.
 //
-//	/api/gateway/{name}[/{p...}]— DEPRECATED (CUA-609). Returns 410 Gone.
-//	                              The per-pool orchestrator HTTP layer has
-//	                              been removed. All pool operations now use
-//	                              OSGymSandboxClaim CRs (Path B) directly.
-//	                              Zero HTTP traffic was confirmed before
-//	                              removal. Route kept for OPA continuity
-//	                              (per-key tokens still validated).
-//
 //	/api/batch/{pool}, /api/label/{pool}
 //	                            — DEPRECATED. Returns 410 Gone for every
 //	                              request. The orchestrator-backed batch
@@ -25,12 +17,12 @@
 //
 //	@title						Cyclops CS Backend API
 //	@version					0.1
-//	@description				Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), namespace management, and deprecated gateway / batch / label routes that now return 410 Gone. All pool operations use OSGymSandboxClaim CRs (Path B).
+//	@description				Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), namespace management, and deprecated batch / label routes that now return 410 Gone. All pool operations use OSGymSandboxClaim CRs (Path B).
 //	@BasePath					/
 //	@securityDefinitions.apikey	BearerAuth
 //	@in							header
 //	@name						Authorization
-//	@description				Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). /api/gateway/{name} requires a per-key token whose `namespace` claim equals "pool-{name}" (enforced by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.
+//	@description				Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.
 package main
 
 import (
@@ -155,11 +147,6 @@ func setupRouter(c handlers.Handlers) http.Handler {
 		withMiddlewares("/api/github-trust-policies/{id}", []string{"id"}, c.UpdateGitHubTrustPolicy))
 	r.Handle("DELETE /api/github-trust-policies/{id}",
 		withMiddlewares("/api/github-trust-policies/{id}", []string{"id"}, c.DeleteGitHubTrustPolicy))
-
-	r.Handle("/api/gateway/{name}",
-		withMiddlewares("/api/gateway/{name}", []string{"name"}, c.Gateway))
-	r.Handle("/api/gateway/{name}/{path...}",
-		withMiddlewares("/api/gateway/{name}/{path...}", []string{"name", "path"}, c.Gateway))
 
 	// Generic service proxy — reaches a K8s Service on port 80 in a
 	// namespace the caller is authorized for. OPA gates authn/shape;

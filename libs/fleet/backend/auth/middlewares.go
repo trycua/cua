@@ -400,7 +400,8 @@ func applyUserKeyIdentity(user *User, userKeyPfx string) error {
 //
 // The `route` and `params` map are filled by RouteContext below before
 // this middleware runs; they let policy reason about the matched
-// route ("/api/gateway/{name}") and its parameters separately from the
+// route ("/api/orch/{namespace}/{service}/{path...}") and its parameters
+// separately from the
 // raw URL path.
 func OpaMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

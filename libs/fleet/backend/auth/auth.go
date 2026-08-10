@@ -5,10 +5,7 @@
 //     tokens do not carry a useful `aud`; GitHub OIDC validates signed
 //     audiences separately.
 //   - OPA (Rego) is used for all route-level authorization via
-//     OpaMiddleware; see auth/authz.rego.  The gateway surface additionally
-//     enforces that the token's `namespace` claim equals "pool-{name}"
-//     (CUA-527), preventing a compromised key from reaching any pool other
-//     than its own.
+//     OpaMiddleware; see auth/authz.rego.
 //   - Three token families: exact interactive clients, per-key clients, and
 //     user-key clients; route policy enforces each family and required claims.
 package auth

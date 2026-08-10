@@ -588,7 +588,9 @@ impl Tool for ListAppsTool {
                 For just opening an app — running or not — call launch_app({path: ...}) \
                 directly; list_apps is not a prerequisite."
                     .into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -596,7 +598,10 @@ impl Tool for ListAppsTool {
         })
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        // A confined session sees only its own processes — applied here, at the
+        // source, so every count and record below describes the same world.
+        let scope = cua_driver_core::visibility_scope::scope_for_args(&args);
         // Strategy:
         // 1. Enumerate top-level visible windows → derive the set of running pids
         //    that have a user-facing surface.
@@ -609,7 +614,7 @@ impl Tool for ListAppsTool {
         //    that launch_path. Remaining installed entries are emitted with
         //    running=false, pid=0. Remaining running pids (no installed-app
         //    match) are emitted as running=true with launch_path=null.
-        let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
+        let apps = tokio::task::spawn_blocking(move || -> Vec<serde_json::Value> {
             use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
             use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
@@ -622,6 +627,7 @@ impl Tool for ListAppsTool {
             let mut seen_pids = std::collections::HashSet::new();
             let mut running_pids: Vec<u32> = Vec::new();
             for w in &wins {
+                if !cua_driver_core::visibility_scope::allows(scope.as_ref(), w.pid) { continue }
                 if seen_pids.insert(w.pid) { running_pids.push(w.pid); }
             }
 
@@ -641,7 +647,14 @@ impl Tool for ListAppsTool {
                 procs.iter().map(|p| (p.pid, p.name.clone())).collect();
 
             let t3 = std::time::Instant::now();
-            let installed = crate::win32::list_installed_apps();
+            // A confined session gets no installed-app inventory: what the
+            // machine has installed is not part of the session's world, and
+            // enumerating the Start Menu is the slowest step here anyway.
+            let installed = if scope.is_some() {
+                Vec::new()
+            } else {
+                crate::win32::list_installed_apps()
+            };
             tracing::debug!(target: "list_apps", "step 4 list_installed_apps: {} installed ({}ms)", installed.len(), t3.elapsed().as_millis());
             // Lowercase-exe-basename → installed-app indices. We match running
             // processes by basename rather than full path because the process
@@ -813,7 +826,8 @@ impl Tool for ListWindowsTool {
                 Inputs: pid (optional pid filter), on_screen_only (bool, default false).".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer","description":"Optional pid filter. When set, only this pid's windows are returned."},
-                "on_screen_only":{"type":"boolean","description":"When true, drop windows that aren't currently on-screen. Default false."}
+                "on_screen_only":{"type":"boolean","description":"When true, drop windows that aren't currently on-screen. Default false."},
+                "session": cua_driver_core::tool_schema::session_schema()
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -823,6 +837,10 @@ impl Tool for ListWindowsTool {
         use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
         let on_screen_only = args.bool_or("on_screen_only", false);
+        // Applied before the records are built, so z-order, the pid count and
+        // the on-screen count all describe the scoped world rather than the
+        // machine's.
+        let scope = cua_driver_core::visibility_scope::scope_for_args(&args);
         let (mut windows, pid_to_name) = tokio::task::spawn_blocking(move || {
             let wins = crate::win32::list_windows(filter_pid);
             let procs = crate::win32::list_processes();
@@ -835,6 +853,7 @@ impl Tool for ListWindowsTool {
         if on_screen_only {
             windows.retain(|w| w.is_on_screen);
         }
+        windows.retain(|w| cua_driver_core::visibility_scope::allows(scope.as_ref(), w.pid));
 
         // Swift surfaces a warning when a pid filter matches nothing.
         let missing_pid_warning = if let Some(fp) = filter_pid {
@@ -7077,6 +7096,12 @@ impl Tool for GetDesktopStateTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::protocol::Content;
+        // A full-display capture cannot be scoped: pixels of every other app on
+        // the machine come with it. A confined session is refused rather than
+        // handed a cropped approximation.
+        if cua_driver_core::visibility_scope::scope_for_args(&args).is_some() {
+            return ToolResult::error(cua_driver_core::visibility_scope::DESKTOP_CAPTURE_REFUSAL);
+        }
         let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
             Ok(input) => input,
             Err(error) => return error,

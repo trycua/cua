@@ -86,7 +86,8 @@ before stopping or advancing:
 3. **Background pixel action.** Use the pixels from the same state snapshot.
 4. **Foreground delivery.** Retry only the action that evidence says could not
    land in the background.
-5. **Desktop fallback.** Enter this explicit, one-way session phase last.
+5. **Desktop fallback.** Select an exact desktop target for that call only.
+   Later calls may return to an exact window target in the same session.
 
 Use Cua Driver when the outcome lives in an application's UI or window state,
 or when the user explicitly asks to operate that GUI. Once the task crosses
@@ -346,7 +347,8 @@ The route vocabulary is intentionally cross-platform:
 An optional escalation is a harness instruction, never an automatic retry:
 
 - `pixel`: refresh visual state and choose an exact pixel target;
-- `foreground`: explicitly select foreground delivery if session policy allows;
+- `foreground`: explicitly select foreground delivery if the authorization
+  stack admits the tool and exact target;
 - `page`: bind the native window to a supported browser page route;
 - `session`: a legacy compatibility signal from an older capture-scope daemon;
   current callers choose a desktop target on the specific action instead.
@@ -384,6 +386,39 @@ stale values on disk are ignored. `start_session.capture_scope`,
 `get_session_state`, and `escalate_session` are deprecated compatibility
 surfaces. There is no `deescalate_session`. Reserved fields such as
 `_session_id` are transport metadata and cannot create authority.
+
+## Keep authorization separate from sessions
+
+The trusted host selects one permission profile at startup. `standard` keeps
+the normal profile behavior and residual approval requirements, `bounded`
+requires a reviewed capability manifest and has no runtime approval path, and
+`unrestricted` bypasses Cua approval prompts after explicit risk acceptance.
+Hard invariants plus managed and user policy remain binding in every profile.
+
+An optional capability manifest is a deny-by-default ceiling in `standard` and
+`unrestricted`; `bounded` requires one. It can remove tools or typed resources
+from the selected profile, but it cannot grant a tool, resource, or approval
+bypass that another authorization layer denies. Approval is considered only
+after the tool and every adapter-attested resource are inside manifest scope.
+
+Use the canonical startup pair together:
+
+```bash
+cua-driver mcp \
+  --permission-mode standard \
+  --capability-manifest ./capabilities.yaml \
+  --approve-capability-manifest
+```
+
+Capability manifest v3 omits file-level `mode` and `ask.tools`. Its
+`allow.tools` list is nonempty. Lifetime fields are optional in `standard` and
+`unrestricted`; `bounded` requires both `expires_after` and `idle_timeout`.
+The older `--session-policy` names remain compatibility aliases and must not be
+used in new configurations.
+
+Starting, ending, naming, reconnecting, or omitting a session never changes
+permission authority. A public session label is lifecycle metadata, never a
+grant, caller identity, or bearer credential.
 
 ### Why window selection is the caller's job now
 

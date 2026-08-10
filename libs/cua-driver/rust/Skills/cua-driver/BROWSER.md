@@ -15,21 +15,24 @@ mints session-scoped tab and element capabilities.
 The canonical loop is:
 
 ```text
-start_session
+start_session(session?)                                  # optional on MCP/SDK
 list_windows or launch_app
-get_browser_state(pid, window_id, session)       # bind
-get_browser_state(target_id, tab_id, session,
-                  snapshot_format=semantic_v2)  # snapshot
+get_browser_state(pid, window_id, session?)               # bind
+get_browser_state(target_id, tab_id, session?,
+                  snapshot_format=semantic_v2)            # snapshot
 browser_navigate / browser_click / browser_type / browser_pointer
 browser_dialog / browser_set_input_files / browser_download
-get_browser_state(target_id, tab_id, session,
-                  snapshot_format=semantic_v2)  # verify and refresh refs
-end_session
+get_browser_state(target_id, tab_id, session?,
+                  snapshot_format=semantic_v2)            # verify and refresh refs
+end_session(session?)                                     # optional cleanup
 ```
 
-Use one explicit `session` value throughout. Never substitute a raw CDP
-target id, tab ordinal, URL match, or remembered ref for a capability returned
-by `get_browser_state`.
+One long-lived MCP or SDK transport may omit `session`; its first admitted call
+creates one implicit session and later unnamed calls reuse it. Direct one-shot
+CLI calls use disposable transports, so name a session for a multi-call browser
+workflow and pass that label throughout. Never substitute a raw CDP target id,
+tab ordinal, URL match, or remembered ref for a capability returned by
+`get_browser_state`.
 
 ### Copy page content to the system clipboard
 
@@ -425,8 +428,9 @@ result from the current host, process, window, session, and tab.
 - `browser_requires_setup`: obtain explicit approval and call
   `browser_prepare`; never make setup a hidden read side effect.
 - `browser_consent_required`: restart standard mode with the trusted launch
-  grant, use a matching bounded manifest, or let the embedding host decide the
-  attested request. Do not automate a generic approval dialog.
+  grant, use a capability manifest that admits the exact resource while the
+  selected profile remains independently binding, or let the embedding host
+  decide the attested request. Do not automate a generic approval dialog.
 - `browser_binding_ambiguous` or heuristic binding: resolve the native-window
   ambiguity and bind again; do not mutate.
 - `browser_ref_stale`: snapshot again and use a new ref.

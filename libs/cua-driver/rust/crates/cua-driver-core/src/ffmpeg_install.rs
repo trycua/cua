@@ -57,7 +57,10 @@ pub fn install_plan() -> Option<InstallPlan> {
             ("apt-get", &["apt-get", "install", "-y", "ffmpeg"]),
             ("dnf", &["dnf", "install", "-y", "ffmpeg"]),
             ("yum", &["yum", "install", "-y", "ffmpeg"]),
-            ("zypper", &["zypper", "--non-interactive", "install", "ffmpeg"]),
+            (
+                "zypper",
+                &["zypper", "--non-interactive", "install", "ffmpeg"],
+            ),
             ("pacman", &["pacman", "-S", "--noconfirm", "ffmpeg"]),
             ("apk", &["apk", "add", "ffmpeg"]),
             ("snap", &["snap", "install", "ffmpeg"]),
@@ -98,8 +101,13 @@ pub fn install_plan() -> Option<InstallPlan> {
             return Some(InstallPlan {
                 manager: "winget".into(),
                 argv: [
-                    "winget", "install", "-e", "--id", "Gyan.FFmpeg",
-                    "--accept-package-agreements", "--accept-source-agreements",
+                    "winget",
+                    "install",
+                    "-e",
+                    "--id",
+                    "Gyan.FFmpeg",
+                    "--accept-package-agreements",
+                    "--accept-source-agreements",
                 ]
                 .iter()
                 .map(|s| (*s).to_string())

@@ -5,12 +5,14 @@
 use std::any::Any;
 use std::collections::HashSet;
 use std::panic::{self, AssertUnwindSafe};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 use cua_driver_testkit::e2e::DisplayServer;
 use cua_driver_testkit::e2e::{write_environment_from_env, EnvironmentRecord};
+use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{driver_binary, harness_app, spawn_in_job, Driver, McpDriver};
 
 struct PreflightFixture {
@@ -18,6 +20,33 @@ struct PreflightFixture {
     args: Vec<&'static str>,
     title: &'static str,
     ax_marker: &'static str,
+}
+
+struct FixtureChildGuard {
+    child: Option<Child>,
+}
+
+impl FixtureChildGuard {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("fixture child guard is armed")
+    }
+
+    fn into_child(mut self) -> Child {
+        self.child.take().expect("fixture child guard is armed")
+    }
+}
+
+impl Drop for FixtureChildGuard {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 fn preflight_fixture() -> PreflightFixture {
@@ -98,8 +127,32 @@ fn has_image(response: &cua_driver_testkit::ToolResponse) -> bool {
             .unwrap_or(false)
 }
 
+fn readiness_contract(
+    is_error: bool,
+    element_count: usize,
+    marker_present: bool,
+    image_present: bool,
+) -> bool {
+    !is_error && element_count > 0 && marker_present && image_present
+}
+
+fn preflight_state_ready(response: &cua_driver_testkit::ToolResponse, ax_marker: &str) -> bool {
+    let element_count = response.structured()["element_count"]
+        .as_u64()
+        .map(|count| count as usize)
+        .or_else(|| response.structured()["elements"].as_array().map(Vec::len))
+        .unwrap_or_default();
+    readiness_contract(
+        response.is_error(),
+        element_count,
+        response.tree_text().contains(ax_marker),
+        has_image(response),
+    )
+}
+
 fn run_preflight() {
-    if let Ok(expected_sha) = std::env::var("CUA_E2E_SOURCE_SHA") {
+    let expected_sha = std::env::var("CUA_E2E_SOURCE_SHA").ok();
+    if let Some(expected_sha) = expected_sha.as_deref() {
         assert!(
             expected_sha.len() == 40 && expected_sha.chars().all(|ch| ch.is_ascii_hexdigit()),
             "CUA_E2E_SOURCE_SHA must be a full commit SHA"
@@ -166,6 +219,13 @@ fn run_preflight() {
         Some(env!("CARGO_PKG_VERSION")),
         "connected driver version does not match the source build"
     );
+    if let Some(expected_sha) = expected_sha.as_deref() {
+        assert_eq!(
+            config.structured()["source_sha"].as_str(),
+            Some(expected_sha),
+            "connected driver was not built from the requested source SHA"
+        );
+    }
     let recording_dir = driver
         .recording_dir()
         .expect("preflight evidence directory was not prepared")
@@ -192,84 +252,97 @@ fn run_preflight() {
         .args(&fixture.args)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
-    let mut child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
+    let child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
     let launched_pid = child.id() as i64;
+    let mut child = FixtureChildGuard::new(child);
 
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + Duration::from_secs(35);
+    let mut last_readiness = "fixture window has not appeared".to_owned();
+    #[cfg(target_os = "linux")]
+    let mut activated_window_id = None;
     let (pid, window_id) = loop {
         if let Some(status) = child
+            .child_mut()
             .try_wait()
             .expect("could not inspect preflight fixture process")
         {
             panic!("preflight fixture exited before mapping a window: {status}");
         }
-        let response = driver.call("list_windows", serde_json::json!({}));
-        if let Some(window) = response.structured()["windows"]
+        let windows = driver.call("list_windows", serde_json::json!({}));
+        let candidate = windows.structured()["windows"]
             .as_array()
             .and_then(|windows| {
-                windows.iter().find(|window| {
-                    window["window_id"]
-                        .as_u64()
-                        .map(|id| !before_ids.contains(&id))
-                        .unwrap_or(false)
-                        && window["title"]
-                            .as_str()
-                            .unwrap_or("")
-                            .contains(fixture.title)
+                windows.iter().find_map(|window| {
+                    let window_id = window["window_id"].as_u64()?;
+                    let is_new = !before_ids.contains(&window_id);
+                    let title_matches = window["title"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains(fixture.title);
+                    (is_new && title_matches)
+                        .then(|| (window["pid"].as_i64().unwrap_or(launched_pid), window_id))
                 })
-            })
-        {
-            if let Some(window_id) = window["window_id"].as_u64() {
-                break (window["pid"].as_i64().unwrap_or(launched_pid), window_id);
-            }
+            });
+        if windows.is_error() {
+            last_readiness = format!("list_windows failed: {}", windows.text());
         }
+
+        if let Some((pid, window_id)) = candidate {
+            #[cfg(target_os = "linux")]
+            if DisplayServer::current() == DisplayServer::X11
+                && activated_window_id != Some(window_id)
+            {
+                let activated = driver.call(
+                    "bring_to_front",
+                    serde_json::json!({ "pid": pid, "window_id": window_id }),
+                );
+                assert!(
+                    !activated.is_error(),
+                    "preflight fixture could not be placed on the Linux desktop: {}",
+                    activated.text()
+                );
+                activated_window_id = Some(window_id);
+                std::thread::sleep(Duration::from_millis(300));
+            }
+
+            let state = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": window_id,
+                    "capture_mode": "ax"
+                }),
+            );
+            if preflight_state_ready(&state, fixture.ax_marker) {
+                break (pid, window_id);
+            }
+            last_readiness = state.text().to_owned();
+        }
+
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("preflight fixture window did not appear");
+            panic!(
+                "preflight could not map a ready fixture window with AX state and screenshot: {last_readiness}"
+            );
         }
         std::thread::sleep(Duration::from_millis(200));
     };
-    driver.reaper().push(child);
+    driver.reaper().push(child.into_child());
 
-    #[cfg(target_os = "linux")]
-    {
-        if DisplayServer::current() == DisplayServer::X11 {
-            let activated = driver.call(
-                "bring_to_front",
-                serde_json::json!({ "pid": pid, "window_id": window_id }),
-            );
-            assert!(
-                !activated.is_error(),
-                "preflight fixture could not be placed on the Linux desktop: {}",
-                activated.text()
-            );
-            std::thread::sleep(Duration::from_millis(300));
-        }
-    }
-
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let state = driver.call(
-            "get_window_state",
-            serde_json::json!({
-                "pid": pid,
-                "window_id": window_id,
-                "capture_mode": "ax"
-            }),
-        );
-        if !state.is_error() && state.tree_text().contains(fixture.ax_marker) && has_image(&state) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "preflight could not read both AX state and screenshot: {}",
-            state.text()
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
+    let target = TargetWindow {
+        pid: pid as u32,
+        native_id: window_id,
+    };
+    let sentinel = ForegroundSentinel::launch(&mut driver);
+    // Sentinel activation is preflight setup, not behavior under test. Starting
+    // the recorder before launch turns its bring_to_front call into a captured
+    // action; nested Wayland then blocks on a setup-only full-display preimage.
+    // Keep the deliberate guard canaries in the recording while excluding the
+    // activation that establishes their baseline.
     driver.start_behavior_recording();
+    sentinel
+        .assert_guard_canaries(&mut driver, target)
+        .expect("foreground sentinel guard canaries failed");
+    drop(sentinel);
 
     drop(driver);
     let video = recording_dir.join("recording.mp4");
@@ -336,6 +409,15 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
                 .map(|message| (*message).to_owned())
         })
         .unwrap_or_else(|| "preflight panicked without a string payload".to_owned())
+}
+
+#[test]
+fn readiness_requires_nonempty_ax_marker_and_screenshot_together() {
+    assert!(readiness_contract(false, 1, true, true));
+    assert!(!readiness_contract(false, 0, true, true));
+    assert!(!readiness_contract(false, 1, false, true));
+    assert!(!readiness_contract(false, 1, true, false));
+    assert!(!readiness_contract(true, 1, true, true));
 }
 
 #[test]

@@ -7,6 +7,32 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Driver gives you three update paths: a passive banner at launch time, a CLI command that only checks, and a separate command that installs the update. Keep the **check and apply steps separate** so you can decide when to change the installed binary.
 
+## Before updating from 0.12.x to 0.13.0
+
+The installer command, CLI/MCP connection flow, tool names, and Python and
+TypeScript SDK constructors remain the same. Two behavior changes require
+attention:
+
+1. `standard` is the promptless practical default for normal observation,
+   input, file, browser, and configuration tools. Attaching to an existing
+   logged-in Chromium profile remains an explicit boundary. Start CLI or MCP
+   with `--grant existing-profile`, use a matching bounded manifest, or supply
+   an authorization host from an embedding application.
+2. The old cursor-style fields and `set_agent_cursor_style` operation are
+   removed. Sessions use the built-in animated `cua.default` theme and display
+   the public session name in a badge below the cursor unless an installed
+   theme ID is selected.
+
+For unattended authenticated-browser work, create a short-lived `bounded`
+manifest instead of disabling every approval. Use `unrestricted` only when a
+trusted launcher explicitly supplies `--dangerously-bypass-approvals` and the
+environment can tolerate full Cua autonomy.
+
+See [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes),
+[Drive a web page](/how-to-guides/driver/drive-a-web-page), and
+[Personalize the agent cursor](/how-to-guides/driver/personalize-cursor) before
+restarting a long-running daemon or worker.
+
 ## Check for updates
 
 ```bash
@@ -16,18 +42,18 @@ cua-driver check-update
 When you're behind:
 
 ```
-Current: 0.6.9
-Latest:  0.7.0
+Current: 0.12.6
+Latest:  0.13.0
 
 Update available. Run `cua-driver update --apply` to install.
-Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.0
+Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.13.0
 ```
 
 When you're current:
 
 ```
-Current: 0.7.0
-Latest:  0.7.0
+Current: 0.13.0
+Latest:  0.13.0
 
 You're on the latest release.
 ```
@@ -47,11 +73,11 @@ cua-driver update --apply
 Output:
 
 ```
-Current version: 0.6.9
+Current version: 0.12.6
 Checking for updates…
-New version available: 0.7.0
-Downloading and installing Cua Driver 0.7.0…
-Installed Cua Driver 0.7.0.
+New version available: 0.13.0
+Downloading and installing Cua Driver 0.13.0…
+Installed Cua Driver 0.13.0.
 ```
 
 `update --apply` calls the canonical installer script, the same one-line installer used for the first install.
@@ -72,14 +98,14 @@ cua-driver check-update --json
 
 ```json
 {
-  "current_version": "0.6.9",
-  "latest_version": "0.7.0",
+  "current_version": "0.12.6",
+  "latest_version": "0.13.0",
   "update_available": true,
   "source": "github_releases",
   "checked_at": "2026-07-01T14:30:00Z",
   "cache_hit": false,
   "install_command": "curl -fsSL https://cua.ai/driver/install.sh | bash",
-  "release_notes_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.0",
+  "release_notes_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.13.0",
   "error": null
 }
 ```
@@ -102,9 +128,9 @@ The same payload is available over MCP through the `check_for_update` tool. MCP 
 Every `cua-driver mcp`, `serve`, and `doctor` invocation starts a background version check. If it finds a newer release, Cua Driver prints a two-line banner to stderr:
 
 ```
-✨ cua-driver v0.7.0 is available (you have v0.6.9).
+✨ cua-driver v0.13.0 is available (you have v0.12.6).
    Update with: cua-driver update
-   Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.0
+   Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.13.0
 ```
 
 The check uses a 20-hour cache and never blocks startup. One-shot commands such as `--version`, `call`, and `list-tools` skip it so piped output remains clean.

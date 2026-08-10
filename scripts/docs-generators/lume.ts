@@ -217,9 +217,14 @@ async function main() {
 
   // Step 2: Get CLI documentation
   console.log('\n📖 Extracting CLI documentation...');
+  const documentationEnv = {
+    ...process.env,
+    LUME_TELEMETRY_ENABLED: 'false',
+  };
   const cliDocsJson = execSync('.build/release/lume dump-docs --type cli', {
     cwd: LUME_DIR,
     encoding: 'utf-8',
+    env: documentationEnv,
   });
   const cliDocs: CLIDocumentation = JSON.parse(cliDocsJson);
   console.log(`   Found ${cliDocs.commands.length} commands`);
@@ -229,6 +234,7 @@ async function main() {
   const apiDocsJson = execSync('.build/release/lume dump-docs --type api', {
     cwd: LUME_DIR,
     encoding: 'utf-8',
+    env: documentationEnv,
   });
   const apiDocs: HTTPAPIDocumentation = JSON.parse(apiDocsJson);
   console.log(`   Found ${apiDocs.endpoints.length} endpoints`);
@@ -324,7 +330,10 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   lines.push('');
 
   const groups = [
-    { title: 'VM Management', commands: ['create', 'run', 'stop', 'delete', 'clone'] },
+    {
+      title: 'VM Management',
+      commands: ['create', 'run', 'attach', 'shutdown', 'restart', 'stop', 'delete', 'clone'],
+    },
     { title: 'VM Information and Configuration', commands: ['ls', 'get', 'set'] },
     {
       title: 'Image Management',
@@ -391,7 +400,9 @@ export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
     lines.push('| ---- | ---- | -------- | ----------- |');
     for (const arg of cmd.arguments) {
       const required = arg.is_optional ? 'No' : 'Yes';
-      lines.push(`| \`<${arg.name}>\` | ${arg.type} | ${required} | ${arg.help} |`);
+      lines.push(
+        `| \`<${arg.name}>\` | ${escapeTableCell(arg.type)} | ${required} | ${escapeTableCell(arg.help)} |`
+      );
     }
     lines.push('');
   }
@@ -404,8 +415,10 @@ export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
     lines.push('| ---- | ---- | ------- | ----------- |');
     for (const opt of cmd.options) {
       const shortFlag = opt.short_name ? `-${opt.short_name}, ` : '';
-      const defaultVal = opt.default_value || '-';
-      lines.push(`| \`${shortFlag}--${opt.name}\` | ${opt.type} | ${defaultVal} | ${opt.help} |`);
+      const defaultVal = opt.default_value ? escapeTableCell(opt.default_value) : '-';
+      lines.push(
+        `| \`${shortFlag}--${opt.name}\` | ${escapeTableCell(opt.type)} | ${defaultVal} | ${escapeTableCell(opt.help)} |`
+      );
     }
     lines.push('');
   }
@@ -418,7 +431,9 @@ export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
     lines.push('| ---- | ------- | ----------- |');
     for (const flag of cmd.flags) {
       const shortFlag = flag.short_name ? `-${flag.short_name}, ` : '';
-      lines.push(`| \`${shortFlag}--${flag.name}\` | ${flag.default_value} | ${flag.help} |`);
+      lines.push(
+        `| \`${shortFlag}--${flag.name}\` | ${flag.default_value} | ${escapeTableCell(flag.help)} |`
+      );
     }
     lines.push('');
   }
@@ -452,6 +467,16 @@ export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
   }
 
   return lines;
+}
+
+function escapeTableCell(value: string): string {
+  return value
+    .replace(/\n/g, ' ')
+    .replace(/\{/g, '&#123;')
+    .replace(/\}/g, '&#125;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\|/g, '\\|');
 }
 
 // ============================================================================
@@ -745,7 +770,9 @@ function getExamplePathValue(name: string): string {
 // Run
 // ============================================================================
 
-main().catch((error) => {
-  console.error('Error:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('Error:', error);
+    process.exit(1);
+  });
+}

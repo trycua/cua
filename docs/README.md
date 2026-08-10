@@ -1,6 +1,8 @@
 # docs
 
-Production docs are served from https://cua.ai/docs; this app is now a local MDX preview only.
+Public documentation content and assets live in this repository. The production
+renderer, redirects, analytics, and site configuration live in `trycua/cloud`.
+This app is a local MDX preview for contributors to the public repository.
 
 Run the local preview:
 
@@ -16,18 +18,11 @@ Public docs live in `content/docs/` and follow the Diátaxis modes:
 
 - `tutorials/` teach a guided first success.
 - `how-to-guides/` give steps for a specific goal.
-- `explanation/` explains concepts, constraints, and tradeoffs.
+- `concepts/` contains Diátaxis explanations of concepts, constraints, and
+  tradeoffs.
 - `reference/` is dry lookup: commands, APIs, contracts, limits.
 
 Place content by what the reader is trying to do, not by topic. Do not mix modes in one page; move reference tables to reference pages and link to them from how-to guides or explanations.
-
-## Setup Telemetry
-
-We use PostHog for telemetry to improve the clarity and structure of our documentation. Start by copying the `.env.example` and adding in your PostHog API key and host.
-
-```bash
-cp .env.example .env
-```
 
 ## Learn More
 

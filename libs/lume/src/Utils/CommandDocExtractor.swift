@@ -85,7 +85,10 @@ enum CommandDocExtractor {
             setDoc,
             listDoc,
             runDoc,
+            attachDoc,
             stopDoc,
+            shutdownDoc,
+            restartDoc,
             sshDoc,
             sipDoc,
             ipswDoc,
@@ -128,7 +131,7 @@ enum CommandDocExtractor {
                 OptionDoc(name: "os", shortName: nil, help: "Operating system to install (macOS or linux)", type: "String", defaultValue: "macOS", isOptional: false),
                 OptionDoc(name: "cpu", shortName: nil, help: "Number of CPU cores", type: "Int", defaultValue: "4", isOptional: false),
                 OptionDoc(name: "memory", shortName: nil, help: "Memory size (e.g., 8GB)", type: "String", defaultValue: "8GB", isOptional: false),
-                OptionDoc(name: "disk-size", shortName: nil, help: "Disk size (e.g., 50GB)", type: "String", defaultValue: "50GB", isOptional: false),
+                OptionDoc(name: "disk-size", shortName: nil, help: "Disk size (e.g., 100GB)", type: "String", defaultValue: "100GB for macOS; 50GB for Linux", isOptional: false),
                 OptionDoc(name: "display", shortName: nil, help: "Display resolution (e.g., 1024x768)", type: "String", defaultValue: "1024x768", isOptional: false),
                 OptionDoc(name: "ipsw", shortName: nil, help: "Path to IPSW file or 'latest' for macOS VMs", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
@@ -339,15 +342,39 @@ enum CommandDocExtractor {
                 OptionDoc(name: "shared-dir", shortName: nil, help: "Directory to share with the VM (format: path or path:ro or path:rw)", type: "[String]", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "mount", shortName: nil, help: "For Linux VMs only, attach a read-only disk image", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "usb-storage", shortName: nil, help: "Disk image to attach as USB mass storage device", type: "[String]", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "disk", shortName: nil, help: "Disk image to attach as a read-write virtio-blk device", type: "[String]", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "registry", shortName: nil, help: "Container registry URL", type: "String", defaultValue: "ghcr.io", isOptional: false),
                 OptionDoc(name: "organization", shortName: nil, help: "Organization to pull from", type: "String", defaultValue: "trycua", isOptional: false),
+                OptionDoc(name: "display", shortName: nil, help: "Local viewer to open: vnc, native, or none. The VNC server remains available in every mode", type: "DisplayMode", defaultValue: "native", isOptional: false),
+                OptionDoc(name: "log-file", shortName: nil, help: "Log path for --detach", type: "String", defaultValue: "~/Library/Logs/lume/{vm}.log", isOptional: true),
                 OptionDoc(name: "vnc-port", shortName: nil, help: "Port for VNC server (0 for auto-assign)", type: "Int", defaultValue: "0", isOptional: false),
                 OptionDoc(name: "recovery-mode", shortName: nil, help: "For macOS VMs only, boot in recovery mode", type: "Bool", defaultValue: "false", isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
             ],
             flags: [
-                FlagDoc(name: "no-display", shortName: "d", help: "Do not start the VNC client", defaultValue: false),
+                FlagDoc(name: "no-display", shortName: "d", help: "Compatibility alias for --display none", defaultValue: false),
+                FlagDoc(name: "detach", shortName: nil, help: "Run the VM in the background and return immediately", defaultValue: false),
+                FlagDoc(name: "clipboard", shortName: nil, help: "Enable bidirectional clipboard sync via SSH. Automatic for native macOS display", defaultValue: false),
             ],
+            subcommands: []
+        )
+    }
+
+    // MARK: - Attach
+
+    private static var attachDoc: CommandDoc {
+        CommandDoc(
+            name: "attach",
+            abstract: "Open a viewer for a running virtual machine",
+            discussion: "Native display is preferred when the owning lume run process supports live attachment. VNC is used as the automatic fallback.",
+            arguments: [
+                ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
+            ],
+            options: [
+                OptionDoc(name: "display", shortName: nil, help: "Viewer to open: native or vnc", type: "AttachDisplayMode", defaultValue: "native with VNC fallback", isOptional: true),
+                OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
+            ],
+            flags: [],
             subcommands: []
         )
     }
@@ -364,6 +391,41 @@ enum CommandDocExtractor {
             ],
             options: [
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
+            ],
+            flags: [],
+            subcommands: []
+        )
+    }
+
+    // MARK: - Guest power
+
+    private static var shutdownDoc: CommandDoc {
+        guestPowerDoc(
+            name: "shutdown",
+            abstract: "Gracefully shut down a virtual machine"
+        )
+    }
+
+    private static var restartDoc: CommandDoc {
+        guestPowerDoc(
+            name: "restart",
+            abstract: "Gracefully restart a virtual machine"
+        )
+    }
+
+    private static func guestPowerDoc(name: String, abstract: String) -> CommandDoc {
+        CommandDoc(
+            name: name,
+            abstract: abstract,
+            discussion: "Requests the operation inside the guest over SSH. VMs created with --unattended use lume/lume credentials by default.",
+            arguments: [
+                ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
+            ],
+            options: [
+                OptionDoc(name: "user", shortName: "u", help: "SSH username", type: "String", defaultValue: "lume", isOptional: false),
+                OptionDoc(name: "password", shortName: "p", help: "SSH and sudo password", type: "String", defaultValue: "lume", isOptional: false),
+                OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "timeout", shortName: "t", help: "SSH command timeout in seconds", type: "Int", defaultValue: "30", isOptional: false),
             ],
             flags: [],
             subcommands: []
@@ -538,6 +600,20 @@ enum CommandDocExtractor {
                         ], options: [], flags: [], subcommands: []),
                         CommandDoc(name: "enable", abstract: "Enable image caching", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
                         CommandDoc(name: "disable", abstract: "Disable image caching", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                    ]
+                ),
+                CommandDoc(
+                    name: "telemetry",
+                    abstract: "Manage pseudonymous telemetry settings",
+                    discussion: nil,
+                    arguments: [],
+                    options: [],
+                    flags: [],
+                    subcommands: [
+                        CommandDoc(name: "status", abstract: "Show current telemetry status", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "enable", abstract: "Enable pseudonymous telemetry", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "disable", abstract: "Disable pseudonymous telemetry", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "reset-id", abstract: "Delete the pseudonymous installation ID and registration markers", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
                     ]
                 ),
             ]

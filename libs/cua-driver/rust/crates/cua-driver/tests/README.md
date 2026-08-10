@@ -17,6 +17,7 @@ action, addressing mode, delivery mode, or OS-specific window-system case.
 | Prefix | Runs by default | Purpose |
 | --- | --- | --- |
 | `protocol_*_test.rs` | yes | MCP/CLI protocol and schema behavior |
+| `session_capture_scope_test.rs` | yes | Per-session policy isolation, escalation, lifecycle, and retired config key |
 | `schema_*_test.rs` | yes | Generated schema consistency |
 | `harness_<toolkit>_test.rs` | no, `#[ignore]` | Toolkit-specific harness apps |
 | `desktop_scope_<os>_test.rs` | no, `#[ignore]` | Platform window/desktop scope contract |
@@ -79,8 +80,16 @@ only for focused diagnosis. Optional
 external-app suites remain separate.
 
 The canonical macOS E2E entrypoint is
-`scripts/ci/macos/run-rust-e2e.sh`. It requires a logged-in user session and an
-installed driver with Accessibility and Screen Recording grants.
+`libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It runs in a disposable
+clone of the private maintainer seed, requires a logged-in user session, and
+verifies the installed driver's Accessibility and Screen Recording grants
+before delegating to `scripts/ci/macos/run-rust-e2e.sh`.
+
+For focused macOS runs on a workstation shared with other driver clients,
+start a TCC-authorized daemon on a dedicated socket and set
+`CUA_E2E_MACOS_DAEMON_SOCKET` to that socket. This prevents an unrelated MCP
+client from changing the shared daemon's session or recording state while a
+row is asserting focus preservation.
 
 Legacy Windows Sandbox runs use
 `../../../../tests/runners/windows-sandbox/run-tests-in-sandbox.ps1`, which
@@ -127,3 +136,14 @@ desktop state outside the repo-local fixtures:
   checks. Requires a logged-in GUI session and usable System Events scripting.
 - `installed_app_textedit_macos_test.rs`: real TextEdit background AX write and
   verification. Requires a logged-in GUI session and Accessibility permission.
+- `standalone_browser_behavior_test.rs`: installed Chrome and Edge browser-tool
+  targeting, mutation, frame, tab, ambiguity, and isolated-profile rows. The
+  harness owns a fresh browser profile and creates adversarial tabs and windows
+  through the browser endpoint instead of relying on browser command-line
+  handoff behavior. Run it through the cross-platform
+  `scripts/ci/run-rust-standalone-browser-e2e.sh`, which stages the Electron
+  foreground sentinel when needed and opts pure Wayland runs into the native
+  backend. Non-macOS runs prove that standard mode refuses existing-profile
+  attachment before running the authorized success rows with a disposable
+  unrestricted daemon. macOS Lume maintainers can add the success rows to the
+  VM acceptance run with `run-all.sh --standalone-browser`.

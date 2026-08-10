@@ -1,0 +1,39 @@
+{
+  "name": "@trycua/fleet",
+  "version": "0.0.3",
+  "packageManager": "pnpm@10.12.3",
+  "description": "Reserved for Cua Fleet — fleet orchestration for computer-use agents and sandboxes. Placeholder release.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/trycua/cua",
+  "bugs": {
+    "url": "https://github.com/trycua/cua/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git"
+  },
+  "author": "cua",
+  "keywords": [
+    "computer-use",
+    "sandbox",
+    "agents",
+    "fleet",
+    "orchestration",
+    "automation"
+  ],
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

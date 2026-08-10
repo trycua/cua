@@ -253,7 +253,7 @@ enum DiskResizeError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .vmRunning(let name):
-            return "Cannot resize the disk of \(name): the VM is running. Stop it first."
+            return "Cannot modify \(name): the VM is running. Stop it first."
         case .resizeInProgress(let name):
             return
                 "A previous disk resize of \(name) did not finish. Re-run the same command to roll it back and restore the disk from its backup."

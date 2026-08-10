@@ -1,6 +1,6 @@
-//! Cross-platform child reaping. Kills every spawned child on drop; on Windows
-//! also assigns them to a kill-on-close Job Object so the OS reaps the whole
-//! tree even on panic / SIGKILL / Ctrl-C.
+//! Cross-platform child reaping. Kills every spawned child tree on drop:
+//! Windows uses a kill-on-close Job Object, while Unix gives each test-owned
+//! child its own process group and terminates that group explicitly.
 
 use std::process::{Child, Command};
 use std::time::Duration;
@@ -58,6 +58,8 @@ impl Drop for ChildReaper {
             tree_kill(pid);
         }
         for c in &mut self.children {
+            #[cfg(unix)]
+            process_group_kill(c.id());
             tree_kill(c.id());
             let _ = c.kill();
             let _ = c.wait();
@@ -70,10 +72,34 @@ impl Drop for ChildReaper {
 /// never outlive the test process. On other platforms a plain spawn (the
 /// [`ChildReaper`] still kills it on drop).
 pub fn spawn_in_job(cmd: &mut Command) -> std::io::Result<Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let child = cmd.spawn()?;
     #[cfg(target_os = "windows")]
     win::assign_child(&child);
     Ok(child)
+}
+
+#[cfg(unix)]
+fn process_group_kill(pid: u32) {
+    let Some(group) = process_group_target(pid) else {
+        return;
+    };
+    // A negative pid targets one process group. Do this directly: some `kill`
+    // utilities parse `kill -9 -<pgid>` as `kill(-1, SIGKILL)` unless the
+    // negative operand is protected with an implementation-specific `--`.
+    unsafe {
+        libc::kill(group, libc::SIGKILL);
+    }
+}
+
+#[cfg(unix)]
+fn process_group_target(pid: u32) -> Option<i32> {
+    let pid = i32::try_from(pid).ok()?;
+    (pid > 1).then_some(-pid)
 }
 
 #[cfg(target_os = "windows")]
@@ -156,5 +182,18 @@ mod win {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::process_group_target;
+
+    #[test]
+    fn process_group_target_is_exact_and_never_all_processes() {
+        assert_eq!(process_group_target(42), Some(-42));
+        assert_eq!(process_group_target(0), None);
+        assert_eq!(process_group_target(1), None);
+        assert_eq!(process_group_target(u32::MAX), None);
     }
 }

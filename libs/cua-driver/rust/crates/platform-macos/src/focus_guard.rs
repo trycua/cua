@@ -183,13 +183,7 @@ mod tests {
     /// 50ms sleep doesn't deadlock.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn arms_lease_when_target_differs_from_prior() {
-        let n = with_focus_suppressed(
-            Some(123),
-            Some(456),
-            "test.armed",
-            || async { 99 },
-        )
-        .await;
+        let n = with_focus_suppressed(Some(123), Some(456), "test.armed", || async { 99 }).await;
         assert_eq!(n, 99);
     }
 

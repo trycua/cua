@@ -1,0 +1,2 @@
+{"reason":"compiler-artifact","package_id":"exact 0.1.0","target":{"name":"cyclops_sdk","crate_types":["cdylib"]},"filenames":["/tmp/one/libcyclops_sdk.so"]}
+{"reason":"compiler-artifact","package_id":"exact 0.1.0","target":{"name":"cyclops_sdk","crate_types":["cdylib"]},"filenames":["/tmp/two/libcyclops_sdk.so"]}

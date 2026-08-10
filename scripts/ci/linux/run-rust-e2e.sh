@@ -56,10 +56,32 @@ export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
+export CUA_E2E_FORBID_SKIPS=1
+# The canonical behavior matrix runs inside a disposable CI desktop and must
+# exercise protected GUI operations without interactive approvals. This
+# testkit-only switch authorizes its spawned behavior daemons without leaking
+# product authorization variables into SDK/runtime tests in the same runner.
+# Focused tests can still select standard/bounded mode explicitly.
+export CUA_E2E_UNRESTRICTED_GUI=1
+# This runner contract requires a real or virtual desktop. Make GUI-dependent
+# lifecycle proofs fail instead of silently returning without evidence.
+export CUA_REQUIRE_GUI=1
+unset CUA_E2E_EXPECTED_MIN_CELLS
+if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
+  && -z "${CUA_E2E_CELL_FILTER:-}" \
+  && -z "${CUA_E2E_HARNESS_FILTER:-}" ]]; then
+  export CUA_E2E_EXPECTED_MIN_CELLS=80
+fi
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-if [[ -z "${CUA_E2E_SOURCE_SHA:-}" && -f "${REPO_ROOT}/.cua-e2e-source-sha" ]]; then
-  export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${REPO_ROOT}/.cua-e2e-source-sha")"
-  export CUA_E2E_SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
+SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
+if [[ -f "${SOURCE_MARKER}" ]]; then
+  export CUA_E2E_SOURCE_MARKER="${CUA_E2E_SOURCE_MARKER:-${SOURCE_MARKER}}"
+  if [[ -z "${CUA_E2E_SOURCE_SHA:-}" ]]; then
+    export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${SOURCE_MARKER}")"
+  fi
+fi
+if [[ -n "${CUA_E2E_SOURCE_SHA:-}" ]]; then
+  export CUA_DRIVER_SOURCE_SHA="${CUA_E2E_SOURCE_SHA}"
 fi
 if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
   export GDK_BACKEND="${GDK_BACKEND:-wayland}"
@@ -68,6 +90,14 @@ if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
 else
   export CUA_E2E_COMPOSITOR="${CUA_E2E_COMPOSITOR:-openbox-x11}"
   export CUA_E2E_INPUT_BACKENDS="${CUA_E2E_INPUT_BACKENDS:-atspi,xsend-event,xtest}"
+fi
+CARGO_DRIVER_FEATURE_ARGS=()
+if [[ ",${CUA_E2E_INPUT_BACKENDS}," == *,libei-portal,* ]]; then
+  # GNOME and KDE retain DISPLAY for XWayland while the product route remains
+  # native Wayland. Their representative lanes require the release-shipped
+  # RemoteDesktop/libei adapter, so every cua-driver build/test in this runner
+  # must compile the same portal-input feature instead of falling back to wtype.
+  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input)
 fi
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   export CUA_ATSPI_DEBUG=1
@@ -84,11 +114,14 @@ command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory 
 command -v jq >/dev/null || { echo "jq is required for E2E ownership validation" >&2; exit 1; }
 
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
-  cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
+  cargo build --release -p cua-driver \
+    "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    --manifest-path "${RUST_ROOT}/Cargo.toml"
   case "${SUITE}" in
     shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
-    native|capture) FIXTURE_TARGETS="electron,gtk3" ;;
-    *) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3" ;;
+    native) FIXTURE_TARGETS="electron,gtk3,gtk4" ;;
+    capture) FIXTURE_TARGETS="electron,gtk3" ;;
+    *) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3,gtk4" ;;
   esac
   bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh" --only "${FIXTURE_TARGETS}"
 fi
@@ -106,7 +139,10 @@ if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
   )
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-gtk3/CuaTestHarness.Gtk3")
+  required_fixtures+=(
+    "${CUA_TEST_APPS_ROOT}/harness-gtk3/CuaTestHarness.Gtk3"
+    "${CUA_TEST_APPS_ROOT}/harness-gtk4/CuaTestHarness.Gtk4"
+  )
 fi
 for fixture in "${required_fixtures[@]}"; do
   if [[ ! -x "${fixture}" ]]; then
@@ -129,7 +165,9 @@ run_report() {
 
 echo "[PREFLIGHT] Linux desktop, fixture, AX, capture, and video"
 set +e
-(cd "${RUST_ROOT}" && cargo test -p cua-driver --test e2e_environment_preflight_test -- \
+(cd "${RUST_ROOT}" && cargo test -p cua-driver \
+  "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+  --test e2e_environment_preflight_test -- \
   --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1) \
   2>&1 | tee "${ARTIFACT_DIR}/environment-preflight.log"
 PREFLIGHT_EXIT=${PIPESTATUS[0]}
@@ -156,24 +194,63 @@ run_test() {
 }
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+  run_test protected-permission-prompt-socket \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test permission_prompt_authorization_test -- --test-threads=1
+  run_test sdk-runtime-contract \
+    cargo test -p cua-driver-sdk --lib -- --test-threads=1
+  run_test sdk-runtime-configuration \
+    cargo test -p cua-driver-sdk --test runtime_configuration -- --test-threads=1
+  run_test private-worker-lifecycle \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test private_worker_test -- --test-threads=1
   run_test shared-behavior-matrix \
-    cargo test -p cua-driver --test cross_platform_behavior_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \
+      --nocapture --test-threads=1
+  run_test embedded-browser-routes \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test cross_platform_behavior_test -- \
+      --ignored --exact embedded_browser_routes_are_exact_or_refused \
       --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
+  run_test wayland-overlay-idle-no-overlay \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test wayland_overlay_idle_test -- \
+      --ignored --exact no_overlay_flag_never_starts_wayland_overlay_thread \
+      --nocapture --test-threads=1
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test wayland-overlay-idle-recovery \
+      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test wayland_overlay_idle_test -- \
+        --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
+        --nocapture --test-threads=1
+  fi
+  run_test agent-cursor-showcase \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test agent_cursor_showcase_test -- \
+      --ignored --nocapture --test-threads=1
   run_test gtk3-native-harness \
-    cargo test -p cua-driver --test harness_gtk3_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test harness_gtk3_test -- \
+      --ignored --nocapture --test-threads=1
+  run_test gtk4-target-selection \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test harness_gtk4_test -- \
       --ignored --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract \
-    cargo test -p cua-driver --test capture_contract_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test capture_contract_test -- \
       --ignored --nocapture --test-threads=1
   run_test desktop-scope \
-    cargo test -p cua-driver --test desktop_scope_linux_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
 fi
 

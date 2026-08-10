@@ -18,19 +18,22 @@
 
 use cua_driver_core::tool::ToolRegistry;
 
-pub mod tools;
-pub mod overlay;
 pub mod diagnostics;
 pub mod health_report;
-pub mod recording_hooks;
+pub mod overlay;
 pub mod pip;
+pub mod recording_hooks;
 pub mod terminal;
+pub mod tools;
 
 // Cross-platform: pure math for MOUSEEVENTF_VIRTUALDESK absolute-coord
 // normalization. Lives outside the Windows-only `input` module so its
 // unit tests run on any host (no Win32 runtime needed) — see issue #1979,
 // where the multi-monitor normalization bug was diagnosable by pure math.
 pub mod virtualdesk;
+
+#[cfg(any(target_os = "windows", test))]
+mod keycodes;
 
 // Cross-platform: pure math for packing `(x, y)` into the `LPARAM` payload
 // every `WM_MOUSE*` / `WM_*BUTTON*` message carries. Lives outside the
@@ -44,6 +47,14 @@ pub mod lparam;
 pub mod win32;
 
 #[cfg(target_os = "windows")]
+pub mod browser_platform;
+
+#[cfg(target_os = "windows")]
+mod browser_consent_ui;
+#[cfg(target_os = "windows")]
+mod browser_setup_ui;
+
+#[cfg(target_os = "windows")]
 pub mod uia;
 
 #[cfg(target_os = "windows")]
@@ -54,6 +65,8 @@ pub mod input;
 
 #[cfg(target_os = "windows")]
 pub mod capture;
+#[cfg(target_os = "windows")]
+mod clipboard;
 
 #[cfg(target_os = "windows")]
 pub mod wgc;
@@ -70,9 +83,17 @@ pub fn register_tools() -> ToolRegistry {
 /// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
 /// tools). See `tools::impl_::ScreenshotCompatTool`.
 pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig, compat: bool) -> ToolRegistry {
+    register_tools_with_cursor_and_provider(None, cfg, compat)
+}
+
+pub fn register_tools_with_cursor_and_provider(
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+) -> ToolRegistry {
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();
     }
-    tools::build_registry(compat)
+    tools::build_registry_with_provider(compat, provider)
 }

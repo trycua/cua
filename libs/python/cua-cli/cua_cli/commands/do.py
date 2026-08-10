@@ -103,10 +103,10 @@ async def _get_api_url(provider_type: str, name: str) -> str:
         return f"http://{state['host']}:{state['api_port']}"
 
     if provider_type in ("cloud", "cloudv2"):
-        from cua_cli.auth.store import get_api_key
+        from cua_cli.auth.oidc import get_access_token
         from cua_sandbox.transport.cloud import CloudTransport, cloud_get_vm
 
-        api_key = get_api_key()
+        api_key = await get_access_token()
         if not api_key:
             raise ValueError("Not authenticated. Run 'cua auth login' first")
         vm = await cloud_get_vm(name, api_key=api_key)
@@ -331,11 +331,10 @@ async def _send(provider_type: str, name: str, command: str, params: dict) -> di
     headers = {"Content-Type": "application/json", **cua_version_headers()}
 
     if provider_type in ("cloud", "cloudv2"):
-        from cua_cli.auth.store import get_api_key
+        from cua_cli.auth.oidc import get_access_token
 
-        api_key = get_api_key()
-        if api_key:
-            headers["X-API-Key"] = api_key
+        access_token = await get_access_token()
+        headers["Authorization"] = f"Bearer {access_token}"
         if name:
             headers["X-Container-Name"] = name
 
@@ -626,7 +625,7 @@ def _cmd_ls(args: argparse.Namespace) -> int:
     explicit_provider = getattr(args, "provider", None)
 
     async def _list_all() -> int:
-        from cua_cli.auth.store import get_api_key
+        from cua_cli.auth.oidc import get_access_token
         from cua_sandbox import Sandbox
 
         print("  host  [local]")
@@ -639,7 +638,7 @@ def _cmd_ls(args: argparse.Namespace) -> int:
             pass
 
         try:
-            api_key = get_api_key()
+            api_key = await get_access_token()
             if api_key:
                 cloud_sandboxes = await Sandbox.list(local=False, api_key=api_key)
                 for s in cloud_sandboxes:
@@ -650,7 +649,7 @@ def _cmd_ls(args: argparse.Namespace) -> int:
         return 0
 
     async def _list_one(ptype: str) -> int:
-        from cua_cli.auth.store import get_api_key
+        from cua_cli.auth.oidc import get_access_token
         from cua_sandbox import Sandbox
 
         if ptype == "host":
@@ -659,7 +658,7 @@ def _cmd_ls(args: argparse.Namespace) -> int:
 
         local = ptype in ("local", "lume", "lumier", "docker", "winsandbox")
         try:
-            api_key = None if local else get_api_key()
+            api_key = None if local else await get_access_token()
             sandboxes = await Sandbox.list(local=local, api_key=api_key)
             if not sandboxes:
                 print(f"No sandboxes found for provider '{ptype}'")
@@ -1265,12 +1264,10 @@ async def _shell_remote_pty(
     headers: dict = {}
     ws_params: dict = {}
     if provider in ("cloud", "cloudv2"):
-        from cua_cli.auth.store import get_api_key
+        from cua_cli.auth.oidc import get_access_token
 
-        api_key = get_api_key()
-        if api_key:
-            headers["X-API-Key"] = api_key
-            ws_params["api_key"] = api_key
+        access_token = await get_access_token()
+        headers["Authorization"] = f"Bearer {access_token}"
         if name:
             headers["X-Container-Name"] = name
             ws_params["container_name"] = name

@@ -7,6 +7,9 @@ these things globally.
 
 It exposes `org.cua.WinRects` on the session bus:
 
+- `GetVersion() -> uint` — a browser-sensitive API version. cua-driver only
+  accepts it after resolving the immutable D-Bus owner and proving the owner is
+  the current user's system-installed `gnome-shell` process.
 - `GetRects() -> json` — every window's frame geometry and surface-buffer
   origin. cua-driver combines the buffer origin with AT-SPI
   `CoordType::Window` per-widget coords: `screen = origin + window_xy`. This is
@@ -19,8 +22,15 @@ It exposes `org.cua.WinRects` on the session bus:
   input from leaking into whichever application happened to be focused.
 - `Capture() -> png_base64` — capture the compositor stage through Shell's
   screenshot API. cua-driver crops it with the same authoritative geometry.
-- `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()` — render the agent
-  cursor as a Clutter actor on the compositor stage.
+- `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()` — position and hide
+  the agent cursor as a Clutter actor on the compositor stage.
+- `SetCursorState(action,delivery,target,active)` — render the same 12 semantic
+  action states as the cross-platform `cua.default` cursor theme. Delivery and
+  target context appears as host-owned chips in the session badge rather than
+  pointer-relative theme artwork. This contract requires helper v8.
+- `SetCursorColor(fill_color)` — apply the stable per-session fill selected by
+  cua-driver. The helper validates the `#RRGGBB` value, updates the matching
+  glow, and keeps a white pointer outline.
 
 It runs in the shell's privileged context, so **no xdg-desktop-portal grant** is
 needed (unlike libei/RemoteDesktop).
@@ -28,7 +38,8 @@ needed (unlike libei/RemoteDesktop).
 ## Install
 
 ```
-./install.sh          # copies to ~/.local/share/gnome-shell/extensions + enables
+~/.cua-driver/packages/current/wayland-helper/install.sh
+# From a source checkout, use ./install.sh in this directory.
 # then log out/in once (GNOME loads extensions only at session startup)
 gnome-extensions info winrects@cua   # -> State: ACTIVE
 ```
@@ -37,6 +48,17 @@ cua-driver auto-detects it at runtime (`wayland::shell_helper`). AX operations
 still work when it is absent, but pixel geometry, the Shell cursor, and safe
 foreground portal input are unavailable. cua-driver refuses focus-bound input
 instead of injecting into an unverified target.
+
+The semantic cursor requires helper v8. When an older helper is still loaded,
+cua-driver does not draw its legacy cursor. Re-run the helper installer, then
+reload the GNOME session so the new compositor-owned artwork becomes active.
+
+Browser setup and consent are held to a stricter boundary: helper API v4 or
+newer must be served by the verified GNOME Shell owner. The driver addresses
+that owner's unique D-Bus name, so another same-session process cannot replace
+the public name between verification and an activation request. One exact
+target is activated only for the bounded operation, then the previously
+focused Shell window is restored and verified.
 
 wlroots compositors such as Sway and labwc do not need it: cua-driver uses
 foreign-toplevel activation, virtual-pointer input, and layer-shell there.

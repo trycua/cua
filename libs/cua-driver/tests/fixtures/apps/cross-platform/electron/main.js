@@ -8,6 +8,8 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const sentinelMode = process.env.CUA_E2E_SENTINEL === '1';
+const nativeWayland = process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY);
+const customCuaCompositor = process.env.CUA_E2E_WAYLAND_SESSION === 'cua-compositor';
 const fixtureJournalUrl = process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '';
 const sentinelJournalPath = process.env.CUA_E2E_SENTINEL_JOURNAL || '';
 if (process.env.CUA_E2E_USER_DATA_DIR) {
@@ -56,32 +58,43 @@ ipcMain.on('cua-e2e-sentinel-event', (_event, entry) => {
 });
 
 let mainWindow;
+let sentinelHeartbeatTimer;
 
 function createWindow() {
   const fixedTitle = sentinelMode
     ? `CuaTestHarness Sentinel [cdp=${CDP_PORT}]`
     : `CuaTestHarness Electron [cdp=${CDP_PORT}]`;
+  // GitHub's interactive Windows desktop can be 1024x768. Keep the normal
+  // fixture wholly inside its work area so a maximized sentinel can prove
+  // geometric full occlusion instead of accepting an off-screen target.
+  const compactWindowsFixture = !sentinelMode && process.platform === 'win32';
   mainWindow = new BrowserWindow({
-    width: sentinelMode ? 1280 : 940,
-    height: sentinelMode ? 900 : 780,
+    width: sentinelMode ? 1280 : compactWindowsFixture ? 900 : 940,
+    height: sentinelMode ? 900 : compactWindowsFixture ? 640 : 780,
     // Keep the normal fixture inside virtual desktops whose window manager
     // has no persisted placement policy (notably Openbox under Xvfb).
-    x: sentinelMode ? 0 : 120,
-    y: sentinelMode ? 0 : 120,
+    x: sentinelMode ? 0 : compactWindowsFixture ? 40 : 120,
+    y: sentinelMode ? 0 : compactWindowsFixture ? 40 : 120,
     title: fixedTitle,
     // Map the normal harness immediately. Xvfb/Openbox can enumerate a
     // deferred BrowserWindow while never painting it into the root desktop.
-    // The sentinel stays hidden until it has maximized and claimed focus.
-    show: !sentinelMode,
+    // The sentinel normally stays hidden until it has maximized and claimed
+    // focus. cua-compositor has no window-policy transition to perform, so map
+    // it at construction time; a synchronous show() after DOMContentLoaded can
+    // otherwise stall Chromium before the renderer paints or schedules timers.
+    show: !sentinelMode || customCuaCompositor,
     // A floating-level macOS window is omitted by cua-driver's deliberate
     // layer-0 top-level window contract. Foreground + maximized is sufficient
     // for occlusion there and lets an unexpected target raise remain visible.
-    alwaysOnTop: sentinelMode && process.platform !== 'darwin',
+    alwaysOnTop: sentinelMode && process.platform !== 'darwin' && !nativeWayland,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: !sentinelMode,
+      // The sentinel's heartbeat is an E2E oracle. It must keep ticking while
+      // the focus-loss canary deliberately places the window in the background.
+      backgroundThrottling: !sentinelMode,
       preload: path.join(__dirname, 'preload.js'),
     },
   });
@@ -104,7 +117,14 @@ function createWindow() {
   }));
   mainWindow.webContents.on('did-create-window', child => {
     child.once('ready-to-show', () => {
-      child.showInactive();
+      // Mutter may activate a newly mapped native-Wayland child even when
+      // Electron requests showInactive(), which makes a background AX action
+      // appear to steal focus. The scenario's behavioral oracle is child
+      // creation, so keep the child hidden on native Wayland and preserve the
+      // visible non-activating window contract on the other backends.
+      if (!nativeWayland || customCuaCompositor) {
+        child.showInactive();
+      }
     });
   });
 
@@ -117,12 +137,37 @@ function createWindow() {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(fixedTitle);
         if (sentinelMode) {
-          if (process.platform !== 'darwin') {
+          // Drive the clock from the main process but require the renderer to
+          // handle each probe before it can journal a heartbeat. Native
+          // Wayland fullscreen surfaces can suspend renderer-owned interval
+          // timers even while renderer IPC remains healthy.
+          if (!sentinelHeartbeatTimer) {
+            sentinelHeartbeatTimer = setInterval(() => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('cua-e2e-sentinel-heartbeat-probe');
+              }
+            }, 100);
+            sentinelHeartbeatTimer.unref();
+          }
+          if (process.platform !== 'darwin' && !nativeWayland) {
             mainWindow.setAlwaysOnTop(true);
           }
-          mainWindow.maximize();
-          mainWindow.show();
-          mainWindow.focus();
+          if (nativeWayland && !customCuaCompositor) {
+            mainWindow.setFullScreen(true);
+          } else if (!customCuaCompositor) {
+            mainWindow.maximize();
+          }
+          // The minimal nested cua-compositor intentionally has no fullscreen
+          // policy implementation. Requesting fullscreen leaves Chromium
+          // waiting on a configure transition and stops the heartbeat oracle.
+          // Its 1280x900 sentinel already covers the smaller fixture at origin.
+          // cua-compositor mapped and focused this toplevel at construction
+          // time. Avoid a second synchronous show/configure/focus transition
+          // after the renderer has emitted its ready event.
+          if (!customCuaCompositor) {
+            mainWindow.show();
+            mainWindow.focus();
+          }
         } else {
           // Xvfb/Openbox can keep a showInactive window inspectable through
           // AT-SPI while never mapping it onto the captured root desktop.
@@ -150,5 +195,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  if (sentinelHeartbeatTimer) {
+    clearInterval(sentinelHeartbeatTimer);
+    sentinelHeartbeatTimer = undefined;
+  }
   if (process.platform !== 'darwin') app.quit();
 });

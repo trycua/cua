@@ -12,12 +12,14 @@ takes no suite selector:
 ```text
 Windows: scripts/ci/windows/run-rust-e2e.ps1 -RequireGui
 Linux:   scripts/ci/linux/run-rust-e2e.sh
-macOS:   scripts/ci/macos/run-rust-e2e.sh
+macOS:   libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
-Workflows set a private lane value to fan that matrix into shared, native, and
-capture jobs so one failure does not hide another lane. These are execution
-partitions, not public suite choices or separate behavioral sources of truth.
+Automated workflows may set a private lane value to fan that matrix into
+shared, native, and capture jobs so one failure does not hide another lane.
+The maintainer-run macOS Lume gate runs the complete matrix by default. These
+are execution partitions, not public suite choices or separate behavioral
+sources of truth.
 
 ## Execution Order
 
@@ -26,12 +28,13 @@ Each runner follows the same sequence:
 1. Resolve one immutable source SHA and check out that SHA in every lane.
 2. Build the Rust driver and required repo-local fixtures.
 3. Run `e2e_environment_preflight_test` once; it verifies `git rev-parse HEAD`
-   against the workflow's resolved SHA.
+   or the VM source marker against the resolved SHA. On macOS it also verifies
+   that the installed, TCC-authorized daemon embeds that exact SHA.
 4. Abort before behavioral cells if the desktop, permissions, fixture, capture,
    or video lifecycle is unavailable.
 5. Run the selected Rust integration targets.
 6. Validate declarations, results, and evidence with `cua-e2e-report`.
-7. Upload the report, logs, and recordings.
+7. Upload or retrieve the report, logs, and recordings.
 
 The preflight prevents a single TCC or desktop-session problem from appearing
 as the same failure on every behavioral cell.
@@ -62,13 +65,17 @@ artifacts/cua-driver/<platform>/
         |-- after.png
         |-- app_state.json
         |-- screenshot.png
-        `-- click.png (click-family turns)
+        `-- click.png (dispatched click-family turns)
 ```
 
 `cases.jsonl` is the executed catalog. `results.jsonl` contains one result for
 every declared cell. In canonical mode, the reporter rejects duplicates,
-missing results, undeclared results, contradictory statuses, missing required
-videos, and missing or invalid expected turn evidence. An `evidence.json`
+missing results, undeclared results, contradictory statuses, forbidden skips,
+an under-sized unfiltered shared catalog, missing required videos, and missing
+or invalid expected turn evidence. Canonical runners set
+`CUA_E2E_FORBID_SKIPS=1` and `CUA_E2E_EXPECTED_MIN_CELLS` (80 on
+Windows/Linux, 120 on macOS). Explicit diagnostic filters omit only the
+minimum-count policy; a filter matching zero cells still fails in Rust. An `evidence.json`
 classification normally makes capture failure auditable without making it
 pass. The one narrow exception is a successful Windows `bring_to_front`
 restoration:
@@ -77,6 +84,13 @@ the before image may be `target_minimized`, and the after image may be
 accessibility data was captured, and the required trajectory and finalized MP4
 remain present. Any
 other missing image still fails closed.
+
+A click-family call refused before its target can be resolved is the other
+explicit non-capture case: `action.json` records `result_error: true` without a
+`click_point`, and `evidence.json` records the click phase as
+`not_applicable/action_refused_before_target_resolution`. No input was aimed or
+dispatched, so that turn must not invent a `click.png`; successful and
+target-resolved click-family turns still require it.
 
 The testkit prepares each cell's artifact directory before fixture setup but
 does not start `recording.mp4` yet. On Windows GitHub-hosted runners it obtains

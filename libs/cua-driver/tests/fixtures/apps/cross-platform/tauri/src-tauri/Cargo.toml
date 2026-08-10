@@ -5,8 +5,12 @@ description = "cua-driver Tauri test harness"
 edition = "2021"
 rust-version = "1.77"
 
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2" }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tiny_http = "0.12"

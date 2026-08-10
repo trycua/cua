@@ -1,0 +1,73 @@
+---
+title: Your first local sandbox
+description: Create a local Linux sandbox with Docker, run one command, and save a screenshot.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+In this tutorial, you create an *ephemeral* Linux sandbox on your machine, run `uname -a` inside it, touch the sandbox clipboard, and save a screenshot from the sandbox to your current directory.
+
+<Callout type="info">
+  Prerequisites: Python 3.12 or 3.13 and Docker Desktop or Docker Engine.
+</Callout>
+
+## Install the SDK
+
+Open a terminal and install the Python SDK:
+
+```bash
+pip install cua
+```
+
+## Create the script
+
+Create a file named `first_sandbox.py`:
+
+```python
+import asyncio
+from cua import Sandbox, Image
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.linux(kind="container"),
+        local=True,
+    ) as sb:
+        result = await sb.shell.run("uname -a")
+        print(result.stdout)
+
+        await sb.clipboard.set("Hello from the sandbox clipboard")
+        value = await sb.clipboard.get()
+        print(value)
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+        print("Screenshot saved to screenshot.png")
+
+asyncio.run(main())
+```
+
+## Run it
+
+Run the script from the same directory:
+
+```bash
+python first_sandbox.py
+```
+
+You should see a Linux kernel string and the clipboard value printed in your terminal.
+
+You should also see a new file named `screenshot.png` in the current directory.
+
+## What just happened
+
+`Sandbox.ephemeral(..., local=True)` created a Linux desktop container through Docker on your machine. The script ran `uname -a` inside that container, printed the command output, changed and read the sandbox desktop clipboard, took a screenshot, and wrote it to `screenshot.png`.
+
+When the `async with` block exited, **the sandbox destroyed itself**. No cleanup is needed.
+
+## Next steps
+
+- [Manage sandbox lifecycle](/how-to-guides/sandbox/lifecycle)
+- [Choose and build a sandbox image](/how-to-guides/sandbox/images)
+- [Open an interactive sandbox shell](/how-to-guides/sandbox/interactive-shell)
+- [Sandbox SDK API reference](/reference/sandbox-sdk)

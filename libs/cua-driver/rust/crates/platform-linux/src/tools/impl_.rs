@@ -1,10 +1,16 @@
 //! Real Linux tool implementations (compiled only on Linux).
 
 use async_trait::async_trait;
+use cua_driver_contract::{
+    ClickButton, ClickInput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput, ScrollInput,
+    TypeTextInput,
+};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef, ToolRegistry},
-    tool_args::ArgsExt,
+    tool_args::{parse_typed_input, parse_typed_projection, ArgsExt},
+    window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -14,12 +20,44 @@ use std::sync::{Arc, RwLock};
 use crate::atspi::ElementCache;
 use cursor_overlay::CursorRegistry;
 
+fn window_target_candidates_for_pid(
+    windows: impl IntoIterator<Item = crate::x11::WindowInfo>,
+    pid: u32,
+) -> Vec<WindowTargetCandidate> {
+    windows
+        .into_iter()
+        .filter(|window| window.pid == Some(pid))
+        .map(|window| WindowTargetCandidate {
+            window_id: window.xid,
+            title: window.title,
+            app_name: Some(window.app_name),
+            is_on_screen: window.is_on_screen,
+        })
+        .collect()
+}
+
+fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
+    let Ok(pid) = u32::try_from(pid) else {
+        return Vec::new();
+    };
+    window_target_candidates_for_pid(crate::wayland::list_windows_dispatch(Some(pid)), pid)
+}
+
+fn pid_window_guarded<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(PidOnlyWindowTargetGuard::new(
+        Box::new(tool),
+        candidates.clone(),
+    ))
+}
+
 // ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
 
 #[derive(Clone)]
 pub struct DriverConfig {
     pub capture_mode: String,
-    pub capture_scope: String,
     pub max_image_dimension: u32,
 }
 
@@ -27,7 +65,6 @@ impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             capture_mode: "ax".into(),
-            capture_scope: "window".into(),
             max_image_dimension: 1568,
         }
     }
@@ -44,11 +81,6 @@ pub fn load_driver_config() -> DriverConfig {
         pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned))
     {
         cfg.capture_mode = v;
-    }
-    if let Some(v) =
-        pip_preview::read_config_value("capture_scope").and_then(|v| v.as_str().map(str::to_owned))
-    {
-        cfg.capture_scope = v;
     }
     if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64())
     {
@@ -390,7 +422,11 @@ impl Tool for ListWindowsTool {
     fn def(&self) -> &ToolDef {
         LIST_WINDOWS_DEF.get_or_init(|| ToolDef {
             name: "list_windows".into(),
-            description: "List top-level X11 windows via _NET_CLIENT_LIST.".into(),
+            description: "List top-level windows. Each record includes z_index (integer or null; \
+                higher values are closer to the front; null means stacking order is unavailable \
+                and callers must not infer one). To select a frontmost candidate, take the maximum \
+                integer z_index; if every value is null, use an explicit fallback instead of \
+                relying on array order.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer"},
                 "on_screen_only":{"type":"boolean","description":"When true, filter to visible windows only. Default false."}
@@ -407,6 +443,9 @@ impl Tool for ListWindowsTool {
             tokio::task::spawn_blocking(move || crate::wayland::list_windows_dispatch(filter_pid))
                 .await
                 .unwrap_or_default();
+        // Exited applications can remain visible in AT-SPI/X11 as zombies;
+        // never return those stale targets to callers.
+        windows.retain(|window| window.pid.map_or(true, crate::proc_fs::is_process_live));
         if on_screen_only {
             windows.retain(|window| window.is_on_screen);
         }
@@ -495,6 +534,24 @@ mod list_windows_tests {
     }
 
     #[test]
+    fn unavailable_wayland_order_serializes_as_null() {
+        let w = crate::x11::WindowInfo {
+            xid: 43,
+            pid: Some(1234),
+            app_name: "native-wayland-app".to_owned(),
+            title: "Example".to_owned(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 400,
+        };
+
+        assert_eq!(window_record_json(&w)["z_index"], Value::Null);
+    }
+
+    #[test]
     fn chromium_launch_detection_uses_executable_basename() {
         assert!(chromium_family_program("/usr/bin/google-chrome-stable"));
         assert!(chromium_family_program("CuaTestHarness.Electron"));
@@ -522,12 +579,16 @@ impl Tool for GetWindowStateTool {
                 with [element_index N] in the markdown and as `element_index` in \
                 the structured array.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry \
-                per indexed row with `element_index`, `role`, `label`, \
+                per indexed row with `element_index`, `role`, `label`, `value`, \
+                `enabled`, `selected`, \
                 `frame: {x,y,w,h}` when AT-SPI reports usable bounds, \
                 `parent_index`, `depth`). The markdown `tree_markdown` stays \
                 available and unchanged in shape for existing text-parsing \
                 callers — but new fields will only be added to the structured \
-                side.\n\n\
+                side. Set `query` to project BOTH representations to matching \
+                rows plus their ancestor chain while preserving original indices. \
+                `total_element_count` reports the complete snapshot and \
+                `returned_element_count` reports the projection.\n\n\
                 Always returns BOTH the element tree AND a screenshot — ground on \
                 both and cross-check (the tree lies on some surfaces). Choose the \
                 modality at ACTION time: an element ax action \
@@ -548,7 +609,7 @@ impl Tool for GetWindowStateTool {
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
-                "query":{"type":"string"},
+                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."}
             },"additionalProperties":false}),
@@ -604,19 +665,38 @@ impl Tool for GetWindowStateTool {
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as usize);
 
+        let process_is_live = crate::proc_fs::is_process_live(pid);
+        let window_matches = if crate::wayland::is_wayland() {
+            crate::wayland::list_windows_dispatch(Some(pid))
+                .iter()
+                .any(|window| window.xid == xid && window.pid == Some(pid))
+        } else {
+            crate::x11::window_belongs_to_pid(xid, pid)
+        };
+        if !process_is_live || !window_matches {
+            return ToolResult::error(format!(
+                "Window target pid {pid}, window_id {xid} is stale or no longer running; refresh list_windows."
+            ));
+        }
+
         // Always walk the AT-SPI tree; capture the screenshot by default. The
         // tree+screenshot pair is the default so the agent grounds on both and
         // cross-checks the (sometimes-lying) tree against the frame — only the
         // explicit `include_screenshot:false` opt-out (with no screenshot_out_file)
         // skips the grab to return tree only.
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        let observation_only = args
+            .get("_observation_only")
+            .and_then(|value| value.as_bool())
+            == Some(true);
         let state = self.state.clone();
+        let query_for_walk = query.clone();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let tree_result = Some(crate::atspi::walk_tree_bounded(
                 pid,
                 xid,
-                query.as_deref(),
+                query_for_walk.as_deref(),
                 max_elements,
                 max_depth,
             ));
@@ -669,6 +749,8 @@ impl Tool for GetWindowStateTool {
                 let mut structured = json!({ "window_id": xid, "pid": pid });
 
                 if let Some(tr) = tree_opt {
+                    let source_trusted = tr.trusted;
+                    let source_degraded_reason = tr.degraded_reason.clone();
                     let count = tr
                         .nodes
                         .iter()
@@ -678,8 +760,13 @@ impl Tool for GetWindowStateTool {
                     content.push(cua_driver_core::protocol::Content::text(
                         header + &tr.tree_markdown,
                     ));
-                    state.element_cache.update(pid, xid, &tr.nodes);
+                    if !observation_only {
+                        state.element_cache.update(pid, xid, &tr.nodes);
+                    }
                     structured["element_count"] = json!(count);
+                    // AT-SPI's current bounded walker does not surface an
+                    // exhaustive-walk proof. Keep negative existence unknown.
+                    structured["elements_complete"] = json!(false);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
                     // Surface 6: register a snapshot in the global token
@@ -687,8 +774,10 @@ impl Tool for GetWindowStateTool {
                     // by an opaque per-snapshot `element_token` alongside
                     // its existing integer `element_index`. The integer
                     // surface stays unchanged — the token is additive.
-                    let snapshot_id = cua_driver_core::element_token::global()
-                        .register_snapshot(pid as i32, xid as u32, count);
+                    let snapshot_id = (!observation_only).then(|| {
+                        cua_driver_core::element_token::global()
+                            .register_snapshot(pid as i32, xid as u32, count)
+                    });
 
                     // Structured `elements` array: one entry per actionable node.
                     // Shape: `{element_index, element_token, role, label,
@@ -710,19 +799,24 @@ impl Tool for GetWindowStateTool {
                             // `label` mirrors what a human reading the markdown row
                             // would call this element: name first, then value,
                             // then description.
-                            let label = n.name.clone()
+                            let label = n
+                                .name
+                                .clone()
                                 .or_else(|| n.value.clone())
                                 .or_else(|| n.description.clone());
                             let mut entry = json!({
                                 "element_index": idx,
-                                // Surface 6: opaque token paired to the
-                                // integer index. See cua-driver-core's
-                                // `element_token` module for the format
-                                // and validity contract.
-                                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
                                 "role": n.role,
                                 "depth": n.depth,
                             });
+                            if let Some(snapshot_id) = snapshot_id {
+                                entry["element_token"] = json!(
+                                    cua_driver_core::element_token::token_for(snapshot_id, idx)
+                                );
+                            }
+                            if n.in_web_content {
+                                entry["in_web_content"] = json!(true);
+                            }
                             if let Some(label) = label {
                                 entry["label"] = json!(label);
                             }
@@ -735,6 +829,12 @@ impl Tool for GetWindowStateTool {
                             if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
                                 entry["value"] = json!(value);
                             }
+                            if let Some(enabled) = n.enabled {
+                                entry["enabled"] = json!(enabled);
+                            }
+                            if let Some(selected) = n.selected {
+                                entry["selected"] = json!(selected);
+                            }
                             if let Some(parent) = n.parent_element_index {
                                 entry["parent_index"] = json!(parent);
                             }
@@ -744,12 +844,21 @@ impl Tool for GetWindowStateTool {
                             Some(entry)
                         })
                         .collect();
+                    let elements = cua_driver_core::element_query::project_elements_for_query(
+                        elements,
+                        query.as_deref(),
+                        &tr.tree_markdown,
+                    );
+                    structured["total_element_count"] = json!(count);
+                    structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
-                    structured["snapshot_id"] =
-                        json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                            .trim_end_matches(":0")
-                            .to_string());
+                    if let Some(snapshot_id) = snapshot_id {
+                        structured["snapshot_id"] =
+                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
+                                .trim_end_matches(":0")
+                                .to_string());
+                    }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
                          but new fields will only be added to the structured side. \
@@ -763,7 +872,16 @@ impl Tool for GetWindowStateTool {
                     // daemon isn't on the desktop session bus so the registry is
                     // empty), or it's a non-AX surface (canvas/WebGL). Mark it
                     // degraded so callers don't read `elements: []` as authoritative.
-                    if count == 0 {
+                    if !source_trusted {
+                        structured["degraded"] = json!(true);
+                        structured["degraded_reason"] = json!(source_degraded_reason
+                            .unwrap_or_else(|| {
+                                "x11_property_fallback_partial: AT-SPI was unavailable and \
+                                 Cua Driver only recovered window metadata. Treat it as \
+                                 discovery evidence; it cannot prove checked state."
+                                    .to_owned()
+                            }));
+                    } else if count == 0 {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(
                             "atspi_tree_empty: the AT-SPI walk returned no actionable \
@@ -785,12 +903,14 @@ impl Tool for GetWindowStateTool {
                 }
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
-                    if let Some(ow) = orig_w {
-                        if w > 0 {
-                            state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                    if !observation_only {
+                        if let Some(ow) = orig_w {
+                            if w > 0 {
+                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                            }
+                        } else {
+                            state.resize_registry.clear_ratio(pid);
                         }
-                    } else {
-                        state.resize_registry.clear_ratio(pid);
                     }
                     // ax mode + screenshot_out_file writes the PNG to disk and
                     // returns b64=None — never embed the image bytes in that case.
@@ -812,6 +932,7 @@ impl Tool for GetWindowStateTool {
                     content,
                     is_error: None,
                     structured_content: Some(structured),
+                    action_record: None,
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Capture error: {e}")),
@@ -825,20 +946,260 @@ impl Tool for GetWindowStateTool {
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+fn contains_remote_debugging_flag(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
+}
+
+/// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
+/// `Exec=` value with field codes stripped) in the background and return the
+/// child pid.
+fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::Result<u32> {
+    let mut parts = cmd.split_whitespace();
+    let prog = parts.next().unwrap_or(cmd);
+    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+    rest.extend(additional_arguments.iter().cloned());
+    let mut launch = std::process::Command::new(prog);
+    launch
+        .args(&rest)
+        // Enable accessibility for this child without toggling GNOME's global
+        // ScreenReaderEnabled setting (which can launch Orca). Native
+        // toolkits ignore these when they do not need them.
+        .env("ACCESSIBILITY_ENABLED", "1")
+        .env("NO_AT_BRIDGE", "0");
+    if chromium_family_program(prog)
+        && !rest
+            .iter()
+            .any(|arg| arg == "--force-renderer-accessibility")
+    {
+        launch.arg("--force-renderer-accessibility");
+    }
+    let child = launch.spawn()?;
+    let pid = child.id();
+    reap_in_background(child);
+    Ok(pid)
+}
+
+/// Collect a launched child's exit status in the background.
+///
+/// `std::process::Child` does not reap on drop and the driver never waits on
+/// an app it launches, so every launched app used to linger as a zombie for
+/// the daemon's lifetime: it held a pid slot, and — because the pid stays
+/// present — made "does this pid exist" liveness checks report a terminated
+/// app as still running.
+///
+/// Reaping is scoped to one thread per child rather than setting
+/// `SIGCHLD` to `SIG_IGN`, which is process-global and would break every
+/// caller that needs an exit status, including the `xdg-open` check below
+/// and any `Command::status()`/`output()` elsewhere in the daemon. The
+/// thread blocks in `wait` until the app exits, so it costs nothing while
+/// the app runs and never delays the launch itself.
+fn reap_in_background(mut child: std::process::Child) {
+    let pid = child.id();
+    let reaper = std::thread::Builder::new()
+        .name(format!("cua-reap-{pid}"))
+        .stack_size(64 * 1024)
+        .spawn(move || {
+            if let Err(e) = child.wait() {
+                tracing::debug!(pid, "launched app could not be reaped: {e}");
+            }
+        });
+    if let Err(e) = reaper {
+        tracing::debug!(pid, "could not start reaper thread for launched app: {e}");
+    }
+}
+
+/// Match a launch_app `name` that failed direct exec against installed XDG
+/// .desktop applications: exact display name, desktop-file id, or `Exec=`
+/// basename first, then a display-name substring when it is unambiguous.
+fn match_installed_app<'a>(
+    apps: &'a [crate::installed_apps::InstalledApp],
+    query: &str,
+) -> Option<&'a crate::installed_apps::InstalledApp> {
+    let q = query.to_ascii_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+    apps.iter()
+        .find(|a| {
+            a.name.to_ascii_lowercase() == q
+                || a.bundle_id.to_ascii_lowercase() == q
+                || exec_basename(&a.launch_path) == q
+        })
+        .or_else(|| {
+            let mut matches = apps
+                .iter()
+                .filter(|a| a.name.to_ascii_lowercase().contains(&q));
+            match (matches.next(), matches.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        })
+}
+
+/// Watch a just-spawned `xdg-open` long enough to catch a fast failure.
+/// xdg-open's generic fallback can `exec` the target app and stay alive for
+/// its whole lifetime, so a child still running after the grace period counts
+/// as success; a quick non-zero exit (2 = file not found, 3 = no handler
+/// tool, 4 = action failed) is the only reliable failure signal.
+fn xdg_open_failure(mut child: std::process::Child) -> Option<String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+    loop {
+        // A branch that observes an exit status has already reaped the child;
+        // one that gives up on it still owes that, so hand it to the reaper
+        // instead of dropping it and leaving a zombie behind.
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return None,
+            Ok(Some(status)) => return Some(format!("xdg-open failed ({status})")),
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                reap_in_background(child);
+                return None;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(e) => {
+                reap_in_background(child);
+                return Some(format!("could not observe xdg-open: {e}"));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod launch_app_tests {
+    use super::*;
+    use crate::installed_apps::InstalledApp;
+
+    fn app(name: &str, bundle_id: &str, launch_path: &str) -> InstalledApp {
+        InstalledApp {
+            name: name.to_owned(),
+            bundle_id: bundle_id.to_owned(),
+            launch_path: launch_path.to_owned(),
+            last_used: None,
+        }
+    }
+
+    fn fixture() -> Vec<InstalledApp> {
+        vec![
+            app("Galculator", "galculator", "galculator"),
+            app(
+                "Google Chrome",
+                "google-chrome",
+                "/usr/bin/google-chrome-stable",
+            ),
+            app("File Manager", "thunar", "thunar"),
+            app(
+                "File Manager Settings",
+                "thunar-settings",
+                "thunar-settings",
+            ),
+        ]
+    }
+
+    /// Process state letter from `/proc/<pid>/stat`, or `None` once the entry
+    /// is gone. `comm` may itself contain spaces and parentheses, so the state
+    /// is read after the final `)` rather than by splitting from the left.
+    fn proc_state(pid: u32) -> Option<char> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let after_comm = stat.rsplit_once(')')?.1;
+        after_comm.split_whitespace().next()?.chars().next()
+    }
+
+    #[test]
+    fn launched_children_are_reaped_instead_of_lingering_as_zombies() {
+        // A launched app that exits must not stay in the process table. The
+        // driver never waits on what it launches, so without an explicit
+        // reaper every launch leaked a pid slot for the daemon's lifetime and
+        // left "does this pid exist" liveness checks reporting a terminated
+        // app as still running.
+        // `/bin/sh` rather than a richer coreutils binary: it is the one
+        // executable POSIX and the Nix build sandbox both guarantee, and the
+        // sandbox has no `/bin/true`.
+        let pid = spawn_launch_command("/bin/sh -c exit", &[]).expect("/bin/sh should spawn");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match proc_state(pid) {
+                None => break,                    // reaped, entry gone
+                Some(state) if state != 'Z' => {} // still running or exiting
+                Some(_) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "pid {pid} was still a zombie after the reaper deadline"
+                    );
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pid {pid} was never reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    #[test]
+    fn matches_exact_display_name_case_insensitively() {
+        let apps = fixture();
+        let hit = match_installed_app(&apps, "google chrome").expect("should match");
+        assert_eq!(hit.bundle_id, "google-chrome");
+    }
+
+    #[test]
+    fn matches_desktop_file_id_and_exec_basename() {
+        let apps = fixture();
+        assert_eq!(
+            match_installed_app(&apps, "galculator").unwrap().name,
+            "Galculator"
+        );
+        assert_eq!(
+            match_installed_app(&apps, "google-chrome-stable")
+                .unwrap()
+                .name,
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn matches_unambiguous_display_name_substring() {
+        let apps = fixture();
+        assert_eq!(
+            match_installed_app(&apps, "chrome").unwrap().name,
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn refuses_ambiguous_substring_and_unknown_names() {
+        let apps = fixture();
+        // "file manager" is a substring of two entries — refuse to guess.
+        // ("File Manager" itself still resolves via the exact-name rung.)
+        assert!(match_installed_app(&apps, "file man").is_none());
+        assert_eq!(
+            match_installed_app(&apps, "file manager")
+                .unwrap()
+                .bundle_id,
+            "thunar"
+        );
+        assert!(match_installed_app(&apps, "gnome-calculator").is_none());
+        assert!(match_installed_app(&apps, "").is_none());
+    }
+}
+
 #[async_trait]
 impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
         LAUNCH_DEF.get_or_init(|| ToolDef {
             name: "launch_app".into(),
             description: "Launch a Linux app in the background. Provide launch_path (preferred — \
-                round-trip the value from list_apps), name (app name, launched via xdg-open or \
-                direct exec), bundle_id (ignored on Linux), or urls (list of URLs to open). \
-                Resolution precedence: launch_path > name > bundle_id.".into(),
+                round-trip the value from list_apps), name (tried as a direct command, then \
+                matched against installed .desktop applications, then handed to xdg-open if it \
+                is a URL or existing file path), bundle_id (ignored on Linux), or urls (list of \
+                URLs to open). Resolution precedence: launch_path > name > bundle_id. Errors \
+                when the name resolves to nothing launchable.".into(),
             input_schema: json!({"type":"object","properties":{
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
-                "name":{"type":"string","description":"App name or command to launch."},
+                "name":{"type":"string","description":"App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring)."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
-                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."}
+                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
+                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: false, open_world: true,
         })
@@ -849,6 +1210,23 @@ impl Tool for LaunchAppTool {
         let launch_path_opt = args.opt_str("launch_path");
         let name_opt = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
+        let additional_arguments: Vec<String> = args.str_array("additional_arguments");
+        if args.get("cdp_debugging_port").is_some() {
+            return ToolResult::error(
+                "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+            );
+        }
+        if launch_path_opt
+            .as_deref()
+            .into_iter()
+            .chain(name_opt.as_deref())
+            .chain(additional_arguments.iter().map(String::as_str))
+            .any(contains_remote_debugging_flag)
+        {
+            return ToolResult::error(
+                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+            );
+        }
 
         if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
@@ -858,8 +1236,17 @@ impl Tool for LaunchAppTool {
             move || -> anyhow::Result<(String, Option<u32>, String)> {
                 // Open URLs via xdg-open.
                 if !urls.is_empty() {
+                    let mut children = Vec::new();
                     for url in &urls {
-                        std::process::Command::new("xdg-open").arg(url).spawn()?;
+                        children.push((
+                            url.clone(),
+                            std::process::Command::new("xdg-open").arg(url).spawn()?,
+                        ));
+                    }
+                    for (url, child) in children {
+                        if let Some(reason) = xdg_open_failure(child) {
+                            anyhow::bail!("could not open '{url}': {reason}");
+                        }
                     }
                     return Ok((
                         format!("Opened {} URL(s) via xdg-open.", urls.len()),
@@ -872,26 +1259,8 @@ impl Tool for LaunchAppTool {
                 // canonical form preferred by list_apps callers.
                 let command = launch_path_opt.as_deref().or(name_opt.as_deref());
                 if let Some(cmd) = command {
-                    let mut parts = cmd.split_whitespace();
-                    let prog = parts.next().unwrap_or(cmd);
-                    let rest: Vec<&str> = parts.collect();
-                    let mut launch = std::process::Command::new(prog);
-                    launch
-                        .args(&rest)
-                        // Enable accessibility for this child without toggling
-                        // GNOME's global ScreenReaderEnabled setting (which can
-                        // launch Orca). Native toolkits ignore these when they
-                        // do not need them.
-                        .env("ACCESSIBILITY_ENABLED", "1")
-                        .env("NO_AT_BRIDGE", "0");
-                    if chromium_family_program(prog)
-                        && !rest.iter().any(|arg| *arg == "--force-renderer-accessibility")
-                    {
-                        launch.arg("--force-renderer-accessibility");
-                    }
-                    match launch.spawn() {
-                        Ok(child) => {
-                            let pid = child.id();
+                    match spawn_launch_command(cmd, &additional_arguments) {
+                        Ok(pid) => {
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
                                 Some(pid),
@@ -899,9 +1268,49 @@ impl Tool for LaunchAppTool {
                             ));
                         }
                         Err(_) => {
-                            // Fall back to xdg-open for .desktop app names. xdg-open may
-                            // spawn a helper and exit, so do not claim its pid is the app pid.
-                            std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            // Not an executable on PATH. Resolve the name against
+                            // installed XDG .desktop applications — the same
+                            // source list_apps reads — and run the match's Exec=.
+                            let installed = crate::installed_apps::list_installed_apps();
+                            if let Some(app) = match_installed_app(&installed, cmd) {
+                                let pid =
+                                    spawn_launch_command(&app.launch_path, &additional_arguments)
+                                        .map_err(|e| {
+                                        anyhow::anyhow!(
+                                            "'{cmd}' matched installed app '{}' but its launcher \
+                                         `{}` failed to start: {e}",
+                                            app.name,
+                                            app.launch_path
+                                        )
+                                    })?;
+                                return Ok((
+                                    format!(
+                                        "✅ Launched {} (`{}`, pid {pid}) in background — \
+                                         resolved '{cmd}' via its desktop entry.",
+                                        app.name, app.launch_path
+                                    ),
+                                    Some(pid),
+                                    app.name.clone(),
+                                ));
+                            }
+                            // xdg-open handles URLs and file paths, not app
+                            // names — only fall through for something it can
+                            // plausibly open, and surface its fast non-zero
+                            // exit instead of reporting a launch that never
+                            // happened.
+                            if !cmd.contains("://") && !std::path::Path::new(cmd).exists() {
+                                anyhow::bail!(
+                                    "'{cmd}' is not an executable on PATH and matches no \
+                                     installed .desktop application. Call list_apps and \
+                                     round-trip its launch_path."
+                                );
+                            }
+                            let child = std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            if let Some(reason) = xdg_open_failure(child) {
+                                anyhow::bail!("could not open '{cmd}': {reason}");
+                            }
+                            // xdg-open may spawn a helper and exit, so do not
+                            // claim its pid is the app pid.
                             return Ok((
                                 format!("Opened '{cmd}' via xdg-open."),
                                 None,
@@ -919,8 +1328,8 @@ impl Tool for LaunchAppTool {
             Ok(Ok((message, pid_opt, name))) => {
                 if let Some(pid) = pid_opt {
                     let windows = tokio::task::spawn_blocking(move || {
-                        let deadline = std::time::Instant::now()
-                            + std::time::Duration::from_secs(3);
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(3);
                         loop {
                             let windows = crate::wayland::list_windows_dispatch(Some(pid));
                             if !windows.is_empty() || std::time::Instant::now() >= deadline {
@@ -1004,7 +1413,7 @@ fn resolve_element_local_coords(
     if crate::wayland::wayland_input_enabled() {
         let (window_x, window_y, window_width, window_height) =
             crate::wayland::window_geometry(xid)
-            .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
+                .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
         if window_width == 0 || window_height == 0 {
             anyhow::bail!("Wayland window {xid} has no usable geometry");
         }
@@ -1083,9 +1492,10 @@ fn non_ax_escalation() -> Value {
 
 /// Structured payload for a `type_text` response. Keeps the legacy
 /// `path`/`characters`/`verified` fields for back-compat and adds the cross-tool
-/// `effect` tri-state: a read-back-confirmed insert (the AT-SPI `insertText`
-/// rung) is `"confirmed"`; every keystroke / XSendEvent / XTest / Wayland rung
-/// is `"unverifiable"` (no read-back — the caller confirms via screenshot) and
+/// `effect` tri-state. Linux's AT-SPI `insertText` return value acknowledges
+/// the method call but does not read the widget value back, so it and every
+/// keystroke / XSendEvent / XTest / Wayland rung are `"unverifiable"` (the
+/// caller confirms through a separate observation) and
 /// carries a `foreground` escalation, because the field IS in the AT-SPI tree —
 /// it's a delivery/focus problem, not a missing element. The foreground rung
 /// itself (`key_events_fg`) is already the last resort, so it emits no
@@ -1131,16 +1541,12 @@ fn type_text_structured_electron(text_len: usize) -> Value {
     })
 }
 
-/// Build the success `ToolResult` for an AT-SPI insert that the driver would
-/// otherwise mark `verified:true` (path=="ax"). Applies the Electron/Chromium
-/// AX-echo suppression: when `pid` is a Chromium embedder, the a11y layer can
-/// echo the `insertText` write back while the renderer ignores it, so we refuse
-/// to claim a confirmed insert — downgrade to effect:"unverifiable" +
-/// escalation:{recommended:"px"} and tell the agent to confirm via screenshot.
-/// Probe ONLY here, on the rung that would otherwise confirm, so native AT-SPI
-/// types pay nothing. `route` is the human route phrase, e.g. "via AT-SPI".
-/// Mirrors macOS `type_text`'s `ax_echo_surface` gate.
-fn type_text_ax_confirm_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
+/// Build the success `ToolResult` for an AT-SPI insert. The EditableText
+/// method's boolean is a delivery acknowledgement, not a fresh value readback,
+/// so native widgets remain `unverifiable`. Chromium embedders additionally
+/// recommend the pixel rung because their accessibility bridge can acknowledge
+/// a write the renderer never observes.
+fn type_text_ax_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
     if is_chromium_embedder(pid) {
         return ToolResult::text(format!(
             "📨 Sent (unverified) {text_len} character(s) ({route}). — Electron/web \
@@ -1152,14 +1558,14 @@ fn type_text_ax_confirm_result(pid: u32, text_len: usize, route: &str) -> ToolRe
         .with_structured(type_text_structured_electron(text_len));
     }
     ToolResult::text(format!("Typed {text_len} character(s) ({route})."))
-        .with_structured(type_text_structured("ax", text_len, true))
+        .with_structured(type_text_structured("ax", text_len, false))
 }
 
 /// True when `pid` is a Chromium-based embedder — a Chrome/Chromium browser or
 /// any Electron/CEF app. On these surfaces an AT-SPI `EditableText.insertText`
 /// can succeed at the bridge while the Chromium *renderer* never observes it,
 /// so the AT-SPI "ax" rung must not be trusted as a confirmed insert (see
-/// [`type_text_ax_confirm_result`]).
+/// [`type_text_ax_result`]).
 ///
 /// This is the Linux analogue of macOS `ElectronJs::is_electron` (which checks
 /// for a bundled Electron Framework). Linux has no bundle, so the signal is
@@ -1299,25 +1705,25 @@ fn unavailable_webkit_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground()
-        && is_webkitgtk_embedder(pid)
-        && !crate::wayland::is_inject_mode())
-    .then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-        )
-    })
+    (!delivery.is_foreground() && is_webkitgtk_embedder(pid) && !crate::wayland::is_inject_mode())
+        .then(|| {
+            crate::input::delivery::background_unavailable_error(
+                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            )
+        })
 }
 
 fn unavailable_gtk_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode()).then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-        )
-    })
+    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode()).then(
+        || {
+            crate::input::delivery::background_unavailable_error(
+                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            )
+        },
+    )
 }
 
 fn unavailable_gtk_pointer_background(
@@ -1428,11 +1834,48 @@ fn x11_pixel_click_no_focus_steal(
                 },
             ) {
                 Ok(()) => return Ok(()),
+                Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
                 Err(e) => tracing::warn!("MPX click fell back to XSendEvent: {e}"),
             }
         }
     }
     crate::input::send_click(xid, lx, ly, count, button)
+}
+
+fn linux_input_error(error: anyhow::Error) -> ToolResult {
+    if crate::input::is_uinput_unavailable(&error) {
+        ToolResult::error(error.to_string()).with_structured(json!({
+            "code": crate::input::UINPUT_UNAVAILABLE_CODE,
+        }))
+    } else {
+        ToolResult::error(error.to_string())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn uinput_failure_has_a_stable_structured_code() {
+    let result = linux_input_error(crate::input::uinput_unavailable("synthetic failure"));
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("code"))
+            .and_then(Value::as_str),
+        Some(crate::input::UINPUT_UNAVAILABLE_CODE)
+    );
+}
+
+fn x11_pixel_click_no_focus_steal_modifiers(
+    xid: u64,
+    lx: i32,
+    ly: i32,
+    button: u8,
+    count: usize,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    crate::input::send_click_with_modifiers(xid, lx, ly, count, button, modifiers)
 }
 
 fn mouse_button_name(button: u8) -> &'static str {
@@ -1508,10 +1951,6 @@ fn held_target_mismatch(
     }
 }
 
-async fn overlay_glide_to(sx: f64, sy: f64) {
-    overlay_glide_to_for("default", sx, sy).await;
-}
-
 fn overlay_snap_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
     crate::overlay::send_command_for(
         cursor_id.to_owned(),
@@ -1555,6 +1994,37 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
         return;
     }
     crate::overlay::animate_cursor_to_for(cursor_id.to_owned(), sx, sy).await;
+}
+
+async fn track_overlay_drag_for(
+    cursor_id: String,
+    from: (f64, f64),
+    to: (f64, f64),
+    duration_ms: u64,
+    steps: usize,
+) {
+    if !crate::overlay::is_enabled_for(&cursor_id) {
+        return;
+    }
+    crate::overlay::send_command_for(
+        cursor_id.clone(),
+        cursor_overlay::OverlayCommand::SetPressed(true),
+    );
+    let steps = steps.max(1);
+    let step_delay = std::time::Duration::from_millis(duration_ms / steps as u64);
+    for index in 0..=steps {
+        let t = index as f64 / steps as f64;
+        let x = from.0 + (to.0 - from.0) * t;
+        let y = from.1 + (to.1 - from.1) * t;
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::track_pointer_command(x, y),
+        );
+        if index < steps && !step_delay.is_zero() {
+            tokio::time::sleep(step_delay).await;
+        }
+    }
+    crate::overlay::send_command_for(cursor_id, cursor_overlay::OverlayCommand::SetPressed(false));
 }
 
 fn process_name(pid: u32) -> Option<String> {
@@ -1703,7 +2173,9 @@ impl Tool for ClickTool {
                 field is fully back-compat. X11: routes through XSendEvent ButtonPress/Release \
                 with the matching button code. Native Wayland: only left-button is supported \
                 via the virtual-pointer protocol — right/middle return an error rather than \
-                silently degrading to left.".into(),
+                silently degrading to left. `modifier` holds ctrl/shift/alt/super for the \
+                click on X11. Native Wayland refuses modified pointer clicks until its input \
+                protocol can carry keyboard modifier state.".into(),
             input_schema: json!({
                 // `pid` is conditionally required (validated in code: needed for
                 // window/element clicks, omitted for windowless scope="desktop"),
@@ -1718,12 +2190,15 @@ impl Tool for ClickTool {
                     "y":{"type":"number"},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     // Shape matches the shared button_schema() canon (string +
                     // [left,right,middle]); kept inline to carry the Linux/Wayland
                     // back-compat prose the click button-schema test asserts on.
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
                     "count":{"type":"integer"},
+                    "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -1733,47 +2208,41 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        let modifiers: Vec<String> = args.str_array("modifier");
 
         // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
         // x,y with NO pid and NO window_id → TRUE SCREEN pixels. Foreground,
-        // vision-driven desktop-scope click (the Linux peer of the Windows
-        // WindowFromPoint / macOS global-HID path). Gate on the effective scope:
-        // under "window" return the same `desktop_scope_disabled` contract.
+        // desktop-scope click (the Linux peer of the Windows WindowFromPoint /
+        // macOS global-HID path). The core registry has already enforced the
+        // session policy; this branch validates the explicit action form.
         let has_pid = args.get("pid").map(|v| !v.is_null()).unwrap_or(false);
         let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
         let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
             && args.get("y").map(|v| v.is_number()).unwrap_or(false);
         if has_xy && !has_pid && !has_window_id {
-            // Linux config is global-only (no per-session override layer).
-            let scope = self.state.config.read().unwrap().capture_scope.clone();
-            if scope != "desktop" {
+            if args.get("scope").and_then(Value::as_str) != Some("desktop") {
                 return ToolResult::error(
-                    "click: x,y given with no pid/window_id, but capture_scope is \
-                     \"window\". Screen-absolute clicks require desktop scope. Call \
-                     set_config with capture_scope=desktop (and use get_desktop_state \
-                     to read true screen pixels) first."
+                    "click: x,y given with no pid/window_id requires scope=\"desktop\"; \
+                     use get_desktop_state to read true screen pixels first."
                         .to_string(),
                 )
                 .with_structured(json!({
-                    "code": "desktop_scope_disabled",
-                    "capture_scope": scope,
-                    "suggestion": "set_config capture_scope=desktop",
+                    "code": "desktop_coordinate_scope_required",
+                    "suggestion": "pass scope=desktop",
                 }));
             }
-            let button_raw = args.str_or("button", "left").to_lowercase();
-            if !matches!(button_raw.as_str(), "" | "left" | "right" | "middle") {
-                return ToolResult::error(format!(
-                    "click: unknown button \"{button_raw}\" — expected one of left, right, middle."
-                ));
+            let input = match parse_typed_projection::<ClickInput>("click", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
+            let sx = input.x as i32;
+            let sy = input.y as i32;
+            let n = input.count.unwrap_or(1) as usize;
+            if n == 0 {
+                return ToolResult::error("click.count must be at least 1.")
+                    .with_structured(json!({ "code": "invalid_arguments" }));
             }
-            let button = parse_mouse_button(if button_raw.is_empty() {
-                "left"
-            } else {
-                &button_raw
-            });
-            let sx = args.f64_or("x", 0.0) as i32;
-            let sy = args.f64_or("y", 0.0) as i32;
-            let n = args.u64_or("count", 1) as usize;
             // Glide the agent-cursor overlay to the click point first (the macOS
             // / Windows desktop paths already do this). Without it the overlay
             // sits idle elsewhere while only the real pointer warps, so a viewer
@@ -1781,9 +2250,22 @@ impl Tool for ClickTool {
             overlay_glide_to_for(&cursor_id, sx as f64, sy as f64).await;
             let r = tokio::task::spawn_blocking(move || {
                 if crate::wayland::wayland_input_enabled() {
+                    if !modifiers.is_empty() {
+                        anyhow::bail!(
+                            "modified desktop clicks are unavailable on native Wayland: \
+                             the virtual-pointer route cannot carry keyboard modifier state"
+                        );
+                    }
                     crate::wayland::click_desktop(sx, sy, n as u32, button)
                 } else {
-                    crate::input::send_click_xtest_desktop(sx, sy, button, n)
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::send_click_xtest_desktop_with_modifiers(
+                        sx,
+                        sy,
+                        button,
+                        n,
+                        &modifier_refs,
+                    )
                 }
             })
             .await;
@@ -1832,6 +2314,7 @@ impl Tool for ClickTool {
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg.map(|v| v as u32),
             "click",
         ) {
@@ -1886,19 +2369,22 @@ impl Tool for ClickTool {
 
             // Chromium can execute a genuine AT-SPI action without focus. Try
             // that route before applying its background synthetic-input gate.
-            let ax_result =
-                tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx)).await;
-            if let Ok(Ok((_action, suspected_noop))) = ax_result {
-                let mut structured = json!({
-                    "path": "ax",
-                    "verified": false,
-                    "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
-                });
-                if suspected_noop {
-                    structured["escalation"] = non_ax_escalation();
+            if modifiers.is_empty() {
+                let ax_result =
+                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
+                        .await;
+                if let Ok(Ok((_action, suspected_noop))) = ax_result {
+                    let mut structured = json!({
+                        "path": "ax",
+                        "verified": false,
+                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                    });
+                    if suspected_noop {
+                        structured["escalation"] = non_ax_escalation();
+                    }
+                    return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
+                        .with_structured(structured);
                 }
-                return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
-                    .with_structured(structured);
             }
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
@@ -1908,7 +2394,38 @@ impl Tool for ClickTool {
             // X11 event for toolkits that accept it.
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 let (xid2, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
-                crate::input::send_click(xid2, lx as i32, ly as i32, count, button)
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                if crate::wayland::wayland_input_enabled() && !modifier_refs.is_empty() {
+                    anyhow::bail!(
+                        "modified element clicks are unavailable on native Wayland: \
+                         the pointer route cannot carry keyboard modifier state"
+                    );
+                }
+                // An explicit X11 foreground request needs the real XTest path
+                // even for a plain click. Some native widgets (notably GTK
+                // selectable rows) expose bounds but no AT-SPI Action and
+                // ignore a targeted XSendEvent; limiting XTest to modified
+                // clicks made those rows addressable but not selectable.
+                if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
+                    crate::input::with_x11_foreground(xid2, 80, || {
+                        crate::input::send_click_xtest_desktop_with_modifiers(
+                            sx.round() as i32,
+                            sy.round() as i32,
+                            button,
+                            count,
+                            &modifier_refs,
+                        )
+                    })
+                } else {
+                    crate::input::send_click_with_modifiers(
+                        xid2,
+                        lx as i32,
+                        ly as i32,
+                        count,
+                        button,
+                        &modifier_refs,
+                    )
+                }
             })
             .await;
             return match result {
@@ -1996,11 +2513,18 @@ impl Tool for ClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
         let cursor_id_for_task = cursor_id.clone();
+        let modifiers_for_task = modifiers.clone();
         // delivery_mode: background (default) = no-focus-steal injection;
         // foreground = activate the target window (EWMH) first, then inject,
         // then restore prior active. Mirrors macOS/Windows.
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
             if crate::wayland::wayland_input_enabled() {
+                if !modifiers_for_task.is_empty() {
+                    anyhow::bail!(
+                        "modified coordinate clicks are unavailable on native Wayland: \
+                         the pointer route cannot carry keyboard modifier state"
+                    );
+                }
                 // Vision/pixel click on native Wayland. Mutter drops synthetic
                 // virtual-pointer events (the `wayland::click` warp doesn't land),
                 // so for a plain left single click resolve the screen pixel to the
@@ -2010,18 +2534,13 @@ impl Tool for ClickTool {
                 // `get_window_state`. Miss → fall through to the injection paths.
                 if !delivery.is_foreground() && button == 1 && count == 1 {
                     if let Ok(Some(_)) =
-                        crate::atspi::perform_action_at_screen_point(
-                            pid,
-                            xid,
-                            output_x,
-                            output_y,
-                        )
+                        crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
                         return Ok("wayland_atspi");
                     }
                 }
                 if crate::wayland::is_inject_mode() {
-                    crate::wayland::inject_click(xid, x, y, count as u32, button)?;
+                    crate::wayland::inject_click(pid, xid, x, y, count as u32, button)?;
                     return Ok("wayland_cua_compositor");
                 }
                 if !delivery.is_foreground() {
@@ -2041,7 +2560,7 @@ impl Tool for ClickTool {
             // Foreground skips the AT-SPI shortcut and does a real activated pixel
             // click (the agent's escalation when background didn't land).
             let inject = |fg: bool| -> anyhow::Result<&'static str> {
-                if !fg && button == 1 && count == 1 {
+                if !fg && button == 1 && count == 1 && modifiers_for_task.is_empty() {
                     if let Ok(Some(_)) = crate::atspi::perform_action_at_point(pid, xi, yi) {
                         return Ok("x11_atspi");
                     }
@@ -2055,16 +2574,39 @@ impl Tool for ClickTool {
                     // widget. XTest is accepted as real input and gives the
                     // widget keyboard focus, so a following type lands.
                     if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
-                        crate::input::send_click_xtest_desktop(
+                        let modifier_refs: Vec<&str> =
+                            modifiers_for_task.iter().map(String::as_str).collect();
+                        crate::input::send_click_xtest_desktop_with_modifiers(
                             sx.round() as i32,
                             sy.round() as i32,
                             button,
                             count,
+                            &modifier_refs,
                         )?;
                         return Ok("x11_xtest_fg");
                     }
                 }
-                x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, button, count)?;
+                if modifiers_for_task.is_empty() {
+                    x11_pixel_click_no_focus_steal(
+                        &cursor_id_for_task,
+                        xid,
+                        xi,
+                        yi,
+                        button,
+                        count,
+                    )?;
+                } else {
+                    let modifier_refs: Vec<&str> =
+                        modifiers_for_task.iter().map(String::as_str).collect();
+                    x11_pixel_click_no_focus_steal_modifiers(
+                        xid,
+                        xi,
+                        yi,
+                        button,
+                        count,
+                        &modifier_refs,
+                    )?;
+                }
                 Ok(if fg { "x11_pixel_fg" } else { "x11_pixel" })
             };
             if delivery.is_foreground() {
@@ -2092,7 +2634,7 @@ impl Tool for ClickTool {
                 "✅ Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "path": path, "verified": false, "effect": "unverifiable" })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => linux_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -2158,10 +2700,8 @@ async fn focus_nested_inject_target(
     pixel: Option<(f64, f64)>,
 ) -> Result<(), ToolResult> {
     if let Some(index) = element_index {
-        return match tokio::task::spawn_blocking(move || {
-            crate::atspi::focus_element(pid, index)
-        })
-        .await
+        return match tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, index))
+            .await
         {
             Ok(Ok(true)) => Ok(()),
             Ok(Ok(false)) => Err(ToolResult::error(format!(
@@ -2173,7 +2713,7 @@ async fn focus_nested_inject_target(
     }
     if let Some((x, y)) = pixel {
         return match tokio::task::spawn_blocking(move || {
-            crate::wayland::inject_click(window_id, x, y, 1, 1)
+            crate::wayland::inject_click(pid, window_id, x, y, 1, 1)
         })
         .await
         {
@@ -2199,15 +2739,17 @@ impl Tool for TypeTextTool {
             name: "type_text".into(),
             description: "Type text to a window via XSendEvent (KeyPress/KeyRelease). No focus steal.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","text"],"properties":{
+                "type":"object","required":["text"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click."},
                     "y":{"type":"number","description":"Screenshot-pixel Y of the field (see x)."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -2217,6 +2759,33 @@ impl Tool for TypeTextTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
+            let input = match parse_typed_projection::<TypeTextInput>("type_text", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let text =
+                cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
+                    .into_owned();
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_focused" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland {
+                    crate::wayland::type_text_focused(&text)
+                } else {
+                    crate::input::send_type_text_xtest(&text)
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text("Typed text into the focused desktop application.")
+                    .with_structured(
+                        json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                    ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
@@ -2233,6 +2802,7 @@ impl Tool for TypeTextTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "type_text",
         ) {
@@ -2288,6 +2858,22 @@ impl Tool for TypeTextTool {
             );
         }
 
+        let cursor_id = resolve_cursor_key(&args);
+        if let Some(idx) = resolved_elem_idx {
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(xid),
+            );
+            if let Ok(Ok((screen_x, screen_y))) =
+                tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
+            {
+                overlay_glide_to_for(&cursor_id, screen_x, screen_y).await;
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_id, screen_x, screen_y);
+            }
+        }
+
         let text_len = text.chars().count();
         // Native toolkit editables have a stronger focus-free route than raw
         // compositor keyboard injection. Keep Chromium/WebKit on real key events
@@ -2305,32 +2891,32 @@ impl Tool for TypeTextTool {
             })
             .await;
             if let Ok(Ok(())) = targeted {
-                return type_text_ax_confirm_result(pid, text_len, "via targeted AT-SPI");
+                return type_text_ax_result(pid, text_len, "via targeted AT-SPI");
             }
         }
         // The private nested compositor can target the owning Wayland client
         // directly. Establish widget-local focus first, without changing the
         // compositor's focused toplevel, so keys reach the addressed control.
         if crate::wayland::is_inject_mode() {
-            if let Err(error) = focus_nested_inject_target(
-                pid,
-                xid,
-                resolved_elem_idx,
-                px.zip(py),
-            )
-            .await
+            if let Err(error) =
+                focus_nested_inject_target(pid, xid, resolved_elem_idx, px.zip(py)).await
             {
                 return error;
             }
             let text_w = text.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::inject_type_text(pid, xid, &text_w)
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (focus-free via cua-compositor)."
                 ))
-                .with_structured(type_text_structured("key_events", text_len, false)),
+                .with_structured(type_text_structured(
+                    "key_events",
+                    text_len,
+                    false,
+                )),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -2380,10 +2966,9 @@ impl Tool for TypeTextTool {
             && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid))
         {
             if let Some(idx) = resolved_elem_idx {
-                let focused = tokio::task::spawn_blocking(move || {
-                    crate::atspi::focus_element(pid, idx)
-                })
-                .await;
+                let focused =
+                    tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))
+                        .await;
                 match focused {
                     Ok(Ok(true)) => {}
                     Ok(Ok(false)) => {
@@ -2396,10 +2981,9 @@ impl Tool for TypeTextTool {
                 }
 
                 let text_w = text.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::wayland::type_text(xid, &text_w)
-                })
-                .await;
+                let result =
+                    tokio::task::spawn_blocking(move || crate::wayland::type_text(xid, &text_w))
+                        .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
@@ -2426,7 +3010,7 @@ impl Tool for TypeTextTool {
             .await;
             match targeted {
                 Ok(Ok(())) => {
-                    return type_text_ax_confirm_result(pid, text_len, "via targeted AT-SPI");
+                    return type_text_ax_result(pid, text_len, "via targeted AT-SPI");
                 }
                 Ok(Err(_)) | Err(_)
                     if !delivery.is_foreground() && crate::wayland::wayland_input_enabled() =>
@@ -2512,21 +3096,6 @@ impl Tool for TypeTextTool {
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
-        }
-        // Pulse the agent cursor onto the field being typed into (when an
-        // element_index OR element_token is supplied — token resolution
-        // already ran above so `resolved_elem_idx` covers both).
-        if let Some(idx) = resolved_elem_idx {
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
-            if let Ok(Ok((sx, sy))) =
-                tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
-            {
-                overlay_glide_to(sx, sy).await;
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                    x: sx,
-                    y: sy,
-                });
-            }
         }
         // Foreground means the caller explicitly permits activation. Chromium
         // and WebKitGTK can acknowledge an accessibility write without
@@ -2628,7 +3197,7 @@ impl Tool for TypeTextTool {
                 // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
                 // Electron/Chromium can echo this write without the renderer
                 // observing it, so the confirm is suppressed there (mirrors macOS).
-                return type_text_ax_confirm_result(pid, text_len, "via AT-SPI");
+                return type_text_ax_result(pid, text_len, "via AT-SPI");
             }
             _ => {
                 // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
@@ -2657,11 +3226,7 @@ impl Tool for TypeTextTool {
 
         match qt5_result {
             Ok(Ok(())) => {
-                return type_text_ax_confirm_result(
-                    pid,
-                    text_len,
-                    "via AT-SPI with focus workaround",
-                );
+                return type_text_ax_result(pid, text_len, "via AT-SPI with focus workaround");
             }
             _ => {
                 // AT-SPI still didn't work. Fall back to X11 XSendEvent.
@@ -2709,15 +3274,10 @@ impl Tool for TypeTextTool {
             "background"
         };
         match result {
-            // Read-back verdict: the AT-SPI EditableText.insertText path ("ax") is
-            // the driver-verifiable rung on Linux — the a11y layer confirms the
-            // insert into the widget model (truthful on GTK/Qt). The keystroke /
-            // XSendEvent / XTest rungs aren't read-back-confirmed (verified:false;
-            // caller confirms via screenshot).
-            // Only the AT-SPI ("ax") rung is read-back-confirmable; route it
-            // through the Electron/Chromium AX-echo suppression (mirrors macOS).
-            // Every other rung is already verified:false.
-            Ok(Ok("ax")) => type_text_ax_confirm_result(
+            // AT-SPI's boolean acknowledges the EditableText call; it is not a
+            // fresh value readback. Keep the result unverifiable and apply the
+            // stricter Chromium escalation where appropriate.
+            Ok(Ok("ax")) => type_text_ax_result(
                 pid,
                 text_len,
                 &format!("via X11, delivery_mode={mode_label}"),
@@ -2744,6 +3304,51 @@ pub struct PressKeyTool {
 }
 static PRESS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Turn a modified `press_key` request into the chord an underlying keyboard
+/// path expects when it takes a single key and no separate modifier list.
+///
+/// Returns `None` when there is nothing to promote, so the caller keeps the
+/// plain single-key route. Dropping the modifiers instead is not a silent
+/// no-op: the bare key still reaches the app and is typed as a character.
+fn press_key_chord(mods: &[String], key: &str) -> Option<Vec<String>> {
+    if mods.is_empty() {
+        return None;
+    }
+    let mut chord = mods.to_vec();
+    chord.push(key.to_owned());
+    Some(chord)
+}
+
+#[cfg(test)]
+mod press_key_tests {
+    use super::press_key_chord;
+
+    #[test]
+    fn unmodified_press_stays_on_the_single_key_route() {
+        assert_eq!(press_key_chord(&[], "return"), None);
+    }
+
+    #[test]
+    fn modifiers_are_promoted_to_a_chord_in_order() {
+        assert_eq!(
+            press_key_chord(&["ctrl".to_owned()], "s"),
+            Some(vec!["ctrl".to_owned(), "s".to_owned()])
+        );
+        assert_eq!(
+            press_key_chord(&["ctrl".to_owned(), "shift".to_owned()], "t"),
+            Some(vec!["ctrl".to_owned(), "shift".to_owned(), "t".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_requested_key_is_last_so_partition_modifiers_can_find_it() {
+        // `wayland::hotkey` splits the array with `partition_modifiers`, which
+        // takes the last non-modifier as the key. Appending keeps that true.
+        let chord = press_key_chord(&["ctrl".to_owned()], "s").expect("chord");
+        assert_eq!(chord.last().map(String::as_str), Some("s"));
+    }
+}
+
 #[async_trait]
 impl Tool for PressKeyTool {
     fn def(&self) -> &ToolDef {
@@ -2751,7 +3356,7 @@ impl Tool for PressKeyTool {
             name: "press_key".into(),
             description: "Press a key via XSendEvent to a window. No focus steal.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","key"],"properties":{
+                "type":"object","required":["key"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
@@ -2759,8 +3364,10 @@ impl Tool for PressKeyTool {
                     "modifiers":{"type":"array","items":{"type":"string"}},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index."},
                     "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -2770,6 +3377,38 @@ impl Tool for PressKeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
+            let input = match parse_typed_projection::<PressKeyInput>("press_key", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let key = input.key;
+            let display = key.clone();
+            let modifiers = input.modifiers.unwrap_or_default();
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_focused" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland && modifiers.is_empty() {
+                    crate::wayland::press_key_focused(&key)
+                } else if wayland {
+                    let mut keys = modifiers;
+                    keys.push(key);
+                    crate::wayland::hotkey_focused(&keys)
+                } else {
+                    let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::send_key_xtest(&key, &refs)
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Pressed desktop key '{display}'."))
+                    .with_structured(
+                        json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                    ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = args.u64_or("pid", 0) as u32;
         let key = match args.require_str("key") {
             Ok(v) => v,
@@ -2788,6 +3427,7 @@ impl Tool for PressKeyTool {
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg.map(|v| v as u32),
             "press_key",
         ) {
@@ -2856,17 +3496,20 @@ impl Tool for PressKeyTool {
             {
                 return error;
             }
-            let result = if mods.is_empty() {
-                let key_w = key.clone();
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::inject_press_key(xid, &key_w)
-                })
-                .await
-            } else {
-                let mut chord = mods.clone();
-                chord.push(key.clone());
-                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(xid, &chord))
+            let result = match press_key_chord(&mods, &key) {
+                None => {
+                    let key_w = key.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::wayland::inject_press_key(pid, xid, &key_w)
+                    })
                     .await
+                }
+                Some(chord) => {
+                    tokio::task::spawn_blocking(move || {
+                        crate::wayland::inject_hotkey(pid, xid, &chord)
+                    })
+                    .await
+                }
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
@@ -2923,10 +3566,20 @@ impl Tool for PressKeyTool {
         };
 
         // Native Wayland: send the key to the focused surface via virtual-keyboard.
+        // `wayland::press_key` carries no modifier list, so a modified request has
+        // to become a chord here — otherwise the modifiers are dropped and the
+        // bare key is typed as a character (Ctrl+S inserts a literal "s").
         if crate::wayland::wayland_input_enabled() {
-            let key_w = key.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::press_key(xid, &key_w)).await;
+            let result = match press_key_chord(&mods, &key) {
+                None => {
+                    let key_w = key.clone();
+                    tokio::task::spawn_blocking(move || crate::wayland::press_key(xid, &key_w))
+                        .await
+                }
+                Some(chord) => {
+                    tokio::task::spawn_blocking(move || crate::wayland::hotkey(xid, &chord)).await
+                }
+            };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Pressed key '{key}' (via Wayland virtual-keyboard)."
@@ -3012,7 +3665,7 @@ impl Tool for HotkeyTool {
             description: "Press a combination of keys simultaneously, e.g. [\"ctrl\",\"c\"] for Copy. \
                 Sent via XSendEvent directly to the target pid; target does NOT need to be frontmost.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","keys"],"properties":{
+                "type":"object","required":["keys"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
@@ -3020,8 +3673,10 @@ impl Tool for HotkeyTool {
                         "description":"Modifier(s) + one non-modifier key, e.g. [\"ctrl\",\"c\"]."},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach."},
                     "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -3031,6 +3686,45 @@ impl Tool for HotkeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
+            let input = match parse_typed_projection::<HotkeyInput>("hotkey", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let keys = input.keys;
+            if keys.len() < 2 {
+                return ToolResult::error("hotkey.keys must contain at least two keys.")
+                    .with_structured(json!({ "code": "invalid_arguments" }));
+            }
+            let modifiers: Vec<String> = keys
+                .iter()
+                .filter(|key| is_modifier(key))
+                .cloned()
+                .collect();
+            let Some(key) = keys.iter().rev().find(|key| !is_modifier(key)).cloned() else {
+                return ToolResult::error("keys must include at least one non-modifier key.");
+            };
+            let display = keys.join("+");
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_focused" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland {
+                    crate::wayland::hotkey_focused(&keys)
+                } else {
+                    let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::send_key_xtest(&key, &refs)
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Pressed desktop hotkey {display}."))
+                    .with_structured(
+                        json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                    ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
@@ -3038,6 +3732,7 @@ impl Tool for HotkeyTool {
             pid as i32,
             element_index_arg,
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg.map(|value| value as u32),
             "hotkey",
         ) {
@@ -3045,10 +3740,9 @@ impl Tool for HotkeyTool {
             Err(error) => return error,
         };
         let resolved_element_index = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element {
-                element_index,
-                ..
-            } => Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
             cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let xid_opt = match &resolved {
@@ -3136,7 +3830,7 @@ impl Tool for HotkeyTool {
             let mut chord = mods.clone();
             chord.push(key.clone());
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::inject_hotkey(xid, &chord)
+                crate::wayland::inject_hotkey(pid, xid, &chord)
             })
             .await;
             return match result {
@@ -3287,6 +3981,7 @@ impl Tool for SetValueTool {
                     "window_id":{"type":"integer","description":"Required when element_index is used; optional when element_token is supplied (the token carries it)."},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "value":{"type":"string"}
                 },"additionalProperties":false
             }),
@@ -3309,6 +4004,7 @@ impl Tool for SetValueTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "set_value",
         ) {
@@ -3323,6 +4019,7 @@ impl Tool for SetValueTool {
                 "set_value requires element_index or element_token to address the target element.",
             ),
         };
+        let cursor_id = resolve_cursor_key(&args);
         let value_for_task = value.clone();
         // Pulse the agent cursor onto the target element before writing, so a
         // value write gets the same visual feedback as a click — the viewer can
@@ -3333,13 +4030,12 @@ impl Tool for SetValueTool {
         {
             let window_id = args.u64_or("window_id", 0);
             if window_id != 0 {
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(window_id));
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(window_id),
+                );
             }
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                x: sx,
-                y: sy,
-            });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
         }
         let result =
             tokio::task::spawn_blocking(move || crate::atspi::set_value(pid, idx, &value_for_task))
@@ -3378,8 +4074,10 @@ impl Tool for ScrollTool {
                     "window_id":{"type":"integer"},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the scroll target. Pass with y and without element_index."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_index."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -3389,6 +4087,38 @@ impl Tool for ScrollTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let input = match parse_typed_projection::<ScrollInput>("scroll", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let direction = input.direction.as_str().to_owned();
+            let x = input.x.round() as i32;
+            let y = input.y.round() as i32;
+            let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
+            let display = direction.clone();
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_desktop" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland {
+                    crate::wayland::scroll_desktop(x, y, &direction, amount as u32)
+                } else {
+                    crate::input::send_scroll_xtest_desktop(x, y, &direction, amount)
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Scrolled desktop {display} × {amount}."))
+                    .with_structured(
+                        json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                    ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = match args.require_u32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -3407,6 +4137,7 @@ impl Tool for ScrollTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "scroll",
         ) {
@@ -3502,13 +4233,7 @@ impl Tool for ScrollTool {
             };
             let direction_for_inject = direction.clone();
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::inject_scroll(
-                    xid,
-                    x,
-                    y,
-                    &direction_for_inject,
-                    amount as u32,
-                )
+                crate::wayland::inject_scroll(pid, xid, x, y, &direction_for_inject, amount as u32)
             })
             .await;
             return match result {
@@ -3535,8 +4260,7 @@ impl Tool for ScrollTool {
                 (
                     None,
                     cua_driver_core::element_token::ResolvedElement::Element {
-                        element_index,
-                        ..
+                        element_index, ..
                     },
                 ) => {
                     let idx = *element_index;
@@ -3564,12 +4288,7 @@ impl Tool for ScrollTool {
                 crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32)
             });
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::scroll_at(
-                    xid,
-                    output_point,
-                    &direction_for_wayland,
-                    amount as u32,
-                )
+                crate::wayland::scroll_at(xid, output_point, &direction_for_wayland, amount as u32)
             })
             .await;
             return match result {
@@ -3670,6 +4389,9 @@ impl Tool for ScrollTool {
                             },
                         ) {
                             Ok(()) => return Ok(()),
+                            Err(error) if crate::input::is_uinput_unavailable(&error) => {
+                                return Err(error)
+                            }
                             Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
                         }
                     }
@@ -3710,7 +4432,7 @@ impl Tool for ScrollTool {
                 "Scrolled {direction} {amount} ticks (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => linux_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -3746,6 +4468,7 @@ impl Tool for DoubleClickTool {
                 "y":{"type":"number"},
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
@@ -3776,6 +4499,7 @@ impl Tool for DoubleClickTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "double_click",
         ) {
@@ -3789,10 +4513,9 @@ impl Tool for DoubleClickTool {
             cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let window_id_resolved: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                args.opt_u64("window_id")
-                    .or_else(|| window_id.map(|v| v as u64))
-            }
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
+                .opt_u64("window_id")
+                .or_else(|| window_id.map(|v| v as u64)),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
         if let Some(idx) = elem_idx_resolved {
@@ -3823,7 +4546,7 @@ impl Tool for DoubleClickTool {
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_inject_mode() {
-                            return crate::wayland::inject_click(xid, lx, ly, 2, 1);
+                            return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1);
                         }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
@@ -3847,7 +4570,7 @@ impl Tool for DoubleClickTool {
                         Ok(Ok(())) => {
                             ToolResult::text(format!("✅ Double-clicked element [{idx}]."))
                         }
-                        Ok(Err(e)) => ToolResult::error(e.to_string()),
+                        Ok(Err(e)) => linux_input_error(e),
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
                     }
                 }
@@ -3911,7 +4634,7 @@ impl Tool for DoubleClickTool {
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(xid, x, y, 2, 1);
+                return crate::wayland::inject_click(pid, xid, x, y, 2, 1);
             }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
@@ -3948,7 +4671,7 @@ impl Tool for DoubleClickTool {
                 "✅ Double-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => linux_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -3978,6 +4701,7 @@ impl Tool for RightClickTool {
                 "y":{"type":"number"},
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "modifier": cua_driver_core::tool_schema::modifier_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
@@ -4009,6 +4733,7 @@ impl Tool for RightClickTool {
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id").map(|v| v as u32),
             "right_click",
         ) {
@@ -4022,10 +4747,9 @@ impl Tool for RightClickTool {
             cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let window_id_resolved: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                args.opt_u64("window_id")
-                    .or_else(|| window_id.map(|v| v as u64))
-            }
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
+                .opt_u64("window_id")
+                .or_else(|| window_id.map(|v| v as u64)),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
         if let Some(idx) = elem_idx_resolved {
@@ -4056,7 +4780,7 @@ impl Tool for RightClickTool {
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_inject_mode() {
-                            return crate::wayland::inject_click(xid, lx, ly, 1, 3);
+                            return crate::wayland::inject_click(pid, xid, lx, ly, 1, 3);
                         }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
@@ -4080,7 +4804,7 @@ impl Tool for RightClickTool {
                         Ok(Ok(())) => {
                             ToolResult::text(format!("✅ Right-clicked element [{idx}]."))
                         }
-                        Ok(Err(e)) => ToolResult::error(e.to_string()),
+                        Ok(Err(e)) => linux_input_error(e),
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
                     }
                 }
@@ -4144,7 +4868,7 @@ impl Tool for RightClickTool {
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(xid, x, y, 1, 3);
+                return crate::wayland::inject_click(pid, xid, x, y, 1, 3);
             }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
@@ -4180,7 +4904,7 @@ impl Tool for RightClickTool {
                 "✅ Right-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => linux_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -4201,7 +4925,7 @@ impl Tool for DragTool {
             description: "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in \
                           window-local screenshot pixels via XSendEvent (ButtonPress + MotionNotify × steps + ButtonRelease). \
                           duration_ms (default 500), steps (default 20). No focus steal.".into(),
-            input_schema: json!({"type":"object","required":["pid","from_x","from_y","to_x","to_y"],"properties":{
+            input_schema: json!({"type":"object","required":["from_x","from_y","to_x","to_y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
@@ -4215,6 +4939,7 @@ impl Tool for DragTool {
                 "modifier": cua_driver_core::tool_schema::modifier_schema(),
                 "button": cua_driver_core::tool_schema::button_schema(),
                 "from_zoom":{"type":"boolean"},
+                "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -4222,6 +4947,64 @@ impl Tool for DragTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let input = match parse_typed_projection::<DragInput>("drag", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
+            let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
+            let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
+            let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_desktop" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland {
+                    crate::wayland::drag_desktop(
+                        from_x.round() as i32,
+                        from_y.round() as i32,
+                        to_x.round() as i32,
+                        to_y.round() as i32,
+                        steps as u32,
+                        duration_ms,
+                        button,
+                    )
+                } else {
+                    crate::input::send_drag_xtest_desktop(
+                        from_x.round() as i32,
+                        from_y.round() as i32,
+                        to_x.round() as i32,
+                        to_y.round() as i32,
+                        button,
+                        duration_ms,
+                        steps,
+                    )
+                }
+            });
+            let visual_drag = track_overlay_drag_for(
+                cursor_id.clone(),
+                (from_x, from_y),
+                (to_x, to_y),
+                duration_ms,
+                steps,
+            );
+            let (result, ()) = tokio::join!(result, visual_drag);
+            if matches!(&result, Ok(Ok(()))) {
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_id, to_x, to_y);
+            }
+            return match result {
+                Ok(Ok(())) => ToolResult::text("Dragged on the desktop.").with_structured(
+                    json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = match args.require_u32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -4334,11 +5117,6 @@ impl Tool for DragTool {
                 },
             );
         }
-        crate::overlay::send_command_for(
-            cursor_id.clone(),
-            cursor_overlay::OverlayCommand::SetPressed(true),
-        );
-
         // Native Wayland: emit press + interpolated motion + release as one
         // virtual-pointer (wlroots) or libei (GNOME/KDE) sequence, output-relative
         // coords. Returns early so we don't fall into the X11 XSendEvent loop below.
@@ -4347,6 +5125,7 @@ impl Tool for DragTool {
             let drag_result = if crate::wayland::is_inject_mode() {
                 tokio::task::spawn_blocking(move || {
                     crate::wayland::inject_drag(
+                        pid,
                         xid,
                         (from_x, from_y),
                         (to_x, to_y),
@@ -4354,21 +5133,35 @@ impl Tool for DragTool {
                         button as u32,
                     )
                 })
-                .await
             } else {
                 let ((fxi, fyi), (txi, tyi)) = wayland_points.unwrap_or((
                     (from_x.round() as i32, from_y.round() as i32),
                     (to_x.round() as i32, to_y.round() as i32),
                 ));
                 tokio::task::spawn_blocking(move || {
-                    crate::wayland::drag(xid, fxi, fyi, txi, tyi, steps_u32, button)
+                    crate::wayland::drag(xid, fxi, fyi, txi, tyi, steps_u32, duration_ms, button)
                 })
-                .await
             };
-            crate::overlay::send_command_for(
+            let ((from_output_x, from_output_y), (to_output_x, to_output_y)) = wayland_points
+                .unwrap_or((
+                    (from_x.round() as i32, from_y.round() as i32),
+                    (to_x.round() as i32, to_y.round() as i32),
+                ));
+            let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
-                cursor_overlay::OverlayCommand::SetPressed(false),
+                (f64::from(from_output_x), f64::from(from_output_y)),
+                (f64::from(to_output_x), f64::from(to_output_y)),
+                duration_ms,
+                steps,
             );
+            let (drag_result, ()) = tokio::join!(drag_result, visual_drag);
+            if matches!(&drag_result, Ok(Ok(()))) {
+                self.state.cursor_registry.update_position(
+                    &cursor_id,
+                    f64::from(to_output_x),
+                    f64::from(to_output_y),
+                );
+            }
             return match drag_result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Posted drag ({button_str}) to pid {pid} \
@@ -4405,12 +5198,20 @@ impl Tool for DragTool {
                         steps,
                     )
                 })
-            })
-            .await;
-            crate::overlay::send_command_for(
+            });
+            let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
-                cursor_overlay::OverlayCommand::SetPressed(false),
+                (screen_from_x, screen_from_y),
+                (screen_to_x, screen_to_y),
+                duration_ms,
+                steps,
             );
+            let (drag_result, ()) = tokio::join!(drag_result, visual_drag);
+            if matches!(&drag_result, Ok(Ok(()))) {
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_id, screen_to_x, screen_to_y);
+            }
             return match drag_result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Dragged ({button_str}) to pid {pid} from ({from_x:.0}, {from_y:.0}) \
@@ -4427,6 +5228,10 @@ impl Tool for DragTool {
             };
         }
 
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(true),
+        );
         let press_result = tokio::task::spawn_blocking(move || {
             crate::input::send_button_down(
                 xid,
@@ -4448,8 +5253,6 @@ impl Tool for DragTool {
             } else {
                 duration_ms
             };
-            let mut prev_x = from_x;
-            let mut prev_y = from_y;
             for i in 1..=steps {
                 let t = i as f64 / steps.max(1) as f64;
                 let ix = from_x + (to_x - from_x) * t;
@@ -4469,20 +5272,14 @@ impl Tool for DragTool {
                             tokio::task::spawn_blocking(move || window_local_to_screen(xid, ix, iy))
                                 .await
                         {
-                            let heading = if (ix - prev_x).abs() > f64::EPSILON
-                                || (iy - prev_y).abs() > f64::EPSILON
-                            {
-                                Some((iy - prev_y).atan2(ix - prev_x))
-                            } else {
-                                None
-                            };
                             self.state
                                 .cursor_registry
                                 .update_position(&cursor_id, sx, sy);
-                            overlay_move_to_for(&cursor_id, sx, sy, heading);
+                            crate::overlay::send_command_for(
+                                cursor_id.clone(),
+                                cursor_overlay::track_pointer_command(sx, sy),
+                            );
                         }
-                        prev_x = ix;
-                        prev_y = iy;
                         if step_delay_ms > 0 {
                             tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms))
                                 .await;
@@ -4520,19 +5317,13 @@ impl Tool for DragTool {
             if let Ok(Ok((sx_to, sy_to))) =
                 tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await
             {
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::track_pointer_command(sx_to, sy_to),
+                );
                 self.state
                     .cursor_registry
                     .update_position(&cursor_id, sx_to, sy_to);
-                overlay_snap_to_for(
-                    &cursor_id,
-                    sx_to,
-                    sy_to,
-                    Some((to_y - from_y).atan2(to_x - from_x)),
-                );
-                crate::overlay::send_command_for(
-                    cursor_id.clone(),
-                    cursor_overlay::OverlayCommand::ClickPulse { x: sx_to, y: sy_to },
-                );
             }
         }
 
@@ -5348,7 +6139,7 @@ impl Tool for ParallelMouseDragTool {
                         cursor_overlay::OverlayCommand::SetPressed(false),
                     );
                 }
-                ToolResult::error(e.to_string())
+                linux_input_error(e)
             }
             Err(e) => {
                 for (session, _) in &drags {
@@ -5377,14 +6168,19 @@ impl Tool for GetScreenSizeTool {
                 scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
                 Requires no TCC permissions."
                 .into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
             open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) = parse_typed_input::<GetScreenSizeInput>("get_screen_size", args) {
+            return result;
+        }
         let result = tokio::task::spawn_blocking(|| {
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
@@ -5458,29 +6254,11 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        // Gate on the global capture_scope: a full-display capture is a
-        // desktop-scope operation, available only when capture_scope="desktop"
-        // (same gate as window-less screen-absolute click/scroll). Read the
-        // persisted value the same way load_config does.
-        let scope = pip_preview::read_config_value("capture_scope")
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "window".to_owned());
-        if scope != "desktop" {
-            return ToolResult::error(format!(
-                "get_desktop_state requires capture_scope=\"desktop\" (current scope is \
-                 \"{scope}\"). Full-display capture is a desktop-scope operation; call \
-                 set_config with capture_scope=desktop first (it also enables window-less \
-                 screen-absolute click/scroll). For a single window, use \
-                 get_window_state(pid, window_id) instead."
-            ))
-            .with_structured(serde_json::json!({
-                "code": "desktop_scope_disabled",
-                "capture_scope": scope,
-                "suggestion": "set_config capture_scope=desktop",
-            }));
-        }
-
-        let out_file = args.opt_str("screenshot_out_file");
+        let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
+            Ok(input) => input,
+            Err(result) => return result,
+        };
+        let out_file = input.screenshot_out_file;
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Vision-only: capture the FULL DISPLAY at native size. No downscale
@@ -5523,10 +6301,12 @@ impl Tool for GetDesktopStateTool {
                 let mut content = Vec::new();
                 let mut structured = json!({
                     "platform": "linux",
+                    "display": "primary",
                     "screenshot_width": shot_w,
                     "screenshot_height": shot_h,
                     "screen_width": screen_w,
                     "screen_height": screen_h,
+                    "scale_factor": 1.0,
                     "screenshot_mime_type": "image/png",
                 });
                 if let Some(b64) = b64_opt {
@@ -5546,6 +6326,7 @@ impl Tool for GetDesktopStateTool {
                     content,
                     is_error: None,
                     structured_content: Some(structured),
+                    action_record: None,
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Capture error: {e}")),
@@ -5567,14 +6348,21 @@ impl Tool for GetCursorPositionTool {
             description:
                 "Return the current mouse cursor position in screen points (origin top-left)."
                     .into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
             open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) =
+            parse_typed_input::<GetCursorPositionInput>("get_cursor_position", args)
+        {
+            return result;
+        }
         // Native Wayland: there's no protocol for clients to query the real
         // global cursor position. Fall back to the synthetic registry that
         // records every `motion_absolute` this process emits.
@@ -5623,15 +6411,49 @@ impl Tool for MoveCursorTool {
     fn def(&self) -> &ToolDef {
         MCURSOR_DEF.get_or_init(|| ToolDef {
             name: "move_cursor".into(),
-            description: "Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.".into(),
+            description: "Move the agent cursor overlay, or with scope=desktop move the real OS pointer in get_desktop_state coordinates.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
-                "x":{"type":"number"},"y":{"type":"number"},"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"}
+                "x":{"type":"number"},"y":{"type":"number"},"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"},"scope":{"type":"string","enum":["window","desktop"],"default":"window"}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop") {
+            let input = match parse_typed_projection::<MoveCursorInput>("move_cursor", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let (x, y) = (input.x, input.y);
+            let xi = x.round() as i32;
+            let yi = y.round() as i32;
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland {
+                "wayland_desktop"
+            } else {
+                "xtest_desktop"
+            };
+            let result = if wayland {
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::move_cursor_absolute(None, xi, yi)
+                })
+                .await
+            } else {
+                tokio::task::spawn_blocking(move || crate::input::send_move_xtest_desktop(xi, yi))
+                    .await
+            };
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Moved the real desktop pointer to ({xi}, {yi})."
+                ))
+                .with_structured(
+                    json!({"scope":"desktop","path":path,"x":xi,"y":yi,"effect":"unverifiable"}),
+                ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
         let window_id = args.get("window_id").and_then(|v| v.as_u64());
@@ -5674,404 +6496,230 @@ impl Tool for MoveCursorTool {
 
 // ── set_agent_cursor_enabled ──────────────────────────────────────────────────
 
-pub struct SetAgentCursorEnabledTool {
+pub struct SetAgentCursorEnabledV2Tool {
     state: Arc<ToolState>,
 }
 
-static SCE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+static CURSOR_ENABLED_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
-impl Tool for SetAgentCursorEnabledTool {
+impl Tool for SetAgentCursorEnabledV2Tool {
     fn def(&self) -> &ToolDef {
-        SCE_DEF.get_or_init(|| ToolDef {
-            name: "set_agent_cursor_enabled".into(),
-            description: "Show or hide the agent cursor overlay.".into(),
-            input_schema: json!({"type":"object","required":["enabled"],"properties":{
-                "enabled":{"type":"boolean"},"session":{"type":"string"},"cursor_id":{"type":"string"}
-            },"additionalProperties":false}),
-            read_only: false, destructive: false, idempotent: true, open_world: false,
-        })
+        CURSOR_ENABLED_V2_DEF.get_or_init(|| canonical_cursor_def("set_agent_cursor_enabled"))
     }
+
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
-        let enabled = match args.require_bool("enabled") {
-            Ok(v) => v,
-            Err(e) => return e,
+        let enabled = match args.get("enabled").and_then(Value::as_bool) {
+            Some(value) => value,
+            None => return ToolResult::error("Missing required boolean field `enabled`."),
         };
-        let cursor_id = resolve_cursor_key(&args);
-        self.state.cursor_registry.set_enabled(&cursor_id, enabled);
+        let session = resolve_cursor_key(&args);
+        self.state.cursor_registry.set_enabled(&session, enabled);
         crate::overlay::send_command_for(
-            cursor_id.clone(),
+            session.clone(),
             cursor_overlay::OverlayCommand::SetEnabled(enabled),
         );
         ToolResult::text(format!(
-            "Agent cursor '{cursor_id}' {}.",
+            "Agent cursor for session '{session}' {}.",
             if enabled { "enabled" } else { "disabled" }
         ))
+        .with_structured(json!({"session":session,"enabled":enabled}))
     }
 }
 
-// ── set_agent_cursor_motion ───────────────────────────────────────────────────
+pub struct SetAgentCursorMotionV2Tool;
 
-pub struct SetAgentCursorMotionTool {
-    state: Arc<ToolState>,
+static CURSOR_MOTION_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn cursor_number(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|value| {
+        value
+            .as_f64()
+            .or_else(|| value.as_i64().map(|integer| integer as f64))
+    })
 }
-
-static CURSOR_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
-impl Tool for SetAgentCursorMotionTool {
+impl Tool for SetAgentCursorMotionV2Tool {
     fn def(&self) -> &ToolDef {
-        CURSOR_DEF.get_or_init(|| ToolDef {
-            name: "set_agent_cursor_motion".into(),
-            description: format!("Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
-                - cursor_id: instance name (default='default')\n\
-                - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n\
-                - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
-                - cursor_label: short text shown near the cursor\n\
-                - cursor_size: dot radius in points (default=16)\n\
-                - cursor_opacity: 0.0–1.0 (default=0.85)\n\n\
-                Motion curve (Bezier):\n\
-                - arc_size: perpendicular deflection as fraction of path length [0,1]. Default 0.25\n\
-                - spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72\n\
-                - glide_duration_ms: fixed flight duration per move [50,5000]; omit for speed-based\n\
-                - dwell_after_click_ms: pause after click ripple [0,5000]. Default 80\n\
-                - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000",
-                cursor_overlay::BuiltinShape::names_help()),
-            input_schema: json!({
-                "type":"object","properties":{
-                    "session":{"type":"string"},
-                    "cursor_id":{"type":"string"},
-                    "cursor_icon":{"type":"string"},
-                    "cursor_color":{"type":"string"},
-                    "cursor_label":{"type":"string"},
-                    "cursor_size":{"type":"number"},
-                    "cursor_opacity":{"type":"number"},
-                    "start_handle":{"type":"number","description":"Start-handle fraction [0,1]. Default 0.3."},
-                    "end_handle":{"type":"number","description":"End-handle fraction [0,1]. Default 0.3."},
-                    "arc_size":{"type":"number","description":"Arc deflection as fraction of path length [0,1]. Default 0.25."},
-                    "arc_flow":{"type":"number","description":"Asymmetry bias [-1,1]. Default 0.0."},
-                    "spring":{"type":"number","description":"Settle damping [0.3,1.0]. Default 0.72."},
-                    "glide_duration_ms":{"type":"number","minimum":50,"maximum":5000},
-                    "dwell_after_click_ms":{"type":"number","minimum":0,"maximum":5000},
-                    "idle_hide_ms":{"type":"number","minimum":0,"maximum":60000},
-                    "turn_radius":{"type":"number","minimum":1,"maximum":1000}
-                },"additionalProperties":false
-            }),
-            read_only: false, destructive: false, idempotent: true, open_world: false,
-        })
+        CURSOR_MOTION_V2_DEF.get_or_init(|| canonical_cursor_def("set_agent_cursor_motion"))
     }
+
     async fn invoke(&self, args: Value) -> ToolResult {
-        fn num(value: Option<&Value>) -> Option<f64> {
-            value.and_then(|value| {
-                value
-                    .as_f64()
-                    .or_else(|| value.as_i64().map(|integer| integer as f64))
-            })
-        }
-
-        let cursor_id = resolve_cursor_key(&args);
-        // Resolve `cursor_icon` (built-in name or image path — same vocabulary as
-        // the CLI flags) to a shape override and dispatch it, so the overlay
-        // actually changes instead of just recording the string.
-        let mut shape_cmd: Option<cursor_overlay::OverlayCommand> = None;
-        if let Some(icon) = args.opt_str("cursor_icon") {
-            let icon_owned = icon.clone();
-            match tokio::task::spawn_blocking(move || {
-                cursor_overlay::resolve_cursor_icon(&icon_owned)
-            })
-            .await
-            {
-                Ok(Ok(resolution)) => {
-                    shape_cmd = Some(cursor_overlay::OverlayCommand::from_cursor_icon(resolution))
-                }
-                Ok(Err(e)) => return ToolResult::error(format!("Invalid cursor_icon: {e}")),
-                Err(e) => return ToolResult::error(format!("Task error: {e}")),
-            }
-        }
-        self.state.cursor_registry.update_config(&cursor_id, |cfg| {
-            if let Some(v) = args.opt_str("cursor_icon") {
-                cfg.cursor_icon = Some(v);
-            }
-            if let Some(v) = args.opt_str("cursor_color") {
-                cfg.cursor_color = Some(v);
-            }
-            if let Some(v) = args.opt_str("cursor_label") {
-                cfg.cursor_label = Some(v);
-            }
-            if let Some(v) = args.opt_f64("cursor_size") {
-                cfg.cursor_size = Some(v);
-            }
-            if let Some(v) = args.opt_f64("cursor_opacity") {
-                cfg.cursor_opacity = Some(v.clamp(0.0, 1.0));
-            }
-        });
-        if let Some(cmd) = shape_cmd {
-            crate::overlay::send_command_for(cursor_id.clone(), cmd);
-        }
-
-        let motion = crate::overlay::current_motion_for(&cursor_id).with_overrides(
-            num(args.get("start_handle")),
-            num(args.get("end_handle")),
-            num(args.get("arc_size")),
-            num(args.get("arc_flow")),
-            num(args.get("spring")),
-            num(args.get("glide_duration_ms")),
-            num(args.get("dwell_after_click_ms")),
-            num(args.get("idle_hide_ms")),
+        let session = resolve_cursor_key(&args);
+        let current = crate::overlay::current_motion_for(&session);
+        let motion = current.with_overrides(
+            cursor_number(args.get("start_handle")),
+            cursor_number(args.get("end_handle")),
+            cursor_number(args.get("arc_size")),
+            cursor_number(args.get("arc_flow")),
+            cursor_number(args.get("spring")),
+            cursor_number(args.get("glide_duration_ms")),
+            cursor_number(args.get("dwell_after_click_ms")),
+            cursor_number(args.get("idle_hide_ms")),
             None,
-            num(args.get("turn_radius")),
+            cursor_number(args.get("turn_radius")),
         );
         crate::overlay::send_command_for(
-            cursor_id.clone(),
+            session.clone(),
             cursor_overlay::OverlayCommand::SetMotion(motion.clone()),
         );
-
         ToolResult::text(format!(
-            "Cursor '{cursor_id}' config updated. Motion: arc={:.2} spring={:.2} glide={}ms dwell={}ms idle={}ms",
-            motion.arc_size,
-            motion.spring,
-            motion.glide_duration_ms as u32,
-            motion.dwell_after_click_ms as u32,
-            motion.idle_hide_ms as u32,
+            "Agent cursor motion updated for session '{session}'."
         ))
-        .with_structured(json!({
-            "cursor_id": cursor_id,
-            "start_handle": motion.start_handle,
-            "end_handle": motion.end_handle,
-            "arc_size": motion.arc_size,
-            "arc_flow": motion.arc_flow,
-            "spring": motion.spring,
-            "glide_duration_ms": motion.glide_duration_ms,
-            "dwell_after_click_ms": motion.dwell_after_click_ms,
-            "idle_hide_ms": motion.idle_hide_ms,
-            "turn_radius": motion.turn_radius,
-        }))
+        .with_structured(json!({"session":session,"motion":{
+            "start_handle":motion.start_handle,
+            "end_handle":motion.end_handle,
+            "arc_size":motion.arc_size,
+            "arc_flow":motion.arc_flow,
+            "spring":motion.spring,
+            "glide_duration_ms":motion.glide_duration_ms,
+            "dwell_after_click_ms":motion.dwell_after_click_ms,
+            "idle_hide_ms":motion.idle_hide_ms,
+            "turn_radius":motion.turn_radius
+        }}))
     }
 }
 
-// ── get_agent_cursor_state ────────────────────────────────────────────────────
-
-pub struct GetAgentCursorStateTool {
+pub struct SetAgentCursorThemeTool {
     state: Arc<ToolState>,
 }
 
-static GCSTATE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+static CURSOR_THEME_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn cursor_reduced_motion(value: Option<&str>) -> cursor_overlay::ReducedMotion {
+    match value {
+        Some("on") => cursor_overlay::ReducedMotion::On,
+        Some("off") => cursor_overlay::ReducedMotion::Off,
+        _ => cursor_overlay::ReducedMotion::Auto,
+    }
+}
 
 #[async_trait]
-impl Tool for GetAgentCursorStateTool {
+impl Tool for SetAgentCursorThemeTool {
     fn def(&self) -> &ToolDef {
-        GCSTATE_DEF.get_or_init(|| ToolDef {
-            name: "get_agent_cursor_state".into(),
-            description: "Return the current state of all agent cursor instances.".into(),
-            input_schema: json!({"type":"object","properties":{"session":{"type":"string"},"cursor_id":{"type":"string"}},"additionalProperties":false}),
-            read_only: true, destructive: false, idempotent: true, open_world: false,
-        })
+        CURSOR_THEME_DEF.get_or_init(|| canonical_cursor_def("set_agent_cursor_theme"))
     }
+
     async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = resolve_cursor_key(&args);
-        let states = if args.get("session").is_some() || args.get("cursor_id").is_some() {
-            vec![self.state.cursor_registry.get_or_create(&cursor_id)]
-        } else {
-            self.state.cursor_registry.all_states()
+        let Some(theme_id) = args.get("theme_id").and_then(Value::as_str) else {
+            return ToolResult::error("Missing required string field `theme_id`.");
         };
-        let json = serde_json::to_value(&states).unwrap_or_default();
-        ToolResult::text(format!("{} cursor instance(s).", states.len()))
-            .with_structured(json!({ "cursors": json }))
-    }
-}
-
-// ── set_agent_cursor_style ────────────────────────────────────────────────────
-
-pub struct SetAgentCursorStyleTool {
-    state: Arc<ToolState>,
-}
-
-static STYLE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-
-#[async_trait]
-impl Tool for SetAgentCursorStyleTool {
-    fn def(&self) -> &ToolDef {
-        STYLE_DEF.get_or_init(|| ToolDef {
-            name: "set_agent_cursor_style".into(),
-            description:
-                "Update the visual style of the agent cursor overlay.\n\n\
-                 - gradient_colors: array of CSS hex strings (e.g. [\"#FF0000\",\"#0000FF\"]) \
-                   used as the arrow fill gradient from tip to tail. Empty array reverts to \
-                   the default palette colours.\n\
-                 - bloom_color: hex string for the radial halo/bloom behind the cursor \
-                   (e.g. \"#00FFFF\"). Empty string reverts to the default.\n\
-                 - image_path: path to a PNG, JPEG, SVG, or ICO file to use as the cursor \
-                   icon instead of the default silhouette. Empty string reverts to the \
-                   default cursor.\n\
-                 All parameters are optional; omit any you do not want to change."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "session": {
-                        "type": "string",
-                        "description": "Optional multi-cursor session id; takes precedence over cursor_id."
-                    },
-                    "cursor_id": {
-                        "type": "string",
-                        "description": "Cursor instance. Default: 'default'."
-                    },
-                    "gradient_colors": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "CSS hex gradient stops tip→tail. [] = revert to default."
-                    },
-                    "bloom_color": {
-                        "type": "string",
-                        "description": "Hex bloom/halo colour (e.g. '#00FFFF'). '' = revert to default."
-                    },
-                    "image_path": {
-                        "type": "string",
-                        "description": "Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to the default cursor."
-                    }
-                },
-                "additionalProperties": false
-            }),
-            read_only: false, destructive: false, idempotent: true, open_world: false,
-        })
-    }
-
-    async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = resolve_cursor_key(&args);
-
-        // image_path
-        let image_path = args.get("image_path").and_then(|v| v.as_str());
-        let shape_cmd: Option<cursor_overlay::OverlayCommand> = if let Some(path) = image_path {
-            if path.is_empty() {
-                Some(cursor_overlay::OverlayCommand::SetShape(None))
-            } else {
-                let path_owned = path.to_owned();
-                match tokio::task::spawn_blocking(move || {
-                    cursor_overlay::CursorShape::load(&path_owned)
-                })
-                .await
-                {
-                    Ok(Ok(shape)) => {
-                        let path_for_cfg = path.to_owned();
-                        self.state.cursor_registry.update_config(&cursor_id, |cfg| {
-                            cfg.cursor_icon = Some(path_for_cfg);
-                        });
-                        Some(cursor_overlay::OverlayCommand::SetShape(Some(shape)))
-                    }
-                    Ok(Err(e)) => {
-                        return ToolResult::error(format!("Failed to load image_path: {e}"))
-                    }
-                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
-                }
+        let session = resolve_cursor_key(&args);
+        let resolved_theme = match cursor_overlay::resolve_theme_selection(theme_id) {
+            Ok(theme) => theme,
+            Err(error) => {
+                return ToolResult::error(format!(
+                    "Cursor theme '{theme_id}' cannot be selected: {error}"
+                ));
             }
-        } else {
-            None
         };
-
-        // gradient_colors
-        let gradient_colors: Vec<[u8; 4]> =
-            if let Some(arr) = args.get("gradient_colors").and_then(|v| v.as_array()) {
-                let mut out = vec![];
-                for v in arr {
-                    if let Some(hex) = v.as_str() {
-                        match parse_hex_color(hex) {
-                            Some(c) => out.push(c),
-                            None => return ToolResult::error(format!("Invalid hex color: {hex}")),
-                        }
-                    }
-                }
-                out
-            } else {
-                vec![]
-            };
-
-        // bloom_color
-        let bloom_color: Option<Option<[u8; 4]>> =
-            if let Some(hex) = args.get("bloom_color").and_then(|v| v.as_str()) {
-                if hex.is_empty() {
-                    Some(None)
-                } else {
-                    match parse_hex_color(hex) {
-                        Some(c) => Some(Some(c)),
-                        None => return ToolResult::error(format!("Invalid bloom_color: {hex}")),
-                    }
-                }
-            } else {
-                None
-            };
-
-        // Dispatch to overlay
-        if let Some(cmd) = shape_cmd {
-            crate::overlay::send_command_for(cursor_id.clone(), cmd);
-        }
-        let gradient_provided = args.get("gradient_colors").is_some();
-        let bloom_provided = args.get("bloom_color").is_some();
-        if gradient_provided || bloom_provided {
-            crate::overlay::send_command_for(
-                cursor_id.clone(),
-                cursor_overlay::OverlayCommand::SetGradient {
-                    gradient_colors,
-                    bloom_color: bloom_color.flatten(),
-                },
-            );
-        }
-
-        let grad_str = args
-            .get("gradient_colors")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                let strs: Vec<String> = arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(str::to_owned))
-                    .collect();
-                format!("[{}]", strs.join(", "))
-            })
-            .unwrap_or_else(|| "(unchanged)".into());
-        let bloom_str = args
-            .get("bloom_color")
-            .and_then(|v| v.as_str())
-            .map(|s| {
-                if s.is_empty() {
-                    "(reverted)".to_owned()
-                } else {
-                    s.to_owned()
-                }
-            })
-            .unwrap_or_else(|| "(unchanged)".into());
-        let img_str = image_path
-            .map(|s| {
-                if s.is_empty() {
-                    "(reverted to default)".to_owned()
-                } else {
-                    s.to_owned()
-                }
-            })
-            .unwrap_or_else(|| "(unchanged)".into());
-
+        let (version, profile) = resolved_theme
+            .as_deref()
+            .map(|theme| (theme.version.as_str(), theme.profile.as_str()))
+            .unwrap_or((
+                cursor_overlay::DEFAULT_THEME_VERSION,
+                cursor_overlay::THEME_PROFILE,
+            ));
+        let reduced_motion =
+            cursor_reduced_motion(args.get("reduced_motion").and_then(Value::as_str));
+        self.state
+            .cursor_registry
+            .update_config(&session, |config| {
+                config.theme_id = theme_id.to_owned();
+                config.reduced_motion = reduced_motion;
+            });
+        crate::overlay::send_command_for(
+            session.clone(),
+            cursor_overlay::OverlayCommand::SetTheme {
+                theme_id: theme_id.to_owned(),
+                reduced_motion,
+            },
+        );
         ToolResult::text(format!(
-            "cursor style: gradient_colors={grad_str} bloom_color={bloom_str} image_path={img_str}"
+            "Agent cursor theme for session '{session}' set to '{theme_id}'."
         ))
+        .with_structured(json!({"session":session,"theme":{
+            "id":theme_id,
+            "version":version,
+            "profile":profile,
+            "reduced_motion":reduced_motion,
+            "fallback":null
+        }}))
     }
 }
 
-fn parse_hex_color(hex: &str) -> Option<[u8; 4]> {
-    let s = hex.trim_start_matches('#');
-    match s.len() {
-        6 => {
-            let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-            Some([r, g, b, 255])
-        }
-        3 => {
-            let r = u8::from_str_radix(&s[0..1].repeat(2), 16).ok()?;
-            let g = u8::from_str_radix(&s[1..2].repeat(2), 16).ok()?;
-            let b = u8::from_str_radix(&s[2..3].repeat(2), 16).ok()?;
-            Some([r, g, b, 255])
-        }
-        _ => None,
+pub struct GetAgentCursorStateV2Tool;
+
+static CURSOR_STATE_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for GetAgentCursorStateV2Tool {
+    fn def(&self) -> &ToolDef {
+        CURSOR_STATE_V2_DEF.get_or_init(|| canonical_cursor_def("get_agent_cursor_state"))
     }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let session = resolve_cursor_key(&args);
+        let enabled = crate::overlay::is_enabled_for(&session);
+        let motion = crate::overlay::current_motion_for(&session);
+        let (theme_id, version, profile, fallback, visual) =
+            crate::overlay::current_theme_state_for(&session).unwrap_or_else(|| {
+                (
+                    cursor_overlay::DEFAULT_THEME_ID.into(),
+                    cursor_overlay::DEFAULT_THEME_VERSION.into(),
+                    cursor_overlay::THEME_PROFILE.into(),
+                    None,
+                    cursor_overlay::CursorVisualState::default(),
+                )
+            });
+        let modifiers: Vec<&str> = [
+            visual.delivery.map(|value| value.as_str()),
+            visual.target.map(|value| value.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        ToolResult::text(format!("Agent cursor state for session '{session}'.")).with_structured(
+            json!({
+                "session":session,
+                "enabled":enabled,
+                "position":null,
+                "theme":{
+                    "id":theme_id,
+                    "version":version,
+                    "profile":profile,
+                    "reduced_motion":visual.reduced_motion,
+                    "fallback":fallback
+                },
+                "visual_state":{
+                    "requested_action":visual.requested_action,
+                    "resolved_action":visual.resolved_action,
+                    "modifiers":modifiers,
+                    "phase":visual.phase(),
+                    "frame":visual.frame(),
+                    "preempted_count":visual.preempted_count
+                },
+                "motion":{
+                    "start_handle":motion.start_handle,
+                    "end_handle":motion.end_handle,
+                    "arc_size":motion.arc_size,
+                    "arc_flow":motion.arc_flow,
+                    "spring":motion.spring,
+                    "glide_duration_ms":motion.glide_duration_ms,
+                    "dwell_after_click_ms":motion.dwell_after_click_ms,
+                    "idle_hide_ms":motion.idle_hide_ms,
+                    "turn_radius":motion.turn_radius
+                }
+            }),
+        )
+    }
+}
+
+fn canonical_cursor_def(name: &str) -> ToolDef {
+    let contract = cua_driver_contract::tool_contract(name)
+        .unwrap_or_else(|| panic!("missing canonical cursor contract for {name}"));
+    ToolDef::from_contract(&contract)
 }
 
 // ── check_permissions ─────────────────────────────────────────────────────────
@@ -6171,9 +6819,9 @@ impl Tool for GetConfigTool {
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text("cua-driver-rs configuration").with_structured(json!({
             "version": env!("CARGO_PKG_VERSION"),
+            "source_sha": option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform": "linux",
             "capture_mode": cfg.capture_mode,
-            "capture_scope": cfg.capture_scope,
             "max_image_dimension": cfg.max_image_dimension,
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry
@@ -6206,7 +6854,6 @@ impl Tool for SetConfigTool {
                 "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
-                "capture_scope":{"type":"string","enum":["window","desktop"],"description":"Capture scope: single window or whole desktop. Default window."},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
                 "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
@@ -6216,6 +6863,18 @@ impl Tool for SetConfigTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.get("capture_scope").is_some()
+            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
+        {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+            )
+            .with_structured(json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "start_session.capture_scope",
+            }));
+        }
         let mut cfg = self.state.config.write().unwrap();
         let mut parts = Vec::new();
         // {key, value} shape (what the Swift/macOS and Windows callers send).
@@ -6235,17 +6894,6 @@ impl Tool for SetConfigTool {
                         parts.push(format!("capture_mode={s}"));
                     }
                     None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
-                },
-                "capture_scope" => match val.as_str() {
-                    Some(s @ ("window" | "desktop")) => {
-                        cfg.capture_scope = s.to_owned();
-                        if let Err(e) = pip_preview::write_config_key("capture_scope", Value::String(s.to_owned())) {
-                            tracing::warn!("set_config: failed to persist capture_scope: {e}");
-                        }
-                        parts.push(format!("capture_scope={s}"));
-                    }
-                    Some(other) => return ToolResult::error(format!("`capture_scope` must be \"window\" or \"desktop\", got \"{other}\".")),
-                    None => return ToolResult::error(format!("`capture_scope` must be a string, got {val}.")),
                 },
                 "max_image_dimension" => match val.as_u64() {
                     Some(n) => {
@@ -6281,7 +6929,7 @@ impl Tool for SetConfigTool {
                     None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
                 },
                 other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, capture_scope, max_image_dimension, experimental_pip, experimental_pip_geometry."
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
                 )),
             }
         }
@@ -6294,20 +6942,6 @@ impl Tool for SetConfigTool {
             }
             parts.push(format!("capture_mode={mode}"));
             cfg.capture_mode = mode;
-        }
-        if let Some(scope) = args.opt_str("capture_scope") {
-            if scope != "window" && scope != "desktop" {
-                return ToolResult::error(format!(
-                    "`capture_scope` must be \"window\" or \"desktop\", got \"{scope}\"."
-                ));
-            }
-            if let Err(e) =
-                pip_preview::write_config_key("capture_scope", Value::String(scope.clone()))
-            {
-                tracing::warn!("set_config: failed to persist capture_scope: {e}");
-            }
-            parts.push(format!("capture_scope={scope}"));
-            cfg.capture_scope = scope;
         }
         if let Some(dim) = args.opt_u64("max_image_dimension") {
             cfg.max_image_dimension = dim as u32;
@@ -6347,7 +6981,6 @@ impl Tool for SetConfigTool {
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text(msg).with_structured(json!({
             "capture_mode": cfg.capture_mode,
-            "capture_scope": cfg.capture_scope,
             "max_image_dimension": cfg.max_image_dimension,
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry
@@ -6527,6 +7160,7 @@ impl Tool for ZoomTool {
                         "width": w, "height": h, "format": "jpeg",
                         "mime_type": "image/jpeg"
                     })),
+                    action_record: None,
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Zoom failed: {e}")),
@@ -6645,7 +7279,46 @@ impl Tool for KillAppTool {
         })
     }
 
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id != "process_control" {
+            return Ok(None);
+        }
+        use cua_driver_core::browser::platform::BrowserPlatform;
+        let pid = args
+            .get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0)
+            .ok_or_else(|| "kill_app requires a positive integer pid".to_owned())?;
+        let fingerprint = crate::browser_platform::LinuxBrowserPlatform
+            .process_fingerprint(pid)
+            .await
+            .map_err(|error| error.message)?;
+        Ok(Some(json!({
+            "kind": "process_instance",
+            "fingerprint": fingerprint,
+        })))
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
+        if let Some(expected) = args.get("_protected_process_fingerprint") {
+            let current = match self
+                .protected_resource_scope("process_control", &args)
+                .await
+            {
+                Ok(Some(scope)) => scope["fingerprint"].clone(),
+                Ok(None) => Value::Null,
+                Err(message) => return kill_app_stale_process_refusal(message),
+            };
+            if current != *expected {
+                return kill_app_stale_process_refusal(
+                    "the process identity changed at the termination boundary".to_owned(),
+                );
+            }
+        }
         let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
             Some(_) => {
@@ -6671,6 +7344,294 @@ impl Tool for KillAppTool {
     }
 }
 
+fn kill_app_stale_process_refusal(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "refusal": {
+            "code": "protected_resource_scope_stale",
+            "message": message,
+        }
+    }))
+}
+
+// ── invoke_menu (Linux) ──────────────────────────────────────────────────────
+
+pub struct InvokeMenuTool;
+
+static INVOKE_MENU_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn normalized_menu_path(path: Vec<String>) -> Result<Vec<String>, String> {
+    if path.is_empty() || path.len() > 16 {
+        return Err("invoke_menu: path must contain between 1 and 16 segments".into());
+    }
+    path.into_iter()
+        .enumerate()
+        .map(|(index, segment)| {
+            let segment = segment.trim();
+            if segment.is_empty() {
+                Err(format!("invoke_menu: path segment {index} is empty"))
+            } else {
+                Ok(segment.to_owned())
+            }
+        })
+        .collect()
+}
+
+fn menu_refusal(message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "refused",
+        "refusal": { "code": "menu_path_unavailable", "message": message }
+    }))
+}
+
+#[async_trait]
+impl Tool for InvokeMenuTool {
+    fn def(&self) -> &ToolDef {
+        INVOKE_MENU_DEF.get_or_init(|| {
+            let contract =
+                cua_driver_contract::tool_contract("invoke_menu").expect("invoke_menu contract");
+            ToolDef {
+                name: contract.name,
+                description: contract.description,
+                input_schema: contract.input_schema,
+                read_only: contract.annotations.read_only,
+                destructive: contract.annotations.destructive,
+                idempotent: contract.annotations.idempotent,
+                open_world: contract.annotations.open_world,
+            }
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::action_record::{
+            ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
+            EvidenceKind, RequestedDelivery,
+        };
+
+        let input: InvokeMenuInput = match parse_typed_input("invoke_menu", args) {
+            Ok(input) => input,
+            Err(result) => return result,
+        };
+        let path = match normalized_menu_path(input.path) {
+            Ok(path) => path,
+            Err(error) => return menu_refusal(error),
+        };
+        let pid = input.pid;
+        let window_id = input.window_id;
+        if !crate::wayland::list_windows_dispatch(Some(pid))
+            .iter()
+            .any(|window| window.xid == window_id && window.pid == Some(pid))
+        {
+            return menu_refusal("invoke_menu: window_id does not belong to pid".into());
+        }
+
+        let activation = if crate::wayland::is_wayland() {
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::activate_window_for_input_target(window_id, Some(pid))
+            })
+            .await;
+            match result {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => {
+                    return menu_refusal(format!(
+                        "invoke_menu: target window could not be activated: {error}"
+                    ))
+                }
+                Err(error) => {
+                    return menu_refusal(format!("invoke_menu: activation task failed: {error}"))
+                }
+            }
+        } else {
+            match tokio::task::spawn_blocking(move || {
+                crate::input::x11_activate_window_persistent(window_id)
+            })
+            .await
+            {
+                Ok(Ok(prior)) => Some(prior),
+                Ok(Err(error)) => {
+                    return menu_refusal(format!(
+                        "invoke_menu: target window could not be activated: {error}"
+                    ))
+                }
+                Err(error) => {
+                    return menu_refusal(format!("invoke_menu: activation task failed: {error}"))
+                }
+            }
+        };
+
+        let outcome = tokio::task::spawn_blocking(move || {
+            let result = crate::atspi::native::invoke_menu_path(pid, &path);
+            if let Some(Some(prior_window)) = activation {
+                let _ = crate::input::x11_activate_window_persistent(prior_window);
+            }
+            result
+        })
+        .await;
+
+        match outcome {
+            Ok(Ok(())) => ToolResult::text(
+                "Resolved the live native menu path and dispatched its final accessibility action; verify the command's semantic effect from fresh state.",
+            )
+            .with_action_record(
+                ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::LinuxAtSpiAction,
+                    RequestedDelivery::Foreground,
+                )
+                .actual_delivery(ActualDelivery::Foreground)
+                .evidence(ActionEvidence {
+                    kind: EvidenceKind::NativeApiResult,
+                    detail: "Every menu hop resolved uniquely and AT-SPI accepted the final action"
+                        .into(),
+                })
+                .build()
+                .expect("invoke_menu record is valid"),
+            ),
+            Ok(Err(error)) => menu_refusal(format!("invoke_menu: {error}")),
+            Err(error) => menu_refusal(format!("invoke_menu: blocking task failed: {error}")),
+        }
+    }
+}
+
+// ── set_window_frame (Linux) ─────────────────────────────────────────────────
+
+pub struct SetWindowFrameTool;
+
+static SET_WINDOW_FRAME_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for SetWindowFrameTool {
+    fn def(&self) -> &ToolDef {
+        SET_WINDOW_FRAME_DEF.get_or_init(|| {
+            let contract = cua_driver_contract::tool_contract("set_window_frame")
+                .expect("set_window_frame contract");
+            ToolDef {
+                name: contract.name,
+                description: contract.description,
+                input_schema: contract.input_schema,
+                read_only: contract.annotations.read_only,
+                destructive: contract.annotations.destructive,
+                idempotent: contract.annotations.idempotent,
+                open_world: contract.annotations.open_world,
+            }
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_contract::SetWindowFrameInput;
+        use cua_driver_core::action_record::{
+            effect_from_value_readback, ActionEvidence, ActionExecutionRecord, ActionTransport,
+            ActualDelivery, EvidenceKind, RequestedDelivery,
+        };
+
+        let input: SetWindowFrameInput =
+            match cua_driver_core::tool_args::parse_typed_input("set_window_frame", args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+        if crate::wayland::is_wayland() {
+            return ToolResult::error(
+                "set_window_frame: this Wayland compositor exposes no protocol that permits a client to set another top-level window's geometry",
+            );
+        }
+        let values = [input.x, input.y, input.width, input.height];
+        if values.iter().any(|value| !value.is_finite())
+            || input.width <= 0.0
+            || input.height <= 0.0
+        {
+            return ToolResult::error(
+                "set_window_frame: x/y must be finite and width/height must be finite positive numbers",
+            );
+        }
+        let to_i32 = |name: &str, value: f64| -> Result<i32, String> {
+            let rounded = value.round();
+            if rounded < i32::MIN as f64 || rounded > i32::MAX as f64 {
+                Err(format!("{name} is out of range for an X11 coordinate"))
+            } else {
+                Ok(rounded as i32)
+            }
+        };
+        let to_u32 = |name: &str, value: f64| -> Result<u32, String> {
+            let rounded = value.round();
+            if rounded < 1.0 || rounded > u32::MAX as f64 {
+                Err(format!("{name} is out of range for an X11 size"))
+            } else {
+                Ok(rounded as u32)
+            }
+        };
+        let x = match to_i32("x", input.x) {
+            Ok(value) => value,
+            Err(error) => return ToolResult::error(format!("set_window_frame: {error}")),
+        };
+        let y = match to_i32("y", input.y) {
+            Ok(value) => value,
+            Err(error) => return ToolResult::error(format!("set_window_frame: {error}")),
+        };
+        let width = match to_u32("width", input.width) {
+            Ok(value) => value,
+            Err(error) => return ToolResult::error(format!("set_window_frame: {error}")),
+        };
+        let height = match to_u32("height", input.height) {
+            Ok(value) => value,
+            Err(error) => return ToolResult::error(format!("set_window_frame: {error}")),
+        };
+        let window_id = input.window_id;
+        let pid = input.pid;
+        let outcome = tokio::task::spawn_blocking(move || {
+            let before = crate::x11::list_windows(Some(pid))
+                .into_iter()
+                .find(|window| window.xid == window_id)
+                .map(|window| (window.x, window.y, window.width, window.height));
+            let (observed, confirmed, mutation_error) =
+                crate::x11::set_window_frame(window_id, pid, x, y, width, height)
+                    .map_err(|error| error.to_string())?;
+            let observed_frame =
+                observed.map(|window| (window.x, window.y, window.width, window.height));
+            let changed = observed_frame.is_some_and(|observed| before != Some(observed));
+            Ok::<_, String>((observed_frame, confirmed, changed, mutation_error))
+        })
+        .await;
+        let (observed, confirmed, changed, mutation_error) = match outcome {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(error)) => return ToolResult::error(format!("set_window_frame: {error}")),
+            Err(error) => {
+                return ToolResult::error(format!(
+                    "set_window_frame: blocking task failed: {error}"
+                ));
+            }
+        };
+        let effect = effect_from_value_readback(confirmed, changed, observed.is_some());
+        let requested = (x, y, width, height);
+        let mut record = ActionExecutionRecord::builder(
+            effect,
+            ActionTransport::LinuxX11ConfigureWindow,
+            RequestedDelivery::NotApplicable,
+        )
+        .actual_delivery(ActualDelivery::NotApplicable)
+        .detail(format!(
+            "requested={requested:?} observed={observed:?} mutation_error={mutation_error:?}"
+        ));
+        if observed.is_some() {
+            record = record.evidence(ActionEvidence {
+                kind: EvidenceKind::ValueReadback,
+                detail: if confirmed {
+                    "X11 geometry readback matched the requested frame".into()
+                } else {
+                    "X11 geometry readback did not match the requested frame".into()
+                },
+            });
+        }
+        ToolResult::text(if confirmed {
+            "Set and verified the requested window frame."
+        } else if observed.is_none() {
+            "The native window mutation was attempted, but its resulting frame could not be read back."
+        } else {
+            "The window frame did not settle at the requested geometry."
+        })
+        .with_action_record(record.build().expect("set_window_frame record is valid"))
+    }
+}
+
 // ── bring_to_front (Linux) ───────────────────────────────────────────────────
 
 pub struct BringToFrontTool;
@@ -6684,10 +7645,16 @@ impl Tool for BringToFrontTool {
             name: "bring_to_front".into(),
             description:
                 "Persistently activate a window so subsequent input lands on it. \
+                 This deliberately breaks the no-foreground contract and is not part \
+                 of the normal input ladder. For an ordinary `background_unavailable` \
+                 response, retry only the refused action with \
+                 `delivery_mode:\"foreground\"`; the input tool performs its own \
+                 activate, act, and restore sequence. Use `bring_to_front` only for a \
+                 focus-proxy surface that must remain foreground across multiple calls, \
+                 such as a remote desktop session, or when repeated action-scoped \
+                 activation prevents the remote surface from accepting input. \
                  X11: EWMH _NET_ACTIVE_WINDOW activation (the `wmctrl -a` equivalent, \
-                 proper timestamp handling to beat focus-stealing prevention) — call \
-                 it before `delivery_mode:\"foreground\"` input to avoid a per-call \
-                 flash, or to escalate when background injection didn't land. \
+                 with proper timestamp handling to beat focus-stealing prevention). \
                  Wayland: activates through a target-addressable compositor adapter \
                  (wlroots foreign-toplevel or the GNOME Shell helper) and refuses \
                  when the compositor offers no safe adapter. Matches the macOS / \
@@ -6723,14 +7690,14 @@ impl Tool for BringToFrontTool {
             })
             .await;
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Brought Wayland window {window_id} to front."
-                ))
-                .with_structured(serde_json::json!({
-                    "window_id": window_id,
-                    "platform": "linux",
-                    "session": "wayland",
-                })),
+                Ok(Ok(())) => {
+                    ToolResult::text(format!("Brought Wayland window {window_id} to front."))
+                        .with_structured(serde_json::json!({
+                            "window_id": window_id,
+                            "platform": "linux",
+                            "session": "wayland",
+                        }))
+                }
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
@@ -6775,11 +7742,51 @@ impl Tool for BringToFrontTool {
 // ── registry ─────────────────────────────────────────────────────────────────
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
+    build_registry_with_provider(compat, None)
+}
+
+pub fn build_registry_with_provider(
+    compat: bool,
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+) -> ToolRegistry {
     let state = ToolState::new();
-    {
+    let cursor_outcome_reader = {
+        let cursor_registry = state.cursor_registry.clone();
+        cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
+            move |session_id| {
+                let state = cursor_registry.get(session_id);
+                let motion_customized = state.is_some()
+                    && crate::overlay::current_motion_for(session_id)
+                        != cursor_overlay::MotionConfig::default();
+                let active_cursor_count = cursor_registry
+                    .all_states()
+                    .iter()
+                    .filter(|state| state.config.cursor_id != "default")
+                    .count()
+                    .max(1);
+                match state {
+                    Some(state) => cua_driver_core::session::bounded_cursor_outcome(
+                        true,
+                        state.config.enabled,
+                        Some(state.config.theme_id.as_str()),
+                        motion_customized,
+                        active_cursor_count,
+                    ),
+                    None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
+                        false,
+                        None,
+                        false,
+                        active_cursor_count,
+                    ),
+                }
+            },
+        ))
+    };
+    let session_end_hook = {
         let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
+        cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
             state_for_session_end
@@ -6788,52 +7795,115 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
                 .unwrap()
                 .remove(session_id);
             crate::input::forget_master_pointer(session_id);
+        })
+    };
+    let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
+    r.retain_cursor_outcome_reader(cursor_outcome_reader);
+    r.retain_session_end_hook(session_end_hook);
+    if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
+        let prefix = format!("__cua_runtime_{runtime_scope}:");
+        let cursor_registry = state.cursor_registry.clone();
+        r.retain_runtime_cleanup(move || {
+            for cursor in cursor_registry
+                .all_states()
+                .into_iter()
+                .filter(|cursor| cursor.config.cursor_id.starts_with(&prefix))
+            {
+                cursor_registry.remove(&cursor.config.cursor_id);
+                crate::overlay::remove_cursor(cursor.config.cursor_id);
+            }
         });
     }
-    let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool {
         state: state.clone(),
     }));
+    r.register(Box::new(
+        cua_driver_core::expectation::VerifyStateTool::new(std::sync::Arc::new(
+            cua_driver_core::expectation::ToolObservationProvider::new(
+                std::sync::Arc::new(ListWindowsTool),
+                std::sync::Arc::new(GetWindowStateTool {
+                    state: state.clone(),
+                }),
+            ),
+        )),
+    ));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
-    r.register(Box::new(BringToFrontTool));
-    r.register(Box::new(ClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(DoubleClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(RightClickTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(DragTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(MouseButtonDownTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(MouseDragTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(MouseButtonUpTool {
-        state: state.clone(),
-    }));
+    let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
+    r.register(pid_window_guarded(BringToFrontTool, &pid_window_candidates));
+    r.register(Box::new(SetWindowFrameTool));
+    r.register(Box::new(InvokeMenuTool));
+    r.register(pid_window_guarded(
+        ClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        DoubleClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        RightClickTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        DragTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        MouseButtonDownTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        MouseDragTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        MouseButtonUpTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
     r.register(Box::new(ParallelMouseDragTool {
         state: state.clone(),
     }));
-    r.register(Box::new(TypeTextTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(PressKeyTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(HotkeyTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(SetValueTool));
-    r.register(Box::new(ScrollTool));
+    r.register(pid_window_guarded(
+        TypeTextTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        PressKeyTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        HotkeyTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(SetValueTool, &pid_window_candidates));
+    r.register(pid_window_guarded(ScrollTool, &pid_window_candidates));
+    cua_driver_core::clipboard::register_clipboard_tools(
+        &mut r,
+        Arc::new(crate::clipboard::LinuxClipboard::new()),
+    );
     // `screenshot` removed - see the matching comment in
     // platform-windows/src/tools/impl_.rs::build_registry. Canonical
     // screenshot path is `get_window_state` (it always returns a screenshot now).
@@ -6844,16 +7914,12 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
     }));
-    r.register(Box::new(SetAgentCursorEnabledTool {
+    r.register(Box::new(SetAgentCursorEnabledV2Tool {
         state: state.clone(),
     }));
-    r.register(Box::new(SetAgentCursorMotionTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(GetAgentCursorStateTool {
-        state: state.clone(),
-    }));
-    r.register(Box::new(SetAgentCursorStyleTool {
+    r.register(Box::new(SetAgentCursorMotionV2Tool));
+    r.register(Box::new(GetAgentCursorStateV2Tool));
+    r.register(Box::new(SetAgentCursorThemeTool {
         state: state.clone(),
     }));
     r.register(Box::new(CheckPermissionsTool));
@@ -6883,6 +7949,12 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         super::page::LinuxPageBackend::new(),
     ))));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
+        Arc::new(crate::browser_platform::LinuxBrowserPlatform),
+        r.approval_broker(),
+        r.protected_resource_ownership(),
+    );
+    cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();
     r
@@ -6950,11 +8022,50 @@ mod click_button_schema_tests {
 }
 
 #[cfg(test)]
-mod driver_config_tests {
-    use super::DriverConfig;
+mod browser_launch_guard_tests {
+    use super::contains_remote_debugging_flag;
 
     #[test]
-    fn capture_scope_defaults_to_window() {
-        assert_eq!(DriverConfig::default().capture_scope, "window");
+    fn rejects_all_chromium_remote_debugging_spellings() {
+        assert!(contains_remote_debugging_flag("--remote-debugging-port=0"));
+        assert!(contains_remote_debugging_flag("--REMOTE-DEBUGGING-PIPE"));
+        assert!(contains_remote_debugging_flag(
+            "/usr/bin/chrome --remote-debugging-port 9222"
+        ));
+        assert!(!contains_remote_debugging_flag(
+            "--user-data-dir=/tmp/profile"
+        ));
+    }
+}
+
+#[cfg(test)]
+mod pid_window_target_tests {
+    use super::*;
+    use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
+
+    fn window(xid: u64, pid: u32) -> crate::x11::WindowInfo {
+        crate::x11::WindowInfo {
+            xid,
+            pid: Some(pid),
+            app_name: "editor".into(),
+            title: format!("Document {xid}"),
+            is_on_screen: true,
+            z_index: Some(1),
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+        }
+    }
+
+    #[test]
+    fn same_pid_sibling_windows_are_ambiguous() {
+        let candidates =
+            window_target_candidates_for_pid([window(7, 42), window(8, 42), window(9, 99)], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
+        ));
     }
 }

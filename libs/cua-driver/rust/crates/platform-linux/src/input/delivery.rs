@@ -82,8 +82,8 @@ pub fn delivery_mode_schema() -> Value {
          error. 'foreground' is the explicit escalation: activate the target \
          (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then \
          restore the prior active window — a brief focus swap unless the \
-         target was already active. Call bring_to_front first to avoid the \
-         flash. Matches the macOS / Windows delivery_mode surface.",
+         target was already active. Matches the macOS / Windows delivery_mode \
+         surface.",
     );
     v["default"] = serde_json::json!("background");
     v
@@ -145,16 +145,19 @@ pub fn background_unavailable_error(
 ) -> cua_driver_core::protocol::ToolResult {
     let detail = reason.detail();
     cua_driver_core::protocol::ToolResult::error(format!(
-        "Background delivery is not available: {detail}. Either call bring_to_front \
-         then retry with delivery_mode:\"foreground\", or accept activation by \
-         setting delivery_mode:\"foreground\" directly."
+        "Background delivery is not available: {detail}. Retry this action with \
+         delivery_mode:\"foreground\"; Cua Driver will activate the target for \
+         the action and restore the previous foreground afterward."
     ))
     .with_structured(serde_json::json!({
         "code": reason.code(),
         "detail": detail,
-        "suggestion":
-            "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
-             or set delivery_mode:\"foreground\" directly.",
+        "suggestion": "Retry this action with delivery_mode:\"foreground\".",
+        "escalation": {
+            "recommended": "foreground",
+            "reason": "background input is unavailable on this surface; retry this \
+                       action with delivery_mode:\"foreground\".",
+        },
     }))
 }
 
@@ -213,6 +216,10 @@ mod tests {
             .collect();
         assert_eq!(en, vec!["background", "foreground"]);
         assert_eq!(s["default"], "background");
+        let description = s["description"]
+            .as_str()
+            .expect("delivery_mode description");
+        assert!(!description.contains("bring_to_front"));
     }
 
     #[test]
@@ -223,5 +230,24 @@ mod tests {
             r.structured_content.as_ref().unwrap()["code"],
             serde_json::json!("background_unavailable")
         );
+        let text = match &r.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text,
+            _ => panic!("expected text content"),
+        };
+        let structured = r.structured_content.as_ref().unwrap();
+        assert!(text.contains("Retry this action with delivery_mode:\"foreground\""));
+        assert!(!text.contains("bring_to_front"));
+        assert_eq!(
+            structured["suggestion"].as_str(),
+            Some("Retry this action with delivery_mode:\"foreground\".")
+        );
+        assert_eq!(
+            structured["escalation"]["recommended"].as_str(),
+            Some("foreground")
+        );
+        assert!(!structured["escalation"]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bring_to_front"));
     }
 }

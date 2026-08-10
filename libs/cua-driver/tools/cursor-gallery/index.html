@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cua cursor gallery</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <div class="brand-bar" aria-label="Cua Driver cursor lab">
+        <span class="brand-wordmark">cua</span>
+        <span class="brand-surface">Driver · Cursor lab</span>
+      </div>
+      <header class="hero">
+        <div>
+          <p class="eyebrow">CUA.DEFAULT · EXACT RENDERER PREVIEW</p>
+          <h1>Session-colored <span class="accent">semantic motion.</span></h1>
+          <p class="lede">
+            Exact frames from the Cua Driver native renderer. Build a production composition, compare
+            every badge context, then inspect the action artwork that makes it up.
+          </p>
+        </div>
+        <div class="controls" aria-label="Animation controls">
+          <button id="play-toggle" type="button">Pause</button>
+          <button id="replay" type="button">Replay</button>
+          <label>
+            <span>Speed</span>
+            <select id="speed" aria-label="Animation speed">
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </label>
+          <button id="background-toggle" type="button">Dark</button>
+        </div>
+      </header>
+
+      <section id="runtime-preview-section" class="runtime-section" aria-labelledby="runtime-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-count">Production runtime</p>
+            <h2 id="runtime-title">Build the final cursor</h2>
+          </div>
+          <p>Choose action, delivery, and target semantics to preview the exact native overlay.</p>
+        </div>
+
+        <article class="runtime-card">
+          <div class="runtime-copy">
+            <p id="runtime-combination" class="section-count">Observe · Background · Browser</p>
+            <h3 id="runtime-preview-title">One cursor, every combination</h3>
+            <p>
+              The action animates around the pointer while the attached badge carries session
+              identity and optional execution context. Every selectable result below is exported
+              by the production Rust renderer.
+            </p>
+            <div class="preview-controls" aria-label="Final cursor preview controls">
+              <label>
+                <span>Action</span>
+                <select id="preview-action" aria-label="Preview action"></select>
+              </label>
+              <label>
+                <span>Delivery</span>
+                <select id="preview-delivery" aria-label="Preview delivery">
+                  <option value="none">None</option>
+                  <option value="background" selected>Background</option>
+                  <option value="foreground">Foreground</option>
+                </select>
+              </label>
+              <label>
+                <span>Target</span>
+                <select id="preview-target" aria-label="Preview target">
+                  <option value="none">None</option>
+                  <option value="ax">AX</option>
+                  <option value="pixel">Pixel</option>
+                  <option value="browser" selected>Browser</option>
+                  <option value="desktop">Desktop</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="runtime-demo demo">
+            <video
+              id="runtime-preview"
+              class="cursor-video"
+              src="./generated/previews/observe--background--browser.webm"
+              data-group="previews"
+              data-state="observe--background--browser"
+              autoplay
+              loop
+              muted
+              playsinline
+            ></video>
+          </div>
+          <div class="runtime-anatomy" aria-label="Runtime cursor anatomy">
+            <div><span class="anatomy-index">1</span><span><strong>Pointer and action</strong><span id="anatomy-action">Observe animation</span></span></div>
+            <div><span class="anatomy-index">2</span><span><strong>Session</strong>Research</span></div>
+            <div><span class="anatomy-index">3</span><span><strong>Delivery</strong><span id="anatomy-delivery">Filled background chip</span></span></div>
+            <div><span class="anatomy-index">4</span><span><strong>Target</strong><span id="anatomy-target">Outlined browser chip</span></span></div>
+          </div>
+        </article>
+      </section>
+
+      <section id="badge-contexts" class="gallery-section context-section" aria-labelledby="contexts-title" data-capture-group="contexts">
+        <div class="section-heading">
+          <div>
+            <p class="section-count">15 badge states</p>
+            <h2 id="contexts-title">Every delivery and target combination</h2>
+          </div>
+          <p>None, single-chip states, and all eight paired states—always in runtime badge order.</p>
+        </div>
+        <div id="contexts-grid" class="context-grid"></div>
+      </section>
+
+      <section class="gallery-section" aria-labelledby="actions-title" data-capture-group="actions">
+        <div class="section-heading">
+          <div>
+            <p class="section-count">12 states</p>
+            <h2 id="actions-title">Action animations</h2>
+          </div>
+          <p>Theme-owned action layers are isolated here for visual review.</p>
+        </div>
+        <div id="actions-grid" class="state-grid"></div>
+      </section>
+
+      <footer>
+        <span>Preview scale is enlarged for review.</span>
+        <span>Production cursor size is 42 points.</span>
+      </footer>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

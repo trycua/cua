@@ -23,17 +23,19 @@
 //! - [`launch_uwp`] — given an AUMID (App User Model ID, the
 //!   `{PackageFamilyName}!{ApplicationId}` form a packaged app exposes),
 //!   activate it and return the real pid.
-//! - [`resolve_aumid_by_name`] — given a display name (e.g. `"Notepad"`),
-//!   walk `shell:AppsFolder` (the same virtual folder the Start Menu
-//!   reads) and return the matching AUMID. Used as the fallback when a
-//!   caller passes a plain name and we want to route through the
-//!   packaged-app path instead of `ShellExecuteExW`.
+//! - [`resolve_apps_folder_target_by_name`] — given a display name (e.g.
+//!   `"Notepad"`), walk `shell:AppsFolder` (the same virtual folder the
+//!   Start Menu reads) and return the matching launch target. Packaged apps
+//!   use `ActivateApplication`; desktop registrations use their
+//!   `shell:AppsFolder` parsing path with `ShellExecuteExW`.
 //!
 //! Both functions are no-ops / compile errors on non-Windows targets;
 //! the module is `#[cfg(target_os = "windows")]`-gated at the crate
 //! root.
 
-use std::sync::{OnceLock, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
 use windows::core::{Interface, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HWND;
@@ -43,8 +45,8 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
 use windows::Win32::UI::Shell::{
-    ApplicationActivationManager, IApplicationActivationManager, IEnumShellItems, IShellItem,
-    IShellItem2, SHCreateItemFromParsingName, AO_NONE, BHID_EnumItems, SIGDN_NORMALDISPLAY,
+    ApplicationActivationManager, BHID_EnumItems, IApplicationActivationManager, IEnumShellItems,
+    IShellItem, IShellItem2, SHCreateItemFromParsingName, AO_NONE, SIGDN_NORMALDISPLAY,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -108,9 +110,8 @@ pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
     // CoCreateInstance call will surface a clear error.
     let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
 
-    let manager: IApplicationActivationManager = unsafe {
-        CoCreateInstance(&ApplicationActivationManager, None, CLSCTX_LOCAL_SERVER)?
-    };
+    let manager: IApplicationActivationManager =
+        unsafe { CoCreateInstance(&ApplicationActivationManager, None, CLSCTX_LOCAL_SERVER)? };
 
     let aumid_h = HSTRING::from(aumid);
     let args_h = HSTRING::from(args);
@@ -120,11 +121,7 @@ pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
     let prior_foreground = unsafe { GetForegroundWindow() };
 
     let pid = unsafe {
-        manager.ActivateApplication(
-            PCWSTR(aumid_h.as_ptr()),
-            PCWSTR(args_h.as_ptr()),
-            AO_NONE,
-        )?
+        manager.ActivateApplication(PCWSTR(aumid_h.as_ptr()), PCWSTR(args_h.as_ptr()), AO_NONE)?
     };
 
     // Restore the prior foreground window. AppX activation has already
@@ -212,11 +209,31 @@ pub fn is_aumid(s: &str) -> bool {
     }
 }
 
-/// Single AppsFolder entry: display name + AUMID.
+/// How an entry discovered through `shell:AppsFolder` must be launched.
+///
+/// `PKEY_AppUserModel_ID` is exposed by both packaged and desktop apps. Only
+/// packaged IDs have the `{PackageFamilyName}!{ApplicationId}` shape accepted
+/// by `IApplicationActivationManager`; desktop IDs must be handed back to the
+/// shell namespace that supplied them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AppsFolderLaunchTarget {
+    PackagedAumid(String),
+    ShellLaunchPath(String),
+}
+
+fn classify_apps_folder_app_id(app_id: &str) -> AppsFolderLaunchTarget {
+    if is_aumid(app_id) {
+        AppsFolderLaunchTarget::PackagedAumid(app_id.to_owned())
+    } else {
+        AppsFolderLaunchTarget::ShellLaunchPath(format!(r"shell:AppsFolder\{app_id}"))
+    }
+}
+
+/// Single AppsFolder entry: display name + application model ID.
 ///
 /// `lowercase_display_name` is a one-time precomputation of
 /// `display_name.to_lowercase()`, populated at enumeration time. The
-/// prefix-match pass in [`resolve_aumid_by_name`] runs over every cached
+/// prefix-match pass in [`resolve_apps_folder_target_by_name`] runs over every cached
 /// entry on every lookup; without this field the loop would allocate a
 /// fresh lowercased `String` per entry per call (~150–300 allocations
 /// per resolve on a stock Win11 install). Caching it once turns the hot
@@ -225,7 +242,7 @@ pub fn is_aumid(s: &str) -> bool {
 struct AppsFolderEntry {
     display_name: String,
     lowercase_display_name: String,
-    aumid: String,
+    app_id: String,
 }
 
 /// Cached snapshot of all `shell:AppsFolder` entries.
@@ -241,8 +258,150 @@ struct AppsFolderEntry {
 /// `bundle_id` always works regardless of cache state.
 static APPS_FOLDER_CACHE: OnceLock<RwLock<Option<Vec<AppsFolderEntry>>>> = OnceLock::new();
 
+const APPS_FOLDER_LOOKUP_TIMEOUT: Duration = Duration::from_secs(4);
+const APPS_FOLDER_LOOKUP_RECOVERY_COOLDOWN: Duration = Duration::from_secs(30);
+
+/// Why a display-name lookup could not produce a definitive answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppsFolderLookupError {
+    Timeout,
+    Busy,
+    Unavailable,
+}
+
+/// Process-wide bound for the uncancellable `shell:AppsFolder` COM walk.
+///
+/// A timed-out blocking task keeps this gate until the COM call actually
+/// returns. Retries therefore fail fast instead of accumulating abandoned
+/// Tokio blocking workers. Once a late worker returns, a short cooldown keeps
+/// a hot retry loop from immediately entering the same unhealthy shell broker.
+struct AppsFolderLookupSingleFlight {
+    in_flight: AtomicBool,
+    cooldown_until_ms: AtomicU64,
+    cooldown_ms: u64,
+}
+
+impl AppsFolderLookupSingleFlight {
+    const fn new(cooldown_ms: u64) -> Self {
+        Self {
+            in_flight: AtomicBool::new(false),
+            cooldown_until_ms: AtomicU64::new(0),
+            cooldown_ms,
+        }
+    }
+
+    async fn run<T, F>(
+        self: &Arc<Self>,
+        timeout: Duration,
+        work: F,
+    ) -> Result<T, AppsFolderLookupError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let now = apps_folder_lookup_now_ms();
+        if now < self.cooldown_until_ms.load(Ordering::Acquire)
+            || self
+                .in_flight
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return Err(AppsFolderLookupError::Busy);
+        }
+
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let worker_timed_out = Arc::clone(&timed_out);
+        let worker_gate = Arc::clone(self);
+        let worker = tokio::task::spawn_blocking(move || {
+            let _guard = AppsFolderLookupInFlightGuard {
+                gate: worker_gate,
+                timed_out: worker_timed_out,
+            };
+            work()
+        });
+
+        match tokio::time::timeout(timeout, worker).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    target: "launch_uwp",
+                    "shell:AppsFolder lookup worker failed: {error}"
+                );
+                Err(AppsFolderLookupError::Unavailable)
+            }
+            Err(_) => {
+                timed_out.store(true, Ordering::Release);
+                // Also arm the cooldown on the caller side. The worker can
+                // return between the deadline firing and observing
+                // `timed_out`; recording it here closes that race.
+                self.cooldown_until_ms.store(
+                    apps_folder_lookup_now_ms().saturating_add(self.cooldown_ms),
+                    Ordering::Release,
+                );
+                Err(AppsFolderLookupError::Timeout)
+            }
+        }
+    }
+}
+
+struct AppsFolderLookupInFlightGuard {
+    gate: Arc<AppsFolderLookupSingleFlight>,
+    timed_out: Arc<AtomicBool>,
+}
+
+impl Drop for AppsFolderLookupInFlightGuard {
+    fn drop(&mut self) {
+        if self.timed_out.load(Ordering::Acquire) {
+            self.gate.cooldown_until_ms.store(
+                apps_folder_lookup_now_ms().saturating_add(self.gate.cooldown_ms),
+                Ordering::Release,
+            );
+        }
+        self.gate.in_flight.store(false, Ordering::Release);
+    }
+}
+
+fn apps_folder_lookup_gate() -> &'static Arc<AppsFolderLookupSingleFlight> {
+    static GATE: OnceLock<Arc<AppsFolderLookupSingleFlight>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        Arc::new(AppsFolderLookupSingleFlight::new(
+            APPS_FOLDER_LOOKUP_RECOVERY_COOLDOWN.as_millis() as u64,
+        ))
+    })
+}
+
+fn apps_folder_lookup_now_ms() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
 fn cache() -> &'static RwLock<Option<Vec<AppsFolderEntry>>> {
     APPS_FOLDER_CACHE.get_or_init(|| RwLock::new(None))
+}
+
+/// Resolve a display name without allowing an unhealthy shell broker to wedge
+/// the async tool stream.
+pub async fn resolve_apps_folder_target_by_name_bounded(
+    display_name: String,
+) -> Result<Option<AppsFolderLaunchTarget>, AppsFolderLookupError> {
+    let result = apps_folder_lookup_gate()
+        .run(APPS_FOLDER_LOOKUP_TIMEOUT, move || {
+            resolve_apps_folder_target_by_name(&display_name)
+        })
+        .await;
+    match result {
+        Err(AppsFolderLookupError::Timeout) => tracing::warn!(
+            target: "launch_uwp",
+            "shell:AppsFolder name lookup exceeded {}ms; keeping its worker single-flight until COM returns",
+            APPS_FOLDER_LOOKUP_TIMEOUT.as_millis()
+        ),
+        Err(AppsFolderLookupError::Busy) => tracing::debug!(
+            target: "launch_uwp",
+            "shell:AppsFolder name lookup skipped while a prior lookup is running or cooling down"
+        ),
+        Err(AppsFolderLookupError::Unavailable) | Ok(_) => {}
+    }
+    result
 }
 
 /// Resolve a packaged-app display name to its AUMID.
@@ -258,9 +417,9 @@ fn cache() -> &'static RwLock<Option<Vec<AppsFolderEntry>>> {
 /// `.exe` suffix is stripped before matching so callers carrying a
 /// Win32 idiom still hit the packaged display name.
 ///
-/// Returns `None` if no packaged app matches. The caller should fall
-/// back to `ShellExecuteExW` for plain Win32 apps in that case.
-pub fn resolve_aumid_by_name(display_name: &str) -> Option<String> {
+/// Returns `None` if no AppsFolder entry matches. The caller should fall back
+/// to `ShellExecuteExW` PATH/association lookup in that case.
+pub fn resolve_apps_folder_target_by_name(display_name: &str) -> Option<AppsFolderLaunchTarget> {
     // Session 0 short-circuit: `shell:AppsFolder` enumeration goes through
     // the interactive shell broker, which doesn't exist in services /
     // SSH-launched contexts and causes the underlying COM call to hang
@@ -291,7 +450,7 @@ pub fn resolve_aumid_by_name(display_name: &str) -> Option<String> {
         .iter()
         .find(|e| e.display_name.eq_ignore_ascii_case(query_stripped))
     {
-        return Some(hit.aumid.clone());
+        return Some(classify_apps_folder_app_id(&hit.app_id));
     }
 
     // Pass 2: shortest case-insensitive prefix match. Uses the
@@ -309,7 +468,7 @@ pub fn resolve_aumid_by_name(display_name: &str) -> Option<String> {
             }
         }
     }
-    best.map(|e| e.aumid.clone())
+    best.map(|e| classify_apps_folder_app_id(&e.app_id))
 }
 
 fn load_or_get_cache() -> Option<Vec<AppsFolderEntry>> {
@@ -332,10 +491,10 @@ fn load_or_get_cache() -> Option<Vec<AppsFolderEntry>> {
     Some(fresh)
 }
 
-/// Walk `shell:AppsFolder` and collect `(display_name, AUMID)` for every
-/// entry that exposes `PKEY_AppUserModel_ID`. Entries without an AUMID
-/// (legacy Win32 shortcuts that happen to be indexed in AppsFolder) are
-/// skipped — those are reachable via `ShellExecuteExW` anyway.
+/// Walk `shell:AppsFolder` and collect `(display_name, app_id)` for every
+/// entry that exposes `PKEY_AppUserModel_ID`. Despite the property name,
+/// desktop apps can expose an explicit application model ID here too; those
+/// entries remain launchable through their `shell:AppsFolder` parsing path.
 fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
     let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
 
@@ -343,14 +502,12 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
     // folder that backs the Start Menu's "all apps" list. It enumerates
     // every activatable app on the system, packaged or not.
     let folder_path = HSTRING::from("shell:AppsFolder");
-    let apps_folder: IShellItem = unsafe {
-        SHCreateItemFromParsingName(PCWSTR(folder_path.as_ptr()), None::<&IBindCtx>)?
-    };
+    let apps_folder: IShellItem =
+        unsafe { SHCreateItemFromParsingName(PCWSTR(folder_path.as_ptr()), None::<&IBindCtx>)? };
 
     // Bind to the `BHID_EnumItems` handler to iterate children.
-    let enumerator: IEnumShellItems = unsafe {
-        apps_folder.BindToHandler(None::<&IBindCtx>, &BHID_EnumItems)?
-    };
+    let enumerator: IEnumShellItems =
+        unsafe { apps_folder.BindToHandler(None::<&IBindCtx>, &BHID_EnumItems)? };
 
     let mut entries = Vec::with_capacity(256);
     loop {
@@ -360,13 +517,13 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
         // — the documented sentinel for "iterator exhausted".
         let mut slot: [Option<IShellItem>; 1] = [None];
         let mut fetched: u32 = 0;
-        let _ = unsafe {
-            enumerator.Next(&mut slot, Some(&mut fetched as *mut u32))
-        };
+        let _ = unsafe { enumerator.Next(&mut slot, Some(&mut fetched as *mut u32)) };
         if fetched == 0 {
             break;
         }
-        let Some(item) = slot[0].take() else { break; };
+        let Some(item) = slot[0].take() else {
+            break;
+        };
 
         // Cast to IShellItem2 to access PKEY_AppUserModel_ID; if the
         // entry doesn't expose AAM (rare; pure-Win32 shortcut), skip.
@@ -375,11 +532,11 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
             Err(_) => continue,
         };
 
-        let aumid = match unsafe { item2.GetString(&PKEY_APP_USER_MODEL_ID) } {
+        let app_id = match unsafe { item2.GetString(&PKEY_APP_USER_MODEL_ID) } {
             Ok(pwstr) => pwstr_to_string_and_free(pwstr),
-            Err(_) => continue, // No AUMID → not a packaged/registered app.
+            Err(_) => continue, // No app ID → not a packaged/registered app.
         };
-        if aumid.is_empty() {
+        if app_id.is_empty() {
             continue;
         }
 
@@ -392,7 +549,11 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
         }
 
         let lowercase_display_name = display_name.to_lowercase();
-        entries.push(AppsFolderEntry { display_name, lowercase_display_name, aumid });
+        entries.push(AppsFolderEntry {
+            display_name,
+            lowercase_display_name,
+            app_id,
+        });
     }
 
     Ok(entries)
@@ -414,6 +575,57 @@ fn pwstr_to_string_and_free(p: PWSTR) -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn apps_folder_lookup_timeout_is_single_flight_and_recovers_after_cooldown() {
+        let gate = Arc::new(AppsFolderLookupSingleFlight::new(20));
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let work_started = Arc::new(AtomicBool::new(false));
+        let worker_started = Arc::clone(&work_started);
+
+        let started = Instant::now();
+        let first = gate
+            .run(Duration::from_millis(100), move || {
+                worker_started.store(true, Ordering::Release);
+                release_rx.recv().expect("release timed-out lookup worker");
+                1_u8
+            })
+            .await;
+        assert_eq!(first, Err(AppsFolderLookupError::Timeout));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(work_started.load(Ordering::Acquire));
+
+        let retry_count = Arc::new(AtomicU64::new(0));
+        for _ in 0..100 {
+            let retry_count = Arc::clone(&retry_count);
+            let retry = gate
+                .run(Duration::from_millis(10), move || {
+                    retry_count.fetch_add(1, Ordering::AcqRel);
+                })
+                .await;
+            assert_eq!(retry, Err(AppsFolderLookupError::Busy));
+        }
+        assert_eq!(retry_count.load(Ordering::Acquire), 0);
+
+        release_tx.send(()).expect("release first lookup");
+        let worker_deadline = Instant::now() + Duration::from_secs(1);
+        while gate.in_flight.load(Ordering::Acquire) && Instant::now() < worker_deadline {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        assert!(!gate.in_flight.load(Ordering::Acquire));
+
+        assert_eq!(
+            gate.run(Duration::from_millis(10), || 2_u8).await,
+            Err(AppsFolderLookupError::Busy),
+            "late worker completion must leave a recovery cooldown"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            gate.run(Duration::from_millis(100), || 3_u8).await,
+            Ok(3),
+            "lookup should recover after the cooldown"
+        );
+    }
+
     #[test]
     fn is_aumid_recognises_canonical_form() {
         assert!(is_aumid("Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"));
@@ -429,5 +641,23 @@ mod tests {
         assert!(!is_aumid("!App")); // empty PFN half
         assert!(!is_aumid("Pkg!")); // empty AppId half
         assert!(!is_aumid("a!b!c")); // two bangs
+    }
+
+    #[test]
+    fn apps_folder_routes_packaged_ids_to_activation_manager() {
+        assert_eq!(
+            classify_apps_folder_app_id("Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"),
+            AppsFolderLaunchTarget::PackagedAumid(
+                "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn apps_folder_routes_desktop_ids_back_through_shell_namespace() {
+        assert_eq!(
+            classify_apps_folder_app_id("MSEdge"),
+            AppsFolderLaunchTarget::ShellLaunchPath(r"shell:AppsFolder\MSEdge".to_owned())
+        );
     }
 }

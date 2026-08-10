@@ -49,7 +49,9 @@ pub struct ElementCacheCore<K: Eq + Hash, S> {
 
 impl<K: Eq + Hash, S> ElementCacheCore<K, S> {
     pub fn new() -> Self {
-        Self { inner: Mutex::new(HashMap::new()) }
+        Self {
+            inner: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Replace the snapshot for `key`. If an entry already existed
@@ -99,8 +101,16 @@ mod tests {
     #[test]
     fn insert_then_get_returns_projection() {
         let cache: ElementCacheCore<TestKey, TestSnapshot> = ElementCacheCore::new();
-        let key = TestKey { pid: 42, window_id: 7 };
-        cache.insert(key, TestSnapshot { elements: vec![10, 20, 30] });
+        let key = TestKey {
+            pid: 42,
+            window_id: 7,
+        };
+        cache.insert(
+            key,
+            TestSnapshot {
+                elements: vec![10, 20, 30],
+            },
+        );
 
         let third = cache.with_snapshot(&key, |s| s.elements.get(2).copied());
         assert_eq!(third, Some(Some(30)));
@@ -109,7 +119,10 @@ mod tests {
     #[test]
     fn miss_returns_none() {
         let cache: ElementCacheCore<TestKey, TestSnapshot> = ElementCacheCore::new();
-        let key = TestKey { pid: 1, window_id: 1 };
+        let key = TestKey {
+            pid: 1,
+            window_id: 1,
+        };
         let v = cache.with_snapshot(&key, |s| s.elements.len());
         assert_eq!(v, None);
     }
@@ -117,12 +130,20 @@ mod tests {
     #[test]
     fn count_via_with_snapshot() {
         let cache: ElementCacheCore<TestKey, TestSnapshot> = ElementCacheCore::new();
-        let key = TestKey { pid: 9, window_id: 99 };
+        let key = TestKey {
+            pid: 9,
+            window_id: 99,
+        };
 
         // Before insert: None.
         assert_eq!(cache.with_snapshot(&key, |s| s.elements.len()), None);
 
-        cache.insert(key, TestSnapshot { elements: vec![1, 2, 3, 4, 5] });
+        cache.insert(
+            key,
+            TestSnapshot {
+                elements: vec![1, 2, 3, 4, 5],
+            },
+        );
         assert_eq!(cache.with_snapshot(&key, |s| s.elements.len()), Some(5));
     }
 
@@ -147,14 +168,32 @@ mod tests {
         let drops = Arc::new(AtomicUsize::new(0));
         let cache: ElementCacheCore<u32, DropCounter> = ElementCacheCore::new();
 
-        cache.insert(1, DropCounter { counter: drops.clone() });
+        cache.insert(
+            1,
+            DropCounter {
+                counter: drops.clone(),
+            },
+        );
         assert_eq!(drops.load(Ordering::SeqCst), 0);
 
-        cache.insert(1, DropCounter { counter: drops.clone() });
-        assert_eq!(drops.load(Ordering::SeqCst), 1, "replacement should drop the prior snapshot");
+        cache.insert(
+            1,
+            DropCounter {
+                counter: drops.clone(),
+            },
+        );
+        assert_eq!(
+            drops.load(Ordering::SeqCst),
+            1,
+            "replacement should drop the prior snapshot"
+        );
 
         cache.remove(&1);
-        assert_eq!(drops.load(Ordering::SeqCst), 2, "remove should drop the snapshot");
+        assert_eq!(
+            drops.load(Ordering::SeqCst),
+            2,
+            "remove should drop the snapshot"
+        );
     }
 
     #[test]

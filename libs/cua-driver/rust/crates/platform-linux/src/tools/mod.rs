@@ -14,15 +14,25 @@ pub(crate) mod page;
 mod stubs;
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
+    build_registry_with_provider(compat, None)
+}
+
+pub fn build_registry_with_provider(
+    compat: bool,
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+) -> ToolRegistry {
     #[cfg(target_os = "linux")]
-    return impl_::build_registry(compat);
+    return impl_::build_registry_with_provider(compat, provider);
 
     #[cfg(not(target_os = "linux"))]
     {
         let _ = compat;
+        let _ = provider;
         stubs::build_registry()
     }
 }
 
 // Keep register_all as alias for backwards compat.
-pub fn register_all() -> ToolRegistry { build_registry(false) }
+pub fn register_all() -> ToolRegistry {
+    build_registry(false)
+}

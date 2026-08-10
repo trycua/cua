@@ -9,15 +9,7 @@
     "frontendDist": "../web"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "CuaTestHarness Tauri",
-        "width": 900,
-        "height": 760,
-        "resizable": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

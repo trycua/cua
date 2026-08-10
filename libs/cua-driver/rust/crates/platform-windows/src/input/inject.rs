@@ -39,6 +39,9 @@ use windows::Win32::UI::Controls::{
     CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE,
     POINTER_FEEDBACK_DEFAULT, POINTER_TYPE_INFO, POINTER_TYPE_INFO_0,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+};
 use windows::Win32::UI::Input::Pointer::{
     InjectSyntheticPointerInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE,
     POINTER_FLAG_UP, POINTER_FLAG_UPDATE, POINTER_INFO, POINTER_PEN_INFO, POINTER_TOUCH_INFO,
@@ -129,6 +132,28 @@ pub(crate) unsafe fn force_foreground_attached(target: HWND) -> bool {
     GetForegroundWindow() == target
 }
 
+/// Retry an explicit visible foreground transition after a reserved no-name
+/// key grants this process the most-recent-input token. The key has no
+/// application meaning; the retry count keeps the transition bounded.
+pub(crate) unsafe fn force_foreground_assisted(target: HWND) -> (bool, bool) {
+    if unsafe { force_foreground_attached(target) } {
+        return (true, false);
+    }
+
+    const VK_NONAME: u8 = 0xFC;
+    unsafe {
+        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
+        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
+    }
+    for _ in 0..3 {
+        if unsafe { force_foreground_attached(target) } {
+            return (true, true);
+        }
+        sleep(Duration::from_millis(25));
+    }
+    (false, true)
+}
+
 /// RAII guard that makes a specific target window **unable to become the
 /// foreground/active window** for the duration of an actuation, by adding the
 /// `WS_EX_NOACTIVATE` extended style to its top-level window.
@@ -154,7 +179,11 @@ impl NoActivateGuard {
         unsafe {
             let root = {
                 let r = GetAncestor(hwnd, GA_ROOT);
-                if r.0.is_null() { hwnd } else { r }
+                if r.0.is_null() {
+                    hwnd
+                } else {
+                    r
+                }
             };
             let prev = GetWindowLongPtrW(root, GWL_EXSTYLE);
             let want = WS_EX_NOACTIVATE.0 as isize;
@@ -275,7 +304,13 @@ fn pen_taps(sx: i32, sy: i32, barrel: bool, count: usize) -> Result<()> {
 /// path for both buttons — `InjectTouchInput` proved unreliable for left-clicks
 /// on Chromium content (returned errors), whereas synthetic-pen injection lands
 /// reliably and routes by coordinate with no foreground dependency.
-pub fn inject_click_screen(target: u64, sx: i32, sy: i32, count: usize, button: &str) -> Result<()> {
+pub fn inject_click_screen(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+) -> Result<()> {
     if target == 0 {
         bail!("inject_click_screen: null target window");
     }
@@ -373,6 +408,122 @@ pub fn point_in_window_bounds(hwnd: u64, x: i32, y: i32) -> bool {
     x >= r.left && x < r.right && y >= r.top && y < r.bottom
 }
 
+fn point_in_rect(x: i32, y: i32, left: i32, top: i32, width: i32, height: i32) -> bool {
+    if width <= 0 || height <= 0 {
+        return false;
+    }
+    let (x, y, left, top, width, height) = (
+        i64::from(x),
+        i64::from(y),
+        i64::from(left),
+        i64::from(top),
+        i64::from(width),
+        i64::from(height),
+    );
+    x >= left && x < left + width && y >= top && y < top + height
+}
+
+/// True when `(x, y)` belongs to the live Windows virtual desktop.
+///
+/// Unlike a fixed negative-coordinate threshold, this admits every layout the
+/// OS actually reports. It also rejects the iconic `(-32000, -32000)` region
+/// when a transient `IsIconic` query races with UIA/GetWindowRect state.
+pub fn point_on_virtual_desktop(x: i32, y: i32) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+    unsafe {
+        point_in_rect(
+            x,
+            y,
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    }
+}
+
+/// True when `hwnd` is minimized (iconic).
+///
+/// Authoritative counterpart to [`is_iconic_sentinel_point`]: the capture path
+/// already refuses iconic windows outright (see `capture.rs`), and the input
+/// path needs the same signal so an element action can fail loudly instead of
+/// posting into the off-screen iconic region.
+pub fn window_is_iconic(hwnd: u64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::IsIconic;
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe { IsIconic(HWND(hwnd as *mut _)).as_bool() }
+}
+
+#[cfg(test)]
+mod iconic_sentinel_tests {
+    use super::*;
+
+    /// The exact rect Win32 hands back for a minimized window, as documented on
+    /// the capture-path guard in `capture.rs`.
+    const ICONIC_RECT: (i32, i32, i32, i32) = (-32000, -32000, -31840, -31972);
+
+    #[test]
+    fn iconic_rect_passes_the_positive_extent_check_that_guards_the_bounds_path() {
+        // This is why #2015 is silent rather than refused: the sentinel rect is
+        // a *well-formed* rectangle, so validity checks phrased as
+        // "right > left && bottom > top" admit it.
+        let (left, top, right, bottom) = ICONIC_RECT;
+        assert!(right > left, "sentinel width is positive: {right} > {left}");
+        assert!(
+            bottom > top,
+            "sentinel height is positive: {bottom} > {top}"
+        );
+    }
+
+    #[test]
+    fn virtual_desktop_membership_has_no_magic_negative_ceiling() {
+        assert!(point_in_rect(-31920, 50, -40000, 0, 50000, 2000));
+    }
+
+    #[test]
+    fn iconic_center_is_outside_an_ordinary_virtual_desktop() {
+        let (left, top, right, bottom) = ICONIC_RECT;
+        let (cx, cy) = ((left + right) / 2, (top + bottom) / 2);
+        assert!(!point_in_rect(cx, cy, -2560, -1080, 6400, 3240));
+    }
+
+    #[test]
+    fn iconic_value_on_either_axis_is_outside_the_desktop() {
+        assert!(!point_in_rect(640, -32000, -2560, -1080, 6400, 3240));
+        assert!(!point_in_rect(-32000, 480, -2560, -1080, 6400, 3240));
+    }
+
+    #[test]
+    fn real_negative_origin_monitor_points_remain_valid() {
+        for (x, y) in [
+            (-1920, 0),
+            (-1795, 383),
+            (-2560, 0),
+            (0, -1080),
+            (-1920, -1080),
+            (0, 0),
+            (1920, 1080),
+        ] {
+            assert!(point_in_rect(x, y, -2560, -1080, 6400, 3240));
+        }
+    }
+
+    #[test]
+    fn virtual_desktop_edges_and_invalid_extents_fail_closed() {
+        assert!(point_in_rect(-1795, 383, -2560, -1080, 6400, 3240));
+        assert!(!point_in_rect(-2561, 383, -2560, -1080, 6400, 3240));
+        assert!(!point_in_rect(3840, 0, -2560, -1080, 6400, 3240));
+        assert!(!point_in_rect(0, 0, 0, 0, 0, 1080));
+        assert!(!point_in_rect(0, 0, 0, 0, 1920, -1));
+    }
+}
+
 /// One pen press-drag-release from screen `(sx0,sy0)` to `(sx1,sy1)`, with
 /// `steps` interpolated in-contact UPDATE points between the down and the up.
 /// A single synthetic pen device is created for the whole stroke. The barrel
@@ -405,7 +556,11 @@ fn pen_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize, barrel: bool) 
             },
         };
         // Press at the start.
-        let down = mk(POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT, sx0, sy0);
+        let down = mk(
+            POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
+            sx0,
+            sy0,
+        );
         let mut res = InjectSyntheticPointerInput(dev, &[down]);
         // Interpolated in-contact moves so frameworks that gate drag-tracking on
         // motion (rather than a single down→up) see a continuous stroke.
@@ -415,7 +570,11 @@ fn pen_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize, barrel: bool) 
             let t = i as f64 / steps as f64;
             let x = sx0 + ((sx1 - sx0) as f64 * t).round() as i32;
             let y = sy0 + ((sy1 - sy0) as f64 * t).round() as i32;
-            let mv = mk(POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT, x, y);
+            let mv = mk(
+                POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
+                x,
+                y,
+            );
             res = res.and(InjectSyntheticPointerInput(dev, &[mv]));
         }
         // Release at the end.
@@ -481,8 +640,18 @@ fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()
                     },
                     touchFlags: 0,
                     touchMask: 0,
-                    rcContact: RECT { left: x - 2, top: y - 2, right: x + 2, bottom: y + 2 },
-                    rcContactRaw: RECT { left: x - 2, top: y - 2, right: x + 2, bottom: y + 2 },
+                    rcContact: RECT {
+                        left: x - 2,
+                        top: y - 2,
+                        right: x + 2,
+                        bottom: y + 2,
+                    },
+                    rcContactRaw: RECT {
+                        left: x - 2,
+                        top: y - 2,
+                        right: x + 2,
+                        bottom: y + 2,
+                    },
                     orientation: 0,
                     pressure: 512,
                 },
@@ -492,7 +661,11 @@ fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()
         // straight line between them), so a few in-contact frames with a tiny
         // dwell is plenty — and the shorter the stroke, the briefer the cursor
         // excursion before we snap it back.
-        let down = mk(POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT, sx0, sy0);
+        let down = mk(
+            POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
+            sx0,
+            sy0,
+        );
         let mut res = InjectSyntheticPointerInput(dev, &[down]);
         let steps = steps.clamp(1, 3);
         for i in 1..=steps {
@@ -500,7 +673,11 @@ fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()
             let t = i as f64 / steps as f64;
             let x = sx0 + ((sx1 - sx0) as f64 * t).round() as i32;
             let y = sy0 + ((sy1 - sy0) as f64 * t).round() as i32;
-            let mv = mk(POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT, x, y);
+            let mv = mk(
+                POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
+                x,
+                y,
+            );
             res = res.and(InjectSyntheticPointerInput(dev, &[mv]));
         }
         sleep(Duration::from_millis(2));
@@ -579,7 +756,13 @@ pub fn inject_drag_screen(
     let prev_fg = unsafe { GetForegroundWindow() };
     // Left drag → touch contact (coordinate-routed). Right/barrel drag has no
     // touch equivalent, so fall back to a pen (rare).
-    let stroke = |()| if barrel { pen_drag(sx0, sy0, sx1, sy1, steps, true) } else { touch_drag(sx0, sy0, sx1, sy1, steps) };
+    let stroke = |()| {
+        if barrel {
+            pen_drag(sx0, sy0, sx1, sy1, steps, true)
+        } else {
+            touch_drag(sx0, sy0, sx1, sy1, steps)
+        }
+    };
     // Chromium/GTK: pointer-aware, process injection in the background — hold
     // non-activatable (no raise), inject, then re-assert the user's foreground.
     let r = {

@@ -27,9 +27,9 @@ struct Create: AsyncParsableCommand {
     var memory: UInt64 = 8 * 1024 * 1024 * 1024
 
     @Option(
-        help: "Disk size (e.g., 50, 50GB, or 51200MB). Numbers without units are treated as GB. Defaults to 50GB.",
+        help: "Disk size (e.g., 100, 100GB, or 102400MB). Numbers without units are treated as GB. Defaults to 100GB for macOS and 50GB for Linux.",
         transform: { try parseSize($0) })
-    var diskSize: UInt64 = 50 * 1024 * 1024 * 1024
+    var diskSize: UInt64?
 
     @Option(help: "Display resolution in format WIDTHxHEIGHT. Defaults to 1024x768.")
     var display: VMDisplayResolution = VMDisplayResolution(string: "1024x768")!
@@ -93,6 +93,8 @@ struct Create: AsyncParsableCommand {
 
     @MainActor
     func run() async throws {
+        let diskSize = diskSize ?? Self.defaultDiskSize(for: os)
+
         // Validate unattended is only used with macOS
         if unattended != nil && os.lowercased() != "macos" {
             throw ValidationError("--unattended is only supported for macOS VMs")
@@ -142,5 +144,10 @@ struct Create: AsyncParsableCommand {
             vncPort: vncPort,
             networkMode: parsedNetworkMode
         )
+    }
+
+    static func defaultDiskSize(for os: String) -> UInt64 {
+        let sizeInGB: UInt64 = os.lowercased() == "macos" ? 100 : 50
+        return sizeInGB * 1024 * 1024 * 1024
     }
 }

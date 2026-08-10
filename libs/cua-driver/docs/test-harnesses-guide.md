@@ -23,12 +23,32 @@ suite selector:
 ```text
 Linux:  scripts/ci/linux/run-rust-e2e.sh
 Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
-macOS:  scripts/ci/macos/run-rust-e2e.sh
+macOS:  libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
 The OS workflow may fan the complete matrix out into independent jobs for
 reporting and failure isolation. That is an execution detail; contributors
 should think of it as one canonical suite.
+
+### Evidence authority
+
+A canonical result is the complete repository harness run at the exact source
+SHA. A one-off app smoke, manually assembled script, video, or environment
+replay can diagnose a failure or provide release presentation evidence, but it
+does not replace the complete matrix.
+
+Windows and Linux use the repository's GitHub-hosted workflows when their
+strict environment preflights pass. Windows Azure RDP runs are optional
+environment-parity replays or a fallback when the hosted preflight cannot prove
+a required capability. macOS uses the logged-in Lume maintainer wrapper.
+For browser-facing changes or browser-use release certification, also run the
+standalone Chrome/Edge matrix: the macOS wrapper accepts
+`--standalone-browser`, while the Windows and Linux workflow is
+`.github/workflows/e2e-rust-standalone-browsers.yml`.
+
+Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
+what was run at that time. They are not current execution instructions and do
+not override this guide or `scripts/ci/README.md`.
 
 ## Repository Map
 
@@ -51,7 +71,8 @@ cua/
 |   |   |   |-- shared/web/           Shared web page and external markers
 |   |   |   |-- apps/                 Repo-local fixture sources
 |   |   |   `-- build/                macOS/Linux/Windows fixture builders
-|   |   `-- runners/                  Auxiliary VM and sandbox entrypoints
+|   |   `-- runners/
+|   |       `-- macos-lume/           Maintainer Lume setup and guest entrypoint
 |   `-- docs/                         Test matrix, reporting, and contributor docs
 `-- scripts/ci/
     |-- linux/run-rust-e2e.sh         Linux canonical runner
@@ -61,12 +82,12 @@ cua/
 
 The important separation is:
 
-| Layer | Owns | Does not own |
-| --- | --- | --- |
-| Rust integration test | Scenarios, driver calls, assertions, action metadata | OS setup and fixture compilation |
-| `cua-driver-testkit` | Session helpers, fixture launching, screenshots, recordings, trajectories | The scenario list |
-| Fixture app | Visible controls and externally observable state markers | Driver correctness assertions |
-| OS runner | Build environment, user session, test selection, artifact collection | Test behavior definitions |
+| Layer                 | Owns                                                                      | Does not own                     |
+| --------------------- | ------------------------------------------------------------------------- | -------------------------------- |
+| Rust integration test | Scenarios, driver calls, assertions, action metadata                      | OS setup and fixture compilation |
+| `cua-driver-testkit`  | Session helpers, fixture launching, screenshots, recordings, trajectories | The scenario list                |
+| Fixture app           | Visible controls and externally observable state markers                  | Driver correctness assertions    |
+| OS runner             | Build environment, user session, test selection, artifact collection      | Test behavior definitions        |
 
 There is deliberately no second Python E2E implementation that the Rust suite
 has to mirror.
@@ -99,13 +120,13 @@ refusal and the absence of focus or input side effects.
 These run without a repo-local GUI application and normally run without
 `--ignored`:
 
-| Location or prefix | What it proves |
-| --- | --- |
-| `rust/crates/*/src/**` | Core driver, platform-independent logic, schemas, and helpers |
-| `protocol_*_test.rs` | MCP handshake, tool calls, sessions, media, and errors |
-| `schema_*_test.rs` | Shared schema and backend consistency |
-| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence |
-| `protocol_element_token_test.rs` | Element-token protocol behavior |
+| Location or prefix                     | What it proves                                                |
+| -------------------------------------- | ------------------------------------------------------------- |
+| `rust/crates/*/src/**`                 | Core driver, platform-independent logic, schemas, and helpers |
+| `protocol_*_test.rs`                   | MCP handshake, tool calls, sessions, media, and errors        |
+| `schema_*_test.rs`                     | Shared schema and backend consistency                         |
+| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence                             |
+| `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI
 workers. They do not prove that a real click, key, scroll, or background input
@@ -125,9 +146,9 @@ ordinary unit command.
 
 The canonical E2E suite has two behavior owners:
 
-| Owner | Purpose |
-| --- | --- |
-| Shared app | Same web behavior tested through Electron and Tauri |
+| Owner          | Purpose                                              |
+| -------------- | ---------------------------------------------------- |
+| Shared app     | Same web behavior tested through Electron and Tauri  |
 | Native harness | Toolkit-specific controls and native window behavior |
 
 WebView, CDP, and page-tool integration stays inside the shared or native
@@ -148,16 +169,16 @@ invocation.
 
 Runner: `scripts/ci/windows/run-rust-e2e.ps1`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native controls | `harness_wpf_test.rs` | Repo-local WPF app |
-| Native controls | `harness_winui3_test.rs` | Repo-local WinUI3 app |
-| Web integration | `harness_web_test.rs` | WebView2 and Electron |
-| Capture contract | `capture_contract_test.rs` | WPF plus driver tree/image output |
-| Launch contract | `launch_windows_test.rs` | Repo-local Electron launch and focus behavior |
-| Agent cursor | `agent_cursor_windows_test.rs` | Source-built cursor overlay and pixel evidence |
-| Desktop scope | `desktop_scope_windows_test.rs` | Windowless desktop input and scope rejection |
+| Runner area       | Rust test                         | Real harness or app                            |
+| ----------------- | --------------------------------- | ---------------------------------------------- |
+| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri                             |
+| Native controls   | `harness_wpf_test.rs`             | Repo-local WPF app                             |
+| Native controls   | `harness_winui3_test.rs`          | Repo-local WinUI3 app                          |
+| Web integration   | `harness_web_test.rs`             | WebView2 and Electron                          |
+| Capture contract  | `capture_contract_test.rs`        | WPF plus driver tree/image output              |
+| Launch contract   | `launch_windows_test.rs`          | Repo-local Electron launch and focus behavior  |
+| Agent cursor      | `agent_cursor_windows_test.rs`    | Source-built cursor overlay and pixel evidence |
+| Desktop scope     | `desktop_scope_windows_test.rs`   | Windowless desktop input and scope rejection   |
 
 Cross-cutting instrumentation used by these rows includes the testkit
 `DesktopObserver`, capture validation, cursor evidence, and desktop-scope
@@ -171,34 +192,37 @@ background delivery is tested.
 
 ### macOS
 
-Runner: `scripts/ci/macos/run-rust-e2e.sh`
+Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native web matrix | `cross_platform_behavior_test.rs` | Repo-local WKWebView host |
-| Native controls | `harness_appkit_test.rs` | Repo-local AppKit app |
-| Native controls | `harness_swiftui_test.rs` | Repo-local SwiftUI app |
-| Installed app launch | `installed_app_launch_macos_test.rs` | Calculator and TextEdit |
-| Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit |
-| Capture contract | `capture_contract_test.rs` | Installed driver and macOS capture APIs |
-| Desktop scope | `desktop_scope_macos_test.rs` | macOS window and desktop scope |
+| Runner area               | Rust test                              | Real harness or app                     |
+| ------------------------- | -------------------------------------- | --------------------------------------- |
+| Shared app matrix         | `cross_platform_behavior_test.rs`      | Electron and Tauri                      |
+| Native web matrix         | `cross_platform_behavior_test.rs`      | Repo-local WKWebView host               |
+| Native controls           | `harness_appkit_test.rs`               | Repo-local AppKit app                   |
+| Native controls           | `harness_swiftui_test.rs`              | Repo-local SwiftUI app                  |
+| Installed app launch      | `installed_app_launch_macos_test.rs`   | Calculator and TextEdit                 |
+| Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
+| Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
+| Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
 
 The WKWebView host runs the same typed shared-web catalog as Electron and
 Tauri. Calculator and TextEdit add typed supporting rows for built-in app
 launch focus and native Cocoa background value delivery. They run in the
 canonical logged-in macOS lane, but they do not replace repo-local fixtures.
+The maintainer wrapper provisions the exact source build and verifies the
+private Lume seed's TCC/signing contract before delegating the behavior matrix
+to `scripts/ci/macos/run-rust-e2e.sh`.
 
 ### Linux
 
 Runner: `scripts/ci/linux/run-rust-e2e.sh`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native controls | `harness_gtk3_test.rs` | Repo-local GTK3 app |
-| Capture contract | `capture_contract_test.rs` | Linux capture backend |
-| Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland desktop scope |
+| Runner area       | Rust test                         | Real harness or app       |
+| ----------------- | --------------------------------- | ------------------------- |
+| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri        |
+| Native controls   | `harness_gtk3_test.rs`            | Repo-local GTK3 app       |
+| Capture contract  | `capture_contract_test.rs`        | Linux capture backend     |
+| Desktop scope     | `desktop_scope_linux_test.rs`     | X11/Wayland desktop scope |
 
 Linux has separate X11 and Wayland concerns. Nix supplies the reproducible
 build and desktop environment, but the E2E test still needs an actual X11 or
@@ -212,6 +236,12 @@ target activation. A portal/libei grant persists until the user revokes it, so
 subsequent driver processes do not reopen the consent dialog.
 KDE requires a future target-addressable KWin adapter; portal availability by
 itself is not evidence that input can be sent safely to a named window.
+Standard Wayland does not expose the physical pointer position, so canonical
+Wayland rows do not claim the real-cursor preservation oracle. Focus, full
+occlusion, sentinel input isolation, liveness, and fixture-state oracles remain
+mandatory. [Issue #2194](https://github.com/trycua/cua/issues/2194) tracks
+compositor, portal/libei, sentinel, and capture-based ways to add a proven
+cursor observer where the environment supports one.
 
 ## AX, PX, and Delivery
 
@@ -220,14 +250,14 @@ delivery, refusal, and unproven-action ledger.
 
 These terms describe different dimensions:
 
-| Term | Meaning |
-| --- | --- |
-| AX | Address a target through its accessibility/UI automation element |
-| PX | Address a target by screen coordinates or pointer geometry |
-| Foreground | The target may be brought to the foreground for delivery |
-| Background | The target should receive the action without being raised or stealing focus |
-| Window scope | Capture or action is limited to one target window |
-| Desktop scope | Capture or action covers the full desktop |
+| Term          | Meaning                                                                     |
+| ------------- | --------------------------------------------------------------------------- |
+| AX            | Address a target through its accessibility/UI automation element            |
+| PX            | Address a target by screen coordinates or pointer geometry                  |
+| Foreground    | The target may be brought to the foreground for delivery                    |
+| Background    | The target should receive the action without being raised or stealing focus |
+| Window scope  | Capture or action is limited to one target window                           |
+| Desktop scope | Capture or action covers the full desktop                                   |
 
 The shared and native action matrices should test left click, right click,
 double click, typing, keys, hotkeys, scroll, child windows, and drag across
@@ -252,17 +282,31 @@ question for any action, harness, or catalog area:
 
 `cua-driver-testkit::DesktopObserver` owns the shared interface. Native Windows,
 macOS, and Linux backends snapshot foreground-window, target z-order, cursor,
-and leaked-input state before and after an action. Background rows opt into the
-observer directly; there is no special guard suite.
+and focus state before and after an action. A separate full-desktop Electron
+sentinel journals keyboard, pointer, wheel, visibility, focus, and heartbeat
+events while it fully covers the target. Background rows opt into both pieces
+of instrumentation directly; there is no special guard suite.
 
-| Invariant or scenario | What it checks |
-| --- | --- |
+| Invariant or scenario     | What it checks                                                               |
+| ------------------------- | ---------------------------------------------------------------------------- |
 | Background click/type/key | The target action does not move focus away from the user's foreground window |
-| Minimized app launch | `launch_app(start_minimized=true)` does not raise the new app |
-| Background hotkey | A keyboard chord does not steal focus |
-| Child-window click | A target-created window does not unexpectedly become foreground |
-| Background screenshot | Reading the target does not change focus or z-order |
-| Agent cursor visibility | The cursor appears in the captured pixels when enabled and moved |
+| Minimized app launch      | `launch_app(start_minimized=true)` does not raise the new app                |
+| Background hotkey         | A keyboard chord does not steal focus                                        |
+| Child-window click        | A target-created window does not unexpectedly become foreground              |
+| Background screenshot     | Reading the target does not change focus or z-order                          |
+| Agent cursor visibility   | The cursor appears in the captured pixels when enabled and moved             |
+
+The sentinel contract fails closed when the target is only partly covered or
+the heartbeat stops. Before any behavioral cells run, the strict environment
+preflight deliberately sends input to the sentinel and deliberately raises the
+background target. The lane proceeds only if the leaked input and transient
+focus loss are observed, the sentinel is restored, and it once again fully
+occludes the target. Windows, macOS, and X11 require the sentinel's live focus
+journal to report the loss. Wayland uses the compositor-backed native focus
+observer because Electron/Ozone does not reliably emit a DOM `blur` event for
+an external surface focus transition. The sentinel heartbeat and leaked-input
+journal remain mandatory on Wayland. This positive control prevents a broken
+guard from making every background row look green.
 
 A focus assertion can prove "no focus steal" while failing to prove that a
 click changed the target application state. An action row must therefore check
@@ -319,13 +363,23 @@ need normal test output and logs; they do not need desktop video.
   posture. A 300 ms baseline precedes dispatch, and capture continues through
   external oracle collection. `trajectory.json` must finish with
   `behavior_video.status = "finalized"`.
+- Use `agent_cursor_showcase_test` for cursor review media. Shared behavior
+  matrix daemons deliberately use `--no-overlay` so synthetic cursor pixels do
+  not contaminate action oracles; their videos prove tool behavior, not cursor
+  rendering.
 - Windows hosted runs use `GetConsoleWindow` to select the inherited
   HostedComputeAgent/runner console, verify its identity, and minimize it
   through `ShowWindow(SW_MINIMIZE)` before fixture or sentinel posture is
   established. The sentinel remains a separate test fixture and is reasserted
   after console cleanup.
 - Strict lane preflights fail on missing fixtures, desktop access, permissions,
-  accessibility, capture, or recording support instead of silently skipping.
+  accessibility, capture, recording support, or ineffective background guards
+  instead of silently skipping.
+- Canonical runners set `CUA_E2E_FORBID_SKIPS=1`. Unfiltered shared runs also
+  set `CUA_E2E_EXPECTED_MIN_CELLS` to 80 on Windows/Linux and 120 on macOS, so
+  a filtered, shortened, or accidentally emptied catalog cannot report green.
+  Explicit diagnostic cell or harness filters disable only the minimum-count
+  check; matching no cells still fails inside the Rust matrix.
 - GitHub summaries link every evidence-bearing row to its lane archive and
   display the exact recording path. The trajectory path remains in the typed
   evidence and archive.

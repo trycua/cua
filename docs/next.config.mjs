@@ -1,199 +1,73 @@
 import { createMDX } from 'fumadocs-mdx/next';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { hostname, networkInterfaces } from 'node:os';
 
 const withMDX = createMDX();
-const docsRoot = dirname(fileURLToPath(import.meta.url));
+
+const localDevOrigins = [
+  'localhost',
+  '127.0.0.1',
+  ...Object.values(networkInterfaces())
+    .flat()
+    .filter((address) => address && !address.internal)
+    .map((address) => address.address),
+  // networkInterfaces() yields addresses only, so reaching the preview by name
+  // — a Tailscale MagicDNS host, a .local name — otherwise 403s on /_next/*
+  // and the page loads unhydrated: server-rendered HTML, no working sidebar.
+  hostname(),
+  // `**` matches any depth; a plain `*` matches a single segment and so would
+  // miss MagicDNS names like <host>.<tailnet>.ts.net.
+  '**.ts.net',
+  '*.local',
+];
 
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  turbopack: {
-    root: docsRoot,
-  },
   trailingSlash: false,
   basePath: '/docs',
   assetPrefix: '/docs',
-  async rewrites() {
-    return [
-      {
-        source: '/:path*.mdx',
-        destination: '/llms.mdx/:path*',
-      },
-    ];
-  },
+  allowedDevOrigins: [...new Set(localDevOrigins)],
   async redirects() {
     return [
       {
         source: '/',
         destination: '/docs',
-        basePath: false, // Important: this bypasses the basePath
+        basePath: false,
         permanent: false,
       },
-      // Redirect old docs.cua.ai URLs to cua.ai/docs with 301 for SEO
-      // This handles URLs that Google has indexed from the old domain
       {
-        source: '/:path*',
-        has: [
-          {
-            type: 'host',
-            value: 'docs.cua.ai',
-          },
-        ],
-        destination: 'https://cua.ai/docs/:path*',
-        permanent: true, // 301 redirect to preserve SEO authority
-        basePath: false,
-      },
-      // Redirects for old URLs
-      {
-        source: '/quickstart-devs',
-        destination: '/get-started/quickstart',
+        source: '/cuabench',
+        destination: '/concepts/what-is-cua-bench',
         permanent: true,
       },
       {
-        source: '/quickstart-cli',
-        destination: '/get-started/quickstart',
-        permanent: true,
-      },
-      // Redirect old /api URLs to SDK landing pages
-      {
-        source: '/cua/reference/computer-sdk/api',
-        destination: '/cua/reference/computer-sdk',
+        source: '/tutorials/your-first-cua-driver-python-app',
+        destination: '/how-to-guides/driver/use-sdk-in-process',
         permanent: true,
       },
       {
-        source: '/cua/reference/agent-sdk/api',
-        destination: '/cua/reference/agent-sdk',
+        source: '/tutorials/your-first-cua-driver-typescript-app',
+        destination: '/how-to-guides/driver/use-sdk-in-process',
         permanent: true,
       },
       {
-        source: '/reference/cua-driver/modality-test-suite',
-        destination: '/reference/cua-driver/limits',
+        source: '/tutorials/verify-a-desktop-action-with-cua-driver',
+        destination: '/how-to-guides/driver/verify-a-desktop-action',
         permanent: true,
       },
       {
-        source: '/reference/cua-driver/modality-test-suite.mdx',
-        destination: '/reference/cua-driver/limits',
+        source: '/tutorials/your-first-cloud-sandbox',
+        destination: '/tutorials/your-first-local-sandbox',
         permanent: true,
       },
       {
-        source: '/explanation/linux-and-wayland',
-        destination: '/reference/cua-driver/limits',
+        source: '/how-to-guides/sandbox/snapshots',
+        destination: '/how-to-guides/sandbox/images',
         permanent: true,
       },
       {
-        source: '/explanation/linux-and-wayland.mdx',
-        destination: '/reference/cua-driver/limits',
-        permanent: true,
-      },
-      {
-        source: '/explanation/capture-and-dispatch-modalities',
-        destination: '/concepts/capture-and-delivery-modalities',
-        permanent: true,
-      },
-      {
-        source: '/explanation/capture-and-dispatch-modalities.mdx',
-        destination: '/concepts/capture-and-delivery-modalities',
-        permanent: true,
-      },
-      {
-        source: '/explanation/demonstrations-skills-and-trajectories',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/explanation/demonstrations-skills-and-trajectories.mdx',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/explanation/process-model',
-        destination: '/reference/cua-driver/process-model',
-        permanent: true,
-      },
-      {
-        source: '/explanation/process-model.mdx',
-        destination: '/reference/cua-driver/process-model',
-        permanent: true,
-      },
-      {
-        source: '/concepts/process-model',
-        destination: '/reference/cua-driver/process-model',
-        permanent: true,
-      },
-      {
-        source: '/concepts/process-model.mdx',
-        destination: '/reference/cua-driver/process-model',
-        permanent: true,
-      },
-      {
-        source: '/explanation/architecture',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/explanation/architecture.mdx',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/concepts/architecture',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/concepts/architecture.mdx',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/concepts/how-cua-fits-together',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/concepts/how-cua-fits-together.mdx',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/how-to-guides/driver/choose-a-modality',
-        destination: '/reference/cua-driver/action-selection-policy',
-        permanent: true,
-      },
-      {
-        source: '/how-to-guides/driver/choose-a-modality.mdx',
-        destination: '/reference/cua-driver/action-selection-policy',
-        permanent: true,
-      },
-      {
-        source: '/explanation',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/explanation.mdx',
-        destination: '/concepts',
-        permanent: true,
-      },
-      {
-        source: '/explanation/:path*.mdx',
-        destination: '/concepts/:path*',
-        permanent: true,
-      },
-      {
-        source: '/explanation/:path*',
-        destination: '/concepts/:path*',
-        permanent: true,
-      },
-      {
-        source: '/tutorials/run-an-agent-in-a-sandbox',
-        destination: '/tutorials/your-first-cloud-sandbox',
-        permanent: true,
-      },
-      {
-        source: '/tutorials/run-an-agent-in-a-sandbox.mdx',
-        destination: '/tutorials/your-first-cloud-sandbox',
+        source: '/how-to-guides/skills/record-a-demonstration',
+        destination: '/how-to-guides',
         permanent: true,
       },
     ];

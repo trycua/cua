@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
     "crates/cua-driver",
+    "crates/cua-driver-contract",
+    "crates/cua-driver-sdk",
+    "crates/cua-driver-bindgen",
     "crates/cua-driver-testkit",
     "crates/cua-driver-uia",
     "crates/cua-driver-core",
@@ -9,11 +12,12 @@ members = [
     "crates/platform-windows",
     "crates/platform-linux",
     "crates/cursor-overlay",
+    "crates/cursor-theme-cli",
     "crates/pip-preview",
 ]
 
 [workspace.package]
-version = "0.7.1"
+version = "0.19.2"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"
@@ -30,3 +34,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# zune-jpeg 0.5.15 accepts zune-core ^0.5, but zune-core 0.5.2 changed its
+# disabled logging macros in a source-incompatible way. Keep fresh downstream
+# resolution on the last compatible pair until zune-jpeg publishes its fix.
+zune-core = "=0.5.1"
+uniffi = "=0.31.0"
+postcard = { version = "1", features = ["alloc"] }
+sha2 = "0.10"
+zstd = "0.13"

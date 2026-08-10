@@ -5,9 +5,10 @@
     "index",
     "driver",
     "sandbox",
+    "(fleets)",
     "lume",
+    "cua-bench",
     "recipes",
-    "skills",
     "agent-context"
   ]
 }

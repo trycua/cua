@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cyclops Browser Lifecycle Example</title>
+    <style>
+      body { font: 16px/1.4 ui-monospace, monospace; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
+      button { font: inherit; margin-top: 1rem; padding: .55rem .8rem; }
+      pre { background: #111; color: #e8f5e9; min-height: 16rem; overflow: auto; padding: 1rem; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>Cyclops browser lifecycle</h1>
+    <p>This development-only page receives a short-lived access token from its test runner; it never accepts a client secret.</p>
+    <p>SDK initialization: <span data-testid="sdk-ready">initializing</span></p>
+    <p>Lifecycle status: <span data-testid="lifecycle-status">idle</span></p>
+    <button id="run" type="button">Run Lifecycle</button>
+    <pre id="output" aria-live="polite">Ready.</pre>
+    <script type="module" src="./browser.ts"></script>
+  </body>
+</html>

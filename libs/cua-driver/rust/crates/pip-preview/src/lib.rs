@@ -23,7 +23,11 @@ use std::sync::OnceLock;
 pub fn default_config_path() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(|h| std::path::PathBuf::from(h).join(".cua-driver").join("config.json"))
+        .map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".cua-driver")
+                .join("config.json")
+        })
 }
 
 /// Read a single key from `~/.cua-driver/config.json` as a raw JSON value,
@@ -76,8 +80,12 @@ pub fn read_pip_keys_from_file() -> (bool, Option<String>) {
         Ok(v) => v,
         Err(_) => return (false, None),
     };
-    let enabled = json.get("experimental_pip").and_then(|v| v.as_bool()).unwrap_or(false);
-    let geometry = json.get("experimental_pip_geometry")
+    let enabled = json
+        .get("experimental_pip")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let geometry = json
+        .get("experimental_pip_geometry")
         .and_then(|v| v.as_str())
         .map(|s| s.to_owned());
     (enabled, geometry)
@@ -212,7 +220,10 @@ impl PipConfig {
                 if let Some(b) = json.get("experimental_pip").and_then(|v| v.as_bool()) {
                     cfg.enabled = b;
                 }
-                if let Some(s) = json.get("experimental_pip_geometry").and_then(|v| v.as_str()) {
+                if let Some(s) = json
+                    .get("experimental_pip_geometry")
+                    .and_then(|v| v.as_str())
+                {
                     if let Some(g) = PipGeometry::parse(s) {
                         cfg.geometry = g;
                     }

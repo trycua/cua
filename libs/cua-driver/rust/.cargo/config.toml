@@ -1,5 +1,10 @@
 [env]
 MACOSX_DEPLOYMENT_TARGET = "13.0"
 
+# Release archives must run on clean Windows hosts without the Visual C++
+# Redistributable. Keep both MSVC targets statically linked to the CRT.
 [target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]

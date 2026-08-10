@@ -24,11 +24,11 @@ if (-not (Test-Path $webDir)) { New-Item -ItemType Directory $webDir | Out-Null 
 Copy-Item (Join-Path $harnessDir "shared\web\*") $webDir -Recurse -Force
 
 $manifest = Join-Path $tauriDir "src-tauri\Cargo.toml"
-Write-Host "[BUILD] cargo build --release --manifest-path $manifest" -ForegroundColor Cyan
+Write-Host "[BUILD] cargo build --release --features custom-protocol --manifest-path $manifest" -ForegroundColor Cyan
 $oldTargetDir = $env:CARGO_TARGET_DIR
 $env:CARGO_TARGET_DIR = Join-Path $tauriDir "src-tauri\target"
 try {
-    & cargo build --release --manifest-path $manifest
+    & cargo build --release --features custom-protocol --manifest-path $manifest
 } finally {
     $env:CARGO_TARGET_DIR = $oldTargetDir
 }

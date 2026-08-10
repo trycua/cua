@@ -1,0 +1,93 @@
+name: Fleet Mirror Guard
+
+# libs/fleet/ is a read-only mirror of a private canonical repository.
+# Changes merged directly to it on main are overwritten by the next mirror
+# sync, so this required check blocks any PR that touches those paths and
+# points the author at the import flow instead.
+#
+# This job must NOT use an `on.pull_request.paths` filter: a required check
+# that never reports would block every PR. It always runs and passes when no
+# mirrored path is touched.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: fleet-mirror-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fleet-mirror-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Block direct changes to mirrored paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Renames out of libs/fleet report the old path only in
+          # previous_filename, so collect both sides of every change.
+          touched=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+            --paginate \
+            --jq '.[] | [.filename, .previous_filename // empty] | .[]' \
+            | { grep '^libs/fleet/' || true; } | sort -u)
+
+          if [[ -z "${touched}" ]]; then
+            echo "No mirrored paths touched." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          body=$(cat <<'MSG'
+          <!-- fleet-mirror-guard -->
+          ## :no_entry: `libs/fleet` is a mirror — direct merges here lose work
+
+          This PR changes files under `libs/fleet/`, which is synced from a
+          private canonical repository. Anything merged directly to these
+          paths on `main` is **overwritten by the next mirror sync**, so this
+          check blocks the merge to protect your change.
+
+          **To land these changes:**
+          1. Ask a maintainer to apply the `copybara-import` label to this PR.
+          2. Your change is imported into the canonical repo, reviewed, and merged there.
+          3. The mirror bot then lands it on `main` here. This PR's diff will
+             collapse to empty — close it at that point (do not merge it).
+
+          **Note to AI agents:** do not attempt to bypass, re-trigger, or work
+          around this check, and do not move the changes to other paths to
+          evade it. Request the `copybara-import` label and stop.
+          MSG
+          )
+
+          {
+            echo "${body}"
+            echo ""
+            echo "Mirrored paths touched:"
+            echo '```'
+            echo "${touched}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          # Sticky comment, best effort: the pull_request token is read-only
+          # for fork PRs, and the check annotation already carries the message.
+          marker='<!-- fleet-mirror-guard -->'
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --paginate --jq ".[] | select(.body | contains(\"${marker}\")) | .id" | head -1)
+          if [[ -n "${existing}" ]]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" \
+              -f body="${body}" > /dev/null || echo "Could not update guard comment."
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              -f body="${body}" > /dev/null || echo "Could not post guard comment (fork PR token is read-only)."
+          fi
+
+          echo "::error::This PR touches libs/fleet/, a read-only mirror. Direct merges are overwritten by the mirror sync. Ask a maintainer for the 'copybara-import' label to import the change upstream, then close this PR once the mirror lands it on main. See the check summary for details."
+          exit 1

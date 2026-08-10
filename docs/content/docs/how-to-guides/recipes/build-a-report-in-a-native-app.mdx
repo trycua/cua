@@ -9,7 +9,7 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 Numbers is a **macOS-only** app with **no clean automation API** for building a spreadsheet, charting it, and exporting a polished PDF. With Cua Driver, the agent drives the *real Numbers app on a real Mac*, the same way a person would, through the GUI.
 
 <Callout type="warn">
-  This recipe is macOS-only. Numbers, Keynote, and Pages do not exist on Linux or Windows, so you need a real Mac now, or a cloud macOS desktop later.
+  This recipe is macOS-only. Numbers, Keynote, and Pages do not exist on Linux or Windows, so use a real Mac or a local macOS VM.
 </Callout>
 
 <Callout type="info">
@@ -70,8 +70,8 @@ Numbers is a **macOS-only** app with **no clean automation API** for building a 
 
 ## Scale this out
 
-One Mac builds one Numbers report at a time. To generate many reports at once, for example one per ticker, client, or reporting period, move the same workflow onto **Cua Sandbox** cloud macOS desktops and fan them out.
+One Mac builds one Numbers report at a time. To generate several reports concurrently, run the workflow in local macOS sandboxes backed by Lume and limit concurrency to the CPU and memory available on the host.
 
-Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run the jobs concurrently, [Choose and build a sandbox image](/how-to-guides/sandbox/images) to bake Numbers and any helper tools into the macOS image, and [Your first cloud sandbox](/tutorials/your-first-cloud-sandbox) for the basic SDK lifecycle.
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run the jobs concurrently, [Choose and build a sandbox image](/how-to-guides/sandbox/images) to prepare Numbers and any helper tools, and [Local macOS sandboxes with Lume](/tutorials/create-your-first-lume-vm) for the VM foundation.
 
-A cloud macOS desktop is the only way to scale Numbers automation, since Numbers cannot run on Linux containers.
+Numbers cannot run in Linux containers, so each concurrent worker needs its own local macOS VM.

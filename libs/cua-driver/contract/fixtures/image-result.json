@@ -1,0 +1,19 @@
+{
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "captured"
+      },
+      {
+        "type": "image",
+        "mimeType": "image/png",
+        "data": "iVBORw0KGgo="
+      }
+    ],
+    "structuredContent": {
+      "path": "/tmp/capture.png",
+      "verified": true
+    }
+  }
+}

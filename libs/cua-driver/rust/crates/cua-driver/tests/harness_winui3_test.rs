@@ -6,12 +6,10 @@
 //! shows up in both suites.
 //!
 //! WinUI3-specific surfaces under test:
-//!   - CommandBarFlyout : popup hosted in same HWND, rendered via XAML
-//!                        Islands / DComp. Tests UIA descent into the
-//!                        flyout subtree.
-//!   - XAML Popup       : Popup primitive (NOT a separate HWND).
-//!                        Regression guard that the agent doesn't lose
-//!                        track of in-window flyouts.
+//! - CommandBarFlyout: popup hosted in same HWND, rendered via XAML Islands /
+//!   DComp. Tests UIA descent into the flyout subtree.
+//! - XAML Popup: Popup primitive (NOT a separate HWND). Regression guard that
+//!   the agent doesn't lose track of in-window flyouts.
 //!
 //! Run via:
 //!   ..\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 harness_winui3
@@ -180,6 +178,76 @@ fn harness_winui3_smoke() {
 
 #[test]
 #[ignore]
+fn harness_winui3_verify_state() {
+    run_case(
+        native_readonly_case(
+            "winui3",
+            "verify_state",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let verified = driver.call(
+                "verify_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "expect": [
+                        {"window": {"exists": true}},
+                        {"element": {
+                            "selector": {"label_contains": "Increment"},
+                            "exists": true,
+                            "enabled": true
+                        }},
+                        {"element": {
+                            "selector": {"label_contains": "I agree"},
+                            "exists": true,
+                            "selected": false
+                        }}
+                    ],
+                    "timeout_ms": 10_000,
+                    "stable_samples": 2,
+                    "include_screenshot": true
+                }),
+            );
+            assert!(
+                !verified.is_error(),
+                "WinUI3 verify_state failed: {}",
+                verified.text()
+            );
+            assert_eq!(
+                verified.structured()["status"],
+                "satisfied",
+                "verify_state outcome: {}",
+                verified.structured()
+            );
+            assert_eq!(
+                verified.structured()["stable"],
+                true,
+                "verify_state outcome: {}",
+                verified.structured()
+            );
+            assert!(
+                verified.structured()["samples"].as_u64().unwrap_or(0) >= 2,
+                "verify_state did not enforce consecutive stable samples: {}",
+                verified.structured()
+            );
+            assert!(
+                verified.raw["result"]["content"]
+                    .as_array()
+                    .is_some_and(|content| content.iter().any(|item| {
+                        item["type"] == "image" && item["mimeType"] == "image/png"
+                    })),
+                "verify_state did not return final visual evidence"
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_winui3_type_text() {
     run_background_case("type_text", DriverRoute::UiaValue, |pid, wid, driver| {
         let snap = driver.call(
@@ -192,6 +260,7 @@ fn harness_winui3_type_text() {
             "type_text",
             serde_json::json!({
                 "pid": pid as i64, "window_id": wid, "element_index": idx,
+                "snapshot_id": snap.snapshot_id(),
                 "text": "winui3-typed", "delivery_mode": "background"
             }),
         );
@@ -225,6 +294,7 @@ fn harness_winui3_xaml_popup_open() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -250,7 +320,7 @@ fn harness_winui3_xaml_popup_open() {
 /// Regression guard for the click → TogglePattern dispatch fix.
 /// cua-driver `click` now tries Invoke → Toggle → SelectionItem →
 /// ExpandCollapse before falling through to PostMessage, so WinUI3
-/// CheckBox toggles correctly via UIA without needing dispatch:foreground.
+/// CheckBox toggles correctly via UIA without needing delivery_mode:foreground.
 #[test]
 #[ignore]
 fn harness_winui3_checkbox_toggle() {
@@ -267,6 +337,7 @@ fn harness_winui3_checkbox_toggle() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -306,6 +377,7 @@ fn harness_winui3_radio_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -357,6 +429,7 @@ fn harness_winui3_slider_set_value() {
                 "set_value",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "value": "42"
                 }),
             );
@@ -403,6 +476,7 @@ fn harness_winui3_combo_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );
@@ -420,6 +494,7 @@ fn harness_winui3_combo_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": item_idx,
+                    "snapshot_id": snap2.snapshot_id(),
                     "delivery_mode": "background"
                 }),
             );

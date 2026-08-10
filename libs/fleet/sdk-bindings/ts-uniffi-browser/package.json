@@ -1,0 +1,25 @@
+{
+  "name": "cyclops-sdk-browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm": "node scripts/patch-ubrn-wasm-template.mjs && ubrn build web --config ubrn.config.yaml --and-generate --release",
+    "build": "npm run build:wasm && vite build",
+    "test:artifact": "playwright test --project=chromium tests/browser-artifact.spec.ts",
+    "test:live": "playwright test --project=chromium tests/browser-live.spec.ts"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "typescript": "5.7.2",
+    "uniffi-bindgen-react-native": "0.31.0-3",
+    "vite": "5.4.11",
+    "prettier": "3.8.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trycua/cloud.git"
+  }
+}

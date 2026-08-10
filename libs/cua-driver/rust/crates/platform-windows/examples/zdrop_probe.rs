@@ -47,18 +47,18 @@ mod probe {
     use windows::Win32::UI::HiDpi::{
         SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
     };
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEINPUT,
+    };
     use windows::Win32::UI::Input::Pointer::{
         InitializeTouchInjection, InjectTouchInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT,
         POINTER_FLAG_INRANGE, POINTER_FLAG_UP, POINTER_INFO, POINTER_TOUCH_INFO,
         TOUCH_FEEDBACK_DEFAULT,
     };
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN,
-        MOUSEEVENTF_LEFTUP,
-    };
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindow, GetWindowRect,
-        GetWindowTextW, GetWindowThreadProcessId, GetTopWindow, IsWindowVisible, SetCursorPos,
+        EnumWindows, GetClassNameW, GetCursorPos, GetForegroundWindow, GetTopWindow, GetWindow,
+        GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SetCursorPos,
         SetForegroundWindow, GW_HWNDNEXT, PT_TOUCH,
     };
 
@@ -93,7 +93,11 @@ mod probe {
         let baseline = HWND(baseline as *mut _);
         let target = HWND(target as *mut _);
         let deadline = Instant::now() + dur;
-        let mut r = PollResult { samples: 0, target_above: 0, fg_not_baseline: 0 };
+        let mut r = PollResult {
+            samples: 0,
+            target_above: 0,
+            fg_not_baseline: 0,
+        };
         while Instant::now() < deadline {
             unsafe {
                 r.samples += 1;
@@ -124,13 +128,19 @@ mod probe {
             let down = INPUT {
                 r#type: INPUT_MOUSE,
                 Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT { dwFlags: MOUSEEVENTF_LEFTDOWN, ..Default::default() },
+                    mi: MOUSEINPUT {
+                        dwFlags: MOUSEEVENTF_LEFTDOWN,
+                        ..Default::default()
+                    },
                 },
             };
             let up = INPUT {
                 r#type: INPUT_MOUSE,
                 Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT { dwFlags: MOUSEEVENTF_LEFTUP, ..Default::default() },
+                    mi: MOUSEINPUT {
+                        dwFlags: MOUSEEVENTF_LEFTUP,
+                        ..Default::default()
+                    },
                 },
             };
             let events = [down, up];
@@ -161,8 +171,18 @@ mod probe {
                 },
                 touchFlags: 0,
                 touchMask: 0,
-                rcContact: RECT { left: x - 2, top: y - 2, right: x + 2, bottom: y + 2 },
-                rcContactRaw: RECT { left: x - 2, top: y - 2, right: x + 2, bottom: y + 2 },
+                rcContact: RECT {
+                    left: x - 2,
+                    top: y - 2,
+                    right: x + 2,
+                    bottom: y + 2,
+                },
+                rcContactRaw: RECT {
+                    left: x - 2,
+                    top: y - 2,
+                    right: x + 2,
+                    bottom: y + 2,
+                },
                 orientation: 0,
                 pressure: 512,
             };
@@ -218,7 +238,13 @@ mod probe {
         let _ = (x, y);
         actuate();
         let r = poller.join().unwrap();
-        let pct = |n: u64| if r.samples == 0 { 0.0 } else { 100.0 * n as f64 / r.samples as f64 };
+        let pct = |n: u64| {
+            if r.samples == 0 {
+                0.0
+            } else {
+                100.0 * n as f64 / r.samples as f64
+            }
+        };
         println!(
             "  [{name:8}] samples={:4}  target_above_baseline={:4} ({:5.1}%)  fg!=baseline={:4} ({:5.1}%)",
             r.samples, r.target_above, pct(r.target_above), r.fg_not_baseline, pct(r.fg_not_baseline)
@@ -252,13 +278,25 @@ mod probe {
             .collect();
 
         if mode == "list" || candidates.is_empty() {
-            println!("Foreground (baseline): pid={} class={:?} title={:?}", pid_of(fg), class_of(fg), title_of(fg));
+            println!(
+                "Foreground (baseline): pid={} class={:?} title={:?}",
+                pid_of(fg),
+                class_of(fg),
+                title_of(fg)
+            );
             println!("Candidate background windows:");
             for h in &candidates {
-                println!("  pid={:6} class={:24} title={:?}", pid_of(*h), class_of(*h), title_of(*h));
+                println!(
+                    "  pid={:6} class={:24} title={:?}",
+                    pid_of(*h),
+                    class_of(*h),
+                    title_of(*h)
+                );
             }
             if candidates.is_empty() {
-                eprintln!("\nNo background candidate windows. Open one and focus a different window.");
+                eprintln!(
+                    "\nNo background candidate windows. Open one and focus a different window."
+                );
             }
             if mode == "list" {
                 return;
@@ -287,16 +325,26 @@ mod probe {
             return;
         };
 
-        println!("baseline (user fg): pid={} title={:?}", pid_of(fg), title_of(fg));
+        println!(
+            "baseline (user fg): pid={} title={:?}",
+            pid_of(fg),
+            title_of(fg)
+        );
         println!(
             "target (background): pid={} class={:?} title={:?}  click@({x},{y})",
-            pid_of(target), class_of(target), title_of(target)
+            pid_of(target),
+            class_of(target),
+            title_of(target)
         );
-        println!("Position your windows now — actuating in 2s. (target should stay BEHIND baseline)");
+        println!(
+            "Position your windows now — actuating in 2s. (target should stay BEHIND baseline)"
+        );
         thread::sleep(Duration::from_secs(2));
 
         if mode == "both" || mode == "control" {
-            run_trial("control", fg, target, x, y, || actuate_sendinput_swap(target.0 as usize, x, y));
+            run_trial("control", fg, target, x, y, || {
+                actuate_sendinput_swap(target.0 as usize, x, y)
+            });
             thread::sleep(Duration::from_millis(400));
         }
         if mode == "both" || mode == "inject" {
@@ -308,7 +356,11 @@ mod probe {
                 }
             });
         }
-        println!("\nInterpretation: control should show a high target_above%/fg!=baseline% (the flash).");
-        println!("Track A (inject) showing ~0% target_above == background input with no visible raise.");
+        println!(
+            "\nInterpretation: control should show a high target_above%/fg!=baseline% (the flash)."
+        );
+        println!(
+            "Track A (inject) showing ~0% target_above == background input with no visible raise."
+        );
     }
 }

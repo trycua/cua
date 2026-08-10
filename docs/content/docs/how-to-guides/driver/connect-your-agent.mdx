@@ -1,14 +1,14 @@
 ---
 title: Connect your agent to Cua Driver
-description: Register Cua Driver as an MCP server so an agent can drive the host desktop.
+description: Connect an agent to Cua Driver through MCP or the Cua Driver skill and CLI.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver mcp` runs Cua Driver as a stdio MCP server. Register it when you want an MCP-capable agent to drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session.
+Cua Driver lets a [computer-use agent](/concepts/what-is-computer-use) drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session. MCP-capable agents connect through `cua-driver mcp`; skill-based agents such as Prime Agent call the CLI directly.
 
 <Callout type="info">
-  This connects an agent to Cua Driver on the current machine. To create disposable cloud desktops, use [Cua Sandbox](/tutorials/your-first-cloud-sandbox) instead.
+  This connects an agent to Cua Driver on the current machine. To create a disposable local desktop, use [Cua Sandbox](/tutorials/your-first-local-sandbox) instead.
 </Callout>
 
 ## Before you start
@@ -27,6 +27,35 @@ cua-driver permissions status
 ```
 
 See [Install Cua Driver](/how-to-guides/driver/install) and [macOS permissions](/reference/cua-driver/macos-permissions) for setup details.
+
+## Decide the permission mode first
+
+Registering the server does not choose an authorization
+[permission mode](/reference/cua-driver/permission-modes) — the process that owns
+the driver runtime does, at launch. Every config below therefore runs in the
+default `standard` mode unless you change that process.
+
+- **macOS:** `cua-driver mcp` proxies to the `CuaDriver.app` daemon to keep TCC
+  attribution with the app, so that daemon's launch flags decide the mode. Start
+  it in the mode you want before the client connects, and use
+  [autostart](/how-to-guides/driver/keep-running#pin-a-permission-mode) to make
+  that stick.
+- **Windows and Linux:** bare `cua-driver mcp` owns its own runtime and has no
+  `--permission-mode` flag. Either set `CUA_DRIVER_PERMISSION_MODE` — plus
+  `CUA_DRIVER_SESSION_POLICY_FILE` and `CUA_DRIVER_SESSION_POLICY_APPROVED` for
+  `bounded` — in the client's `env` block, or run a `cua-driver serve` daemon in
+  that mode and point the client at it with `--socket`.
+
+`--grant existing-profile` is the one authorization flag `cua-driver mcp` accepts
+directly, and it applies only to a runtime this command launches. An agent cannot
+widen any of this from a tool call.
+
+<Callout type="warn">
+  A `standard`-mode runtime allows input against every application on the
+  desktop. If an agent should reach only a reviewed set of apps, origins, and
+  directories, register it against a `bounded` runtime instead — see [Write a
+  bounded manifest](/how-to-guides/driver/write-a-bounded-manifest).
+</Callout>
 
 ## Generate the client config
 
@@ -75,6 +104,34 @@ Restart Codex or open a fresh session after adding the server. For richer agent 
 ```bash
 cua-driver skills install
 cua-driver skills status
+```
+
+See [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill) for the ClawHub and direct-install paths.
+
+## Prime Agent
+
+Prime Agent uses Cua Driver through its persistent IPython environment and the
+Cua Driver agent skill. It does not need a local MCP registration.
+
+Install the skill pack after both tools are installed:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+Cua Driver links the skill into `~/.prime/agent/skills/` when Prime Agent's
+skill directory exists. Prime Agent also scans the shared `~/.agents/skills/`
+directory, so an existing Codex-targeted link remains discoverable. Run
+`/reload` in Prime Agent or start a new session after installation, then ask it
+to use the Cua Driver skill. Use `/skill:cua-driver` to invoke it explicitly.
+See [Prime Agent's skill documentation](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/skills.md)
+for its complete discovery and invocation behavior.
+
+Print the same current guidance from the installed binary:
+
+```bash
+cua-driver mcp-config --client prime-agent
 ```
 
 ## Cursor

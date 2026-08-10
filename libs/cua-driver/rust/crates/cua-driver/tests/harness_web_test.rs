@@ -23,7 +23,9 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
-use cua_driver_testkit::{harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse};
+use cua_driver_testkit::{
+    harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
+};
 
 // ── workspace paths ──────────────────────────────────────────────────────────
 
@@ -124,7 +126,10 @@ fn run_web_case_with_preparation<P, F>(
         let journal = FixtureJournal::start();
         let mut driver = McpDriver::spawn_named_with_env(
             &cell_id,
-            &[("CUA_DRIVER_CDP_PORT", cdp_port_string.as_str())],
+            &[
+                ("CUA_DRIVER_CDP_PORT", cdp_port_string.as_str()),
+                ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+            ],
         )
         .expect("required source-built Windows driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
@@ -300,7 +305,7 @@ fn harness_webview_left_click_px_background() {
         "webview2",
         "left_click",
         Targeting::Px,
-        DriverRoute::UiaInvoke,
+        DriverRoute::Composite,
     );
     let point = Cell::new(None);
     run_web_case_with_preparation(
@@ -371,13 +376,13 @@ fn harness_webview_left_click_px_background() {
                 "WebView2 PX background click failed: {}",
                 click.text()
             );
-            assert_eq!(
-                click.structured()["path"].as_str(),
-                Some("ax"),
-                "WebView2 PX background click used an unexpected driver route: {}",
-                click.text()
-            );
             wait_for_journal_text(journal, "lbl-counter", "counter=3");
+            let route = click.action_route();
+            assert!(
+                matches!(route, Some("accessibility" | "synthetic_events")),
+                "WebView2 PX background click used an unsupported driver route {route:?}: {}",
+                click.text(),
+            );
         },
     );
 }

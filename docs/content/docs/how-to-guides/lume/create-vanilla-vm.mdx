@@ -37,13 +37,15 @@ lume ls
 lume ssh macos-tahoe 'sw_vers; id -un'
 ```
 
-Use `lume run` with no `--no-display` flag when you want the VNC display. Use
-`lume run --no-display macos-tahoe` for a headless boot.
+`lume run` opens the native viewer by default while keeping VNC available for
+automation and remote access. Use `--display vnc` to open Screen Sharing instead,
+or `--display none` (or `--no-display`) to start without a viewer.
 
 ## Stop or remove it
 
 ```bash
-lume stop macos-tahoe
+lume shutdown macos-tahoe # graceful guest shutdown
+lume stop macos-tahoe     # immediate process-level stop
 lume delete macos-tahoe
 ```
 

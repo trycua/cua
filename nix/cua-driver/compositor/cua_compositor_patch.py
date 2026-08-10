@@ -45,6 +45,7 @@ INCLUDES = r"""#include <stdint.h>
 #include <linux/input-event-codes.h>
 #include <wayland-server-protocol.h>
 #include <xkbcommon/xkbcommon.h>
+#include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
@@ -56,6 +57,7 @@ static struct cua_devstate cua_ptr[CUA_MAXDEV];
 static struct cua_devstate cua_kbd_state[CUA_MAXDEV];
 static int g_keymap_fd = -1;
 static size_t g_keymap_size = 0;
+static struct wlr_keyboard g_keyboard;
 static xkb_mod_mask_t g_shift_mask = 1;
 static xkb_mod_mask_t g_ctrl_mask = 0;
 static xkb_mod_mask_t g_alt_mask = 0;
@@ -63,13 +65,18 @@ static xkb_mod_mask_t g_logo_mask = 0;
 struct cua_keyent { uint32_t keycode; int shift; int valid; };
 static struct cua_keyent g_chartab[128];
 static struct wlr_foreign_toplevel_manager_v1 *g_ftl_mgr = NULL;
+struct tinywl_toplevel;
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
+static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel);
+static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
+static bool cua_pid_in_family(pid_t pid, pid_t root_pid);
 
 """
 
 # A foreign-toplevel handle pointer on each toplevel (for list_windows).
 STRUCT_FIELD = (
     "\tstruct wlr_xdg_toplevel *xdg_toplevel;\n"
+    "\tbool cua_initial_activation_sent;\n"
     "\tstruct wlr_foreign_toplevel_handle_v1 *ftl;\n"
     "\tstruct wl_listener ftl_request_activate;\n"
 )
@@ -78,10 +85,46 @@ FUNCS = r"""
 /* v1 control-protocol banner: the client sends this line, the compositor echoes
  * it to confirm both speak v1. Any other first line is refused. */
 #define CUA_PROTO_HELLO "cua-inject v1"
+static void cua_focus_toplevel(struct tinywl_toplevel *toplevel) {
+	focus_toplevel(toplevel);
+	/* tinywl only notifies seat keyboard focus when a physical wlr_keyboard is
+	 * attached. Headless CI has none, so explicit activation establishes the
+	 * logical focus without coupling it to the initial map/configure handshake. */
+	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
+	if (toplevel->server->seat->keyboard_state.focused_surface != surface) {
+		struct wlr_keyboard_modifiers modifiers = {0};
+		wlr_seat_keyboard_notify_enter(
+			toplevel->server->seat, surface, NULL, 0, &modifiers);
+	}
+}
+/* New child toplevels may request focus as part of their normal map sequence.
+ * Preserve that behavior only when the current keyboard focus belongs to the
+ * same process family. A background application opening a child must not steal
+ * focus from the foreground sentinel (or from any other application). */
+static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel) {
+	struct wlr_surface *focused = toplevel->server->seat->keyboard_state.focused_surface;
+	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
+	if (!focused_root) {
+		cua_focus_toplevel(toplevel);
+		return;
+	}
+	struct tinywl_toplevel *current;
+	wl_list_for_each(current, &toplevel->server->toplevels, link) {
+		struct wlr_surface *surface = current->xdg_toplevel ? current->xdg_toplevel->base->surface : NULL;
+		if (surface != focused_root) continue;
+		pid_t requested_pid = cua_toplevel_pid(toplevel);
+		pid_t focused_pid = cua_toplevel_pid(current);
+		if (requested_pid == focused_pid ||
+			cua_pid_in_family(requested_pid, focused_pid) ||
+			cua_pid_in_family(focused_pid, requested_pid))
+			cua_focus_toplevel(toplevel);
+		return;
+	}
+}
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data) {
 	(void)data;
 	struct tinywl_toplevel *t = wl_container_of(listener, t, ftl_request_activate);
-	focus_toplevel(t);
+	cua_focus_toplevel(t);
 }
 static uint32_t cua_now_ms(void) {
 	struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -105,7 +148,28 @@ static void cua_pframe(struct wl_resource *res) {
 	if (wl_resource_get_version(res) >= WL_POINTER_FRAME_SINCE_VERSION)
 		wl_pointer_send_frame(res);
 }
-static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
+static bool cua_pid_in_family(pid_t pid, pid_t root_pid) {
+	if (pid <= 0 || root_pid <= 0) return false;
+	for (int depth = 0; depth < 64 && pid > 1; depth++) {
+		if (pid == root_pid) return true;
+		char path[64], stat[4096];
+		snprintf(path, sizeof path, "/proc/%d/stat", (int)pid);
+		FILE *file = fopen(path, "r");
+		if (!file) return false;
+		size_t n = fread(stat, 1, sizeof stat - 1, file);
+		fclose(file);
+		if (!n) return false;
+		stat[n] = '\0';
+		/* comm is parenthesized and may contain spaces or ')', so parse the
+		 * state + parent pid after its final closing parenthesis. */
+		char *close = strrchr(stat, ')'), state = '\0';
+		long parent = 0;
+		if (!close || sscanf(close + 2, "%c %ld", &state, &parent) != 2 ||
+			parent <= 0 || parent == pid) return false;
+		pid = (pid_t)parent;
+	}
+	return pid == root_pid;
+}
 /* Resolve a target window by its xdg app_id, refusing missing and ambiguous
  * matches so a command never silently drives the wrong window. In v1 duplicate
  * app_ids are simply not addressable. On failure returns NULL and points *err
@@ -113,6 +177,17 @@ static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
 static struct tinywl_toplevel *cua_resolve_target(struct tinywl_server *server, const char *app_id, const char **err) {
 	struct tinywl_toplevel *t, *found = NULL;
 	int matches = 0;
+	if (!strncmp(app_id, "root:", 5)) {
+		char *end = NULL;
+		long pid = strtol(app_id + 5, &end, 10);
+		if (pid <= 0 || !end || *end) { *err = "bad-root-pid"; return NULL; }
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (cua_pid_in_family(cua_toplevel_pid(t), (pid_t)pid)) { found = t; matches++; }
+		}
+		if (matches == 0) { *err = "unknown-root-pid"; return NULL; }
+		if (matches > 1) { *err = "ambiguous-root-pid"; return NULL; }
+		return found;
+	}
 	if (!strncmp(app_id, "pid:", 4)) {
 		char *end = NULL;
 		long pid = strtol(app_id + 4, &end, 10);
@@ -152,15 +227,7 @@ static const char *cua_activate_pid(struct tinywl_server *server, pid_t target_p
 	}
 	if (matches == 0) return "unknown-pid";
 	if (matches > 1) return "ambiguous-pid";
-	focus_toplevel(found);
-	/* tinywl only notifies seat keyboard focus when a physical wlr_keyboard is
-	 * attached. Headless CI has none, so establish the logical focus explicitly
-	 * for observer truth and client activation semantics. */
-	struct wlr_surface *surface = found->xdg_toplevel->base->surface;
-	if (server->seat->keyboard_state.focused_surface != surface) {
-		struct wlr_keyboard_modifiers modifiers = {0};
-		wlr_seat_keyboard_notify_enter(server->seat, surface, NULL, 0, &modifiers);
-	}
+	cua_focus_toplevel(found);
 	return NULL;
 }
 /* Independent observer query used only by the Rust E2E testkit. The target is
@@ -186,7 +253,10 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	struct tinywl_toplevel *t, *target = NULL;
 	int matches = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (cua_toplevel_pid(t) == target_pid) { target = t; matches++; }
+		/* Electron exposes accessibility under the browser root while its
+		 * xdg_toplevel can be owned by a descendant GPU/renderer client. Match
+		 * the same bounded process family accepted by root:<pid> injection. */
+		if (cua_pid_in_family(cua_toplevel_pid(t), target_pid)) { target = t; matches++; }
 	}
 	if (!matches) return "target-not-found";
 	if (matches > 1) return "ambiguous-pid";
@@ -242,6 +312,22 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 		sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 		if (!sc || wl_list_empty(&sc->pointers)) return false;
 	}
+	/* Chromium consumes pointer input through wlroots' seat pointer state. Raw
+	 * wl_pointer resource sends are sufficient for GTK, but Chromium can ACK
+	 * them without dispatching DOM mouse events because the compositor-side
+	 * focus/grab state was never updated. Device 0 is the normal single-pointer
+	 * route, so use the protocol-complete seat notifications there. Higher
+	 * logical device indices retain direct delivery for independent cursors. */
+	if (idx == 0) {
+		wlr_seat_pointer_notify_enter(server->seat, surface, local_x, local_y);
+		wlr_seat_pointer_notify_motion(server->seat, cua_now_ms(), local_x, local_y);
+		/* Real cursors emit a separate frame event after the motion callback.
+		 * Synthetic commands have no cursor-frame signal, so terminate the
+		 * protocol batch here; Chromium buffers motion/button events until it. */
+		wlr_seat_pointer_notify_frame(server->seat);
+		cua_ptr[idx].entered = surface;
+		return true;
+	}
 	wl_fixed_t sx = wl_fixed_from_double(local_x), sy = wl_fixed_from_double(local_y);
 	struct wl_resource *res;
 	if (cua_ptr[idx].entered != surface) {
@@ -263,21 +349,14 @@ static struct tinywl_toplevel *cua_desktop_motion(struct tinywl_server *server, 
 	if (!t || !surface) return NULL;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return NULL;
-	struct wl_resource *res;
-	if (cua_ptr[0].entered != surface) {
-		if (cua_ptr[0].entered) cua_ptr_leave(server->seat, cua_ptr[0].entered);
-		uint32_t serial = wlr_seat_client_next_serial(sc);
-		wl_resource_for_each(res, &sc->pointers) {
-			wl_pointer_send_enter(res, serial, surface->resource, wl_fixed_from_double(sx), wl_fixed_from_double(sy));
-			cua_pframe(res);
-		}
-		cua_ptr[0].entered = surface;
-	}
-	uint32_t tm = cua_now_ms();
-	wl_resource_for_each(res, &sc->pointers) {
-		wl_pointer_send_motion(res, tm, wl_fixed_from_double(sx), wl_fixed_from_double(sy));
-		cua_pframe(res);
-	}
+	/* Desktop scope also uses logical device 0. Keep wlroots' seat pointer
+	 * focus in sync before cua_button() sends its protocol-complete seat
+	 * notification; raw resource enters here would leave the seat targeting a stale
+	 * surface, so the following button notification never reaches this point. */
+	wlr_seat_pointer_notify_enter(server->seat, surface, sx, sy);
+	wlr_seat_pointer_notify_motion(server->seat, cua_now_ms(), sx, sy);
+	wlr_seat_pointer_notify_frame(server->seat);
+	cua_ptr[0].entered = surface;
 	return t;
 }
 static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t button, bool pressed) {
@@ -287,6 +366,14 @@ static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	struct wlr_surface *surface = cua_ptr[idx].entered ? cua_ptr[idx].entered : t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return false;
+	if (idx == 0) {
+		wlr_seat_pointer_notify_button(server->seat, cua_now_ms(), button,
+			pressed ? WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED);
+		/* See cua_motion: there is no hardware cursor-frame callback for the
+		 * virtual device, so each injected command must close its own batch. */
+		wlr_seat_pointer_notify_frame(server->seat);
+		return true;
+	}
 	uint32_t tm = cua_now_ms(), bs = wlr_seat_client_next_serial(sc);
 	struct wl_resource *res;
 	wl_resource_for_each(res, &sc->pointers) {
@@ -315,7 +402,7 @@ static bool cua_axis(struct tinywl_server *server, struct tinywl_toplevel *t, in
 	}
 	return true;
 }
-static void cua_init_keymap(void) {
+static void cua_init_keymap(struct tinywl_server *server) {
 	struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	struct xkb_rule_names names = {0};
 	struct xkb_keymap *km = xkb_keymap_new_from_names(ctx, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
@@ -354,6 +441,13 @@ static void cua_init_keymap(void) {
 	/* Control characters used by the protocol map to dedicated keys. */
 	g_chartab['\n'] = (struct cua_keyent){ KEY_ENTER, 0, 1 };
 	g_chartab['\t'] = (struct cua_keyent){ KEY_TAB, 0, 1 };
+	/* A keyboard-capable seat must attach a real wlr_keyboard before clients
+	 * bind. wlroots then sends keymap + repeat-info before any enter event;
+	 * Chromium can stall if it receives an enter from a device-less seat. */
+	wlr_keyboard_init(&g_keyboard, NULL, "cua-virtual-keyboard");
+	wlr_keyboard_set_keymap(&g_keyboard, km);
+	wlr_keyboard_set_repeat_info(&g_keyboard, 25, 600);
+	wlr_seat_set_keyboard(server->seat, &g_keyboard);
 	xkb_keymap_unref(km); xkb_context_unref(ctx);
 	wlr_log(WLR_INFO, "[cua] xkb keymap + chartab ready (%zu bytes)", g_keymap_size);
 }
@@ -363,6 +457,13 @@ static struct wlr_seat_client *cua_kbd_enter(struct tinywl_server *server, struc
 	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->keyboards)) return NULL;
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	if (focused && wlr_surface_get_root_surface(focused) == surface) {
+		/* Foreground delivery already has a protocol-complete seat enter. The
+		 * key path below uses wlr_seat_keyboard_notify_key for this target. */
+		cua_kbd_state[0].entered = surface;
+		return sc;
+	}
 	if (cua_kbd_state[0].entered != surface) {
 		struct wl_resource *res; struct wl_array keys; wl_array_init(&keys);
 		wl_resource_for_each(res, &sc->keyboards) {
@@ -387,14 +488,31 @@ static void cua_kbd_key(struct wlr_seat_client *sc, uint32_t keycode, bool press
 		wl_keyboard_send_key(res, wlr_seat_client_next_serial(sc), tm, keycode,
 			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 }
+/* Preserve compositor-native keyboard delivery when the addressed surface is
+ * already the logical seat focus. Chromium relies on wlroots' focused-seat
+ * state for foreground keyboard events; sending a raw wl_keyboard.key to its
+ * resource can be acknowledged while never reaching the renderer. Background
+ * targets retain the direct resource path that makes focus-free input possible. */
+static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_toplevel *t,
+		struct wlr_seat_client *sc, uint32_t keycode, bool pressed) {
+	struct wlr_surface *target = wlr_surface_get_root_surface(t->xdg_toplevel->base->surface);
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
+	if (target == focused_root) {
+		wlr_seat_keyboard_notify_key(server->seat, cua_now_ms(), keycode,
+			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+	} else {
+		cua_kbd_key(sc, keycode, pressed);
+	}
+}
 static bool cua_type_cp(struct tinywl_server *server, struct tinywl_toplevel *t, uint32_t cp) {
 	if (cp >= 128 || !g_chartab[cp].valid) return false;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
 	if (!sc) return false;
 	struct cua_keyent e = g_chartab[cp];
 	if (e.shift) cua_kbd_mods(sc, g_shift_mask);
-	cua_kbd_key(sc, e.keycode, true);
-	cua_kbd_key(sc, e.keycode, false);
+	cua_kbd_key_target(server, t, sc, e.keycode, true);
+	cua_kbd_key_target(server, t, sc, e.keycode, false);
 	if (e.shift) cua_kbd_mods(sc, 0);
 	return true;
 }
@@ -435,8 +553,8 @@ static int cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t
 	if (!kc) return 0;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
 	if (!sc) return -1;
-	cua_kbd_key(sc, kc, true);
-	cua_kbd_key(sc, kc, false);
+	cua_kbd_key_target(server, t, sc, kc, true);
+	cua_kbd_key_target(server, t, sc, kc, false);
 	return 1;
 }
 static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, const char *mods, const char *key) {
@@ -460,8 +578,8 @@ static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, c
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
 	if (!sc) return -1;
 	cua_kbd_mods(sc, mask);
-	cua_kbd_key(sc, kc, true);
-	cua_kbd_key(sc, kc, false);
+	cua_kbd_key_target(server, t, sc, kc, true);
+	cua_kbd_key_target(server, t, sc, kc, false);
 	cua_kbd_mods(sc, 0);
 	return 1;
 }
@@ -606,6 +724,7 @@ static int cua_listen_cb(int fd, uint32_t mask, void *data) {
 	return 0;
 }
 static void cua_setup_control_socket(struct tinywl_server *server) {
+	cua_init_keymap(server);
 	const char *path = getenv("CUA_INJECT_SOCKET");
 	if (!path) { wlr_log(WLR_INFO, "[cua] no CUA_INJECT_SOCKET; injection disabled"); return; }
 	int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -616,7 +735,6 @@ static void cua_setup_control_socket(struct tinywl_server *server) {
 	if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0 || listen(fd, 4) < 0) {
 		wlr_log(WLR_ERROR, "[cua] bind/listen %s: %s", path, strerror(errno)); close(fd); return;
 	}
-	cua_init_keymap();
 	wl_event_loop_add_fd(wl_display_get_event_loop(server->wl_display), fd,
 		WL_EVENT_READABLE, cua_listen_cb, server);
 	wlr_log(WLR_INFO, "[cua] injection control socket on %s", path);
@@ -632,6 +750,44 @@ def repl(s, old, new, label, count=1):
 
 # 1) includes + globals + a foreign-toplevel handle field on the toplevel.
 src = repl(src, "struct tinywl_server {", INCLUDES + "struct tinywl_server {", "includes")
+# tinywl's desktop-oriented focus helper toggles xdg_toplevel activation on
+# every focus transition. Chromium needs one coherent transition (deactivate
+# the old surface, activate the new one) to finish renderer startup, but can
+# stop scheduling frames after later toggles in this minimal headless
+# compositor. Send that startup transition once per toplevel; seat focus plus
+# scene stacking are authoritative after that.
+src = repl(src,
+    "\tif (prev_surface) {\n"
+    "\t\t/*\n"
+    "\t\t * Deactivate the previously focused surface. This lets the client know\n"
+    "\t\t * it no longer has focus and the client will repaint accordingly, e.g.\n"
+    "\t\t * stop displaying a caret.\n"
+    "\t\t */\n"
+    "\t\tstruct wlr_xdg_toplevel *prev_toplevel =\n"
+    "\t\t\twlr_xdg_toplevel_try_from_wlr_surface(prev_surface);\n"
+    "\t\tif (prev_toplevel != NULL) {\n"
+    "\t\t\twlr_xdg_toplevel_set_activated(prev_toplevel, false);\n"
+    "\t\t}\n"
+    "\t}\n",
+    "\tif (!toplevel->cua_initial_activation_sent && prev_surface) {\n"
+    "\t\tstruct wlr_xdg_toplevel *prev_toplevel =\n"
+    "\t\t\twlr_xdg_toplevel_try_from_wlr_surface(prev_surface);\n"
+    "\t\tif (prev_toplevel != NULL) {\n"
+    "\t\t\twlr_xdg_toplevel_set_activated(prev_toplevel, false);\n"
+    "\t\t}\n"
+    "\t}\n",
+    "headless-startup-deactivation")
+src = repl(src,
+    "\t/* Activate the new surface */\n"
+    "\twlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);\n",
+    "\t/* Chromium needs one activated configure to complete renderer startup.\n"
+    "\t * Later focus changes use the seat and scene only, avoiding activation\n"
+    "\t * toggles that can stall it in this private headless compositor. */\n"
+    "\tif (!toplevel->cua_initial_activation_sent) {\n"
+    "\t\twlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);\n"
+    "\t\ttoplevel->cua_initial_activation_sent = true;\n"
+    "\t}\n",
+    "headless-initial-activation")
 src = repl(src,
     "\tstruct wlr_xdg_toplevel *xdg_toplevel;\n",
     STRUCT_FIELD, "ftl-field")
@@ -651,7 +807,7 @@ src = repl(src,
     "\t\t\twlr_foreign_toplevel_handle_v1_set_app_id(toplevel->ftl, toplevel->xdg_toplevel->app_id);\n"
     "\t\ttoplevel->ftl_request_activate.notify = cua_ftl_request_activate;\n"
     "\t\twl_signal_add(&toplevel->ftl->events.request_activate, &toplevel->ftl_request_activate);\n"
-    "\t}\n\n\tfocus_toplevel(toplevel);",
+    "\t}\n\n\tcua_maybe_focus_new_toplevel(toplevel);",
     "ftl-on-map")
 
 # 4) On unmap: drop the foreign-toplevel handle.
@@ -705,6 +861,15 @@ src = repl(src,
     "\twl_display_run(server.wl_display);",
     "\tcua_setup_control_socket(&server);\n\twl_display_run(server.wl_display);",
     "control-socket-setup")
+src = repl(src,
+    "\twlr_backend_destroy(server.backend);\n"
+    "\twl_display_destroy(server.wl_display);\n"
+    "\treturn 0;",
+    "\twlr_backend_destroy(server.backend);\n"
+    "\twlr_keyboard_finish(&g_keyboard);\n"
+    "\twl_display_destroy(server.wl_display);\n"
+    "\treturn 0;",
+    "virtual-keyboard-cleanup")
 
 io.open(out, "w", encoding="utf-8").write(src)
 sys.stderr.write("cua-compositor.c written (%d bytes)\n" % len(src))

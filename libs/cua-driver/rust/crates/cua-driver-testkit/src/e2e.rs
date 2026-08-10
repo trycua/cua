@@ -109,6 +109,7 @@ pub enum Scope {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DriverRoute {
+    CaptureScopeGate,
     AxRead,
     WindowState,
     UiaInvoke,
@@ -165,6 +166,13 @@ fn shared_web_route_for_environment(
     nested_inject: bool,
 ) -> Result<DriverRoute, String> {
     use DriverRoute as Route;
+
+    if action == "type_submit" && matches!(targeting, Targeting::Ax | Targeting::Px) {
+        return match delivery {
+            Delivery::Background | Delivery::Foreground => Ok(Route::Composite),
+            Delivery::NotApplicable => Err(format!("{action}: delivery mode is required")),
+        };
+    }
 
     let pointer_or_key_route = |background, foreground| match delivery {
         Delivery::Background => Ok(background),
@@ -294,6 +302,20 @@ pub enum RefusalCode {
     BackgroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,
+    BrowserRouteUnavailable,
+    BrowserRequiresSetup,
+    BrowserBindingAmbiguous,
+    BrowserBindingStale,
+    BrowserWrongTargetRefused,
+    BrowserTabNotFound,
+    BrowserRefStale,
+    BrowserInputTrustUnavailable,
+    BrowserConsentRequired,
+    BrowserConsentRevoked,
+    BrowserReconnectExhausted,
+    BrowserInputIncomplete,
+    BrowserActionUnavailable,
+    WindowMinimized,
 }
 
 impl RefusalCode {
@@ -302,6 +324,20 @@ impl RefusalCode {
             "background_unavailable" => Some(Self::BackgroundUnavailable),
             "background_occluded" => Some(Self::BackgroundOccluded),
             "background_uipi_blocked" => Some(Self::BackgroundUipiBlocked),
+            "browser_route_unavailable" => Some(Self::BrowserRouteUnavailable),
+            "browser_requires_setup" => Some(Self::BrowserRequiresSetup),
+            "browser_binding_ambiguous" => Some(Self::BrowserBindingAmbiguous),
+            "browser_binding_stale" => Some(Self::BrowserBindingStale),
+            "browser_wrong_target_refused" => Some(Self::BrowserWrongTargetRefused),
+            "browser_tab_not_found" => Some(Self::BrowserTabNotFound),
+            "browser_ref_stale" => Some(Self::BrowserRefStale),
+            "browser_input_trust_unavailable" => Some(Self::BrowserInputTrustUnavailable),
+            "browser_consent_required" => Some(Self::BrowserConsentRequired),
+            "browser_consent_revoked" => Some(Self::BrowserConsentRevoked),
+            "browser_reconnect_exhausted" => Some(Self::BrowserReconnectExhausted),
+            "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
+            "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
+            "window_minimized" => Some(Self::WindowMinimized),
             _ => None,
         }
     }
@@ -1159,8 +1195,17 @@ pub fn validate_catalog_with_evidence(
     require_turn_evidence: bool,
 ) -> Result<ValidationSummary, Vec<String>> {
     let mut errors = Vec::new();
+    let policy = CatalogPolicy::from_environment(&mut errors);
     if declarations.is_empty() {
         errors.push("E2E catalog has no declarations".to_owned());
+    }
+    if let Some(minimum) = policy.minimum_cells {
+        if declarations.len() < minimum {
+            errors.push(format!(
+                "E2E catalog declared {} cells, below the required minimum of {minimum}",
+                declarations.len()
+            ));
+        }
     }
     let mut declared = BTreeMap::new();
     for case in declarations {
@@ -1213,7 +1258,14 @@ pub fn validate_catalog_with_evidence(
                 _ => errors.push(format!("passing cell has no valid behavior: {cell_id}")),
             },
             TestStatus::Fail | TestStatus::EnvironmentError => summary.failed += 1,
-            TestStatus::Skip => summary.skipped += 1,
+            TestStatus::Skip => {
+                summary.skipped += 1;
+                if policy.forbid_skips {
+                    errors.push(format!(
+                        "canonical E2E catalog may not skip cell: {cell_id}"
+                    ));
+                }
+            }
         }
 
         if require_video {
@@ -1267,9 +1319,53 @@ pub fn validate_catalog_with_evidence(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct CatalogPolicy {
+    minimum_cells: Option<usize>,
+    forbid_skips: bool,
+}
+
+impl CatalogPolicy {
+    fn from_environment(errors: &mut Vec<String>) -> Self {
+        Self::parse(
+            std::env::var("CUA_E2E_EXPECTED_MIN_CELLS").ok().as_deref(),
+            std::env::var("CUA_E2E_FORBID_SKIPS").ok().as_deref(),
+            errors,
+        )
+    }
+
+    fn parse(minimum: Option<&str>, forbid_skips: Option<&str>, errors: &mut Vec<String>) -> Self {
+        let minimum_cells = minimum.and_then(|value| match value.parse::<usize>() {
+            Ok(value) if value > 0 => Some(value),
+            _ => {
+                errors.push(format!(
+                    "CUA_E2E_EXPECTED_MIN_CELLS must be a positive integer, got {value:?}"
+                ));
+                None
+            }
+        });
+        let forbid_skips = match forbid_skips {
+            None | Some("") | Some("0") | Some("false") => false,
+            Some("1") | Some("true") => true,
+            Some(value) => {
+                errors.push(format!(
+                    "CUA_E2E_FORBID_SKIPS must be 0/1/false/true, got {value:?}"
+                ));
+                false
+            }
+        };
+        Self {
+            minimum_cells,
+            forbid_skips,
+        }
+    }
+}
+
 fn case_requires_action_turn(case: &CaseSpec) -> bool {
-    !matches!(case.driver_route, DriverRoute::AxRead | DriverRoute::WindowState)
-        && case.action != "screenshot"
+    !matches!(
+        case.driver_route,
+        DriverRoute::CaptureScopeGate | DriverRoute::AxRead | DriverRoute::WindowState
+    ) && case.action != "screenshot"
 }
 
 fn recording_directory(evidence: &Evidence) -> Option<&Path> {
@@ -1317,7 +1413,9 @@ fn validate_turn_evidence(
                 ));
             }
         }
-        Err(error) => errors.push(format!("invalid trajectory evidence for {cell_id}: {error}")),
+        Err(error) => errors.push(format!(
+            "invalid trajectory evidence for {cell_id}: {error}"
+        )),
     }
 
     let mut turns = match std::fs::read_dir(recording_dir) {
@@ -1388,22 +1486,36 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .and_then(|value| value[phase][kind]["classification"].as_str())
     };
     let tool = action.as_ref().and_then(|value| value["tool"].as_str());
+    let private_existing_profile_prepare = action.as_ref().is_some_and(|value| {
+        value["tool"].as_str() == Some("browser_prepare")
+            && value["arguments"]["strategy"]["kind"].as_str() == Some("existing_profile")
+    });
     let successful_restore = action.as_ref().is_some_and(|value| {
         value["result_summary"]
             .as_str()
             .is_some_and(|summary| summary.starts_with("✅ bring_to_front:"))
     });
-    let restored_state_captured = manifest.as_ref().is_some_and(|value| {
-        value["after"]["state"]["status"].as_str() == Some("captured")
+    let refused_minimized_action = action.as_ref().is_some_and(|value| {
+        value["result_error"].as_bool() == Some(true)
+            && value["result_summary"]
+                .as_str()
+                .is_some_and(|summary| summary.starts_with("refused (window_minimized):"))
     });
+    let restored_state_captured = manifest
+        .as_ref()
+        .is_some_and(|value| value["after"]["state"]["status"].as_str() == Some("captured"));
     let expected_unavailable_screenshot = |phase: &str| {
-        tool == Some("bring_to_front")
-            && ((phase == "before"
+        (private_existing_profile_prepare
+            && classification(phase, "screenshot") == Some("privacy_suppressed"))
+            || (tool == Some("bring_to_front")
+                && ((phase == "before"
+                    && classification(phase, "screenshot") == Some("target_minimized"))
+                    || (phase == "after"
+                        && successful_restore
+                        && restored_state_captured
+                        && classification(phase, "screenshot") == Some("capture_failed"))))
+            || (refused_minimized_action
                 && classification(phase, "screenshot") == Some("target_minimized"))
-                || (phase == "after"
-                    && successful_restore
-                    && restored_state_captured
-                    && classification(phase, "screenshot") == Some("capture_failed")))
     };
 
     for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
@@ -1436,10 +1548,11 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
         );
     }
 
-    let state_expected = action
-        .as_ref()
-        .and_then(|value| value["arguments"]["pid"].as_i64())
-        .is_some();
+    let state_expected = !private_existing_profile_prepare
+        && action
+            .as_ref()
+            .and_then(|value| value["arguments"]["pid"].as_i64())
+            .is_some();
     if state_expected {
         for phase in ["before", "after"] {
             validate_capture_status(
@@ -1471,6 +1584,30 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             Some("click" | "double_click" | "right_click")
         )
     }) {
+        let refused_before_target_resolution = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(true) && value.get("click_point").is_none()
+        });
+        let refused_before_dispatch = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(true)
+                && value["action_truth"]["effect"].as_str() == Some("refused")
+        });
+        if refused_before_target_resolution || refused_before_dispatch {
+            let click = manifest.as_ref().map(|value| &value["click"]);
+            let expected_classification = if refused_before_target_resolution {
+                "action_refused_before_target_resolution"
+            } else {
+                "action_refused_before_dispatch"
+            };
+            if !click.is_some_and(|value| {
+                value["status"].as_str() == Some("not_applicable")
+                    && value["classification"].as_str() == Some(expected_classification)
+            }) {
+                errors.push(format!(
+                    "invalid refused-click evidence for {cell_id}/{turn_name}: expected not_applicable/{expected_classification}"
+                ));
+            }
+            return;
+        }
         validate_capture_status(
             manifest.as_ref(),
             &["click"],
@@ -1744,6 +1881,20 @@ mod tests {
     }
 
     #[test]
+    fn strict_catalog_policy_is_explicit_and_rejects_invalid_values() {
+        let mut errors = Vec::new();
+        let policy = CatalogPolicy::parse(Some("80"), Some("true"), &mut errors);
+        assert!(errors.is_empty());
+        assert_eq!(policy.minimum_cells, Some(80));
+        assert!(policy.forbid_skips);
+
+        let mut errors = Vec::new();
+        let policy = CatalogPolicy::parse(Some("0"), Some("sometimes"), &mut errors);
+        assert_eq!(policy, CatalogPolicy::default());
+        assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
     fn validator_rejects_contradictory_status_and_missing_video() {
         let case = delivered_case("contradiction");
         let mut result = CaseResult::evaluate(
@@ -1895,7 +2046,25 @@ mod tests {
 
         let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect_err("mutable not-applicable cells still need a recorded turn");
-        assert!(errors.iter().any(|error| error.contains("missing turn evidence")));
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("missing turn evidence")));
+    }
+
+    #[test]
+    fn strict_capture_scope_gate_does_not_invent_an_action_turn() {
+        let case = CaseSpec::delivered(
+            "window-scope-gate",
+            "desktop",
+            "x11",
+            "window_scope_gate",
+            Targeting::Px,
+            Delivery::NotApplicable,
+            Scope::Window,
+            DriverRoute::CaptureScopeGate,
+            vec![OracleKind::Protocol],
+        );
+        assert!(!case_requires_action_turn(&case));
     }
 
     #[test]
@@ -1912,6 +2081,55 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("turn-00001/click.png")));
+    }
+
+    #[test]
+    fn validator_accepts_click_refused_before_target_resolution_without_marker() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"element_token":"stale-token"},
+                "result_error":true
+            }"#,
+        )
+        .expect("write refused action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_target_resolution"}
+            }"#,
+        )
+        .expect("write refused evidence");
+        std::fs::remove_file(turn.join("click.png")).expect("remove inapplicable click marker");
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a pre-target refusal must not invent click evidence");
+    }
+
+    #[test]
+    fn validator_rejects_successful_click_marked_not_applicable() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_target_resolution"}
+            }"#,
+        )
+        .expect("write invalid evidence");
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("successful clicks still require click evidence");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/click")));
     }
 
     #[test]
@@ -1934,6 +2152,65 @@ mod tests {
         assert!(errors.iter().any(|error| {
             error.contains("turn-00001/after.png") && error.contains("classified capture_failed")
         }));
+    }
+
+    #[test]
+    fn validator_accepts_private_existing_profile_prepare_turn() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"browser_prepare",
+                "arguments":{
+                    "approval_token":"[redacted]",
+                    "pid":1,
+                    "window_id":2,
+                    "strategy":{"kind":"existing_profile"}
+                }
+            }"#,
+        )
+        .expect("write private prepare action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"not_applicable","classification":"no_target_pid"},"screenshot":{"status":"unavailable","classification":"privacy_suppressed"}},
+                "after":{"state":{"status":"not_applicable","classification":"no_target_pid"},"screenshot":{"status":"unavailable","classification":"privacy_suppressed"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write private prepare evidence");
+        for file in [
+            "before.png",
+            "after.png",
+            "screenshot.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            std::fs::remove_file(turn.join(file)).expect("remove private visual evidence");
+        }
+
+        validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            Some(root.path()),
+            true,
+        )
+        .expect("private existing-profile consent must not persist visual state");
+
+        let mut action: Value = read_json_value(&turn.join("action.json")).expect("read action");
+        action["arguments"]["strategy"]["kind"] = Value::String("isolated_new".to_owned());
+        std::fs::write(
+            turn.join("action.json"),
+            serde_json::to_vec(&action).expect("serialize action"),
+        )
+        .expect("rewrite non-private action");
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("privacy suppression is limited to existing-profile consent turns");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("classified privacy_suppressed")));
     }
 
     #[test]
@@ -1961,6 +2238,42 @@ mod tests {
 
         validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect("a minimized target cannot provide a pre-restore screenshot");
+    }
+
+    #[test]
+    fn validator_accepts_missing_images_for_typed_minimized_refusal() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2,"element_index":3},
+                "result_summary":"refused (window_minimized): restore before retrying",
+                "result_error":true,
+                "click_point":{"x":10,"y":20},
+                "action_truth":{"effect":"refused"}
+            }"#,
+        )
+        .expect("write minimized refusal action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
+            }"#,
+        )
+        .expect("write minimized refusal evidence manifest");
+        for file in ["before.png", "after.png", "screenshot.png", "click.png"] {
+            let path = turn.join(file);
+            if path.exists() {
+                std::fs::remove_file(path).expect("remove unavailable image");
+            }
+        }
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a typed minimized refusal cannot provide target images");
     }
 
     #[test]
@@ -2284,6 +2597,7 @@ mod tests {
             "right_click",
             "double_click",
             "type_text",
+            "type_submit",
             "press_key",
             "hotkey",
             "scroll",
@@ -2299,7 +2613,7 @@ mod tests {
             cells.push(("drag", Targeting::Px, delivery));
             cells.push(("editor_save", Targeting::Ax, delivery));
         }
-        assert_eq!(cells.len(), 36);
+        assert_eq!(cells.len(), 40);
         for (platform, display_server) in [
             (Platform::Windows, DisplayServer::Win32),
             (Platform::Macos, DisplayServer::Quartz),

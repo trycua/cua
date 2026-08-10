@@ -462,7 +462,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
         // bring_to_front / macOS with_foreground_assist) — a bare
         // SetForegroundWindow is denied by the foreground-lock without UIAccess.
         // Restored to prev_fg below.
-        let _ = crate::input::inject::force_foreground_attached(target);
+        let _ = crate::input::force_foreground_assisted(target);
         // Brief settle so the foreground swap is processed before we send.
         sleep(Duration::from_millis(8));
 
@@ -478,7 +478,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
         if actual_fg != target {
             // Don't restore — prev_fg is presumably still foreground anyway.
             bail!(
-                "Foreground swap to target HWND {:?} was rejected by Windows \
+                "foreground_unavailable: foreground swap to exact target HWND {:?} was rejected by Windows \
                  (actual foreground is HWND {:?}). This daemon is not at \
                  UIAccess integrity, so SetForegroundWindow is subject to the \
                  foreground-lock and the swap silently fails. Without the \
@@ -581,12 +581,12 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
         // bring_to_front / macOS with_foreground_assist) — a bare
         // SetForegroundWindow is denied by the foreground-lock without UIAccess.
         // Restored to prev_fg below.
-        let _ = crate::input::inject::force_foreground_attached(target);
+        let _ = crate::input::force_foreground_assisted(target);
         sleep(Duration::from_millis(8));
         let actual_fg = GetForegroundWindow();
         if actual_fg != target {
             bail!(
-                "Foreground swap to target HWND {:?} was rejected by Windows \
+                "foreground_unavailable: foreground swap to exact target HWND {:?} was rejected by Windows \
                  (actual foreground is HWND {:?}). This daemon is not at \
                  UIAccess integrity, so SetForegroundWindow is subject to the \
                  foreground-lock and the swap silently fails. Without the swap, \
@@ -720,6 +720,14 @@ fn is_extended(vk: VIRTUAL_KEY) -> bool {
 
 fn key_name_to_vk(key: &str) -> Result<VIRTUAL_KEY> {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    // Windows reserves the ASCII values themselves as the virtual-key codes
+    // for A-Z and 0-9. Resolve the documented alphanumeric vocabulary
+    // directly so it does not depend on the daemon thread having a current
+    // keyboard layout, which VkKeyScanW requires.
+    if let Some(vk) = crate::keycodes::ascii_alphanumeric_virtual_key_code(key) {
+        return Ok(VIRTUAL_KEY(vk));
+    }
+
     let vk = match key.to_lowercase().as_str() {
         "enter" | "return" => VK_RETURN,
         "tab" => VK_TAB,

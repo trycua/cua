@@ -87,9 +87,19 @@ pub fn scope_schema() -> Value {
 pub fn element_index_schema() -> Value {
     json!({
         "type": "integer",
-        "description": "Element index from the last get_window_state. REQUIRES \
-            `pid` and `window_id` alongside it — element_index alone (no pid) \
-            fails fast, it is not a silent no-op."
+        "description": "Element index from get_window_state. Cua Driver 0.17 \
+            requires the matching `snapshot_id` alongside it. Prefer \
+            `element_token`, which carries both values."
+    })
+}
+
+/// `snapshot_id` — the snapshot handle paired with a numeric element index.
+pub fn snapshot_id_schema() -> Value {
+    json!({
+        "type": "string",
+        "pattern": "^s[0-9a-f]{8}$",
+        "description": "Snapshot handle from get_window_state. Required when \
+            targeting by element_index; stale snapshots fail closed."
     })
 }
 
@@ -98,9 +108,9 @@ pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
         "description": "Opaque per-snapshot element handle from \
-            `structuredContent.elements[].element_token`. Takes precedence over \
-            element_index when both are supplied. Returns an explicit \"stale\" \
-            error once a newer snapshot supersedes it — re-snapshot in that case."
+            `structuredContent.elements[].element_token`. If element_index, \
+            snapshot_id, or window_id are also supplied they must agree. Returns \
+            an explicit stale error once a newer snapshot supersedes it."
     })
 }
 
@@ -119,6 +129,7 @@ fn shared_param_canonical(name: &str) -> Option<Value> {
         "scope" => scope_schema(),
         "element_index" => element_index_schema(),
         "element_token" => element_token_schema(),
+        "snapshot_id" => snapshot_id_schema(),
         "capture_mode" => crate::capture_mode::capture_mode_schema(),
         _ => return None,
     };
@@ -185,7 +196,11 @@ pub fn shared_schema_violations(tool_name: &str, input_schema: &Value) -> Vec<St
         let got: Vec<String> = input_schema
             .get("required")
             .and_then(|r| r.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
             .unwrap_or_default();
         let mut got_sorted = got.clone();
         got_sorted.sort();

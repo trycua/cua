@@ -153,8 +153,8 @@ fn probe_d3d11_device() -> Result<(), String> {
     use windows::Win32::Graphics::{
         Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0},
         Direct3D11::{
-            D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+            D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            D3D11_SDK_VERSION,
         },
     };
     let mut device: Option<ID3D11Device> = None;
@@ -189,7 +189,10 @@ fn probe_d3d11_device() -> Result<(), String> {
 fn ver_string() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        let output = std::process::Command::new("cmd").args(["/c", "ver"]).output().ok()?;
+        let output = std::process::Command::new("cmd")
+            .args(["/c", "ver"])
+            .output()
+            .ok()?;
         if !output.status.success() {
             return None;
         }

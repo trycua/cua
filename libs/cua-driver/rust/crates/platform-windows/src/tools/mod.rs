@@ -16,12 +16,20 @@ pub(crate) mod page_bookmark;
 mod stubs;
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
+    build_registry_with_provider(compat, None)
+}
+
+pub fn build_registry_with_provider(
+    compat: bool,
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+) -> ToolRegistry {
     #[cfg(target_os = "windows")]
-    return impl_::build_registry(compat);
+    return impl_::build_registry_with_provider(compat, provider);
 
     #[cfg(not(target_os = "windows"))]
     {
         let _ = compat;
+        let _ = provider;
         stubs::build_registry()
     }
 }

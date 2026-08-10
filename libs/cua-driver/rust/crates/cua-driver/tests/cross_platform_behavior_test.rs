@@ -2,10 +2,12 @@
 //!
 //! These are source-owned Rust tests, not a copy of a partner test runner. The
 //! shared web fixture is loaded by Electron and Tauri on every supported OS;
-//! Windows also has WebView2 coverage in `harness_web_test.rs`. Assertions read
-//! mutated application state from a fixture-owned loopback journal, independently
-//! of the driver's accessibility snapshot. A successful response alone is never
-//! sufficient.
+//! Windows also has WebView2 coverage. The embedded-browser rows require an
+//! exact CDP round trip for Electron and a structured, side-effect-free refusal
+//! for hosts whose engine-to-native-window relationship cannot be proven.
+//! Assertions read mutated application state from a fixture-owned loopback
+//! journal, independently of the driver's accessibility snapshot. A successful
+//! response alone is never sufficient.
 //!
 //! Run after building the shared fixtures:
 //!
@@ -17,6 +19,8 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 
 use std::any::Any;
+#[cfg(target_os = "macos")]
+use std::io::Write as _;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -116,6 +120,11 @@ fn host_specs() -> Vec<HostSpec> {
         });
     }
 
+    retain_selected_hosts(&mut hosts);
+    hosts
+}
+
+fn retain_selected_hosts(hosts: &mut Vec<HostSpec>) {
     if let Ok(filter) = std::env::var("CUA_E2E_HARNESS_FILTER") {
         let selected = filter
             .split(',')
@@ -126,7 +135,18 @@ fn host_specs() -> Vec<HostSpec> {
             hosts.retain(|host| selected.contains(host.name));
         }
     }
+}
 
+fn embedded_browser_specs() -> Vec<HostSpec> {
+    let mut hosts = host_specs();
+    #[cfg(target_os = "windows")]
+    hosts.push(HostSpec {
+        name: "webview2",
+        path: harness_app("harness-webview", "CuaTestHarness.WebView.exe"),
+        args: Vec::new(),
+        title: "CuaTestHarness WebView",
+    });
+    retain_selected_hosts(&mut hosts);
     hosts
 }
 
@@ -229,14 +249,21 @@ fn resume_first_failure(failure: Option<Box<dyn Any + Send>>) {
     }
 }
 
-fn spawn_driver(recording_label: &str) -> Option<McpDriver> {
+fn spawn_driver(recording_label: &str, cdp_port: Option<u16>) -> Option<McpDriver> {
     #[cfg(target_os = "macos")]
     {
+        let _ = cdp_port;
         McpDriver::spawn_macos_daemon_proxy_named(recording_label)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        McpDriver::spawn_named(recording_label)
+        let port = cdp_port.map(|value| value.to_string());
+        match port.as_deref() {
+            Some(port) => {
+                McpDriver::spawn_named_with_env(recording_label, &[("CUA_DRIVER_CDP_PORT", port)])
+            }
+            None => McpDriver::spawn_named(recording_label),
+        }
     }
 }
 
@@ -269,7 +296,8 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
     }
 
     let recording_label = scenario.to_owned();
-    let mut driver = spawn_driver(&recording_label).unwrap_or_else(|| {
+    let cdp_port = matches!(spec.name, "electron" | "webview2").then(allocate_loopback_port);
+    let mut driver = spawn_driver(&recording_label, cdp_port).unwrap_or_else(|| {
         panic!(
             "cua-driver could not be started for the required {} fixture",
             spec.name
@@ -283,11 +311,20 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
         .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    if spec.name == "electron" {
-        command.env(
-            "CUA_ELECTRON_CDP_PORT",
-            allocate_loopback_port().to_string(),
-        );
+    match spec.name {
+        "electron" => {
+            command.env(
+                "CUA_ELECTRON_CDP_PORT",
+                cdp_port.expect("Electron CDP port").to_string(),
+            );
+        }
+        "webview2" => {
+            command.env(
+                "CUA_WEBVIEW_CDP_PORT",
+                cdp_port.expect("WebView2 CDP port").to_string(),
+            );
+        }
+        _ => {}
     }
     let before_windows = driver
         .call("list_windows", serde_json::json!({}))
@@ -329,7 +366,18 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                         name: spec.name,
                         journal,
                     };
-                    let ax_deadline = Instant::now() + Duration::from_secs(10);
+                    // A freshly provisioned platform webview can need more than
+                    // the generic fixture budget to start its renderer and
+                    // expose the remote accessibility subtree (observed for
+                    // cold Windows WebView2 and macOS WKWebView helpers). Keep
+                    // the extension Tauri-specific and bounded; every other
+                    // harness still fails fast.
+                    let ax_timeout = if spec.name == "tauri" {
+                        Duration::from_secs(30)
+                    } else {
+                        Duration::from_secs(10)
+                    };
+                    let ax_deadline = Instant::now() + ax_timeout;
                     let mut last_tree = String::new();
                     while Instant::now() < ax_deadline {
                         let state = snapshot(&mut fixture);
@@ -399,8 +447,7 @@ fn refresh_wayland_window_geometry(fixture: &mut Fixture) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn refresh_wayland_window_geometry(_fixture: &mut Fixture) {
-}
+fn refresh_wayland_window_geometry(_fixture: &mut Fixture) {}
 
 fn window_origin(fixture: &Fixture, _state: &ToolResponse) -> (f64, f64) {
     #[cfg(target_os = "macos")]
@@ -511,6 +558,78 @@ fn assert_fixture_contains(fixture: &Fixture, marker: &str) {
     }
 }
 
+fn assert_fixture_value(fixture: &Fixture, id: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = fixture.journal.snapshot();
+        if state[id]["value"].as_str() == Some(expected) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{}: fixture value {id:?} did not reach {expected:?}: {state}",
+                fixture.name
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn assert_fixture_single_insertion(
+    fixture: &Fixture,
+    id: &str,
+    initial: &str,
+    inserted: &str,
+) -> String {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = fixture.journal.snapshot();
+        if let Some(value) = state[id]["value"].as_str() {
+            if value.len() == initial.len() + inserted.len() {
+                for (offset, _) in value.match_indices(inserted) {
+                    let mut without_insertion = value.to_owned();
+                    without_insertion.replace_range(offset..offset + inserted.len(), "");
+                    if without_insertion == initial {
+                        return value.to_owned();
+                    }
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{}: fixture value {id:?} did not insert {inserted:?} exactly once into {initial:?}: {state}",
+                fixture.name
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn assert_fixture_text(fixture: &Fixture, id: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = fixture.journal.snapshot();
+        if state[id]["text"].as_str() == Some(expected) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{}: fixture text {id:?} did not reach {expected:?}: {state}",
+                fixture.name
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn fixture_marker_number(fixture: &Fixture, id: &str, prefix: &str) -> Option<u64> {
+    fixture
+        .journal
+        .text(id)
+        .and_then(|text| text.strip_prefix(prefix).map(str::to_owned))
+        .and_then(|value| value.parse().ok())
+}
+
 fn action_target_args(
     fixture: &Fixture,
     state: &ToolResponse,
@@ -527,6 +646,10 @@ fn action_target_args(
     let object = args.as_object_mut().expect("action arguments object");
     if addressing == "ax" {
         object.insert("element_index".to_owned(), serde_json::json!(index));
+        object.insert(
+            "snapshot_id".to_owned(),
+            serde_json::json!(state.snapshot_id()),
+        );
     } else {
         let origin = window_origin(fixture, state);
         let scale = screenshot_scale(state);
@@ -582,6 +705,26 @@ fn delivered_observation() -> Observation {
     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
 }
 
+fn browser_ref_by_label(snapshot: &ToolResponse, label_fragment: &str) -> String {
+    snapshot.structured()["refs"]
+        .as_array()
+        .and_then(|refs| {
+            refs.iter().find(|entry| {
+                entry["label"]
+                    .as_str()
+                    .is_some_and(|label| label.contains(label_fragment))
+            })
+        })
+        .and_then(|entry| entry["ref"].as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            panic!(
+                "browser snapshot is missing ref label {label_fragment:?}: {}",
+                snapshot.raw
+            )
+        })
+}
+
 fn refused_without_fixture_mutation(
     fixture: &Fixture,
     before: &serde_json::Value,
@@ -611,15 +754,9 @@ fn unverified_background_protocol_oracle(
         return Vec::new();
     }
     assert_eq!(
-        response.verified(),
-        Some(false),
-        "background dispatch without independent read-back must remain unverified: {}",
-        response.text()
-    );
-    assert_ne!(
-        response.structured()["verify"].as_str(),
-        Some("confirmed"),
-        "background dispatch overclaimed a confirmed read-back: {}",
+        response.action_effect(),
+        Some("unverifiable"),
+        "background dispatch without independent read-back must remain unverifiable: {}",
         response.text()
     );
     vec![OracleKind::Protocol]
@@ -661,6 +798,60 @@ fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> O
     Observation::delivered(passed, Evidence::default())
 }
 
+fn run_type_submit_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
+    let text = format!("cua-submit-{addressing}-{delivery}");
+    let mut type_args = action_target_args(fixture, &pre, "keyboard-input", addressing, delivery);
+    type_args
+        .as_object_mut()
+        .expect("type-submit type_text arguments object")
+        .insert("text".to_owned(), serde_json::json!(text));
+    let type_response = fixture.driver.call("type_text", type_args);
+    if let Some(code) = background_refusal_code(&type_response, delivery) {
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &type_response);
+    }
+    assert!(
+        !type_response.is_error(),
+        "{}: type-submit type_text {addressing}/{delivery} failed: {}",
+        fixture.name,
+        type_response.text()
+    );
+    assert_fixture_value(fixture, "keyboard-input", &text);
+
+    let post_type = snapshot(fixture);
+    let mut enter_args =
+        action_target_args(fixture, &post_type, "keyboard-input", addressing, delivery);
+    enter_args
+        .as_object_mut()
+        .expect("type-submit press_key arguments object")
+        .insert("key".to_owned(), serde_json::json!("return"));
+    let enter_response = fixture.driver.call("press_key", enter_args);
+    if let Some(code) = background_refusal_code(&enter_response, delivery) {
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &enter_response);
+    }
+    assert!(
+        !enter_response.is_error(),
+        "{}: type-submit Enter {addressing}/{delivery} failed: {}",
+        fixture.name,
+        enter_response.text()
+    );
+    assert_fixture_contains(fixture, &format!("key_state=submitted:{text}"));
+
+    let mut passed = vec![OracleKind::FixtureState];
+    if addressing == "px" {
+        passed.extend(unverified_background_protocol_oracle(
+            &type_response,
+            delivery,
+        ));
+    }
+    passed.extend(unverified_background_protocol_oracle(
+        &enter_response,
+        delivery,
+    ));
+    Observation::delivered(passed, Evidence::default())
+}
+
 fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
     let journal_before = fixture.journal.snapshot();
@@ -693,7 +884,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     hotkey_args
         .as_object_mut()
         .expect("hotkey arguments object")
-        .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "7"]));
+        .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "h"]));
     let response = fixture.driver.call("hotkey", hotkey_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
         return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
@@ -705,8 +896,106 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text()
     );
     assert_fixture_contains(fixture, "key_state=hotkey");
+    #[cfg(target_os = "macos")]
+    if fixture.name == "electron" && addressing == "px" && delivery == "foreground" {
+        run_macos_selection_hotkeys(fixture);
+    }
     let passed = unverified_background_protocol_oracle(&response, delivery);
     Observation::delivered_with_fixture_state(passed)
+}
+
+#[cfg(target_os = "macos")]
+struct TextClipboardGuard {
+    previous: Vec<u8>,
+}
+
+#[cfg(target_os = "macos")]
+impl TextClipboardGuard {
+    fn replace(text: &str) -> Self {
+        let previous = Command::new("/usr/bin/pbpaste")
+            .output()
+            .expect("read macOS text pasteboard")
+            .stdout;
+        write_text_clipboard(text.as_bytes());
+        Self { previous }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for TextClipboardGuard {
+    fn drop(&mut self) {
+        write_text_clipboard(&self.previous);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_text_clipboard(contents: &[u8]) {
+    let mut child = Command::new("/usr/bin/pbcopy")
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("start macOS text pasteboard writer");
+    child
+        .stdin
+        .as_mut()
+        .expect("pbcopy stdin")
+        .write_all(contents)
+        .expect("write macOS text pasteboard");
+    assert!(
+        child.wait().expect("wait for pbcopy").success(),
+        "pbcopy failed"
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos_selection_hotkeys(fixture: &mut Fixture) {
+    const INITIAL: &str = "cua-hotkey-initial";
+    const REPLACEMENT: &str = "cua-hotkey-replacement";
+    const PASTED: &str = "cua-hotkey-pasted";
+
+    let state = snapshot(fixture);
+    let mut type_args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    type_args["text"] = serde_json::json!(INITIAL);
+    let typed = fixture.driver.call("type_text", type_args);
+    assert!(!typed.is_error(), "seed selection fixture: {}", typed.raw);
+    assert_fixture_value(fixture, "keyboard-input", INITIAL);
+
+    let select_all = |fixture: &mut Fixture| {
+        let state = snapshot(fixture);
+        let mut args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+        args["keys"] = serde_json::json!(["cmd", "a"]);
+        let response = fixture.driver.call("hotkey", args);
+        assert!(!response.is_error(), "Cmd+A failed: {}", response.raw);
+        assert_eq!(
+            response.action_effect(),
+            Some("unverifiable"),
+            "generic hotkeys must retain the honest unverifiable contract: {}",
+            response.raw
+        );
+    };
+
+    select_all(fixture);
+    let state = snapshot(fixture);
+    let mut replace_args =
+        action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    replace_args["text"] = serde_json::json!(REPLACEMENT);
+    let replaced = fixture.driver.call("type_text", replace_args);
+    assert!(!replaced.is_error(), "replace selection: {}", replaced.raw);
+    assert_fixture_value(fixture, "keyboard-input", REPLACEMENT);
+
+    select_all(fixture);
+    let _clipboard = TextClipboardGuard::replace(PASTED);
+    let state = snapshot(fixture);
+    let mut paste_args = action_target_args(fixture, &state, "keyboard-input", "px", "foreground");
+    paste_args["keys"] = serde_json::json!(["cmd", "v"]);
+    let pasted = fixture.driver.call("hotkey", paste_args);
+    assert!(!pasted.is_error(), "Cmd+V failed: {}", pasted.raw);
+    assert_eq!(
+        pasted.action_effect(),
+        Some("unverifiable"),
+        "{}",
+        pasted.raw
+    );
+    assert_fixture_value(fixture, "keyboard-input", PASTED);
 }
 
 fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -728,26 +1017,26 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text(),
         response.raw
     );
-    thread::sleep(Duration::from_millis(250));
-    let offset = fixture
-        .journal
-        .text("lbl-scroll-offset")
-        .and_then(|text| text.split("scroll_offset=").nth(1).map(str::to_owned))
-        .and_then(|tail| {
-            tail.split(|ch: char| !ch.is_ascii_digit())
-                .next()
-                .map(str::to_owned)
-        })
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(0);
-    assert!(
-        offset > 0,
-        "{}: scroll did not advance the external oracle: {}; response={}; raw={}",
-        fixture.name,
-        fixture.journal.snapshot(),
-        response.text(),
-        response.raw
-    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let offset =
+            fixture_marker_number(fixture, "lbl-scroll-offset", "scroll_offset=").unwrap_or(0);
+        let page =
+            fixture_marker_number(fixture, "lbl-scroll-client-height", "scroll_client_height=")
+                .unwrap_or(0);
+        if page > 0 && offset >= page {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{}: two-page scroll did not advance by at least one viewport: {}; response={}; raw={}",
+            fixture.name,
+            fixture.journal.snapshot(),
+            response.text(),
+            response.raw
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
     delivered_observation()
 }
 
@@ -814,6 +1103,14 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
     let pre = snapshot(fixture);
     let journal_before = fixture.journal.snapshot();
     let text = format!("cua-editor-{delivery}");
+    let initial_value = journal_before["editor-document"]["value"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: editor fixture did not publish its initial value: {journal_before}",
+                fixture.name
+            )
+        });
     let mut text_args = action_target_args(fixture, &pre, "editor-document", "ax", delivery);
     text_args
         .as_object_mut()
@@ -829,6 +1126,8 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
         fixture.name,
         response.text()
     );
+    let expected_value =
+        assert_fixture_single_insertion(fixture, "editor-document", initial_value, &text);
 
     let post_text = snapshot(fixture);
     let journal_before_save = fixture.journal.snapshot();
@@ -843,7 +1142,11 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
         fixture.name,
         response.text()
     );
-    assert_fixture_contains(fixture, "editor_status=saved:");
+    assert_fixture_text(
+        fixture,
+        "editor-status",
+        &format!("editor_status=saved:{expected_value}"),
+    );
     delivered_observation()
 }
 
@@ -876,7 +1179,11 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             ("electron", "right_click" | "double_click" | "drag", _) => {
                 vec![RefusalCode::BackgroundOccluded]
             }
-            ("electron", "type_text" | "press_key" | "hotkey" | "scroll" | "editor_save", _) => {
+            (
+                "electron",
+                "type_text" | "type_submit" | "press_key" | "hotkey" | "scroll" | "editor_save",
+                _,
+            ) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
             ("tauri", "hotkey", _) | ("tauri", "scroll", Targeting::Px) => {
@@ -917,7 +1224,9 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         // must refuse those background keyboard composites instead of reporting
         // a successful write that the page never observes.
         match (action, targeting) {
-            ("type_text", _) | ("editor_save", Targeting::Ax) | ("press_key" | "hotkey", _) => {
+            ("type_text" | "type_submit", _)
+            | ("editor_save", Targeting::Ax)
+            | ("press_key" | "hotkey", _) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
             ("right_click" | "double_click" | "scroll", _) | ("drag", Targeting::Px)
@@ -931,11 +1240,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         Vec::new()
     };
     let expected_background_refusal = !expected_refusals.is_empty();
-    let mut oracles = if expected_background_refusal {
-        vec![OracleKind::FixtureState]
-    } else {
-        vec![OracleKind::FixtureState]
-    };
+    let mut oracles = vec![OracleKind::FixtureState];
     if delivery_kind == Delivery::Background {
         oracles.extend([
             OracleKind::Focus,
@@ -949,7 +1254,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         }
         if !expected_background_refusal
             && cfg!(target_os = "windows")
-            && (matches!(action, "press_key" | "hotkey")
+            && (matches!(action, "press_key" | "hotkey" | "type_submit")
                 || (action == "type_text" && targeting == Targeting::Px))
         {
             oracles.push(OracleKind::Protocol);
@@ -1010,10 +1315,335 @@ fn cell_selected(case: &CaseSpec) -> bool {
     parts.peek().is_none() || parts.any(|part| case.cell_id == part || case.cell_id.contains(part))
 }
 
-fn cell_filter_active() -> bool {
-    std::env::var("CUA_E2E_CELL_FILTER")
-        .map(|filter| filter.split(',').any(|part| !part.trim().is_empty()))
-        .unwrap_or(false)
+fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
+    let session = format!("browser-v1-e2e-{}", fixture.pid);
+    let started = fixture
+        .driver
+        .call("start_session", serde_json::json!({ "session": session }));
+    assert!(
+        !started.is_error(),
+        "browser E2E session did not start: {}",
+        started.raw
+    );
+    let prepared = fixture.driver.call(
+        "browser_prepare",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        prepared.structured()["prepared"].as_bool(),
+        Some(true),
+        "browser_prepare did not recognize the fixture's owned endpoint: {}",
+        prepared.raw
+    );
+    let bind = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.wid,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        bind.structured()["status"].as_str(),
+        Some("ok"),
+        "Electron browser binding failed: {}; raw={}",
+        bind.text(),
+        bind.raw
+    );
+    assert_eq!(
+        bind.structured()["binding_quality"].as_str(),
+        Some("exact"),
+        "Electron browser binding must be exact: {}",
+        bind.raw
+    );
+    assert_eq!(
+        bind.structured()["binding_route"].as_str(),
+        Some("embedded_single_page"),
+        "Electron must exercise the bounded embedded-browser route: {}",
+        bind.raw
+    );
+    let target_id = bind.structured()["target_id"]
+        .as_str()
+        .expect("bind target_id")
+        .to_owned();
+    let tab_id = bind.structured()["tabs"]
+        .as_array()
+        .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+        .and_then(|tab| tab["tab_id"].as_str())
+        .expect("active tab_id")
+        .to_owned();
+
+    let first_snapshot = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        first_snapshot.structured()["status"].as_str(),
+        Some("ok"),
+        "Electron browser snapshot failed: {}",
+        first_snapshot.raw
+    );
+    let increment_ref = browser_ref_by_label(&first_snapshot, "id=btn-increment");
+    let click = fixture.driver.call(
+        "browser_click",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": increment_ref,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        click.action_effect(),
+        Some("unverifiable"),
+        "trusted browser click failed: {}",
+        click.raw
+    );
+    assert_eq!(click.action_route(), Some("trusted_input"));
+    assert_fixture_text(fixture, "lbl-counter", "counter=1");
+
+    let second_snapshot = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": session,
+        }),
+    );
+    let input_ref = browser_ref_by_label(&second_snapshot, "id=txt-input");
+    let typed = fixture.driver.call(
+        "browser_type",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": input_ref,
+            "text": "browser-v1",
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        typed.action_effect(),
+        Some("unverifiable"),
+        "browser type failed: {}",
+        typed.raw
+    );
+    assert_fixture_value(fixture, "txt-input", "browser-v1");
+    assert_fixture_text(fixture, "lbl-input-mirror", "mirror=browser-v1");
+
+    let stale = fixture.driver.call(
+        "browser_click",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": increment_ref,
+            "session": session,
+        }),
+    );
+    assert_eq!(stale.action_effect(), Some("refused"), "{}", stale.raw);
+    assert!(
+        stale.text().contains("browser_ref_stale"),
+        "older snapshot ref should retain its diagnostic code: {}",
+        stale.raw
+    );
+    assert_fixture_text(fixture, "lbl-counter", "counter=1");
+
+    let navigated = fixture.driver.call(
+        "browser_navigate",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "url": "about:blank",
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        navigated.structured()["status"].as_str(),
+        Some("ok"),
+        "browser navigation failed: {}",
+        navigated.raw
+    );
+    assert_eq!(
+        navigated.structured()["refs_invalidated"].as_bool(),
+        Some(true),
+        "browser navigation must invalidate page refs: {}",
+        navigated.raw
+    );
+    let blank_snapshot = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        blank_snapshot.structured()["url"].as_str(),
+        Some("about:blank"),
+        "browser did not reach the requested page: {}",
+        blank_snapshot.raw
+    );
+    let stale_after_navigation = fixture.driver.call(
+        "browser_click",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": input_ref,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        stale_after_navigation.action_effect(),
+        Some("refused"),
+        "{}",
+        stale_after_navigation.raw
+    );
+    assert!(
+        stale_after_navigation.text().contains("browser_ref_stale"),
+        "navigation-invalidated ref should retain its diagnostic code: {}",
+        stale_after_navigation.raw
+    );
+    let ended = fixture
+        .driver
+        .call("end_session", serde_json::json!({ "session": session }));
+    assert!(
+        !ended.is_error(),
+        "browser E2E session did not end: {}",
+        ended.raw
+    );
+    delivered_observation()
+}
+
+fn run_browser_tool_refusal(fixture: &mut Fixture) -> Observation {
+    let session = format!("browser-embedded-refusal-{}", fixture.pid);
+    let started = fixture
+        .driver
+        .call("start_session", serde_json::json!({ "session": session }));
+    assert!(
+        !started.is_error(),
+        "browser refusal session did not start: {}",
+        started.raw
+    );
+    let journal_before = fixture.journal.snapshot();
+    let response = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.wid,
+            "session": session,
+        }),
+    );
+    let code = response.structured()["refusal"]["code"]
+        .as_str()
+        .and_then(RefusalCode::from_driver_code)
+        .unwrap_or_else(|| {
+            panic!(
+                "embedded browser did not refuse structurally: {}",
+                response.raw
+            )
+        });
+    assert_eq!(
+        code,
+        RefusalCode::BrowserRouteUnavailable,
+        "embedded browser returned the wrong refusal: {}",
+        response.raw
+    );
+    assert_eq!(
+        fixture.journal.snapshot(),
+        journal_before,
+        "browser refusal mutated the fixture journal"
+    );
+    let ended = fixture
+        .driver
+        .call("end_session", serde_json::json!({ "session": session }));
+    assert!(
+        !ended.is_error(),
+        "browser refusal session did not end: {}",
+        ended.raw
+    );
+    Observation::refused(
+        code,
+        vec![OracleKind::FixtureState],
+        response.text(),
+        Evidence::default(),
+    )
+}
+
+fn embedded_browser_case(spec: &HostSpec) -> CaseSpec {
+    let mut oracles = vec![
+        OracleKind::FixtureState,
+        OracleKind::Focus,
+        OracleKind::ZOrder,
+        OracleKind::NoLeakedInput,
+    ];
+    if cua_driver_testkit::e2e::DisplayServer::current()
+        != cua_driver_testkit::e2e::DisplayServer::Wayland
+    {
+        oracles.push(OracleKind::Cursor);
+    }
+    let case = CaseSpec::delivered(
+        format!(
+            "{}-{}-browser-tool-roundtrip",
+            std::env::consts::OS,
+            spec.name
+        ),
+        spec.name,
+        if spec.name == "electron" {
+            "chromium"
+        } else {
+            "platform-webview"
+        },
+        "browser_tool_roundtrip",
+        Targeting::Page,
+        Delivery::Background,
+        Scope::Window,
+        cua_driver_testkit::e2e::DriverRoute::Cdp,
+        oracles,
+    );
+    if spec.name == "electron" {
+        case
+    } else {
+        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
+    }
+}
+
+#[test]
+#[ignore]
+fn embedded_browser_routes_are_exact_or_refused() {
+    let mut failure = None;
+    let mut selected = 0usize;
+    for spec in embedded_browser_specs() {
+        let case = embedded_browser_case(&spec);
+        if !cell_selected(&case) {
+            continue;
+        }
+        selected += 1;
+        let result = if spec.name == "electron" {
+            run_host_case_with_outcome(case, &spec, run_browser_tool_roundtrip)
+        } else {
+            run_host_case_with_outcome(case, &spec, run_browser_tool_refusal)
+        };
+        if failure.is_none() {
+            failure = result;
+        }
+    }
+    if selected == 0
+        && std::env::var("CUA_E2E_CELL_FILTER").is_ok_and(|filter| !filter.trim().is_empty())
+    {
+        eprintln!("no embedded-browser rows matched CUA_E2E_CELL_FILTER");
+        return;
+    }
+    assert!(
+        selected > 0,
+        "no embedded-browser cells were selected; check CUA_E2E_HARNESS_FILTER"
+    );
+    resume_first_failure(failure);
 }
 
 #[test]
@@ -1047,6 +1677,10 @@ fn shared_web_action_matrix_is_state_verified() {
             (
                 "type_text",
                 run_text_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "type_submit",
+                run_type_submit_action as fn(&mut Fixture, &str, &str) -> Observation,
             ),
             (
                 "press_key",
@@ -1108,8 +1742,8 @@ fn shared_web_action_matrix_is_state_verified() {
         }
     }
     assert!(
-        !cell_filter_active() || selected > 0,
-        "CUA_E2E_CELL_FILTER matched no shared E2E cells"
+        selected > 0,
+        "no shared E2E cells were selected; check CUA_E2E_HARNESS_FILTER and CUA_E2E_CELL_FILTER"
     );
     resume_first_failure(failure);
 }

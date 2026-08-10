@@ -6,8 +6,8 @@
 //! legacy `app_state.json` and `screenshot.png` names remain post-action aliases.
 //!
 //! Schema mirrors the Swift/Windows reference `action.json`:
-//!   { tool, arguments, result_summary, timestamp, t_ms_from_session_start,
-//!     t_start_ms_from_session_start }
+//!   { tool, arguments, result_summary, result_error, timestamp,
+//!     t_ms_from_session_start, t_start_ms_from_session_start }
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -47,8 +47,7 @@ impl ScreenshotCapture {
     }
 }
 
-type ScreenshotFnBox =
-    Box<dyn Fn(Option<u64>, Option<i64>) -> ScreenshotCapture + Send + Sync>;
+type ScreenshotFnBox = Box<dyn Fn(Option<u64>, Option<i64>) -> ScreenshotCapture + Send + Sync>;
 static SCREENSHOT_FN: OnceLock<ScreenshotFnBox> = OnceLock::new();
 
 /// Register the platform-specific screenshot callback. Call once at startup
@@ -147,6 +146,7 @@ pub struct PendingTurn {
     window_id: Option<u64>,
     pid: Option<i64>,
     click_point: Option<(f64, f64)>,
+    capture_visual_state: bool,
     before: TurnCapture,
 }
 
@@ -477,6 +477,29 @@ impl RecordingSession {
     /// Reserve a turn and capture its target immediately before tool dispatch.
     /// No-op when recording is disabled.
     pub fn begin_turn(&self, tool_name: &str, args: &Value, start_ms: u64) -> Option<PendingTurn> {
+        self.begin_turn_with_capture(tool_name, args, start_ms, true)
+    }
+
+    /// Reserve a turn while deliberately suppressing visual and accessibility
+    /// capture. Used for consent-bearing operations where the target may be an
+    /// authenticated browser profile: action metadata and the structured result
+    /// remain auditable without persisting page or dialog contents.
+    pub fn begin_private_turn(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        start_ms: u64,
+    ) -> Option<PendingTurn> {
+        self.begin_turn_with_capture(tool_name, args, start_ms, false)
+    }
+
+    fn begin_turn_with_capture(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        start_ms: u64,
+        capture_visual_state: bool,
+    ) -> Option<PendingTurn> {
         let (turn_dir, session_start_ms, generation) = {
             let mut inner = self.inner.lock().unwrap();
             if !inner.enabled {
@@ -514,7 +537,15 @@ impl RecordingSession {
             }
         }
         let click_point = resolve_click_point(tool_name, &args, window_id, pid, element_index);
-        let before = capture_turn(window_id, pid);
+        let before = if capture_visual_state {
+            capture_turn(window_id, pid)
+        } else {
+            TurnCapture {
+                state: None,
+                screenshot: None,
+                screenshot_classification: Some("privacy_suppressed"),
+            }
+        };
 
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled || inner.generation != generation {
@@ -535,12 +566,40 @@ impl RecordingSession {
             window_id,
             pid,
             click_point,
+            capture_visual_state,
             before,
         })
     }
 
     /// Finalize a previously reserved turn after tool dispatch.
     pub fn finish_turn(&self, pending: PendingTurn, result_text: &str) {
+        self.finish_turn_with_action(pending, result_text, None);
+    }
+
+    /// Finalize a turn while retaining the daemon's rich, non-wire action
+    /// truth in the recording artifact. Existing trajectory readers can ignore
+    /// the additive `action_truth` key.
+    pub fn finish_turn_with_action(
+        &self,
+        pending: PendingTurn,
+        result_text: &str,
+        action_record: Option<&crate::action_record::ActionExecutionRecord>,
+    ) {
+        self.finish_turn_with_outcome(pending, result_text, action_record, false);
+    }
+
+    /// Finalize a turn while also recording whether dispatch returned an
+    /// error. A click-family call rejected before its target can be resolved
+    /// has no click point to annotate; retaining this bit lets the evidence
+    /// manifest distinguish that honest non-action from a missing marker on a
+    /// dispatched click.
+    pub fn finish_turn_with_outcome(
+        &self,
+        pending: PendingTurn,
+        result_text: &str,
+        action_record: Option<&crate::action_record::ActionExecutionRecord>,
+        result_is_error: bool,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled || inner.generation != pending.generation {
             tracing::warn!(
@@ -549,7 +608,7 @@ impl RecordingSession {
             );
             return;
         }
-        if let Err(error) = write_turn(pending, result_text) {
+        if let Err(error) = write_turn(pending, result_text, action_record, result_is_error) {
             inner.last_error = Some(error.to_string());
         }
     }
@@ -624,11 +683,7 @@ fn write_phase_artifacts(
     Ok(())
 }
 
-fn capture_status(
-    captured: bool,
-    expected: bool,
-    classification: Option<&'static str>,
-) -> Value {
+fn capture_status(captured: bool, expected: bool, classification: Option<&'static str>) -> Value {
     if captured {
         serde_json::json!({ "status": "captured" })
     } else if expected {
@@ -651,6 +706,7 @@ fn write_evidence_manifest(
     state_expected: bool,
     click_expected: bool,
     click_captured: bool,
+    click_not_applicable_classification: &'static str,
 ) -> anyhow::Result<()> {
     let manifest = serde_json::json!({
         "schema": "cua-turn-evidence/v1",
@@ -670,7 +726,14 @@ fn write_evidence_manifest(
                 after.screenshot_classification,
             ),
         },
-        "click": capture_status(click_captured, click_expected, None),
+        "click": if click_expected {
+            capture_status(click_captured, true, None)
+        } else {
+            serde_json::json!({
+                "status": "not_applicable",
+                "classification": click_not_applicable_classification,
+            })
+        },
     });
     write_json_atomic(&turn_dir.join("evidence.json"), &manifest)
 }
@@ -693,7 +756,12 @@ fn strip_internal_keys(args: &Value) -> std::borrow::Cow<'_, Value> {
     }
 }
 
-fn write_turn(pending: PendingTurn, result_text: &str) -> anyhow::Result<()> {
+fn write_turn(
+    pending: PendingTurn,
+    result_text: &str,
+    action_record: Option<&crate::action_record::ActionExecutionRecord>,
+    result_is_error: bool,
+) -> anyhow::Result<()> {
     let PendingTurn {
         generation: _,
         turn_dir,
@@ -704,26 +772,46 @@ fn write_turn(pending: PendingTurn, result_text: &str) -> anyhow::Result<()> {
         window_id,
         pid,
         click_point,
+        capture_visual_state,
         before,
     } = pending;
     std::fs::create_dir_all(&turn_dir)?;
     let now = now_ms();
-    let after = capture_turn(window_id, pid);
-    let click_expected = matches!(
-        tool_name.as_str(),
-        "click" | "double_click" | "right_click"
-    );
+    let after = if capture_visual_state {
+        capture_turn(window_id, pid)
+    } else {
+        TurnCapture {
+            state: None,
+            screenshot: None,
+            screenshot_classification: Some("privacy_suppressed"),
+        }
+    };
+    let click_family = matches!(tool_name.as_str(), "click" | "double_click" | "right_click");
+    let action_refused = action_record
+        .is_some_and(|record| record.effect == crate::action_record::ActionEffect::Refused);
+    let refused_before_target_resolution = click_family && result_is_error && click_point.is_none();
+    // A target may resolve successfully and still be refused before input
+    // dispatch (for example, a minimized Windows element). Retaining the
+    // resolved point in action.json is useful diagnostic context, but a
+    // crosshair would falsely imply that a click was delivered.
+    let refused_before_dispatch = click_family && result_is_error && action_refused;
+    let click_expected =
+        click_family && !refused_before_target_resolution && !refused_before_dispatch;
 
     let mut payload = serde_json::json!({
         "tool": tool_name,
         "arguments": args,
         "result_summary": result_text,
+        "result_error": result_is_error,
         "timestamp": iso_now(),
         "t_ms_from_session_start": now.saturating_sub(session_start_ms),
         "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
     });
     if let Some((cx, cy)) = click_point {
         payload["click_point"] = serde_json::json!({"x": cx, "y": cy});
+    }
+    if let Some(action_record) = action_record {
+        payload["action_truth"] = action_record.debug_json();
     }
     write_json_atomic(&turn_dir.join("action.json"), &payload)?;
     write_phase_artifacts(&turn_dir, "after", &after)?;
@@ -740,23 +828,32 @@ fn write_turn(pending: PendingTurn, result_text: &str) -> anyhow::Result<()> {
     // the pre-action image. This also keeps modal-dismiss evidence available
     // after the modal HWND has closed.
     let mut click_captured = false;
-    if let (Some((cx, cy)), Some(screenshot), Some(marker)) = (
-        click_point,
-        before.screenshot.as_deref(),
-        CLICK_MARKER_FN.get(),
-    ) {
-        if let Some(click_png) = marker(screenshot, cx, cy) {
-            std::fs::write(turn_dir.join("click.png"), click_png)?;
-            click_captured = true;
+    if click_expected {
+        if let (Some((cx, cy)), Some(screenshot), Some(marker)) = (
+            click_point,
+            before.screenshot.as_deref(),
+            CLICK_MARKER_FN.get(),
+        ) {
+            if let Some(click_png) = marker(screenshot, cx, cy) {
+                std::fs::write(turn_dir.join("click.png"), click_png)?;
+                click_captured = true;
+            }
         }
     }
     write_evidence_manifest(
         &turn_dir,
         &before,
         &after,
-        pid.is_some(),
+        pid.is_some() && capture_visual_state,
         click_expected,
         click_captured,
+        if refused_before_target_resolution {
+            "action_refused_before_target_resolution"
+        } else if refused_before_dispatch {
+            "action_refused_before_dispatch"
+        } else {
+            "not_a_click_action"
+        },
     )?;
 
     Ok(())
@@ -904,7 +1001,15 @@ mod tests {
         assert_eq!(std::fs::read(turn.join("before.png")).unwrap(), b"before");
         assert!(!turn.join("after.png").exists());
 
-        session.finish_turn(pending, "clicked");
+        let action_record = crate::action_record::ActionExecutionRecord::builder(
+            crate::action_record::ActionEffect::Unverifiable,
+            crate::action_record::ActionTransport::MacosCgEventPid,
+            crate::action_record::RequestedDelivery::Background,
+        )
+        .actual_delivery(crate::action_record::ActualDelivery::Background)
+        .build()
+        .expect("valid action record");
+        session.finish_turn_with_action(pending, "clicked", Some(&action_record));
         assert_eq!(std::fs::read(turn.join("after.png")).unwrap(), b"after");
         assert_eq!(
             std::fs::read(turn.join("screenshot.png")).unwrap(),
@@ -915,6 +1020,13 @@ mod tests {
             std::fs::read(turn.join("after_state.json")).unwrap()
         );
         assert_eq!(std::fs::read(turn.join("click.png")).unwrap(), b"click");
+        let action: Value = serde_json::from_slice(
+            &std::fs::read(turn.join("action.json")).expect("read action truth"),
+        )
+        .expect("parse action truth");
+        assert_eq!(action["action_truth"]["effect"], "unverifiable");
+        assert_eq!(action["action_truth"]["route"], "synthetic_events");
+        assert_eq!(action["action_truth"]["requested_delivery"], "background");
 
         let snapshot_id = crate::element_token::global().register_snapshot(1, 77, 1);
         let token = crate::element_token::token_for(snapshot_id, 0);
@@ -935,6 +1047,78 @@ mod tests {
         assert_eq!(token_action["click_point"]["y"], 1.0);
         assert!(token_turn.join("click.png").exists());
 
+        let stale_snapshot = crate::element_token::global().register_snapshot(1, 88, 1);
+        let stale_token = crate::element_token::token_for(stale_snapshot, 0);
+        let _newer_snapshot = crate::element_token::global().register_snapshot(1, 88, 1);
+        let pending = session
+            .begin_turn(
+                "click",
+                &serde_json::json!({"pid": 1, "element_token": stale_token}),
+                now_ms(),
+            )
+            .expect("stale-token refusal should reserve an evidence turn");
+        session.finish_turn_with_outcome(pending, "stale token", None, true);
+        let refused_turn = output_dir.join("turn-00003");
+        let refused_action: Value = serde_json::from_slice(
+            &std::fs::read(refused_turn.join("action.json")).expect("read refused action"),
+        )
+        .expect("parse refused action");
+        assert_eq!(refused_action["result_error"], true);
+        assert!(refused_action.get("click_point").is_none());
+        assert!(!refused_turn.join("click.png").exists());
+        let refused_manifest: Value = serde_json::from_slice(
+            &std::fs::read(refused_turn.join("evidence.json")).expect("read refused evidence"),
+        )
+        .expect("parse refused evidence");
+        assert_eq!(refused_manifest["click"]["status"], "not_applicable");
+        assert_eq!(
+            refused_manifest["click"]["classification"],
+            "action_refused_before_target_resolution"
+        );
+
+        let pending = session
+            .begin_turn(
+                "click",
+                &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4}),
+                now_ms(),
+            )
+            .expect("resolved refusal should reserve an evidence turn");
+        let refusal_record = crate::action_record::ActionExecutionRecord::builder(
+            crate::action_record::ActionEffect::Refused,
+            crate::action_record::ActionTransport::WindowsTargetedInjection,
+            crate::action_record::RequestedDelivery::Background,
+        )
+        .build()
+        .expect("valid refusal record");
+        session.finish_turn_with_outcome(
+            pending,
+            "refused before dispatch",
+            Some(&refusal_record),
+            true,
+        );
+        let resolved_refusal_turn = output_dir.join("turn-00004");
+        let resolved_refusal_action: Value = serde_json::from_slice(
+            &std::fs::read(resolved_refusal_turn.join("action.json"))
+                .expect("read resolved refusal action"),
+        )
+        .expect("parse resolved refusal action");
+        assert_eq!(resolved_refusal_action["click_point"]["x"], 3.0);
+        assert_eq!(resolved_refusal_action["action_truth"]["effect"], "refused");
+        assert!(!resolved_refusal_turn.join("click.png").exists());
+        let resolved_refusal_manifest: Value = serde_json::from_slice(
+            &std::fs::read(resolved_refusal_turn.join("evidence.json"))
+                .expect("read resolved refusal evidence"),
+        )
+        .expect("parse resolved refusal evidence");
+        assert_eq!(
+            resolved_refusal_manifest["click"]["status"],
+            "not_applicable"
+        );
+        assert_eq!(
+            resolved_refusal_manifest["click"]["classification"],
+            "action_refused_before_dispatch"
+        );
+
         let files = [
             "action.json",
             "app_state.json",
@@ -951,6 +1135,13 @@ mod tests {
                 std::fs::remove_file(directory.join(file)).expect("remove turn fixture file");
             }
             std::fs::remove_dir(directory).expect("remove turn fixture directory");
+        }
+        for directory in [&refused_turn, &resolved_refusal_turn] {
+            for file in files.iter().copied().filter(|file| *file != "click.png") {
+                std::fs::remove_file(directory.join(file))
+                    .expect("remove refused turn fixture file");
+            }
+            std::fs::remove_dir(directory).expect("remove refused turn fixture directory");
         }
         std::fs::remove_dir(&output_dir).expect("remove recording fixture directory");
     }
@@ -983,6 +1174,62 @@ mod tests {
         }
         std::fs::remove_dir(&turn).expect("remove partial turn");
         std::fs::remove_dir(&output_dir).expect("remove recording directory");
+    }
+
+    #[test]
+    fn private_turn_records_metadata_without_visual_or_ax_artifacts() {
+        let output_dir = std::env::temp_dir().join(format!(
+            "cua-recording-private-turn-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let session = RecordingSession::new();
+        {
+            let mut inner = session.inner.lock().expect("recording lock");
+            inner.enabled = true;
+            inner.output_dir = Some(output_dir.clone());
+            inner.session_start_ms = now_ms();
+        }
+        let pending = session
+            .begin_private_turn(
+                "browser_prepare",
+                &serde_json::json!({"pid": 1, "window_id": 2}),
+                now_ms(),
+            )
+            .expect("reserve private consent turn");
+        session.finish_turn(pending, "attached");
+
+        let turn = output_dir.join("turn-00001");
+        assert!(turn.join("action.json").exists());
+        assert!(turn.join("evidence.json").exists());
+        for private_artifact in [
+            "before.png",
+            "after.png",
+            "screenshot.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            assert!(!turn.join(private_artifact).exists(), "{private_artifact}");
+        }
+        let evidence: Value = serde_json::from_slice(
+            &std::fs::read(turn.join("evidence.json")).expect("read private evidence"),
+        )
+        .expect("parse private evidence");
+        assert_eq!(
+            evidence["before"]["screenshot"]["classification"],
+            "privacy_suppressed"
+        );
+        assert_eq!(
+            evidence["after"]["screenshot"]["classification"],
+            "privacy_suppressed"
+        );
+
+        for file in ["action.json", "evidence.json"] {
+            std::fs::remove_file(turn.join(file)).expect("remove private turn artifact");
+        }
+        std::fs::remove_dir(&turn).expect("remove private turn directory");
+        std::fs::remove_dir(&output_dir).expect("remove private recording directory");
     }
 
     #[test]

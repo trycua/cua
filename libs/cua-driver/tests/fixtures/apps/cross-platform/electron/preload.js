@@ -30,14 +30,31 @@ if (sentinelMode) {
       </main>
     `;
     record('ready');
+    // Electron can already own native/DOM focus before this renderer's focus
+    // listener is ready. Re-activating an already focused window does not
+    // guarantee another DOM focus event, so explicitly publish the initial
+    // state and keep subsequent focus/blur transitions as separate oracles.
+    if (document.hasFocus()) record('focus');
   });
   window.addEventListener('focus', () => record('focus'));
   window.addEventListener('blur', () => record('blur'));
+  window.addEventListener('visibilitychange', () =>
+    record('visibility', { state: document.visibilityState })
+  );
   window.addEventListener('keydown', event =>
     record('keydown', { key: event.key, code: event.code })
   );
+  window.addEventListener('keyup', event =>
+    record('keyup', { key: event.key, code: event.code })
+  );
   window.addEventListener('pointerdown', event =>
     record('pointerdown', { button: event.button, x: event.clientX, y: event.clientY })
+  );
+  window.addEventListener('pointerup', event =>
+    record('pointerup', { button: event.button, x: event.clientX, y: event.clientY })
+  );
+  window.addEventListener('click', event =>
+    record('click', { button: event.button, x: event.clientX, y: event.clientY })
   );
   window.addEventListener('wheel', event =>
     record('wheel', { delta_x: event.deltaX, delta_y: event.deltaY })
@@ -45,4 +62,5 @@ if (sentinelMode) {
   window.addEventListener('contextmenu', event =>
     record('contextmenu', { x: event.clientX, y: event.clientY })
   );
+  ipcRenderer.on('cua-e2e-sentinel-heartbeat-probe', () => record('heartbeat'));
 }

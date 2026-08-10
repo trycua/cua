@@ -8,8 +8,8 @@
 // Runs the one-grant demo sequence from EMBEDDING.md end to end:
 //   1. Requests Accessibility + Screen Recording AS THE HOST (the only
 //      prompts the user ever sees), then
-//   2. spawns cua-driver as a direct child in embedded mode and, over
-//      stdio MCP, verifies attribution, takes a background screenshot,
+//   2. spawns an embedded cua-driver daemon plus its stdio MCP proxy and
+//      verifies attribution, takes a background screenshot,
 //      reads a background app's window state, and glides the agent-cursor
 //      overlay — with zero driver-side prompts.
 //
@@ -42,16 +42,36 @@ if !ax || !sr {
     log("after this run: grant the missing item(s) in System Settings, then re-run")
 }
 
-// 2. Spawn cua-driver as a DIRECT child (never via `open`/NSWorkspace —
-//    that breaks responsibility inheritance) in embedded mode.
+// 2. Spawn the daemon as a DIRECT child (never via `open`/NSWorkspace —
+//    that breaks responsibility inheritance), then attach an MCP proxy.
 let driverPath = ProcessInfo.processInfo.environment["CUA_DRIVER_PATH"]
     ?? "/usr/local/bin/cua-driver"
-let driver = Process()
-driver.executableURL = URL(fileURLWithPath: driverPath)
-driver.arguments = ["mcp"]
+let socketPath = "/tmp/cua-embedded-\(ProcessInfo.processInfo.processIdentifier).sock"
 var env = ProcessInfo.processInfo.environment
 env["CUA_DRIVER_EMBEDDED"] = "1"
 env["CUA_DRIVER_HOST_BUNDLE_ID"] = Bundle.main.bundleIdentifier ?? ""
+
+let daemon = Process()
+daemon.executableURL = URL(fileURLWithPath: driverPath)
+daemon.arguments = ["serve", "--embedded", "--socket", socketPath]
+daemon.environment = env
+daemon.standardOutput = logFile
+daemon.standardError = logFile
+try daemon.run()
+
+let deadline = Date().addingTimeInterval(10)
+while !FileManager.default.fileExists(atPath: socketPath) && Date() < deadline {
+    Thread.sleep(forTimeInterval: 0.05)
+}
+guard FileManager.default.fileExists(atPath: socketPath) else {
+    log("embedded daemon did not create \(socketPath)")
+    daemon.terminate()
+    exit(1)
+}
+
+let driver = Process()
+driver.executableURL = URL(fileURLWithPath: driverPath)
+driver.arguments = ["mcp", "--embedded", "--socket", socketPath]
 driver.environment = env
 let toDriver = Pipe(), fromDriver = Pipe()
 driver.standardInput = toDriver
@@ -100,7 +120,7 @@ send(["jsonrpc": "2.0", "id": nextId, "method": "initialize", "params": [
     "clientInfo": ["name": "ExampleAgentHarness", "version": "0.1"]]])
 _ = readMessage()
 send(["jsonrpc": "2.0", "method": "notifications/initialized"])
-log("embedded cua-driver started (\(driverPath)) — no driver prompt should have appeared")
+log("embedded cua-driver daemon + proxy started (\(driverPath)) — no driver prompt should have appeared")
 
 // 4. check_permissions must report attribution "host" and never prompt.
 let perms = call("check_permissions")
@@ -141,4 +161,5 @@ log("move_cursor — \(cursorOk ? "ok" : "FAILED")")
 let pass = attribution == "host" && !images.isEmpty && hasTree && cursorOk
 log(pass ? "DEMO COMPLETE: PASS" : "DEMO COMPLETE: FAIL")
 driver.terminate()
+daemon.terminate()
 exit(pass ? 0 : 1)

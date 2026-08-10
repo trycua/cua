@@ -1,1 +1,13 @@
-{ "title": "Lume", "pages": ["install-lume", "create-vanilla-vm", "manage-vms", "expand-vm-disk", "change-sip", "serve-api", "use-mcp-server"] }
+{
+  "title": "Lume",
+  "pages": [
+    "install-lume",
+    "create-vanilla-vm",
+    "run-openclaw",
+    "manage-vms",
+    "expand-vm-disk",
+    "change-sip",
+    "serve-api",
+    "use-mcp-server"
+  ]
+}

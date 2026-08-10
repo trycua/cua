@@ -5,6 +5,8 @@ Nix expressions are grouped by what they prove:
 | Path | Role |
 | --- | --- |
 | `rust-unit.nix` | Source-built Rust workspace checks without a desktop session |
+| `policy-yaml.nix` | NixOS VM stdio checks for YAML allow, deny, and argument constraints |
+| `policy-rego.nix` | NixOS VM stdio checks for embedded Rego policy evaluation |
 
 This directory intentionally contains no desktop behavior catalog. Nix builds
 the driver, unit checks, session dependencies, and optional compositor package.

@@ -21,18 +21,21 @@ public actor SSHClient {
     private let port: Int
     private let user: String
     private let password: String
+    private let connectTimeout: TimeInterval
     private let eventLoopGroup: MultiThreadedEventLoopGroup
 
     public init(
         host: String,
         port: UInt16 = 22,
         user: String = "lume",
-        password: String = "lume"
+        password: String = "lume",
+        connectTimeout: TimeInterval = 30
     ) {
         self.host = host
         self.port = Int(port)
         self.user = user
         self.password = password
+        self.connectTimeout = connectTimeout
         self.eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     }
 
@@ -48,28 +51,39 @@ public actor SSHClient {
         let resultPromise = channel.eventLoop.makePromise(of: SSHResult.self)
         let resultState = CommandResultState(promise: resultPromise)
 
-        // Create the SSH child channel for command execution.
-        // We keep handler access + createChannel on the event loop to avoid
-        // crossing a Sendable boundary with NIOSSHHandler.
-        let childChannelPromise = channel.eventLoop.makePromise(of: Channel.self)
-        let childChannelFuture = channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler -> EventLoopFuture<Channel> in
-            sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
-                guard channelType == .session else {
-                    return channel.eventLoop.makeFailedFuture(SSHError.connectionFailed("Invalid channel type"))
-                }
+        // Create the child promise only after locating NIOSSHHandler. If the
+        // connection closes first, flatMap is skipped; a promise created outside
+        // this closure would then be released unfulfilled and SwiftNIO traps in
+        // EventLoopFuture.deinit.
+        let childChannel: Channel
+        do {
+            childChannel = try await Self.makeChildChannelFuture(
+                handlerFuture: channel.pipeline.handler(type: NIOSSHHandler.self),
+                eventLoop: channel.eventLoop
+            ) { sshHandler, childChannelPromise in
+                sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
+                    guard channelType == .session else {
+                        return channel.eventLoop.makeFailedFuture(
+                            SSHError.connectionFailed("Invalid channel type")
+                        )
+                    }
 
-                return childChannel.eventLoop.makeCompletedFuture {
-                    let execHandler = CommandExecHandler(
-                        command: command,
-                        resultState: resultState
-                    )
-                    try childChannel.pipeline.syncOperations.addHandler(execHandler)
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        let execHandler = CommandExecHandler(
+                            command: command,
+                            resultState: resultState
+                        )
+                        try childChannel.pipeline.syncOperations.addHandler(execHandler)
+                    }
                 }
-            }
-            return childChannelPromise.futureResult
+            }.get()
+        } catch {
+            // The command handler never took ownership of resultState, so resolve
+            // its promise before unwinding this operation.
+            resultState.fail(error)
+            try? await channel.close().get()
+            throw error
         }
-
-        let childChannel = try await childChannelFuture.get()
 
         // Set up timeout if specified
         if timeout > 0 {
@@ -100,27 +114,35 @@ public actor SSHClient {
     public func interactive() async throws {
         let channel = try await connect()
 
-        // Create the SSH child channel for interactive session.
-        // We keep handler access + createChannel on the event loop to avoid
-        // crossing a Sendable boundary with NIOSSHHandler.
-        let childChannelPromise = channel.eventLoop.makePromise(of: Channel.self)
+        // As in execute(), do not allocate the child promise until handler
+        // lookup succeeds or a disconnect race can leak an unfulfilled promise.
         let sessionCompletePromise = channel.eventLoop.makePromise(of: Void.self)
+        let childChannel: Channel
+        do {
+            childChannel = try await Self.makeChildChannelFuture(
+                handlerFuture: channel.pipeline.handler(type: NIOSSHHandler.self),
+                eventLoop: channel.eventLoop
+            ) { sshHandler, childChannelPromise in
+                sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
+                    guard channelType == .session else {
+                        return channel.eventLoop.makeFailedFuture(
+                            SSHError.connectionFailed("Invalid channel type")
+                        )
+                    }
 
-        let childChannelFuture = channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler -> EventLoopFuture<Channel> in
-            sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
-                guard channelType == .session else {
-                    return channel.eventLoop.makeFailedFuture(SSHError.connectionFailed("Invalid channel type"))
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        let interactiveHandler = InteractiveSessionHandler(
+                            completePromise: sessionCompletePromise
+                        )
+                        try childChannel.pipeline.syncOperations.addHandler(interactiveHandler)
+                    }
                 }
-
-                return childChannel.eventLoop.makeCompletedFuture {
-                    let interactiveHandler = InteractiveSessionHandler(completePromise: sessionCompletePromise)
-                    try childChannel.pipeline.syncOperations.addHandler(interactiveHandler)
-                }
-            }
-            return childChannelPromise.futureResult
+            }.get()
+        } catch {
+            sessionCompletePromise.fail(error)
+            try? await channel.close().get()
+            throw error
         }
-
-        let childChannel = try await childChannelFuture.get()
 
         // Wait for the session to complete
         try await sessionCompletePromise.futureResult.get()
@@ -128,6 +150,21 @@ public actor SSHClient {
         // Clean up
         try? await childChannel.closeFuture.get()
         try? await channel.close().get()
+    }
+
+    /// Creates the child promise only after handler lookup succeeds. SwiftNIO
+    /// deliberately traps when an unfulfilled promise is deallocated, so callers
+    /// must not allocate this promise before the prerequisite future completes.
+    static func makeChildChannelFuture(
+        handlerFuture: EventLoopFuture<NIOSSHHandler>,
+        eventLoop: EventLoop,
+        initialize: @escaping @Sendable (NIOSSHHandler, EventLoopPromise<Channel>) -> Void
+    ) -> EventLoopFuture<Channel> {
+        handlerFuture.flatMap { sshHandler in
+            let childChannelPromise = eventLoop.makePromise(of: Channel.self)
+            initialize(sshHandler, childChannelPromise)
+            return childChannelPromise.futureResult
+        }
     }
 
     /// Connect to the SSH server and return the channel
@@ -154,7 +191,7 @@ public actor SSHClient {
             }
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY), value: 1)
-            .connectTimeout(.seconds(30))
+            .connectTimeout(.seconds(max(1, Int64(connectTimeout.rounded(.up)))))
 
         do {
             return try await bootstrap.connect(host: host, port: port).get()

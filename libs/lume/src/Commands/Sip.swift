@@ -449,23 +449,44 @@ struct Sip: AsyncParsableCommand {
         try await pause(seconds: 3, operation: "csrutil prompt", heartbeat: heartbeat, timeout: timeout)
         try driver.snapshot("05-csrutil-prompt")
 
-        let accountPrompt = "enter password for user \(adminUser):"
+        // Older macOS prompts directly for "enter password for user <admin>:".
+        // macOS 26 (Tahoe) Recovery first asks for an authorized username
+        // ("authorized user:"), then a password. Handle both.
+        let legacyPasswordPrompt = "enter password for user \(adminUser):"
+        let usernamePrompt = "authorized user"
         let promptText = try await driver.waitForText(
-            containing: ["[y/n]", accountPrompt],
+            containing: ["[y/n]", legacyPasswordPrompt, usernamePrompt],
             rejecting: ["no administrator was found", "failed to authenticate", "authentication failure"],
             deadlineSeconds: try timeout(15, "csrutil prompt"), label: "csrutil prompt", heartbeat: heartbeat)
 
-        if !promptText.lowercased().contains(accountPrompt.lowercased()) {
+        var authText = promptText
+        if promptText.lowercased().contains("[y/n]")
+            && !promptText.lowercased().contains(legacyPasswordPrompt)
+            && !promptText.lowercased().contains(usernamePrompt) {
             try driver.key("y")
+            try driver.key("enter")
+            try await pause(seconds: 3, operation: "csrutil auth prompt", heartbeat: heartbeat, timeout: timeout)
+            authText = try await driver.waitForText(
+                containing: [legacyPasswordPrompt, usernamePrompt],
+                rejecting: ["no administrator was found", "failed to authenticate", "authentication failure"],
+                deadlineSeconds: try timeout(20, "csrutil account prompt"), label: "csrutil account prompt",
+                heartbeat: heartbeat)
+        }
+        try driver.snapshot("06-account-prompt")
+
+        // macOS 26: type the authorized username, then wait for the password prompt.
+        if authText.lowercased().contains(usernamePrompt)
+            && !authText.lowercased().contains(legacyPasswordPrompt) {
+            try driver.type(adminUser)
             try driver.key("enter")
             try await pause(seconds: 3, operation: "csrutil password prompt", heartbeat: heartbeat, timeout: timeout)
             _ = try await driver.waitForText(
-                containing: [accountPrompt],
-                rejecting: ["no administrator was found", "failed to authenticate", "authentication failure"],
-                deadlineSeconds: try timeout(15, "csrutil account prompt"), label: "csrutil account prompt",
+                containing: ["password"],
+                rejecting: ["no administrator was found", "failed to authenticate", "authentication failure", "incorrect password"],
+                deadlineSeconds: try timeout(20, "csrutil password prompt"), label: "csrutil password prompt",
                 heartbeat: heartbeat)
         }
-        try driver.snapshot("06-password-prompt")
+        try driver.snapshot("06b-password-prompt")
 
         try driver.typeSensitive(adminPassword)
         try driver.key("enter")

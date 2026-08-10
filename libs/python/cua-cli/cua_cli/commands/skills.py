@@ -479,11 +479,11 @@ async def _record_skill_async(args: argparse.Namespace) -> int:
     # Build VNC URL with recording parameters
     if args.sandbox:
         # Get sandbox VNC URL
-        from cua_cli.auth.store import require_api_key
+        from cua_cli.auth.oidc import get_access_token
         from cua_sandbox.transport.cloud import cloud_get_vm
 
         try:
-            vm = await cloud_get_vm(args.sandbox, api_key=require_api_key())
+            vm = await cloud_get_vm(args.sandbox, api_key=await get_access_token())
         except Exception:
             vm = None
         if not vm or vm.get("status") == "not_found":

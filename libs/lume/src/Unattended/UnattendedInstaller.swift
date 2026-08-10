@@ -63,7 +63,7 @@ final class UnattendedInstaller {
         let vmTask = Task {
             do {
                 try await vm.run(
-                    noDisplay: true,
+                    displayMode: .none,
                     sharedDirectories: [],
                     mount: nil,
                     vncPort: vncPort,
@@ -117,7 +117,7 @@ final class UnattendedInstaller {
             while attempts < maxAttempts {
                 do {
                     try await vm.run(
-                        noDisplay: true,
+                        displayMode: .none,
                         sharedDirectories: [],
                         mount: nil,
                         vncPort: vncPort,

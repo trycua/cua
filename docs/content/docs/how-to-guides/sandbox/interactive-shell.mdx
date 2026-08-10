@@ -35,7 +35,7 @@ Create a sandbox, open a PTY session with `sb.terminal.create`, send input as te
 ```python
 from cua import Sandbox, Image
 
-async with Sandbox.ephemeral(Image.linux()) as sb:
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
     session = await sb.terminal.create(cols=80, rows=24)
     pid = session['pid']
 

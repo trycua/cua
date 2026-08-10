@@ -44,9 +44,9 @@ impl Default for MotionConfig {
             arc_size: 0.25,
             arc_flow: 0.0,
             spring: 0.72,
-            glide_duration_ms: 0.0,  // 0 = speed-based mode
+            glide_duration_ms: 0.0, // 0 = speed-based mode
             dwell_after_click_ms: 80.0,
-            idle_hide_ms: 20_000.0,  // fade 20s after last activity (matches .NET reference)
+            idle_hide_ms: 20_000.0, // fade 20s after last activity (matches .NET reference)
             press_duration_ms: 120.0,
             peak_speed: 900.0,
             min_start_speed: 300.0,
@@ -71,21 +71,35 @@ impl MotionConfig {
         press_duration_ms: Option<f64>,
         turn_radius: Option<f64>,
     ) -> Self {
-        fn clamp(v: f64, lo: f64, hi: f64) -> f64 { v.clamp(lo, hi) }
+        fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
+            v.clamp(lo, hi)
+        }
         Self {
-            start_handle:         clamp(start_handle.unwrap_or(self.start_handle), 0.0, 1.0),
-            end_handle:           clamp(end_handle.unwrap_or(self.end_handle), 0.0, 1.0),
-            arc_size:             clamp(arc_size.unwrap_or(self.arc_size), 0.0, 1.0),
-            arc_flow:             clamp(arc_flow.unwrap_or(self.arc_flow), -1.0, 1.0),
-            spring:               clamp(spring.unwrap_or(self.spring), 0.3, 1.0),
-            glide_duration_ms:    clamp(glide_duration_ms.unwrap_or(self.glide_duration_ms), 0.0, 5000.0),
-            dwell_after_click_ms: clamp(dwell_after_click_ms.unwrap_or(self.dwell_after_click_ms), 0.0, 5000.0),
-            idle_hide_ms:         clamp(idle_hide_ms.unwrap_or(self.idle_hide_ms), 0.0, 60_000.0),
-            press_duration_ms:    clamp(press_duration_ms.unwrap_or(self.press_duration_ms), 0.0, 5000.0),
-            peak_speed:           self.peak_speed,
-            min_start_speed:      self.min_start_speed,
-            min_end_speed:        self.min_end_speed,
-            turn_radius:          clamp(turn_radius.unwrap_or(self.turn_radius), 1.0, 1000.0),
+            start_handle: clamp(start_handle.unwrap_or(self.start_handle), 0.0, 1.0),
+            end_handle: clamp(end_handle.unwrap_or(self.end_handle), 0.0, 1.0),
+            arc_size: clamp(arc_size.unwrap_or(self.arc_size), 0.0, 1.0),
+            arc_flow: clamp(arc_flow.unwrap_or(self.arc_flow), -1.0, 1.0),
+            spring: clamp(spring.unwrap_or(self.spring), 0.3, 1.0),
+            glide_duration_ms: clamp(
+                glide_duration_ms.unwrap_or(self.glide_duration_ms),
+                0.0,
+                5000.0,
+            ),
+            dwell_after_click_ms: clamp(
+                dwell_after_click_ms.unwrap_or(self.dwell_after_click_ms),
+                0.0,
+                5000.0,
+            ),
+            idle_hide_ms: clamp(idle_hide_ms.unwrap_or(self.idle_hide_ms), 0.0, 60_000.0),
+            press_duration_ms: clamp(
+                press_duration_ms.unwrap_or(self.press_duration_ms),
+                0.0,
+                5000.0,
+            ),
+            peak_speed: self.peak_speed,
+            min_start_speed: self.min_start_speed,
+            min_end_speed: self.min_end_speed,
+            turn_radius: clamp(turn_radius.unwrap_or(self.turn_radius), 1.0, 1000.0),
         }
     }
 }

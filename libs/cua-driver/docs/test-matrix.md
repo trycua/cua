@@ -45,9 +45,12 @@ These run without the repo-local GUI applications:
 | --- | --- | --- |
 | Core driver logic | `rust/crates/*/src/**` | Protocol values, sessions, schemas, image helpers, input helpers, configuration, telemetry, CLI behavior |
 | MCP and CLI boundary | `rust/crates/cua-driver/tests/protocol_*` | Handshake, tool registration, tool calls, media, sessions, and errors |
-| Schema gate | `schema_consistency_test.rs` | Shared tool schema parity across OS backends |
+| Session capture scope | `session_capture_scope_test.rs` plus core `capture_scope` tests | Per-session isolation, immutable live policy, explicit auto escalation, end/revive race safety, transport-mirror refusal, and retired persistent key |
+| Tool-contract gate | `schema_consistency_test.rs` | Shared tool schema parity and reviewed risk metadata across OS backends |
 | Configuration transport | `transport_config_persistence_test.rs` | CLI and MCP configuration persistence |
 | Token and protocol surfaces | `protocol_element_token_test.rs`, related tests | JSON-RPC-visible contract behavior |
+| Permission modes and policy startup | `permission_policy_startup_test.rs`, `daemon_required_test.rs`, core `authorization`, `policy`, and `session_manifest` tests | Fail-before-bind policy loading, managed/user intersection, immutable standard/autonomous/unrestricted startup, danger acknowledgement, admin disable, deny-by-default manifests, and canonical daemon dispatch |
+| Protected browser grants | Core `consent`, `browser::grant`, `browser::engine`, and `browser::v2_tests` | Exact request digests, provider authentication seam and deadline, persistent-indicator activation, Stop/session teardown, forged legacy artifact refusal, exact PID/window manifest scope, and the live-origin decision path used before mutation |
 
 Some protocol tests spawn the driver process. They remain deterministic because
 they do not launch a real target application or require a desktop. They should
@@ -74,22 +77,28 @@ The shared harness exposes deterministic external markers for these actions:
 | Action family | Actions | Addressing | Delivery |
 | --- | --- | --- | --- |
 | Pointer | Left click, right click, double click | AX and PX | Background and foreground |
-| Keyboard and text | Type text, Return, hotkey | AX and PX where supported | Background and foreground |
+| Keyboard and text | Type text, Return, hotkey, type then Return | AX and PX where supported | Background and foreground |
 | Scroll | Scroll | AX and PX where supported | Background and foreground |
 | Child windows | Open child window | AX and PX | Background and foreground |
 | Drag | Drag source to drop target | PX | Background and foreground |
 | State controls | Checkbox, radio, combo, slider | AX or PX by control | Mode declared per action |
 | Editor | Type, save, saved-state readback | AX and PX where supported | Mode declared per action |
 
-The Rust shared catalog declares 36 evidence-bearing cells per harness
-application. Windows and Linux run 72 shared cells across Electron and Tauri;
-macOS also runs the native WKWebView host for 108 shared cells. Each host covers
+The Rust shared catalog declares 40 evidence-bearing cells per harness
+application. Windows and Linux run 80 shared cells across Electron and Tauri;
+macOS also runs the native WKWebView host for 120 shared cells. Each host covers
 the full AX/PX and foreground/background cross-product for click, text,
-keyboard, scroll, and child-window actions, plus both delivery modes for PX
-drag and AX editor-save. A
+keyboard, sequential type-then-Return, scroll, and child-window actions, plus
+both delivery modes for PX drag and AX editor-save. A
 background capability refusal is a valid result only when the test verifies the
 declared structured refusal and the no-focus/no-z-order/no-input-leak side
-effect. A refusal fails a cell whose contract requires delivery.
+effect. Background posture requires one foreground window to contain the target
+geometry, not merely overlap it. The lane preflight also injects deliberate
+focus and input violations and requires the sentinel to detect both before its
+results are trusted. A refusal fails a cell whose contract requires delivery.
+Canonical reporting rejects skips and enforces the complete shared catalog
+size for unfiltered runs. Diagnostic filters are allowed, but matching zero
+cells is always an error.
 
 ## Harness E2E: Native Windows
 
@@ -100,6 +109,7 @@ Windows native harnesses are repo-local applications built from source:
 | WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows |
 | WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup |
 | WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
+| Desktop scope | `desktop_scope_windows_test.rs` | Concurrent strict window/desktop sessions, full-display capture, screen-absolute click/scroll, and strict rejection |
 | Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
 
 Native controls use AX/UIA state as their oracle. Pointer actions also use PX
@@ -112,14 +122,19 @@ background delivery and attach desktop-side-effect oracles.
 | --- | --- | --- |
 | AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and foreground slider drag across the proven delivery modes; background drag is an exact refusal |
 | SwiftUI | `harness_swiftui_test.rs` | AX tree/capture, background click/value, and foreground popover-trigger state |
-| WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 36-cell shared web catalog |
+| WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 40-cell shared web catalog |
+| Desktop scope | `desktop_scope_macos_test.rs` | Concurrent strict window/desktop sessions, screen-absolute action delivery, and strict rejection |
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior in the canonical logged-in lane |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification in the canonical logged-in lane |
 
-macOS uses the installed ScreenCaptureKit/AX permissions for GUI runs. The
-repo-local harnesses are canonical; Calculator and TextEdit are supporting
-real-app checks. SwiftUI's popover trigger is proven independently from the
-remaining transient-panel AX discovery gap.
+macOS uses the installed ScreenCaptureKit/AX permissions for GUI runs. Its
+maintainer acceptance gate runs in a disposable clone of the stopped Lume
+SIP-off golden image described in the [macOS Lume runner
+guide](../tests/runners/macos-lume/README.md). Maintainers build that private
+seed from the sanitized public base `macos-tahoe-cua:26.5.2`. The repo-local
+harnesses are canonical; Calculator and TextEdit are supporting real-app
+checks. SwiftUI's popover trigger is proven independently from the remaining
+transient-panel AX discovery gap.
 
 ## Harness E2E: Linux
 
@@ -128,7 +143,7 @@ remaining transient-panel AX discovery gap.
 | Electron | `cross_platform_behavior_test.rs` | X11 and hosted Sway | Shared web action matrix |
 | Tauri | `cross_platform_behavior_test.rs` | X11 and hosted Sway | Shared web action matrix |
 | GTK3 | `harness_gtk3_test.rs` | X11/AT-SPI and Wayland/AT-SPI where configured | Native GTK controls and input |
-| Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland | Desktop versus window scope |
+| Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland | Concurrent strict window/desktop sessions, screen-absolute action delivery, and strict rejection |
 
 Nix provides the Linux build and desktop environment. X11 and Wayland are
 separate matrix dimensions because their capture and input contracts differ.
@@ -174,7 +189,7 @@ allowed, and the desktop-side-effect oracles pass.
 | Linux Sway Harness E2E | Controlled wlroots session | `scripts/ci/linux/run-rust-e2e-wayland.sh` |
 | Linux nested-compositor E2E | Controlled experimental session | `scripts/ci/linux/run-rust-e2e-inject.sh` |
 | Linux representative desktop E2E | Existing GNOME, KDE, or Xorg login | `scripts/ci/linux/run-rust-e2e-desktop.sh <desktop>` |
-| macOS Harness E2E | Logged-in macOS session with permissions | `scripts/ci/macos/run-rust-e2e.sh` |
+| macOS Harness E2E | Maintainer Lume SIP-off worker with a logged-in session and inherited grants | `libs/cua-driver/tests/runners/macos-lume/run-all.sh` |
 
 Workflows select private execution lanes. Rust source owns scenario definitions,
 fixture oracles, and result records. OS runners only build the driver, stage the

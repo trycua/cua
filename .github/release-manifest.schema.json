@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/release-manifest.schema.json",
+  "title": "Cua release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schemaVersion",
+    "repository",
+    "product",
+    "displayName",
+    "version",
+    "bump",
+    "tag",
+    "sha",
+    "previousTag",
+    "compareUrl",
+    "changelog",
+    "visualRequested",
+    "changes",
+    "contributors",
+    "assets"
+  ],
+  "properties": {
+    "schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": 1 },
+    "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+    "product": { "type": "string", "minLength": 1 },
+    "displayName": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "bump": { "enum": ["patch", "minor", "major"] },
+    "tag": { "type": "string", "minLength": 1 },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "previousTag": { "type": ["string", "null"] },
+    "compareUrl": { "type": "string", "format": "uri" },
+    "changelog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "visualRequested": { "type": "boolean" },
+    "changes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "scope", "summary", "breaking", "pr", "issues", "contributors"],
+        "properties": {
+          "type": { "enum": ["feat", "fix", "perf", "revert"] },
+          "scope": { "type": ["string", "null"] },
+          "summary": { "type": "string", "minLength": 1 },
+          "breaking": { "type": "boolean" },
+          "pr": { "type": "integer", "minimum": 1 },
+          "issues": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true },
+          "contributors": { "type": "array", "items": { "$ref": "#/$defs/changeContributor" } }
+        }
+      }
+    },
+    "contributors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/releaseContributor" }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bytes", "sha256"],
+        "properties": {
+          "name": { "type": "string" },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "changeContributor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["login", "role", "external"],
+      "properties": {
+        "login": { "type": "string", "minLength": 1 },
+        "role": { "enum": ["author", "coauthor", "reporter"] },
+        "external": { "type": "boolean" }
+      }
+    },
+    "releaseContributor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["login", "roles", "external"],
+      "properties": {
+        "login": { "type": "string", "minLength": 1 },
+        "roles": {
+          "type": "array",
+          "items": { "enum": ["author", "coauthor", "reporter"] },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "external": { "type": "boolean" }
+      }
+    }
+  }
+}

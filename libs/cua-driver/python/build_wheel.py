@@ -78,7 +78,8 @@ def get_platform_info(arch_override: str = None):
 def get_wheel_tag(platform_name: str, arch: str) -> str:
     """Return the Python wheel tag for the bundled binary target."""
     if platform_name == "darwin":
-        return "py3-none-macosx_11_0_universal2"
+        # Keep this aligned with the SDK dylib's LC_BUILD_VERSION minimum.
+        return "py3-none-macosx_13_0_universal2"
     if platform_name == "linux":
         # Rust Linux release binaries are built in debian:11, whose glibc floor is 2.31.
         if arch == "x86_64":
@@ -105,14 +106,14 @@ def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, l
     if platform_name == "darwin":
         # Universal binary tarball
         filename = f"cua-driver-rs-{version}-darwin-universal-binary.tar.gz"
-        binary_names = ["cua-driver"]
+        binary_names = ["cua-driver", "libcua_driver_sdk.dylib"]
     elif platform_name == "linux":
         filename = f"cua-driver-rs-{version}-linux-{arch}-binary.tar.gz"
-        binary_names = ["cua-driver"]
+        binary_names = ["cua-driver", "libcua_driver_sdk.so"]
     elif platform_name == "windows":
         filename = f"cua-driver-rs-{version}-windows-{arch}-binary.zip"
         # Windows includes both main executable and UIAccess worker
-        binary_names = ["cua-driver.exe", "cua-driver-uia.exe"]
+        binary_names = ["cua-driver.exe", "cua-driver-uia.exe", "cua_driver_sdk.dll"]
     else:
         raise ValueError(f"Unknown platform: {platform_name}")
 
@@ -321,7 +322,11 @@ def main():
             print("[OK] Cached archive checksum verified")
 
         # Extract binaries
-        extract_binaries(archive_path, binary_names, bin_dir)
+        extracted = extract_binaries(archive_path, binary_names, bin_dir)
+        native_library = next(
+            path for path in extracted if path.suffix in {".dylib", ".so", ".dll"}
+        )
+        shutil.move(native_library, script_dir / "src" / "cua_driver" / native_library.name)
     else:
         print("Skipping download (using existing binary)")
 
@@ -332,6 +337,18 @@ def main():
         raise FileNotFoundError(
             f"Binary not found at {binary_path}. "
             f"Run without --skip-download or place binary manually."
+        )
+
+    native_library_name = {
+        "darwin": "libcua_driver_sdk.dylib",
+        "linux": "libcua_driver_sdk.so",
+        "windows": "cua_driver_sdk.dll",
+    }[platform_name]
+    native_library_path = script_dir / "src" / "cua_driver" / native_library_name
+    if not native_library_path.exists():
+        raise FileNotFoundError(
+            f"UniFFI library not found at {native_library_path}. "
+            "Use a current release asset or stage a local release build."
         )
 
     print(f"\nBinary ready at: {binary_path}")

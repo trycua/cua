@@ -7,10 +7,7 @@
 //!
 //! ## What lives here
 //!
-//! - [`RenderStateCore`] — the platform-agnostic animation fields
-//!   (`cfg`, `palette`, `motion`, `pos`, `heading`, `path`, `dist`, `spring`,
-//!   `spring_tgt`, `click_t`, `pressed`, `shape`, `visible`, `idle_secs`, `idle_alpha`,
-//!   `pinned_wid`, `gradient_colors`, `bloom_override`).
+//! - [`RenderStateCore`] — the platform-agnostic animation and semantic state.
 //! - [`RenderStateCore::tick_motion`] — speed-profile + spring physics +
 //!   click-pulse + idle-fade using runtime [`MotionConfig`] (Windows + Linux).
 //! - [`RenderStateCore::tick_swift_constants`] — same physics but with the
@@ -18,13 +15,12 @@
 //!   path just ended (so the caller can fire arrival signals).
 //! - [`RenderStateCore::apply_command_base`] — the OverlayCommand match arms
 //!   that all three platforms implement identically (MoveTo / ClickPulse /
-//!   SetEnabled / SetMotion / SetPalette / PinAbove / SetShape / SetGradient).
+//!   SetEnabled / SetMotion / SetTheme / semantic action events / PinAbove).
 //!   Returns `false` for variants the core doesn't handle so platforms can
 //!   layer their own behaviour on top (e.g. macOS ShowFocusRect).
-//! - [`render_frame`] — the tiny-skia paint of bloom + click-pulse + arrow.
+//! - [`render_frame`] — the tiny-skia paint of the selected cursor theme.
 //!   Parametrised by pixmap dimensions and an origin offset so Windows can
 //!   pass `(virt_x, virt_y)` while macOS / Linux pass `(0, 0)`.
-//! - [`draw_default_arrow`] — gradient-arrow rasteriser.
 //!
 //! ## What stays per-platform
 //!
@@ -39,9 +35,13 @@
 //!   supplies one via the optional argument).
 
 use crate::{
-    BuiltinShape, CursorConfig, CursorShape, MotionConfig, OverlayCommand, Palette, PathPlanner,
-    PathState, PlannedPath, Spring,
+    CompiledTheme, CursorAction, CursorConfig, CursorVisualState, DeliveryModifier, MotionConfig,
+    OverlayCommand, PathPlanner, PathState, PlannedPath, Spring, TargetModifier,
 };
+use std::sync::Arc;
+
+pub const SESSION_BADGE_HOLD_SECS: f64 = 2.0;
+pub const SESSION_BADGE_FADE_SECS: f64 = 0.4;
 
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
 ///
@@ -50,8 +50,6 @@ use crate::{
 pub struct RenderStateCore {
     /// Frozen copy of the launch-time CursorConfig.
     pub cfg: CursorConfig,
-    /// Current colour palette (mutable via [`OverlayCommand::SetPalette`]).
-    pub palette: Palette,
     /// Current motion / timing config (mutable via [`OverlayCommand::SetMotion`]).
     pub motion: MotionConfig,
     /// Current rendered position in screen / overlay-window coordinates.
@@ -70,8 +68,12 @@ pub struct RenderStateCore {
     pub click_t: Option<f64>,
     /// Whether a button is currently being held for this cursor.
     pub pressed: bool,
-    /// Custom cursor shape; `None` = built-in gradient arrow.
-    pub shape: Option<CursorShape>,
+    /// Semantic action and animation playback state.
+    pub visual: CursorVisualState,
+    /// Decoded installed or embedded theme.
+    pub theme: Option<Arc<CompiledTheme>>,
+    /// Non-fatal launch-time fallback reason, if an installed theme failed.
+    pub theme_fallback: Option<String>,
     /// User-controlled visibility.
     pub visible: bool,
     /// Idle-hide: elapsed seconds since last activity.
@@ -80,11 +82,20 @@ pub struct RenderStateCore {
     pub idle_alpha: f64,
     /// Window id the overlay should be pinned above (for z-ordering).
     pub pinned_wid: Option<u64>,
-    /// Runtime-overridden gradient colours (from `set_agent_cursor_style`).
-    /// Empty = use palette defaults.
-    pub gradient_colors: Vec<[u8; 4]>,
-    /// Runtime-overridden bloom colour.  `None` = palette default.
-    pub bloom_override: Option<[u8; 4]>,
+    /// Sanitized caller-facing label painted below the cursor.
+    pub session_label: Option<String>,
+    /// Elapsed time since the session label was revealed with the cursor.
+    pub session_badge_secs: f64,
+    /// Whether the user's hardware pointer is currently over this synthetic
+    /// cursor. Hover temporarily reveals an already-faded session badge
+    /// without changing its one-shot reveal timer.
+    pub session_badge_hovered: bool,
+    /// Last action-scoped delivery and target context shown in the badge.
+    /// This is latched briefly after the semantic action ends so the chips
+    /// can fade without keeping modifier artwork inside the Lottie theme.
+    pub badge_modifiers: Option<(Option<DeliveryModifier>, Option<TargetModifier>)>,
+    /// Elapsed chip fade time after the active semantic action clears.
+    pub badge_modifier_fade_secs: Option<f64>,
 }
 
 impl RenderStateCore {
@@ -93,16 +104,28 @@ impl RenderStateCore {
     /// "never placed on screen yet" — the click path uses this to detect
     /// first-placement and snap rather than animate.
     pub fn new(cfg: CursorConfig) -> Self {
-        let palette = cfg.palette();
         let motion = cfg.motion.clone();
-        let shape = cfg.shape.clone();
+        let visual = CursorVisualState {
+            reduced_motion: cfg.reduced_motion,
+            ..CursorVisualState::default()
+        };
+        let (theme, theme_fallback) = match crate::load_installed_theme(&cfg.theme_id) {
+            Ok(theme) => (theme, None),
+            Err(error) => (
+                Some(crate::embedded_default_theme()),
+                Some(format!(
+                    "theme `{}` could not be loaded; using {}: {error}",
+                    cfg.theme_id,
+                    crate::DEFAULT_THEME_ID
+                )),
+            ),
+        };
         Self {
             cfg,
-            palette,
             motion,
-            shape,
-            gradient_colors: vec![],
-            bloom_override: None,
+            visual,
+            theme,
+            theme_fallback,
             pos: (-200.0, -200.0),
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
@@ -115,6 +138,126 @@ impl RenderStateCore {
             idle_secs: 0.0,
             idle_alpha: 1.0,
             pinned_wid: None,
+            session_label: None,
+            session_badge_secs: SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS,
+            session_badge_hovered: false,
+            badge_modifiers: None,
+            badge_modifier_fade_secs: None,
+        }
+    }
+
+    fn cursor_is_revealed(&self) -> bool {
+        self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+    }
+
+    fn reveal_session_badge(&mut self) {
+        if self.session_label.is_some() {
+            self.session_badge_secs = 0.0;
+        }
+    }
+
+    pub fn session_badge_alpha(&self) -> f32 {
+        if self.session_label.is_none() {
+            return 0.0;
+        }
+        if self.session_badge_hovered {
+            return 1.0;
+        }
+        if self.session_badge_secs <= SESSION_BADGE_HOLD_SECS {
+            return 1.0;
+        }
+        let fade = ((self.session_badge_secs - SESSION_BADGE_HOLD_SECS) / SESSION_BADGE_FADE_SECS)
+            .clamp(0.0, 1.0);
+        let smooth = fade * fade * (3.0 - 2.0 * fade);
+        (1.0 - smooth) as f32
+    }
+
+    pub fn session_badge_chip_alpha(&self) -> f32 {
+        if self.badge_modifiers.is_none() {
+            return 0.0;
+        }
+        let Some(elapsed) = self.badge_modifier_fade_secs else {
+            return 1.0;
+        };
+        let fade = (elapsed / SESSION_BADGE_FADE_SECS).clamp(0.0, 1.0);
+        let smooth = fade * fade * (3.0 - 2.0 * fade);
+        (1.0 - smooth) as f32
+    }
+
+    pub fn session_badge_is_visible(&self) -> bool {
+        self.cursor_is_revealed()
+            && (self.session_badge_alpha() > 0.001 || self.session_badge_chip_alpha() > 0.001)
+    }
+
+    pub fn session_badge_needs_frame_tick(&self) -> bool {
+        self.cursor_is_revealed()
+            && ((self.session_label.is_some()
+                && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS)
+                || self.badge_modifier_fade_secs.is_some()
+                || self.visual.resolved_action != CursorAction::Idle)
+    }
+
+    /// Whether the platform overlay should keep a low-frequency hardware
+    /// pointer poll alive for hover-to-reveal. This is deliberately separate
+    /// from [`Self::session_badge_needs_frame_tick`]: a faded badge needs hover
+    /// hit-testing, not continuous 60 fps repainting.
+    pub fn session_badge_needs_hover_poll(&self) -> bool {
+        self.session_label.is_some() && self.cursor_is_revealed()
+    }
+
+    /// Update hover state from a platform-native hardware pointer sample.
+    ///
+    /// `self.pos` is the centre of the cursor artwork. The hit radius is a
+    /// little larger than the 42 point production artwork so the interaction
+    /// remains comfortable around the white outline and glow.
+    pub fn update_session_badge_hover(&mut self, pointer: Option<(f64, f64)>) -> bool {
+        const HOVER_RADIUS: f64 = crate::theme::DISPLAY_SIZE as f64 * 0.82;
+        let hovered = self.session_badge_needs_hover_poll()
+            && pointer.is_some_and(|(x, y)| {
+                let dx = x - self.pos.0;
+                let dy = y - self.pos.1;
+                if dx * dx + dy * dy <= HOVER_RADIUS * HOVER_RADIUS {
+                    return true;
+                }
+                crate::session_badge_layout(crate::SessionBadgeInput {
+                    label: self.session_label.as_deref(),
+                    delivery: self.badge_modifiers.and_then(|modifiers| modifiers.0),
+                    target: self.badge_modifiers.and_then(|modifiers| modifiers.1),
+                    cursor: (self.pos.0 as f32, self.pos.1 as f32),
+                    backing_scale: 1.0,
+                    label_alpha: self.session_badge_alpha(),
+                    chip_alpha: self.session_badge_chip_alpha(),
+                    clip: None,
+                })
+                .is_some_and(|layout| {
+                    let rect = layout.rect;
+                    x >= rect.x() as f64
+                        && x <= (rect.x() + rect.width()) as f64
+                        && y >= rect.y() as f64
+                        && y <= (rect.y() + rect.height()) as f64
+                })
+            });
+        let changed = hovered != self.session_badge_hovered;
+        self.session_badge_hovered = hovered;
+        changed
+    }
+
+    /// Return the theme that is actually being painted, including any
+    /// non-fatal fallback from an unavailable launch-time selection.
+    pub fn active_theme_metadata(&self) -> (String, String, String, Option<String>) {
+        match self.theme.as_deref() {
+            Some(theme) => (
+                theme.id.clone(),
+                theme.version.clone(),
+                theme.profile.clone(),
+                self.theme_fallback.clone(),
+            ),
+            None => (
+                crate::DEFAULT_THEME_ID.into(),
+                crate::DEFAULT_THEME_VERSION.into(),
+                crate::THEME_PROFILE.into(),
+                self.theme_fallback.clone(),
+            ),
         }
     }
 
@@ -138,8 +281,7 @@ impl RenderStateCore {
         if let Some(ref p) = self.path {
             let path_len = p.length.max(1.0);
             let path_frac = (self.dist / path_len).clamp(0.0, 1.0);
-            let profile =
-                16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
+            let profile = 16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
             let floor = if path_frac < 0.5 {
                 self.motion.min_start_speed
             } else {
@@ -251,7 +393,11 @@ impl RenderStateCore {
 
             // Smootherstep speed profile (normalised: peak = 1.0).
             let profile = (30.0 * u * u * (1.0 - u) * (1.0 - u)) / 1.875;
-            let floor_speed = if u < 0.5 { MIN_START_SPEED } else { MIN_END_SPEED };
+            let floor_speed = if u < 0.5 {
+                MIN_START_SPEED
+            } else {
+                MIN_END_SPEED
+            };
             let speed_based = floor_speed + (PEAK_SPEED - floor_speed) * profile;
             // Fixed-duration override: when `glide_duration_ms > 0` the move
             // takes exactly that long regardless of distance, so an orchestrator
@@ -335,10 +481,34 @@ impl RenderStateCore {
     /// moving, then fade `idle_alpha` from 1→0 over 180ms once
     /// `motion.idle_hide_ms` has elapsed.  Identical across all platforms.
     fn tick_idle(&mut self, dt: f64) {
+        let modifiers_before_tick = (self.visual.delivery, self.visual.target);
+        self.visual.tick(dt);
+        let modifiers_after_tick = (self.visual.delivery, self.visual.target);
+        if modifiers_after_tick.0.is_some() || modifiers_after_tick.1.is_some() {
+            self.badge_modifiers = Some(modifiers_after_tick);
+            self.badge_modifier_fade_secs = None;
+        } else if (modifiers_before_tick.0.is_some() || modifiers_before_tick.1.is_some())
+            && self.badge_modifiers.is_some()
+            && self.badge_modifier_fade_secs.is_none()
+        {
+            self.badge_modifier_fade_secs = Some(0.0);
+        }
+        if let Some(elapsed) = self.badge_modifier_fade_secs {
+            let next = elapsed + dt.max(0.0);
+            if next >= SESSION_BADGE_FADE_SECS {
+                self.badge_modifiers = None;
+                self.badge_modifier_fade_secs = None;
+            } else {
+                self.badge_modifier_fade_secs = Some(next);
+            }
+        }
+        if self.session_label.is_some() {
+            self.session_badge_secs = (self.session_badge_secs + dt)
+                .min(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        }
         let idle_hide_ms = self.motion.idle_hide_ms;
         if idle_hide_ms > 0.0 {
-            let moving =
-                self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
+            let moving = self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
             if moving {
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -385,6 +555,7 @@ impl RenderStateCore {
                 y,
                 end_heading_radians,
             } => {
+                let reveal_badge = !self.cursor_is_revealed();
                 // Apply click offset (16 pt along end_heading) before planning,
                 // matching Swift `moveTo(point:endAngleRadians:)`:
                 //   tx = clickPoint.x + cos(endAngle) * clickOffset
@@ -402,22 +573,25 @@ impl RenderStateCore {
                 let (x0, y0) = self.pos;
                 let th0 = self.heading + std::f64::consts::PI;
                 let th1 = end_heading_radians + std::f64::consts::PI;
-                let plan = PathPlanner::plan(
-                    x0,
-                    y0,
-                    th0,
-                    tx,
-                    ty,
-                    th1,
-                    end_heading_radians,
-                    turn_radius,
-                );
+                let plan =
+                    PathPlanner::plan(x0, y0, th0, tx, ty, th1, end_heading_radians, turn_radius);
                 self.path = Some(plan);
                 self.dist = 0.0;
                 self.spring = None;
                 self.spring_tgt = None;
+                if matches!(
+                    self.visual.resolved_action,
+                    CursorAction::Idle | CursorAction::Navigate
+                ) {
+                    let delivery = self.visual.delivery;
+                    let target = self.visual.target;
+                    self.visual.begin(CursorAction::Navigate, delivery, target);
+                }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
+                if reveal_badge {
+                    self.reveal_session_badge();
+                }
                 true
             }
             OverlayCommand::SnapTo {
@@ -425,6 +599,7 @@ impl RenderStateCore {
                 y,
                 heading_radians,
             } => {
+                let reveal_badge = !self.cursor_is_revealed();
                 self.pos = (x, y);
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
@@ -433,11 +608,23 @@ impl RenderStateCore {
                 self.dist = 0.0;
                 self.spring = None;
                 self.spring_tgt = None;
+                if matches!(
+                    self.visual.resolved_action,
+                    CursorAction::Idle | CursorAction::Navigate
+                ) {
+                    let delivery = self.visual.delivery;
+                    let target = self.visual.target;
+                    self.visual.begin(CursorAction::Navigate, delivery, target);
+                }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
+                if reveal_badge {
+                    self.reveal_session_badge();
+                }
                 true
             }
             OverlayCommand::ClickPulse { x, y } => {
+                let reveal_badge = !self.cursor_is_revealed();
                 if click_pulse_sentinel_only {
                     // macOS: only snap position on first placement (sentinel state).
                     // After that the cursor stays where the animation landed.
@@ -454,49 +641,96 @@ impl RenderStateCore {
                     self.pos = (x, y);
                 }
                 self.click_t = Some(0.0);
+                if matches!(
+                    self.visual.resolved_action,
+                    CursorAction::Idle | CursorAction::Navigate | CursorAction::Click
+                ) {
+                    let delivery = self.visual.delivery;
+                    let target = self.visual.target;
+                    self.visual.begin(CursorAction::Click, delivery, target);
+                }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
+                if reveal_badge {
+                    self.reveal_session_badge();
+                }
                 true
             }
             OverlayCommand::SetPressed(v) => {
                 self.pressed = v;
+                if v {
+                    let delivery = self.visual.delivery;
+                    let target = self.visual.target;
+                    self.visual.begin(CursorAction::Drag, delivery, target);
+                } else {
+                    self.visual.end(CursorAction::Drag);
+                }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
                 true
             }
             OverlayCommand::SetEnabled(v) => {
+                let reveal_badge = v && !self.visible;
                 self.visible = v;
+                if reveal_badge {
+                    self.reveal_session_badge();
+                }
                 true
             }
             OverlayCommand::SetMotion(m) => {
                 self.motion = m;
                 true
             }
-            OverlayCommand::SetPalette(p) => {
-                self.palette = p;
-                true
-            }
             OverlayCommand::PinAbove(wid) => {
                 self.pinned_wid = Some(wid);
                 true
             }
-            OverlayCommand::SetShape(shape) => {
-                self.shape = shape;
-                true
-            }
-            OverlayCommand::SetBuiltinShape(builtin) => {
-                // Built-in selection drives the default silhouette and clears
-                // any custom image override so the built-in actually shows.
-                self.cfg.builtin_shape = builtin;
-                self.shape = None;
-                true
-            }
-            OverlayCommand::SetGradient {
-                gradient_colors,
-                bloom_color,
+            OverlayCommand::BeginAction {
+                action,
+                delivery,
+                target,
             } => {
-                self.gradient_colors = gradient_colors;
-                self.bloom_override = bloom_color;
+                self.visual.begin(action, delivery, target);
+                self.badge_modifiers = if delivery.is_some() || target.is_some() {
+                    Some((delivery, target))
+                } else {
+                    None
+                };
+                self.badge_modifier_fade_secs = None;
+                true
+            }
+            OverlayCommand::EndAction(action) => {
+                self.visual.end(action);
+                true
+            }
+            OverlayCommand::SetTheme {
+                theme_id,
+                reduced_motion,
+            } => {
+                match crate::resolve_theme_selection(&theme_id) {
+                    Ok(theme) => {
+                        self.theme = theme;
+                        self.theme_fallback = None;
+                        self.cfg.theme_id = theme_id;
+                        self.cfg.reduced_motion = reduced_motion;
+                        self.visual.reduced_motion = reduced_motion;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            theme_id,
+                            error = %error,
+                            "keeping the active cursor theme after selection failed"
+                        );
+                    }
+                }
+                true
+            }
+            OverlayCommand::SetSessionLabel(label) => {
+                let session_label = crate::sanitize_session_label(&label);
+                if session_label != self.session_label {
+                    self.session_label = session_label;
+                    self.session_badge_secs = 0.0;
+                }
                 true
             }
             OverlayCommand::ShowFocusRect(_) => false, // caller-specific
@@ -539,8 +773,8 @@ pub fn render_frame(
 ) -> tiny_skia::Pixmap {
     let w = width.max(1);
     let h = height.max(1);
-    let mut pm = tiny_skia::Pixmap::new(w, h)
-        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+    let mut pm =
+        tiny_skia::Pixmap::new(w, h).unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
     paint_cursor(&mut pm, core, origin_x, origin_y, focus_rect, backing_scale);
     pm
 }
@@ -589,93 +823,6 @@ pub fn paint_cursor(
     let heading = core.heading;
     let alpha_scale = core.idle_alpha as f32;
 
-    // --- Bloom (radial gradient behind the arrow) ---
-    let bloom_r: f32 = if core.pressed { 34.0 * sf } else { 22.0 * sf };
-    // Use runtime bloom_override if set, otherwise fall back to palette.
-    let (br, bg, bb) = if let Some([r, g, b, _]) = core.bloom_override {
-        (r, g, b)
-    } else {
-        let [r, g, b, _] = core.palette.bloom_inner;
-        (r, g, b)
-    };
-    let bloom_inner = tiny_skia::Color::from_rgba8(br, bg, bb, (115.0 * alpha_scale) as u8);
-    let (or_, og, ob) = if let Some([r, g, b, _]) = core.bloom_override {
-        (r, g, b)
-    } else {
-        let [r, g, b, _] = core.palette.bloom_outer;
-        (r, g, b)
-    };
-    let bloom_outer = tiny_skia::Color::from_rgba8(or_, og, ob, (26.0 * alpha_scale) as u8);
-    let bloom_zero = tiny_skia::Color::from_rgba8(or_, og, ob, 0);
-
-    let bloom_paint = {
-        let mut p = tiny_skia::Paint::default();
-        p.shader = tiny_skia::RadialGradient::new(
-            tiny_skia::Point::from_xy(px as f32, py as f32),
-            tiny_skia::Point::from_xy(px as f32, py as f32), // focal = center
-            bloom_r,
-            vec![
-                tiny_skia::GradientStop::new(0.0, bloom_inner),
-                tiny_skia::GradientStop::new(0.5, bloom_outer),
-                tiny_skia::GradientStop::new(1.0, bloom_zero),
-            ],
-            tiny_skia::SpreadMode::Pad,
-            tiny_skia::Transform::identity(),
-        )
-        .unwrap_or(tiny_skia::Shader::SolidColor(bloom_inner));
-        p.anti_alias = true;
-        p
-    };
-
-    if let Some(r) = tiny_skia::Rect::from_xywh(
-        (px - bloom_r as f64) as f32,
-        (py - bloom_r as f64) as f32,
-        bloom_r * 2.0,
-        bloom_r * 2.0,
-    ) {
-        pm.fill_rect(r, &bloom_paint, tiny_skia::Transform::identity(), None);
-    }
-
-    if core.pressed {
-        let [pr, pg, pb, _] = core.palette.cursor_mid;
-        let ring_color =
-            tiny_skia::Color::from_rgba8(pr, pg, pb, (210.0 * alpha_scale) as u8);
-        let mut ring_paint = tiny_skia::Paint::default();
-        ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
-        ring_paint.anti_alias = true;
-        let stroke = tiny_skia::Stroke {
-            width: 3.0 * sf,
-            ..Default::default()
-        };
-        let core_fill =
-            tiny_skia::Color::from_rgba8(pr, pg, pb, (110.0 * alpha_scale) as u8);
-        let mut fill_paint = tiny_skia::Paint::default();
-        fill_paint.shader = tiny_skia::Shader::SolidColor(core_fill);
-        fill_paint.anti_alias = true;
-        let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(px as f32, py as f32, 6.5 * sf);
-        if let Some(path) = pb.finish() {
-            pm.fill_path(
-                &path,
-                &fill_paint,
-                tiny_skia::FillRule::Winding,
-                tiny_skia::Transform::identity(),
-                None,
-            );
-        }
-        let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(px as f32, py as f32, 13.0 * sf);
-        if let Some(path) = pb.finish() {
-            pm.stroke_path(
-                &path,
-                &ring_paint,
-                &stroke,
-                tiny_skia::Transform::identity(),
-                None,
-            );
-        }
-    }
-
     // --- Focus rect highlight (macOS only — others pass None) ---
     // Cyan glow border + faint fill, matching Swift AgentCursor.showFocusRect.
     if let Some(fr) = focus_rect {
@@ -694,18 +841,22 @@ pub fn paint_cursor(
             (fh * s) as f32,
         ) {
             // Faint fill
-            let mut fill_paint = tiny_skia::Paint::default();
-            fill_paint.shader = tiny_skia::Shader::SolidColor(
-                tiny_skia::Color::from_rgba8(cr, cg, cb, fill_a),
-            );
+            let fill_paint = tiny_skia::Paint {
+                shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
+                    cr, cg, cb, fill_a,
+                )),
+                ..Default::default()
+            };
             pm.fill_rect(rect, &fill_paint, tiny_skia::Transform::identity(), None);
 
             // Border stroke (2px glow)
-            let mut border_paint = tiny_skia::Paint::default();
-            border_paint.shader = tiny_skia::Shader::SolidColor(
-                tiny_skia::Color::from_rgba8(cr, cg, cb, border_a),
-            );
-            border_paint.anti_alias = true;
+            let border_paint = tiny_skia::Paint {
+                shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
+                    cr, cg, cb, border_a,
+                )),
+                anti_alias: true,
+                ..Default::default()
+            };
             let stroke = tiny_skia::Stroke {
                 width: 2.5 * sf,
                 ..Default::default()
@@ -724,222 +875,54 @@ pub fn paint_cursor(
         }
     }
 
-    // --- Click pulse ring ---
-    if let Some(t) = core.click_t {
-        // bloom_r already includes backing_scale; the +20pt expansion is
-        // logical so scale it explicitly here.
-        let ring_r = (bloom_r + 20.0 * sf * t as f32) * (1.0 - t as f32 * 0.5);
-        let alpha = ((1.0 - t) * 180.0 * alpha_scale as f64) as u8;
-        let [cr, cg, cb, _] = core.palette.cursor_mid;
-        let ring_color = tiny_skia::Color::from_rgba8(cr, cg, cb, alpha);
-        let mut ring_paint = tiny_skia::Paint::default();
-        ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
-        ring_paint.anti_alias = true;
-        let stroke = tiny_skia::Stroke {
-            width: 2.0 * sf,
-            ..Default::default()
-        };
-        let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(px as f32, py as f32, ring_r);
-        if let Some(path) = pb.finish() {
-            pm.stroke_path(
-                &path,
-                &ring_paint,
-                &stroke,
-                tiny_skia::Transform::identity(),
-                None,
-            );
-        }
+    if let Some(theme) = core.theme.as_deref() {
+        let tint = (theme.id == crate::DEFAULT_THEME_ID)
+            .then(|| crate::session_fill_rgba(&core.cfg.cursor_id));
+        crate::paint_compiled_theme_with_tint(
+            pm,
+            theme,
+            &core.visual,
+            px as f32,
+            py as f32,
+            heading as f32,
+            backing_scale.max(1.0),
+            alpha_scale,
+            tint,
+        );
+    } else {
+        // Defensive fallback for a manually constructed RenderStateCore. The
+        // normal constructor always resolves either the requested theme or the
+        // embedded default.
+        crate::theme::paint_default_theme_with_fill(
+            pm,
+            &core.visual,
+            px as f32,
+            py as f32,
+            heading as f32,
+            backing_scale.max(1.0),
+            alpha_scale,
+            crate::session_fill_rgba(&core.cfg.cursor_id),
+        );
     }
 
-    // --- Arrow / silhouette ---
-    //
-    // Three-way precedence:
-    //   1. Per-instance custom asset loaded from `--cursor-icon <path>`
-    //      (or runtime `set_agent_cursor_style.image_path`) wins.
-    //   2. Else the built-in selected by `--cursor-shape`:
-    //      - `arrow` (default): call `draw_default_arrow` — procedural
-    //        gradient diamond, sharp at any backing scale because nothing
-    //        rasterises.
-    //      - `teardrop`: blit the cached `CursorShape::teardrop()` pixmap
-    //        — rasterised once at 2× the display target.
-    //   3. (No other built-ins today.)
-    //
-    // Teardrop is the default silhouette; `--cursor-shape arrow` (or
-    // `cursor_icon: "arrow"`) selects the procedural arrow instead.
-    let shape: Option<&CursorShape> = match (core.shape.as_ref(), core.cfg.builtin_shape) {
-        (Some(custom), _) => Some(custom),
-        (None, BuiltinShape::Teardrop) => Some(CursorShape::teardrop()),
-        (None, BuiltinShape::Arrow) => {
-            let grad_override = if core.gradient_colors.is_empty() {
-                None
-            } else {
-                Some(&core.gradient_colors)
-            };
-            draw_default_arrow(
-                pm,
-                &core.palette,
-                grad_override,
-                px as f32,
-                py as f32,
-                heading as f32,
-                alpha_scale,
-            );
-            None
-        }
-    };
-    let shape = match shape {
-        Some(s) => s,
-        None => return,
-    };
-    // Display size in pixels. 26 logical points is a touch larger than a
-    // default OS arrow — large enough to spot during agent action without
-    // overwhelming the workspace. The source raster is shape.width ×
-    // shape.height (64×64 for built-ins), so the transform scales down by
-    // display_size/shape.width. We multiply by `backing_scale` so the arrow
-    // rasterises at the destination pixmap's native resolution (e.g. 52 px
-    // on a 2× retina display) — Core Animation then maps 1:1 to the screen
-    // instead of upsampling a logical-pixel pixmap.
-    let display_size = 26.0_f32 * sf;
-    let scale = display_size / shape.width as f32;
-    if let Some(pix) =
-        tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height)
-    {
-        // T = Translate(px, py) * Rotate(angle) * Scale(s) * Translate(-w/2, -h/2)
-        // Centres the source on its own origin, scales to display_size, rotates
-        // around the scaled centre, lands the centre at (px, py).
-        //
-        // +90° offset compensates for the SVG's intrinsic orientation: the
-        // cursor-up silhouette points UP at rest (CSS y-down angle -π/2),
-        // whereas the procedural arrow's rotation convention assumes the
-        // shape points RIGHT at rest (angle 0). Without the +90°, motion-
-        // right rotation would leave the tip still pointing up.
-        let rotation_deg = heading.to_degrees() as f32 + 180.0 + 90.0;
-        let transform = tiny_skia::Transform::from_translate(
-            -(shape.width as f32) / 2.0,
-            -(shape.height as f32) / 2.0,
-        )
-        .post_scale(scale, scale)
-        .post_rotate(rotation_deg)
-        .post_translate(px as f32, py as f32);
-        let mut paint = tiny_skia::PixmapPaint::default();
-        paint.opacity = alpha_scale;
-        pm.draw_pixmap(0, 0, pix, &paint, transform, None);
+    let (delivery, target) = core.badge_modifiers.unwrap_or((None, None));
+    if let Some(layout) = crate::session_badge_layout(crate::SessionBadgeInput {
+        label: core.session_label.as_deref(),
+        delivery,
+        target,
+        cursor: (px as f32, py as f32),
+        backing_scale: backing_scale.max(1.0),
+        label_alpha: core.session_badge_alpha(),
+        chip_alpha: core.session_badge_chip_alpha(),
+        clip: Some((pm.width() as f32, pm.height() as f32)),
+    }) {
+        crate::paint_session_badge(
+            pm,
+            &layout,
+            crate::session_fill_rgba(&core.cfg.cursor_id),
+            alpha_scale,
+        );
     }
-}
-
-/// Rasterise the built-in gradient arrow at `(px, py)` rotated by
-/// `heading` radians.  `alpha_scale` is the idle-fade multiplier
-/// (1.0 = fully opaque, 0.0 = fully faded out).
-///
-/// `gradient_override` lets `set_agent_cursor_style` substitute custom
-/// gradient stops at runtime.  When `None` the palette's
-/// `cursor_start/cursor_mid/cursor_end` are used.
-pub fn draw_default_arrow(
-    pm: &mut tiny_skia::Pixmap,
-    palette: &Palette,
-    gradient_override: Option<&Vec<[u8; 4]>>,
-    px: f32,
-    py: f32,
-    heading: f32,
-    alpha_scale: f32,
-) {
-    // Arrow vertices (tip at +x).
-    let verts: [(f32, f32); 4] = [(14.0, 0.0), (-8.0, -9.0), (-3.0, 0.0), (-8.0, 9.0)];
-
-    // Rotate by (heading + π) so tip points in the motion direction.
-    let angle = heading + std::f64::consts::PI as f32;
-    let (sa, ca) = (angle.sin(), angle.cos());
-    let transform_pt = |(vx, vy): (f32, f32)| -> (f32, f32) {
-        (px + ca * vx - sa * vy, py + sa * vx + ca * vy)
-    };
-
-    let pts: Vec<(f32, f32)> = verts.iter().map(|&v| transform_pt(v)).collect();
-
-    let mut pb = tiny_skia::PathBuilder::new();
-    pb.move_to(pts[0].0, pts[0].1);
-    for p in &pts[1..] {
-        pb.line_to(p.0, p.1);
-    }
-    pb.close();
-    let arrow_path = match pb.finish() {
-        Some(p) => p,
-        None => return,
-    };
-
-    // Gradient fill: start color at tip, end color at tail.
-    // Use runtime overrides when available, otherwise fall back to palette.
-    let tip = pts[0];
-    let tail = (
-        (pts[1].0 + pts[3].0) / 2.0,
-        (pts[1].1 + pts[3].1) / 2.0,
-    );
-    let (r0, g0, b0) = if let Some(g) = gradient_override.and_then(|g| g.first()) {
-        (g[0], g[1], g[2])
-    } else {
-        let [r, g, b, _] = palette.cursor_start;
-        (r, g, b)
-    };
-    let (r1, g1, b1) = if let Some(g) =
-        gradient_override.and_then(|g| g.get(1).or_else(|| g.first()))
-    {
-        (g[0], g[1], g[2])
-    } else {
-        let [r, g, b, _] = palette.cursor_mid;
-        (r, g, b)
-    };
-    let (r2, g2, b2) = if let Some(g) = gradient_override.and_then(|g| g.last()) {
-        (g[0], g[1], g[2])
-    } else {
-        let [r, g, b, _] = palette.cursor_end;
-        (r, g, b)
-    };
-
-    let a = (255.0 * alpha_scale) as u8;
-    let fill_paint = {
-        let mut p = tiny_skia::Paint::default();
-        p.shader = tiny_skia::LinearGradient::new(
-            tiny_skia::Point::from_xy(tip.0, tip.1),
-            tiny_skia::Point::from_xy(tail.0, tail.1),
-            vec![
-                tiny_skia::GradientStop::new(0.00, tiny_skia::Color::from_rgba8(r0, g0, b0, a)),
-                tiny_skia::GradientStop::new(0.53, tiny_skia::Color::from_rgba8(r1, g1, b1, a)),
-                tiny_skia::GradientStop::new(1.00, tiny_skia::Color::from_rgba8(r2, g2, b2, a)),
-            ],
-            tiny_skia::SpreadMode::Pad,
-            tiny_skia::Transform::identity(),
-        )
-        .unwrap_or(tiny_skia::Shader::SolidColor(
-            tiny_skia::Color::from_rgba8(r1, g1, b1, a),
-        ));
-        p.anti_alias = true;
-        p
-    };
-
-    pm.fill_path(
-        &arrow_path,
-        &fill_paint,
-        tiny_skia::FillRule::Winding,
-        tiny_skia::Transform::identity(),
-        None,
-    );
-
-    // White outline (faded with alpha_scale).
-    let mut stroke_paint = tiny_skia::Paint::default();
-    stroke_paint.shader =
-        tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(255, 255, 255, a));
-    stroke_paint.anti_alias = true;
-    let stroke = tiny_skia::Stroke {
-        width: 1.5,
-        ..Default::default()
-    };
-    pm.stroke_path(
-        &arrow_path,
-        &stroke_paint,
-        &stroke,
-        tiny_skia::Transform::identity(),
-        None,
-    );
 }
 
 #[cfg(test)]
@@ -956,14 +939,22 @@ mod glide_duration_tests {
         core.motion.idle_hide_ms = 0.0;
         core.pos = (0.0, 0.0);
         // Aligned headings → an effectively straight path of length ~dist_pts.
-        core.path = Some(PathPlanner::plan(0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0));
+        core.path = Some(PathPlanner::plan(
+            0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0,
+        ));
         core.dist = 0.0;
         let dt = 1.0 / 240.0;
         let mut t = 0.0;
         for _ in 0..200_000 {
-            let arrived = if swift { core.tick_swift_constants(dt) } else { core.tick_motion(dt) };
+            let arrived = if swift {
+                core.tick_swift_constants(dt)
+            } else {
+                core.tick_motion(dt)
+            };
             t += dt;
-            if arrived { break; }
+            if arrived {
+                break;
+            }
         }
         t
     }
@@ -986,8 +977,251 @@ mod glide_duration_tests {
         for swift in [false, true] {
             let short = arrival_secs(0.0, 120.0, swift);
             let long = arrival_secs(0.0, 1400.0, swift);
-            assert!(long > short + 0.2, "swift={swift} short={short} long={long}");
+            assert!(
+                long > short + 0.2,
+                "swift={swift} short={short} long={long}"
+            );
         }
+    }
+}
+
+#[cfg(test)]
+mod session_badge_and_action_tests {
+    use super::*;
+    use crate::{CursorConfig, DeliveryModifier, TargetModifier};
+
+    #[test]
+    fn session_badge_holds_then_fades_once() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        assert_eq!(core.session_badge_alpha(), 0.0);
+        assert!(core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        ));
+        assert_eq!(core.session_badge_alpha(), 1.0);
+
+        core.tick_motion(SESSION_BADGE_HOLD_SECS - 0.05);
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        core.tick_motion(SESSION_BADGE_FADE_SECS * 0.5 + 0.05);
+        assert!(core.session_badge_alpha() > 0.0);
+        assert!(core.session_badge_alpha() < 1.0);
+        core.tick_motion(SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+    }
+
+    #[test]
+    fn repeated_session_label_metadata_does_not_restart_badge_timer() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        assert_eq!(core.session_badge_alpha(), 0.0);
+
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Writing".into()),
+            false,
+            false,
+        );
+        assert_eq!(core.session_badge_alpha(), 1.0);
+    }
+
+    #[test]
+    fn revealing_hidden_cursor_restarts_badge_without_restarting_on_every_move() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+
+        core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 100.0,
+                y: 100.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        assert!(core.session_badge_needs_frame_tick());
+        core.tick_motion(0.5);
+        let elapsed = core.session_badge_secs;
+        core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 120.0,
+                y: 120.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(core.session_badge_secs, elapsed);
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        assert!(!core.session_badge_needs_frame_tick());
+    }
+
+    #[test]
+    fn hardware_pointer_hover_reveals_only_while_over_cursor() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (300.0, 240.0);
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research".into()),
+            false,
+            false,
+        );
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+        assert!(core.session_badge_needs_hover_poll());
+
+        assert!(core.update_session_badge_hover(Some((302.0, 238.0))));
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        assert!(!core.update_session_badge_hover(Some((304.0, 241.0))));
+        assert_eq!(core.session_badge_alpha(), 1.0);
+
+        assert!(core.update_session_badge_hover(Some((500.0, 500.0))));
+        assert_eq!(core.session_badge_alpha(), 0.0);
+    }
+
+    #[test]
+    fn movement_preserves_the_active_semantic_action() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (20.0, 20.0);
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Text,
+                delivery: None,
+                target: Some(TargetModifier::Ax),
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 200.0,
+                y: 100.0,
+                end_heading_radians: 0.0,
+            },
+            false,
+            false,
+        );
+        assert_eq!(core.visual.resolved_action, CursorAction::Text);
+        assert_eq!(core.visual.target, Some(TargetModifier::Ax));
+        core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 200.0, y: 100.0 },
+            false,
+            false,
+        );
+        assert_eq!(core.visual.resolved_action, CursorAction::Text);
+        assert_eq!(core.visual.target, Some(TargetModifier::Ax));
+    }
+
+    #[test]
+    fn modifiers_live_in_the_badge_then_fade_after_action_completion() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (200.0, 200.0);
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Click,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: Some(TargetModifier::Pixel),
+            },
+            false,
+            false,
+        );
+        assert_eq!(
+            core.badge_modifiers,
+            Some((
+                Some(DeliveryModifier::Foreground),
+                Some(TargetModifier::Pixel)
+            ))
+        );
+        assert_eq!(core.session_badge_chip_alpha(), 1.0);
+        assert!(core.session_badge_is_visible());
+
+        let frame = 1.0 / 60.0;
+        for _ in 0..=((CursorAction::Click.duration_secs() / frame).ceil() as usize) {
+            core.tick_motion(frame);
+        }
+        assert!(core.session_badge_chip_alpha() > 0.0);
+        assert!(core.session_badge_chip_alpha() < 1.0);
+        assert!(core.session_badge_needs_frame_tick());
+
+        core.tick_motion(SESSION_BADGE_FADE_SECS);
+        assert_eq!(core.badge_modifiers, None);
+        assert_eq!(core.session_badge_chip_alpha(), 0.0);
+    }
+
+    #[test]
+    fn modifier_preemption_replaces_the_badge_context_without_cross_fading() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Observe,
+                delivery: Some(DeliveryModifier::Background),
+                target: Some(TargetModifier::Ax),
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Text,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: Some(TargetModifier::Browser),
+            },
+            false,
+            false,
+        );
+        assert_eq!(
+            core.badge_modifiers,
+            Some((
+                Some(DeliveryModifier::Foreground),
+                Some(TargetModifier::Browser)
+            ))
+        );
+        assert_eq!(core.badge_modifier_fade_secs, None);
+        assert_eq!(core.session_badge_chip_alpha(), 1.0);
+    }
+
+    #[test]
+    fn click_pulse_preserves_declared_context_until_the_action_fades() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Click,
+                delivery: Some(DeliveryModifier::Background),
+                target: Some(TargetModifier::Ax),
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
+            false,
+            false,
+        );
+        assert_eq!(
+            (core.visual.delivery, core.visual.target),
+            (Some(DeliveryModifier::Background), Some(TargetModifier::Ax))
+        );
+        assert_eq!(
+            core.badge_modifiers,
+            Some((Some(DeliveryModifier::Background), Some(TargetModifier::Ax)))
+        );
     }
 }
 
@@ -996,13 +1230,31 @@ mod backing_scale_tests {
     use super::*;
     use crate::CursorConfig;
 
-    /// Count opaque (alpha > 0) pixels in the pixmap — a proxy for the
-    /// cursor's on-pixmap footprint that's independent of palette / gradient.
-    fn opaque_pixel_count(pm: &tiny_skia::Pixmap) -> u32 {
-        pm.data()
-            .chunks_exact(4)
-            .filter(|px| px[3] > 0)
-            .count() as u32
+    fn visible_pixel_count(pm: &tiny_skia::Pixmap) -> u32 {
+        // Count strongly visible coverage, not the halo's feather pixels.
+        // Low-alpha gradient coverage is quantized differently across scales
+        // and is not useful evidence for the backing-scale regression.
+        pm.data().chunks_exact(4).filter(|px| px[3] > 96).count() as u32
+    }
+
+    fn visible_bounds(pm: &tiny_skia::Pixmap) -> (u32, u32) {
+        let mut min_x = u32::MAX;
+        let mut min_y = u32::MAX;
+        let mut max_x = 0;
+        let mut max_y = 0;
+        for (index, pixel) in pm.data().chunks_exact(4).enumerate() {
+            if pixel[3] <= 96 {
+                continue;
+            }
+            let x = index as u32 % pm.width();
+            let y = index as u32 / pm.width();
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+        assert_ne!(min_x, u32::MAX, "render should have visible pixels");
+        (max_x - min_x + 1, max_y - min_y + 1)
     }
 
     fn render_at(backing_scale: f32, logical_size: u32) -> tiny_skia::Pixmap {
@@ -1023,32 +1275,51 @@ mod backing_scale_tests {
         pm
     }
 
-    /// Doubling `backing_scale` doubles every linear dimension of the cursor's
-    /// pixel footprint, so the opaque-pixel COUNT should grow ~4× (one factor
-    /// of 2 per axis). Exact equality isn't expected — the embedded SVG
-    /// downscales from a 52-px source, anti-aliased edges round at integer
-    /// boundaries, and the bloom gradient has a soft cutoff — but the ratio
-    /// should sit clearly above 3.0 (well past the ~2.0 ceiling we'd hit if
-    /// only one dimension were scaling). This is the regression guard for
-    /// the retina-blur fix: if a future refactor reverts paint_cursor to
-    /// emitting logical-pixel art into a physical-pixel pixmap, the ratio
-    /// collapses back toward 1.0.
+    /// The compiled artifact contains vector geometry. Skia must rasterize it
+    /// at the destination backing scale, so linear dimensions grow 1:2:3 and
+    /// strongly visible coverage grows approximately with the square.
     #[test]
-    fn backing_scale_two_grows_opaque_footprint_roughly_fourfold() {
+    fn compiled_vectors_render_at_one_two_and_three_x() {
         let pm_1x = render_at(1.0, 200);
         let pm_2x = render_at(2.0, 200);
+        let pm_3x = render_at(3.0, 200);
 
-        let n_1x = opaque_pixel_count(&pm_1x);
-        let n_2x = opaque_pixel_count(&pm_2x);
+        let n_1x = visible_pixel_count(&pm_1x);
+        let n_2x = visible_pixel_count(&pm_2x);
+        let n_3x = visible_pixel_count(&pm_3x);
 
         assert!(n_1x > 0, "1× render should paint SOMETHING (got {n_1x})");
         assert!(n_2x > 0, "2× render should paint SOMETHING (got {n_2x})");
+        assert!(n_3x > 0, "3× render should paint SOMETHING (got {n_3x})");
 
-        let ratio = n_2x as f64 / n_1x as f64;
+        let ratio_2x = n_2x as f64 / n_1x as f64;
+        let ratio_3x = n_3x as f64 / n_1x as f64;
         assert!(
-            ratio > 3.0 && ratio < 5.0,
-            "2× backing_scale should produce ~4× more opaque pixels — \
-             got n_1x={n_1x}, n_2x={n_2x}, ratio={ratio:.2}"
+            ratio_2x > 3.0 && ratio_2x < 5.0,
+            "2× backing_scale should produce ~4× more visible pixels: \
+             got n_1x={n_1x}, n_2x={n_2x}, ratio={ratio_2x:.2}"
         );
+        assert!(
+            ratio_3x > 7.0 && ratio_3x < 11.0,
+            "3× backing_scale should produce ~9× more visible pixels: \
+             got n_1x={n_1x}, n_3x={n_3x}, ratio={ratio_3x:.2}"
+        );
+
+        let bounds_1x = visible_bounds(&pm_1x);
+        let bounds_2x = visible_bounds(&pm_2x);
+        let bounds_3x = visible_bounds(&pm_3x);
+        for (one, two, three) in [
+            (bounds_1x.0, bounds_2x.0, bounds_3x.0),
+            (bounds_1x.1, bounds_2x.1, bounds_3x.1),
+        ] {
+            assert!(
+                (two as f64 / one as f64 - 2.0).abs() < 0.15,
+                "2× visible bounds should double: {one}, {two}"
+            );
+            assert!(
+                (three as f64 / one as f64 - 3.0).abs() < 0.20,
+                "3× visible bounds should triple: {one}, {three}"
+            );
+        }
     }
 }

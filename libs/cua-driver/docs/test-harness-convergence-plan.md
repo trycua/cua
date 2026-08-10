@@ -64,8 +64,8 @@ environment or backend gaps separately.
 
 ### Implemented
 
-- `cross_platform_behavior_test.rs` has one typed 36-cell catalog per shared
-  harness application: 72 shared cells across Electron and Tauri per platform.
+- `cross_platform_behavior_test.rs` has one typed 40-cell catalog per shared
+  harness application: 80 shared cells across Electron and Tauri per platform.
   It covers AX and PX with foreground and background delivery for click,
   text, keyboard, scroll, and child-window actions; PX drag and AX editor-save
   each cover both delivery modes.
@@ -79,10 +79,12 @@ environment or backend gaps separately.
   Chromium PX background keeps its targeted-injection route metadata, while a
   fully occluded target expects the exact `background_occluded` refusal because
   temporarily raising the window would violate the desktop-side-effect contract.
-- Every background shared cell attaches independent focus, z-order, real
-  cursor, leaked-input, and fixture-state observations. Windows, macOS, and X11
-  use direct testkit observers; an occluding Electron sentinel supplies the
-  focus and leaked-input journal. Unsupported Wayland observations fail closed.
+- Every background shared cell attaches independent focus, z-order,
+  leaked-input, and fixture-state observations. Windows, macOS, and X11 also
+  attach the real-cursor observer. An occluding Electron sentinel supplies the
+  focus and leaked-input journal across target frameworks. Wayland leaves the
+  cursor oracle explicitly unsupported while issue #2194 investigates a
+  capability-checked observer.
 - Electron and Tauri use repo-local builds of the same shared web fixture.
 - Windows, Linux, and macOS runners have strict source, fixture, AX, capture,
   and video preflights. Shell runners no longer synthesize behavioral rows.
@@ -194,7 +196,7 @@ driver route:
 5. Every omitted combination names an `equivalent_to` cell or an unsupported
    contract reason.
 
-The shared catalog currently declares 36 cells per harness application, or 72
+The shared catalog currently declares 40 cells per harness application, or 80
 cells across Electron and Tauri per platform. Add a missing combination when it
 reaches a different driver route. Remove a combination only when another cell
 proves the same route with an equal or stronger oracle.

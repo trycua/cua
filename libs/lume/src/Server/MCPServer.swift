@@ -27,6 +27,7 @@ final class LumeMCPServer {
 
         let transport = StdioTransport()
         try await mcpServer?.start(transport: transport)
+        TelemetryClient.shared.recordMCPSessionStarted()
         await mcpServer?.waitUntilCompleted()
     }
 
@@ -171,7 +172,7 @@ final class LumeMCPServer {
         - Avoid spaces and special characters
 
         ### Resource Allocation
-        - Default: 4 CPU cores, 8GB RAM, 64GB disk
+        - Default: 4 CPU cores, 8GB RAM, 100GB disk
         - For builds: Consider 8 CPU cores, 16GB RAM
         - Disk grows dynamically (sparse files)
 
@@ -493,7 +494,7 @@ final class LumeMCPServer {
                         ]),
                         "disk_size": .object([
                             "type": .string("string"),
-                            "description": .string("Disk size, e.g., '64GB' (default: 64GB)")
+                            "description": .string("Disk size, e.g., '100GB' (default: 100GB)")
                         ]),
                         "storage": .object([
                             "type": .string("string"),
@@ -543,46 +544,62 @@ final class LumeMCPServer {
     // MARK: - Tool Call Handler
 
     private func handleToolCall(_ params: CallTool.Parameters) async -> CallTool.Result {
+        let startedAt = Date()
+        let result: CallTool.Result
         do {
             switch params.name {
             case "lume_list_vms":
-                return try await handleListVMs(params.arguments)
+                result = try await handleListVMs(params.arguments)
             case "lume_get_vm":
-                return try await handleGetVM(params.arguments)
+                result = try await handleGetVM(params.arguments)
             case "lume_run_vm":
-                return try await handleRunVM(params.arguments)
+                result = try await handleRunVM(params.arguments)
             case "lume_stop_vm":
-                return try await handleStopVM(params.arguments)
+                result = try await handleStopVM(params.arguments)
             case "lume_clone_vm":
-                return try await handleCloneVM(params.arguments)
+                result = try await handleCloneVM(params.arguments)
             case "lume_delete_vm":
-                return try await handleDeleteVM(params.arguments)
+                result = try await handleDeleteVM(params.arguments)
             case "lume_exec":
-                return try await handleExec(params.arguments)
+                result = try await handleExec(params.arguments)
             case "lume_create_vm":
-                return try await handleCreateVM(params.arguments)
+                result = try await handleCreateVM(params.arguments)
             case "lume_resize_disk":
-                return try await handleResizeDisk(params.arguments)
+                result = try await handleResizeDisk(params.arguments)
             case "check_for_update":
-                return try await handleCheckForUpdate(params.arguments)
+                result = try await handleCheckForUpdate(params.arguments)
             default:
-                return CallTool.Result(
+                result = CallTool.Result(
                     content: [.text("Unknown tool: \(params.name)")],
                     isError: true
                 )
             }
         } catch {
-            return CallTool.Result(
+            result = CallTool.Result(
                 content: [.text("Error: \(error.localizedDescription)")],
                 isError: true
             )
         }
+        let success = result.isError != true
+        TelemetryClient.shared.recordMCPToolCompleted(
+            toolName: params.name,
+            success: success,
+            errorClass: success ? .none : (params.name == "check_for_update" ? .unavailable : .operationError),
+            elapsed: Date().timeIntervalSince(startedAt)
+        )
+        return result
     }
 
     // MARK: - Tool Implementations
 
     private func handleCheckForUpdate(_ args: [String: Value]?) async throws -> CallTool.Result {
         let state = await LumeVersionCheck.checkUpdateState(noCache: false)
+        TelemetryClient.shared.recordUpdateChecked(
+            source: "mcp",
+            outcome: state.error != nil ? "unavailable" : (state.updateAvailable ? "available" : "up_to_date"),
+            targetVersion: state.latestVersion,
+            cacheHit: state.cacheHit
+        )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -649,7 +666,8 @@ final class LumeMCPServer {
                     noDisplay: noDisplay,
                     sharedDirectories: sharedDirectories,
                     storage: storage,
-                    clipboard: clipboard
+                    clipboard: clipboard,
+                    telemetryTransport: .mcpStdio
                 )
             } catch {
                 Logger.error(
@@ -803,12 +821,12 @@ final class LumeMCPServer {
             memorySize = 8 * 1024 * 1024 * 1024  // 8GB default
         }
 
-        // Parse disk size (default 64GB)
+        // Parse disk size (default 100GB)
         let diskSize: UInt64
         if let diskStr = args?["disk_size"]?.stringValue {
             diskSize = try parseSize(diskStr)
         } else {
-            diskSize = 64 * 1024 * 1024 * 1024  // 64GB default
+            diskSize = 100 * 1024 * 1024 * 1024  // 100GB default
         }
 
         // Load unattended config if specified
@@ -827,7 +845,8 @@ final class LumeMCPServer {
             display: "1920x1080",
             ipsw: ipsw,
             storage: storage,
-            unattendedConfig: unattendedConfig
+            unattendedConfig: unattendedConfig,
+            telemetryTransport: .mcpStdio
         )
 
         var response = "VM '\(name)' creation started. Status: provisioning."

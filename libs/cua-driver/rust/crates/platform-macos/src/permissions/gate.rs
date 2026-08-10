@@ -32,6 +32,7 @@
 //! more polished look — left as a follow-up; CLI is the MVP.
 
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -61,12 +62,14 @@ impl MissingPermission {
     /// adapted from the Swift gate's SwiftUI subtitle copy.
     pub fn rationale(self) -> &'static str {
         match self {
-            Self::Accessibility =>
+            Self::Accessibility => {
                 "lets cua-driver read the accessibility tree of running apps and \
-                 send clicks / keystrokes via AX RPC.",
-            Self::ScreenRecording =>
+                 send clicks / keystrokes via AX RPC."
+            }
+            Self::ScreenRecording => {
                 "lets cua-driver capture per-window screenshots so agents can see \
-                 the current UI state alongside the tree.",
+                 the current UI state alongside the tree."
+            }
         }
     }
 
@@ -74,10 +77,12 @@ impl MissingPermission {
     /// Privacy pane.  Same strings the Swift gate uses.
     pub fn settings_url(self) -> &'static str {
         match self {
-            Self::Accessibility =>
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            Self::ScreenRecording =>
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            Self::Accessibility => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            }
+            Self::ScreenRecording => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            }
         }
     }
 }
@@ -199,6 +204,117 @@ const GATE_REEXEC_ENV: &str = "CUA_DRIVER_RS_GATE_REEXEC";
 /// `start`, and since a re-exec fires (~25s) well before the deadline
 /// (~10min) the deadline never triggers and the daemon re-execs forever.
 const GATE_START_ENV: &str = "CUA_DRIVER_RS_GATE_START_UNIX";
+const GATE_TELEMETRY_START_MILLIS_ENV: &str = "CUA_DRIVER_RS_GATE_TELEMETRY_START_MILLIS";
+const GATE_ENGAGED_ARG: &str = "--cua-internal-gate-engaged";
+const GATE_MISSING_ACCESSIBILITY_ARG: &str = "--cua-internal-gate-missing-accessibility";
+const GATE_MISSING_SCREEN_RECORDING_ARG: &str = "--cua-internal-gate-missing-screen-recording";
+const GATE_PANEL_SHOWN_ARG: &str = "--cua-internal-gate-panel-shown";
+const GATE_PANEL_DISMISSED_ARG: &str = "--cua-internal-gate-panel-dismissed";
+
+static GATE_ENGAGED: AtomicBool = AtomicBool::new(false);
+static GATE_MISSING_ACCESSIBILITY: AtomicBool = AtomicBool::new(false);
+static GATE_MISSING_SCREEN_RECORDING: AtomicBool = AtomicBool::new(false);
+static GATE_PANEL_SHOWN: AtomicBool = AtomicBool::new(false);
+static GATE_PANEL_DISMISSED: AtomicBool = AtomicBool::new(false);
+static GATE_STARTED_REPORTED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateTelemetryContext {
+    pub engaged: bool,
+    pub missing_accessibility: bool,
+    pub missing_screen_recording: bool,
+    pub panel_shown: bool,
+    pub dismissed: bool,
+    pub elapsed: Duration,
+}
+
+/// Bounded progress signals emitted while an interactive permissions-gate
+/// episode is in flight. The binary owns telemetry delivery; this platform
+/// module reports only content-free state transitions plus the existing
+/// bounded gate context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateProgress {
+    Started,
+    Dismissed,
+}
+
+pub fn is_gate_reexec() -> bool {
+    std::env::var_os(GATE_REEXEC_ENV).is_some()
+}
+
+fn has_internal_arg(value: &str) -> bool {
+    std::env::args_os().any(|arg| arg == value)
+}
+
+/// Return only the bounded state needed by the binary's telemetry layer. The
+/// start time plus bounded hidden argv flags survive the TCC cache-clearing
+/// re-exec loop, allowing one terminal event for the whole gate episode.
+pub fn telemetry_context() -> GateTelemetryContext {
+    let engaged = GATE_ENGAGED.load(Ordering::Relaxed) || has_internal_arg(GATE_ENGAGED_ARG);
+    let missing_accessibility = GATE_MISSING_ACCESSIBILITY.load(Ordering::Relaxed)
+        || has_internal_arg(GATE_MISSING_ACCESSIBILITY_ARG);
+    let missing_screen_recording = GATE_MISSING_SCREEN_RECORDING.load(Ordering::Relaxed)
+        || has_internal_arg(GATE_MISSING_SCREEN_RECORDING_ARG);
+    let started = std::env::var(GATE_START_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let telemetry_started = std::env::var(GATE_TELEMETRY_START_MILLIS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u128>().ok());
+    let elapsed = telemetry_started
+        .and_then(|started| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|now| Duration::from_millis(now.as_millis().saturating_sub(started) as u64))
+        })
+        .unwrap_or_default();
+    GateTelemetryContext {
+        engaged: started.is_some()
+            && engaged
+            && (missing_accessibility || missing_screen_recording),
+        missing_accessibility,
+        missing_screen_recording,
+        panel_shown: GATE_PANEL_SHOWN.load(Ordering::Relaxed)
+            || has_internal_arg(GATE_PANEL_SHOWN_ARG),
+        dismissed: GATE_PANEL_DISMISSED.load(Ordering::Relaxed)
+            || has_internal_arg(GATE_PANEL_DISMISSED_ARG),
+        elapsed,
+    }
+}
+
+fn begin_gate_episode(initial: PermissionsStatus) {
+    let already_engaged =
+        GATE_ENGAGED.swap(true, Ordering::Relaxed) || has_internal_arg(GATE_ENGAGED_ARG);
+    if !already_engaged {
+        GATE_MISSING_ACCESSIBILITY.store(!initial.accessibility, Ordering::Relaxed);
+        GATE_MISSING_SCREEN_RECORDING.store(!initial.screen_recording, Ordering::Relaxed);
+    }
+    if std::env::var_os(GATE_START_ENV).is_none() {
+        if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            std::env::set_var(GATE_START_ENV, now.as_secs().to_string());
+            std::env::set_var(GATE_TELEMETRY_START_MILLIS_ENV, now.as_millis().to_string());
+        }
+    }
+}
+
+/// Initialize the environment-backed gate timestamps before the daemon starts
+/// any background threads. Later panel state is held in atomics and copied to
+/// bounded hidden argv flags only at re-exec time. A returned `Started`
+/// transition belongs to this first probe and should be delivered before the
+/// caller performs other startup work.
+pub fn prepare_telemetry_context(opt_out: bool) -> Option<(GateProgress, GateTelemetryContext)> {
+    if opt_out || is_gate_reexec() || std::env::var_os(GATE_START_ENV).is_some() {
+        return None;
+    }
+    let initial = current_status();
+    if !initial.all_granted() {
+        begin_gate_episode(initial);
+        GATE_STARTED_REPORTED.store(true, Ordering::Relaxed);
+        return Some((GateProgress::Started, telemetry_context()));
+    }
+    None
+}
 
 /// Run the gate if needed.  When called and the process already has both
 /// grants, this returns immediately without printing anything — the
@@ -217,6 +333,16 @@ const GATE_START_ENV: &str = "CUA_DRIVER_RS_GATE_START_UNIX";
 /// with their existing error messages, mirroring Swift's "user closes
 /// the panel" path.
 pub fn run_if_needed(opts: GateOpts) -> Result<()> {
+    run_if_needed_with_observer(opts, |_, _| {})
+}
+
+/// Run the gate while reporting bounded progress transitions to `observer`.
+/// The first process reports `Started`; TCC cache-refresh re-execs skip it.
+/// `Dismissed` is reported as soon as the native panel returns that outcome.
+pub fn run_if_needed_with_observer<F>(opts: GateOpts, mut observer: F) -> Result<()>
+where
+    F: FnMut(GateProgress, GateTelemetryContext),
+{
     if opts.opt_out {
         tracing::debug!("permissions gate skipped (opt_out=true)");
         return Ok(());
@@ -228,6 +354,17 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
         // the user sees nothing different from before this gate existed.
         return Ok(());
     }
+    begin_gate_episode(initial);
+
+    let gate_reexec = is_gate_reexec();
+    if should_report_started(
+        initial,
+        gate_reexec,
+        GATE_STARTED_REPORTED.load(Ordering::Relaxed),
+    ) {
+        GATE_STARTED_REPORTED.store(true, Ordering::Relaxed);
+        observer(GateProgress::Started, telemetry_context());
+    }
 
     // A gate re-exec (`wait_for_grants` restarts the daemon ~every 25s to
     // refresh the per-process TCC trust cache) re-runs this function. The
@@ -236,7 +373,7 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
     // user (forever, since a stale/never-granted state keeps re-execing). A
     // re-exec'd process polls SILENTLY instead — skip the prompts + panel and
     // go straight to the wait loop, which re-checks the grant and re-execs.
-    if std::env::var(GATE_REEXEC_ENV).is_ok() {
+    if gate_reexec {
         return wait_for_grants(&opts);
     }
 
@@ -285,6 +422,13 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
     //   * `ShownAllGranted` — the panel's poll loop saw both grants
     //     flip green; skip the wait loop entirely.
     let presentation = present_panel_if_available(initial);
+    if presentation != PanelPresentation::NotShown {
+        GATE_PANEL_SHOWN.store(true, Ordering::Relaxed);
+    }
+    if progress_for_presentation(presentation) == Some(GateProgress::Dismissed) {
+        GATE_PANEL_DISMISSED.store(true, Ordering::Relaxed);
+        observer(GateProgress::Dismissed, telemetry_context());
+    }
     let should_auto_open_settings;
     let skip_wait_loop;
     match presentation {
@@ -319,6 +463,23 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
         return Ok(());
     }
     wait_for_grants(&opts)
+}
+
+fn should_report_started(
+    initial: PermissionsStatus,
+    gate_reexec: bool,
+    already_reported: bool,
+) -> bool {
+    !initial.all_granted() && !gate_reexec && !already_reported
+}
+
+fn progress_for_presentation(presentation: PanelPresentation) -> Option<GateProgress> {
+    match presentation {
+        PanelPresentation::ShownDismissed => Some(GateProgress::Dismissed),
+        PanelPresentation::NotShown
+        | PanelPresentation::ShownOpenSettings
+        | PanelPresentation::ShownAllGranted => None,
+    }
 }
 
 /// Outcome of a panel-present attempt. Drives the subsequent flow in
@@ -394,7 +555,10 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        match std::env::var(GATE_START_ENV).ok().and_then(|s| s.parse::<u64>().ok()) {
+        match std::env::var(GATE_START_ENV)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+        {
             Some(orig) => Instant::now()
                 .checked_sub(Duration::from_secs(now_unix.saturating_sub(orig)))
                 .unwrap_or_else(Instant::now),
@@ -511,7 +675,32 @@ fn reexec_self() {
         eprintln!("[cua-driver] re-exec failed: cannot resolve current_exe");
         return;
     };
-    let argv: Vec<CString> = std::env::args_os()
+    let mut raw_argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    for (enabled, flag) in [
+        (GATE_ENGAGED.load(Ordering::Relaxed), GATE_ENGAGED_ARG),
+        (
+            GATE_MISSING_ACCESSIBILITY.load(Ordering::Relaxed),
+            GATE_MISSING_ACCESSIBILITY_ARG,
+        ),
+        (
+            GATE_MISSING_SCREEN_RECORDING.load(Ordering::Relaxed),
+            GATE_MISSING_SCREEN_RECORDING_ARG,
+        ),
+        (
+            GATE_PANEL_SHOWN.load(Ordering::Relaxed),
+            GATE_PANEL_SHOWN_ARG,
+        ),
+        (
+            GATE_PANEL_DISMISSED.load(Ordering::Relaxed),
+            GATE_PANEL_DISMISSED_ARG,
+        ),
+    ] {
+        if enabled && !raw_argv.iter().any(|arg| arg == flag) {
+            raw_argv.push(flag.into());
+        }
+    }
+    let argv: Vec<CString> = raw_argv
+        .into_iter()
         .filter_map(|a| CString::new(a.into_vec()).ok())
         .collect();
     if argv.is_empty() {
@@ -520,8 +709,7 @@ fn reexec_self() {
     }
 
     // execvp takes a NULL-terminated argv. Build pointers + sentinel.
-    let mut argv_ptrs: Vec<*const libc::c_char> =
-        argv.iter().map(|s| s.as_ptr()).collect();
+    let mut argv_ptrs: Vec<*const libc::c_char> = argv.iter().map(|s| s.as_ptr()).collect();
     argv_ptrs.push(std::ptr::null());
 
     let exe_c = match CString::new(exe.into_os_string().into_vec()) {
@@ -604,6 +792,44 @@ mod tests {
         crate::permissions::test_env_lock()
     }
 
+    fn clear_telemetry_env() {
+        for name in [
+            GATE_REEXEC_ENV,
+            GATE_START_ENV,
+            GATE_TELEMETRY_START_MILLIS_ENV,
+        ] {
+            std::env::remove_var(name);
+        }
+        GATE_ENGAGED.store(false, Ordering::Relaxed);
+        GATE_MISSING_ACCESSIBILITY.store(false, Ordering::Relaxed);
+        GATE_MISSING_SCREEN_RECORDING.store(false, Ordering::Relaxed);
+        GATE_PANEL_SHOWN.store(false, Ordering::Relaxed);
+        GATE_PANEL_DISMISSED.store(false, Ordering::Relaxed);
+        GATE_STARTED_REPORTED.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn telemetry_context_is_bounded_and_survives_reexec_state() {
+        let _guard = env_lock();
+        clear_telemetry_env();
+        std::env::set_var(GATE_START_ENV, "1");
+        std::env::set_var(GATE_TELEMETRY_START_MILLIS_ENV, "1");
+        GATE_ENGAGED.store(true, Ordering::Relaxed);
+        GATE_MISSING_ACCESSIBILITY.store(true, Ordering::Relaxed);
+        GATE_PANEL_SHOWN.store(true, Ordering::Relaxed);
+        GATE_PANEL_DISMISSED.store(true, Ordering::Relaxed);
+        std::env::set_var(GATE_REEXEC_ENV, "1");
+
+        let context = telemetry_context();
+        assert!(context.engaged);
+        assert!(context.missing_accessibility);
+        assert!(!context.missing_screen_recording);
+        assert!(context.panel_shown);
+        assert!(context.dismissed);
+        assert!(is_gate_reexec());
+        clear_telemetry_env();
+    }
+
     #[test]
     fn opt_out_short_circuits_run_if_needed() {
         // With opt_out=true the gate must return Ok(()) without touching
@@ -619,7 +845,82 @@ mod tests {
             also_raise_prompts: false,
             open_settings: false,
         };
-        assert!(run_if_needed(opts).is_ok());
+        let mut observed = Vec::new();
+        assert!(run_if_needed_with_observer(opts, |progress, _| {
+            observed.push(progress);
+        })
+        .is_ok());
+        assert!(observed.is_empty());
+    }
+
+    #[test]
+    fn started_progress_covers_each_missing_permission_combination_once() {
+        for initial in [
+            PermissionsStatus {
+                accessibility: false,
+                screen_recording: true,
+            },
+            PermissionsStatus {
+                accessibility: true,
+                screen_recording: false,
+            },
+            PermissionsStatus {
+                accessibility: false,
+                screen_recording: false,
+            },
+        ] {
+            assert!(should_report_started(initial, false, false));
+            assert!(
+                !should_report_started(initial, true, false),
+                "re-exec must not repeat start"
+            );
+            assert!(
+                !should_report_started(initial, false, true),
+                "an already reported episode must not repeat start"
+            );
+        }
+        assert!(!should_report_started(
+            PermissionsStatus {
+                accessibility: true,
+                screen_recording: true,
+            },
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn gate_episode_keeps_the_first_missing_permission_snapshot() {
+        let _guard = env_lock();
+        clear_telemetry_env();
+        begin_gate_episode(PermissionsStatus {
+            accessibility: false,
+            screen_recording: false,
+        });
+        begin_gate_episode(PermissionsStatus {
+            accessibility: true,
+            screen_recording: false,
+        });
+
+        let context = telemetry_context();
+        assert!(context.missing_accessibility);
+        assert!(context.missing_screen_recording);
+        clear_telemetry_env();
+    }
+
+    #[test]
+    fn dismissed_progress_is_only_reported_for_explicit_panel_exit() {
+        assert_eq!(
+            progress_for_presentation(PanelPresentation::ShownDismissed),
+            Some(GateProgress::Dismissed)
+        );
+        for presentation in [
+            PanelPresentation::NotShown,
+            PanelPresentation::ShownOpenSettings,
+            PanelPresentation::ShownAllGranted,
+        ] {
+            assert_eq!(progress_for_presentation(presentation), None);
+        }
     }
 
     #[test]
@@ -689,8 +990,10 @@ mod tests {
             let opts = GateOpts::from_env_and_flag(false);
             // "TrUe" is in the list intentionally — it must NOT opt out
             // (it's not in the off-sentinel set), so split the assertion.
-            let expected_opt_out =
-                matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off");
+            let expected_opt_out = matches!(
+                v.to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            );
             assert_eq!(
                 opts.opt_out, expected_opt_out,
                 "env={v:?} opt_out mismatch (expected {expected_opt_out})"

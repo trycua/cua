@@ -30,6 +30,26 @@ cd "$elecDir"
 mkdir -p "$elecDir/web"
 cp -r "$harnessDir/shared/web/." "$elecDir/web/"
 
+# Certification runs archive any inherited dependency tree and reinstall from
+# the lockfile. This keeps a same-SHA rerun independent of worker state without
+# deleting evidence from the previous fixture build.
+if [[ "${CUA_E2E_FRESH_FIXTURE_STATE:-0}" == 1 ]]; then
+  fixtureRunId="${CUA_E2E_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+  fixtureArchiveRoot="${TMPDIR:-/tmp}/cua-electron-fixture-archive"
+  fixtureArchive="${fixtureArchiveRoot}/node_modules.${fixtureRunId}"
+  if [[ -e "$fixtureArchive" ]]; then
+    echo "[ERROR] refusing to overwrite fixture archive: $fixtureArchive" >&2
+    exit 2
+  fi
+  if [[ -d "$elecDir/node_modules" ]]; then
+    mkdir -p "$fixtureArchiveRoot"
+    mv "$elecDir/node_modules" "$fixtureArchive"
+    echo "[EVIDENCE] Archived inherited Electron dependencies at $fixtureArchive"
+  fi
+  echo "[INSTALL] npm ci from the pinned lockfile..."
+  npm ci --silent
+fi
+
 # install the Electron runtime for the current platform
 if [ "$platform" = "Darwin" ]; then
   electronBin="$elecDir/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
@@ -49,7 +69,7 @@ electron_install_complete() {
   fi
 }
 
-if ! electron_install_complete; then
+if [[ "${CUA_E2E_FRESH_FIXTURE_STATE:-0}" != 1 ]] && ! electron_install_complete; then
   echo "[INSTALL] npm install (first run)..."
   npm install --silent
 fi

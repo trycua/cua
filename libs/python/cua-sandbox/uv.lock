@@ -414,7 +414,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.8.3"
+version = "0.8.4"
 source = { editable = "../agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -450,12 +450,14 @@ requires-dist = [
     { name = "cua-som", marker = "extra == 'omni'", editable = "../som" },
     { name = "einops", marker = "extra == 'all'" },
     { name = "einops", marker = "extra == 'internvl-hf'" },
+    { name = "fastmcp", marker = "extra == 'hud'", specifier = ">=3.2.0,<3.3.0" },
     { name = "google-genai", marker = "extra == 'all'", specifier = ">=1.41.0" },
     { name = "google-genai", marker = "extra == 'cloud'", specifier = ">=1.41.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.41.0" },
     { name = "gradio", marker = "extra == 'all'", specifier = ">=6.0.0" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=6.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "hud-python", marker = "extra == 'hud'", specifier = "==0.4.52" },
     { name = "litellm", specifier = "==1.86.2" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' and extra == 'all'", specifier = ">=0.1.27" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' and extra == 'uitars-mlx'", specifier = ">=0.1.27" },
@@ -536,12 +538,25 @@ provides-extras = ["otel", "telemetry"]
 dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
+name = "cua-fleet"
+version = "0.1.8"
+source = { registry = "https://wheels.cua.ai/simple" }
+wheels = [
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:20611a14c185157e6f41502e1bbdcc1e98663347e94463ca538755b0efc173bb" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7c21d0a36a8d74bfe0768422e4f3d9367ee51837920e2c22ee57521fc93c4f3b" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:d7604668a7186d06cefb2bd23974b033c0b2cda61ccbe88d944af622b37f58d3" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:0bac329552d351604ad15b7eb4f4f3ed944921083238d74f51277d657d8f0a34" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-win_amd64.whl", hash = "sha256:d78fe6934a2f650dcf5b105a08833418245c720765da9c3b40e160b86a3d203d" },
+]
+
+[[package]]
 name = "cua-sandbox"
-version = "0.1.16"
+version = "0.1.28"
 source = { editable = "." }
 dependencies = [
     { name = "cua-auto" },
     { name = "cua-core" },
+    { name = "cua-fleet" },
     { name = "grpcio" },
     { name = "httpx" },
     { name = "oras" },
@@ -573,6 +588,7 @@ dev = [
 requires-dist = [
     { name = "cua-auto", specifier = ">=0.1.2" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
+    { name = "cua-fleet", specifier = "==0.1.8" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "oras", specifier = ">=0.2.40" },
@@ -615,7 +631,7 @@ name = "ewmhlib"
 version = "0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "python-xlib", marker = "sys_platform == 'linux'" },
+    { name = "python-xlib" },
     { name = "typing-extensions" },
 ]
 wheels = [

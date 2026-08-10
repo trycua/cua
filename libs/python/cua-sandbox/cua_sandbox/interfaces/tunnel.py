@@ -28,15 +28,18 @@ from cua_sandbox.transport.base import Transport
 class TunnelInfo:
     """A single forwarded port."""
 
-    def __init__(self, host: str, port: int, sandbox_port: int) -> None:
+    def __init__(
+        self, host: str, port: int, sandbox_port: int, *, url: Optional[str] = None
+    ) -> None:
         self.host = host
         self.port = port  # host-side port
         self.sandbox_port = sandbox_port  # original port inside sandbox
+        self._url = url
         self._closer: Optional[object] = None  # Callable[[TunnelInfo], Coroutine]
 
     @property
     def url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        return self._url or f"http://{self.host}:{self.port}"
 
     async def close(self) -> None:
         """Close this tunnel (no-op if already closed or inside a context manager)."""

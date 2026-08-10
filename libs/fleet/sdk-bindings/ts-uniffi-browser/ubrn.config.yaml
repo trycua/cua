@@ -1,0 +1,10 @@
+rust:
+  directory: ../..
+  manifestPath: sdk/Cargo.toml
+bindings:
+  cpp: cpp
+  ts: ts
+web:
+  manifestPath: rust_modules/wasm/Cargo.toml
+  tsBindings: ts
+  entrypoint: ts/index.web.ts

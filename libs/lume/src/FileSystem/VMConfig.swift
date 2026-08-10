@@ -3,7 +3,7 @@ import Foundation
 import Virtualization
 
 /// Represents a shared directory configuration
-struct SharedDirectory: Codable {
+struct SharedDirectory: Codable, Sendable {
     let hostPath: String
     let tag: String
     let readOnly: Bool

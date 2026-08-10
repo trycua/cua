@@ -23,21 +23,68 @@ lume get macos-tahoe
 The details include the VM state, IP address, display session, resources, and
 SSH availability when the VM is running.
 
-## Run and stop a VM
+## Run, attach to, and stop a VM
 
-Run Tahoe with a display:
+Run Tahoe with the low-latency native viewer. VNC remains available for
+automation and remote access, and the owning process stays attached to the
+terminal:
 
 ```bash
 lume run macos-tahoe
 ```
 
-Run it headlessly:
+Use `--detach` to run it in the background without opening a viewer. Lume prints
+its PID and writes logs to `~/Library/Logs/lume/macos-tahoe.log` by default:
 
 ```bash
-lume run --no-display macos-tahoe
+lume run macos-tahoe --detach
 ```
 
-Stop it when you are finished:
+VNC remains active in the background. From another terminal, attach the
+preferred viewer; Lume uses its native viewer when the owning process supports
+live attachment and otherwise falls back to VNC:
+
+```bash
+lume attach macos-tahoe
+```
+
+Select a viewer explicitly when needed:
+
+```bash
+lume attach macos-tahoe --display native
+lume attach macos-tahoe --display vnc
+```
+
+Select Screen Sharing or suppress the startup viewer explicitly when needed:
+
+```bash
+lume run macos-tahoe --display vnc
+lume run macos-tahoe --display none
+```
+
+Closing the native window only hides it; it does not stop the guest. Reopen it
+from Lume's Dock icon, **Window → Show VM Window**, or another `lume attach`
+command. The older `--no-display` flag remains an alias for `--display none`.
+
+### Copy files into a native guest
+
+Drop one or more files or folders from Finder onto the native VM screen. Lume
+shows the transfer status while recursively copying the items over SSH to
+`/Users/lume/Desktop`.
+
+File drop is available only in the native viewer and transfers from host to
+guest. SSH for the default `lume` guest account must be available. Lume rejects
+the entire drop rather than overwriting an existing Desktop item; items in the
+same drop must also have distinct names.
+
+Gracefully restart or shut down a guest over SSH:
+
+```bash
+lume restart macos-tahoe
+lume shutdown macos-tahoe
+```
+
+Keep `stop` for an immediate process-level stop:
 
 ```bash
 lume stop macos-tahoe
@@ -55,8 +102,12 @@ Pass a host directory when you run the VM:
 lume run macos-tahoe --shared-dir ~/Projects
 ```
 
-The directory appears in the guest at `/Volumes/My Shared Files`. Use a
-read-only mount when the guest only needs to read the files:
+The directory appears in the guest at `/Volumes/My Shared Files`. In the native
+viewer, **Share Folder** can also add a directory while the guest is running,
+including the first folder added to a VM that started without shared folders;
+no guest restart or remount is needed. Folders added from the toolbar last for
+that run only. Use a read-only mount when the guest only needs to read the
+files:
 
 ```bash
 lume run macos-tahoe --shared-dir ~/Projects:ro

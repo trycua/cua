@@ -1,0 +1,106 @@
+---
+title: 'Use Cua Driver with Claude Agent SDK'
+description: 'Choose same-process native callbacks or the MCP agent boundary in Python and TypeScript.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Claude Agent SDK supports both Cua Driver integration routes:
+
+- Use **native callbacks** when your application already owns the agent loop,
+  driver runtime, permissions, and session lifecycle.
+- Use **MCP** when Claude is an external agent or should discover the complete
+  Cua Driver tool catalog.
+
+The native callbacks are packaged by Claude Agent SDK as an in-process SDK MCP
+server. Despite that helper's name, it does not start a subprocess or use a
+socket; each callback calls `CuaDriver.create()` in the application process.
+
+## Install the executable examples
+
+From `libs/cua-driver/examples/agent-sdks`:
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+npm install
+```
+
+  </Tab>
+</Tabs>
+
+Authenticate Claude Agent SDK using its normal local login or
+`ANTHROPIC_API_KEY`. Set `CLAUDE_MODEL` only when you need to override its
+default model.
+
+## Run the native callback route
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+.venv/bin/python claude_agent.py --route native \
+  "Inspect the fixture, enter a short value, submit it, and verify the result"
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+npm run claude -- --route native \
+  "Inspect the fixture, enter a short value, submit it, and verify the result"
+```
+
+  </Tab>
+</Tabs>
+
+The examples expose only `observe_desktop`, `click_desktop`, `type_text`, and
+`press_key`. Their handlers call the same-process Python or TypeScript SDK.
+Every mutation returns a fresh desktop observation. If a call times out, the
+handler labels its outcome unknown and tells the model to inspect before any
+retry.
+
+The complete executables live at
+`libs/cua-driver/examples/agent-sdks/claude_agent.py` and
+`libs/cua-driver/examples/agent-sdks/claude_agent.ts` in the Cua repository.
+
+## Run the MCP route
+
+Install Cua Driver so `cua-driver` is on `PATH`, then run:
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+CUA_CAPTURE_SCOPE=auto \
+  .venv/bin/python claude_agent.py --route mcp \
+  "Inspect the active app and summarize what is visible"
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+CUA_CAPTURE_SCOPE=auto \
+  npm run claude -- --route mcp \
+  "Inspect the active app and summarize what is visible"
+```
+
+  </Tab>
+</Tabs>
+
+The host creates the Cua session, supplies `cua-driver mcp` to Claude, and ends
+the session in `finally`. Claude discovers the full live MCP surface; the
+generated Cua language packages are not acting as MCP clients.
+
+Use only trusted tasks with these examples. They remove interactive approval
+prompts and deliberately exclude Claude Code's built-in shell and file tools.

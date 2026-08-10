@@ -20,12 +20,12 @@ from cua_sandbox.image import Image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport
 from fleet_sdk import (
+    AccessTokenProvider,
     CreateClaimRequest,
     CreatePoolRequest,
     CreatePoolRequestBuilder,
     CreateTemplateRequest,
     CreateTemplateRequestBuilder,
-    AccessTokenProvider,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,

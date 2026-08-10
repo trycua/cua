@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 
 import pytest
-from cua_sandbox import Image, Sandbox as CuaSandbox
+from cua_sandbox import Image
+from cua_sandbox import Sandbox as CuaSandbox
 from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 from fleet_sdk import (

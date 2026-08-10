@@ -11,8 +11,7 @@ import importlib
 import os
 
 import pytest
-from cua_sandbox import Image, Sandbox
-from cua_sandbox import _config
+from cua_sandbox import Image, Sandbox, _config
 from cua_sandbox.runtime.base import RuntimeInfo
 
 sandbox_module = importlib.import_module("cua_sandbox.sandbox")
@@ -67,7 +66,9 @@ async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(monkeypatch, 
             return None
 
     monkeypatch.setattr(sandbox_module, "FleetCloudTransport", FleetTransport)
-    monkeypatch.setattr(sandbox_module, "_make_transport", lambda **kwargs: LegacyTransport(**kwargs))
+    monkeypatch.setattr(
+        sandbox_module, "_make_transport", lambda **kwargs: LegacyTransport(**kwargs)
+    )
 
     fleet_sandbox = await Sandbox.create(Image.from_registry("example:latest"), name="fleet-demo")
     legacy_sandbox = await Sandbox.create(

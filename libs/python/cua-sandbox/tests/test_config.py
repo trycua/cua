@@ -1,7 +1,6 @@
 """Unit tests for config and auth modules."""
 
 import pytest
-
 from cua_sandbox._config import (
     _global_config,
     configure,
@@ -14,7 +13,6 @@ from cua_sandbox._config import (
     get_token_url,
     has_fleet_auth,
 )
-
 
 _CONFIG_ENV_VARS = (
     "CUA_API_KEY",

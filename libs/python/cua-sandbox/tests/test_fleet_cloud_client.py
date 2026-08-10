@@ -2,7 +2,10 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-from cua_sandbox.transport.fleet_cloud import _FleetClient, _GitHubActionsAccessTokenProvider
+from cua_sandbox.transport.fleet_cloud import (
+    _FleetClient,
+    _GitHubActionsAccessTokenProvider,
+)
 from fleet_sdk import (
     AccessTokenProviderError,
     CyclopsClient,

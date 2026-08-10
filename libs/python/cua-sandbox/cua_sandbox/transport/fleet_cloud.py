@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import httpx
-
 from cua_sandbox._config import (
     get_client_id,
     get_client_secret,

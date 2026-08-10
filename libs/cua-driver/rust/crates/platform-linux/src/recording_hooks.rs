@@ -60,12 +60,13 @@ pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Opt
         return crate::wayland::screenshot_display_dispatch().ok();
     }
     if let Some(window_id) = window_id {
-        crate::wayland::screenshot_dispatch(window_id).ok()
+        pid.and_then(|pid| u32::try_from(pid).ok())
+            .and_then(|pid| crate::wayland::screenshot_dispatch_with_pid(window_id, pid).ok())
     } else if let Some(pid) = pid.and_then(|pid| u32::try_from(pid).ok()) {
         let windows = crate::wayland::list_windows_dispatch(Some(pid));
         windows
             .first()
-            .and_then(|window| crate::wayland::screenshot_dispatch(window.xid).ok())
+            .and_then(|window| crate::wayland::screenshot_dispatch_with_pid(window.xid, pid).ok())
     } else {
         crate::capture::screenshot_display_bytes().ok()
     }

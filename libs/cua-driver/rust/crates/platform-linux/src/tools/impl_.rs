@@ -594,10 +594,11 @@ impl Tool for GetWindowStateTool {
                 modality at ACTION time: an element ax action \
                 (element_index/element_token → accessibility rung) or an element px \
                 action (x,y → pixel rung off this screenshot). capture_mode is \
-                deprecated and ignored. On Wayland, where output capture cannot prove \
-                the requested surface's identity, the truthful tree is returned without \
-                a screenshot and `screenshot_error.code` is \
-                `surface_identity_unproven`.\n\n\
+                deprecated and ignored. When a Wayland compositor cannot prove the \
+                requested surface's identity, the truthful tree is returned without a \
+                screenshot and `screenshot_error.code` is \
+                `surface_identity_unproven`. Hyprland uses compositor-owned per-toplevel \
+                capture when exact PID/title/app-id correlation succeeds.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees. When applied, BOTH \
@@ -718,7 +719,7 @@ impl Tool for GetWindowStateTool {
             // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
             let mut screenshot_error = None;
             let screenshot = if should_capture {
-                match crate::wayland::screenshot_dispatch(xid) {
+                match crate::wayland::screenshot_dispatch_with_pid(xid, pid) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw)
                             .map(|(w, _)| w)
@@ -7085,7 +7086,10 @@ impl Tool for ZoomTool {
             // pure-Wayland sessions surface a typed "per-window capture not
             // supported yet" error instead of accidentally calling the
             // X11-only path with a foreign-toplevel id.
-            let png = crate::wayland::screenshot_window_dispatch(xid)?;
+            let png = match pid {
+                Some(pid) => crate::wayland::screenshot_dispatch_with_pid(xid, pid)?,
+                None => crate::wayland::screenshot_window_dispatch(xid)?,
+            };
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png, x1, y1, x2, y2, 500)
         })
         .await;

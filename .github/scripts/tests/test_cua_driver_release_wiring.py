@@ -64,6 +64,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("Verify Node runtime is self-contained on Windows", release_workflow)
         self.assertIn("dumpbin /DEPENDENTS", release_workflow)
         self.assertIn("VCRUNTIME|MSVCP|CONCRT|UCRTBASE|api-ms-win-crt-", release_workflow)
+        self.assertIn("verify-windows-node-runtime:", release_workflow)
+        self.assertIn("os: windows-11-arm", release_workflow)
+        self.assertIn("Import exact candidate through public SDK", release_workflow)
+        self.assertIn("process.arch !== '${{ matrix.node_arch }}'", release_workflow)
 
     def test_npm_publish_uses_explicit_local_tarball_paths(self) -> None:
         workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
@@ -482,7 +486,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' && inputs.publish && "
             "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
         )
-        self.assertEqual(workflow.count(immutable_ref), 5)
+        self.assertEqual(workflow.count(immutable_ref), 6)
         self.assertIn(
             "name: Ensure Rust target is installed\n"
             "        working-directory: libs/cua-driver/rust",
@@ -574,6 +578,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
             "[build-linux, build-windows, build-macos-universal, "
+            "verify-windows-node-runtime, "
             "verify-release-artifacts, verify-mcp-client-discovery]",
             workflow,
         )

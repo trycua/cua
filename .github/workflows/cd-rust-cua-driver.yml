@@ -347,6 +347,68 @@ jobs:
           path: libs/cua-driver/rust/release/cua-driver-rs-*-windows-${{ matrix.arch }}*.zip
           if-no-files-found: error
 
+  # Load the exact candidate Node runtime on native x64 and ARM64 Windows.
+  # The build job also rejects dynamic CRT imports, while this job proves the
+  # staged addon and SDK DLL work together through the public TypeScript API.
+  verify-windows-node-runtime:
+    name: Windows ${{ matrix.node_arch }} packaged Node runtime
+    needs: build-windows
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            release_arch: x86_64
+            node_arch: x64
+          - os: windows-11-arm
+            release_arch: arm64
+            node_arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/typescript/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: cua-driver-rs-windows-${{ matrix.release_arch }}
+          path: artifacts
+      - name: Build TypeScript SDK
+        working-directory: libs/cua-driver/typescript
+        run: |
+          npm ci
+          npm run build
+      - name: Stage exact candidate native package
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem artifacts -Recurse `
+            -Filter "*-windows-${{ matrix.release_arch }}-binary.zip")
+          if ($archives.Count -ne 1) {
+            throw "Expected one Windows candidate archive, found $($archives.Count)"
+          }
+          $candidate = Join-Path $env:RUNNER_TEMP "cua-driver-node-candidate"
+          Expand-Archive -LiteralPath $archives[0].FullName -DestinationPath $candidate
+
+          $triple = "win32-${{ matrix.node_arch }}-msvc"
+          $package = "libs/cua-driver/typescript/node_modules/@trycua/cua-driver-$triple"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item (Join-Path $candidate "cua_driver_sdk.dll") $package
+          Copy-Item (Join-Path $candidate "cua_driver_node_runtime.node") $package
+          @{
+            name = "@trycua/cua-driver-$triple"
+            version = "0.0.0-candidate"
+            private = $true
+          } | ConvertTo-Json | Set-Content (Join-Path $package "package.json")
+      - name: Import exact candidate through public SDK
+        shell: pwsh
+        run: |
+          node --input-type=module -e `
+            "if (process.arch !== '${{ matrix.node_arch }}') throw new Error('unexpected Node architecture ' + process.arch); const sdk = await import('./libs/cua-driver/typescript/dist/index.js'); const driver = sdk.CuaDriver.connect(undefined); console.log(process.platform, process.arch, driver.socketPath()); driver.uniffiDestroy();"
+
   # ── macOS universal (arm64 + x86_64 → lipo) ─────────────────────────────────
   # Mirrors cd-swift-cua-driver.yml's approach: build both arches in one job
   # on macos-26, then combine into a universal binary via `lipo -create`.
@@ -718,7 +780,7 @@ jobs:
   # evidence exists.
   release:
     needs:
-      [build-linux, build-windows, build-macos-universal, verify-release-artifacts, verify-mcp-client-discovery]
+      [build-linux, build-windows, build-macos-universal, verify-windows-node-runtime, verify-release-artifacts, verify-mcp-client-discovery]
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
     steps:

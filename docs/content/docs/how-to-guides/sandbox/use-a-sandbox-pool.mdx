@@ -51,20 +51,11 @@ Save the following script as `sandbox_pool.py`. Change `CUA_POOL_NAME` if you
 need a different DNS-compatible namespace and pool name.
 
 ```python title="sandbox_pool.py"
+import asyncio
 import os
 from pathlib import Path
 
-from cua_sandbox import (
-    CreatePoolRequestBuilder,
-    CreateTemplateRequestBuilder,
-    OsGymSandboxTemplateSpecBuilder,
-    OsGymSandboxWarmPoolSpecBuilder,
-    SandboxServiceBuilder,
-    SandboxTemplateRefBuilder,
-    ServiceProtocol,
-    VmTemplateBuilder,
-)
-from cua_sandbox.sync import Pool, Template
+from cua_sandbox import Image, Sandbox
 
 POOL_NAME = os.environ.get("CUA_POOL_NAME", "my-sandbox-pool")
 IMAGE = (
@@ -72,49 +63,22 @@ IMAGE = (
     "@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
 )
 
-server = (
-    SandboxServiceBuilder()
-    .name("server")
-    .target_port(8000)
-    .protocol(ServiceProtocol.TCP)
-    .build()
-)
-vm = (
-    VmTemplateBuilder()
-    .container_disk_image(IMAGE)
-    .image_pull_secret("ecr-credentials")
-    .cpu_cores(4)
-    .memory("4Gi")
-    .services([server])
-    .build()
-)
-template_request = (
-    CreateTemplateRequestBuilder()
-    .namespace(POOL_NAME)
-    .name("workspace")
-    .spec(OsGymSandboxTemplateSpecBuilder().vm_template(vm).build())
-    .build()
-)
-pool_request = (
-    CreatePoolRequestBuilder()
-    .namespace(POOL_NAME)
-    .spec(
-        OsGymSandboxWarmPoolSpecBuilder()
-        .replicas(1)
-        .sandbox_template_ref(SandboxTemplateRefBuilder().name("workspace").build())
-        .build()
-    )
-    .build()
-)
 
-Template.reconcile(template_request)
-pool = Pool.reconcile(pool_request)
+async def main() -> None:
+    output = Path("sandbox.png")
+    async with Sandbox.ephemeral(
+        Image.from_registry(IMAGE),
+        name=POOL_NAME,
+        cpu=4,
+        memory_mb=4096,
+        time_to_start=900,
+    ) as sandbox:
+        output.write_bytes(await sandbox.screenshot())
 
-output = Path("sandbox.png")
-with pool.claim() as sandbox:
-    output.write_bytes(sandbox.screenshot())
+    print(f"Saved screenshot to {output.resolve()}")
 
-print(f"Saved screenshot to {output.resolve()}")
+
+asyncio.run(main())
 ```
 
 Run it with Python 3.12, the published `cua-sandbox` package, and the Cua wheel
@@ -127,13 +91,12 @@ uv run --python 3.12 \
   sandbox_pool.py
 ```
 
-The first run creates or updates the template and one-replica warm pool. It can
-take several minutes for the sandbox to become ready. The claim context waits
-for a sandbox, saves the PNG bytes returned by `screenshot()` to `sandbox.png`,
-and releases the claim on exit. Reconciliation is idempotent, so later runs
-update the same named resources instead of creating duplicates.
+The high-level builder creates or updates the template and one-replica pool,
+then waits for its claim to bind. Provisioning can take several minutes. The
+context saves the PNG bytes returned by `screenshot()` to `sandbox.png` and
+releases the claim on exit.
 
 <Callout type="info">
-  Exiting the claim releases the sandbox but does not delete the warm pool. Remove pools you no
-  longer need in [run.cua.ai](https://run.cua.ai/#/pools) to avoid keeping resources allocated.
+  Exiting the context releases the claim but leaves the reconciled pool and template in place.
+  Remove pools you no longer need from the [run.cua.ai pools page](https://run.cua.ai/#/pools).
 </Callout>

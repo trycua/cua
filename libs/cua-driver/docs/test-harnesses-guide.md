@@ -233,8 +233,15 @@ Wayland results are compositor-specific. The hosted lane uses Sway to prove
 wlroots protocols. GNOME requires the optional WinRects Shell helper for
 authoritative frame and buffer geometry, observation, capture, and verified
 target activation. A portal/libei grant persists until the user revokes it, so
-subsequent driver processes do not reopen the consent dialog.
-KDE requires a future target-addressable KWin adapter; portal availability by
+subsequent driver processes do not reopen the consent dialog. Hyprland
+representative runs use `hyprctl` only as an out-of-band test oracle for exact
+focus, active-workspace visibility, and fullscreen sentinel posture; product
+capture identity remains owned by the driver's Hyprland adapter. The desktop
+wrapper rejects a Hyprland selector unless it can query the active compositor.
+Its capture catalog also launches an actual XWayland Electron fixture, moves
+that exact client to an inactive workspace, and requires target-specific pixels
+without any focus or active-workspace change. KDE requires a future
+target-addressable KWin adapter; portal availability by
 itself is not evidence that input can be sent safely to a named window.
 Standard Wayland does not expose the physical pointer position, so canonical
 Wayland rows do not claim the real-cursor preservation oracle. Focus, full
@@ -399,9 +406,11 @@ hierarchy:
 3. **Close representative-desktop gaps.** Hosted Sway passes the complete
    Electron, Tauri, GTK3, capture, and desktop-scope catalogs. A real GNOME 46
    session passes GTK3, capture, and desktop scope, but still needs the shared
-   renderer catalog and portal-video parity. Plasma 6 still needs a verified
-   KWin activation adapter and its first accepted behavioral lane. Issue `#1922`
-   tracks the grouped backend work.
+   renderer catalog and portal-video parity. Hyprland has a representative
+   desktop selector and compositor-backed observer but still needs its first
+   accepted complete-matrix run on an exact candidate SHA. Plasma 6 still needs
+   a verified KWin activation adapter and its first accepted behavioral lane.
+   Issue `#1922` tracks the grouped backend work.
 4. **Add representative toolkit surfaces.** GTK4, Qt5/Qt6, VTE, VCL, and GL
    canvases remain optional real-app gaps; shared Electron/Tauri coverage does
    not substitute for those native stacks.

@@ -893,6 +893,7 @@ pub mod macos {
 
 #[cfg(target_os = "linux")]
 pub mod linux {
+    use std::collections::HashSet;
     use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -915,6 +916,7 @@ pub mod linux {
     enum SessionKind {
         X11,
         Sway,
+        Hyprland,
         Gnome,
         CuaCompositor,
         Missing,
@@ -938,6 +940,8 @@ pub mod linux {
                     SessionKind::CuaCompositor
                 } else if sway_available() {
                     SessionKind::Sway
+                } else if hyprland_available() {
+                    SessionKind::Hyprland
                 } else if gnome_windows().is_ok() {
                     SessionKind::Gnome
                 } else {
@@ -976,14 +980,15 @@ pub mod linux {
                     cursor: true,
                     leaked_input: false,
                 },
-                SessionKind::Sway | SessionKind::Gnome | SessionKind::CuaCompositor => {
-                    ObserverCapabilities {
-                        focus: true,
-                        z_order: true,
-                        cursor: false,
-                        leaked_input: false,
-                    }
-                }
+                SessionKind::Sway
+                | SessionKind::Hyprland
+                | SessionKind::Gnome
+                | SessionKind::CuaCompositor => ObserverCapabilities {
+                    focus: true,
+                    z_order: true,
+                    cursor: false,
+                    leaked_input: false,
+                },
                 SessionKind::Missing => ObserverCapabilities::default(),
             }
         }
@@ -992,6 +997,7 @@ pub mod linux {
             match self.session {
                 SessionKind::X11 => x11_snapshot(target),
                 SessionKind::Sway => sway_snapshot(target),
+                SessionKind::Hyprland => hyprland_snapshot(target),
                 SessionKind::Gnome => gnome_snapshot(target),
                 SessionKind::CuaCompositor => cua_compositor_snapshot(target),
                 SessionKind::Missing => Ok(DesktopSnapshot {
@@ -1019,6 +1025,7 @@ pub mod linux {
                 let focus_identity = || match session {
                     SessionKind::X11 => x11_focus_identity(),
                     SessionKind::Sway => sway_focus_identity(),
+                    SessionKind::Hyprland => hyprland_focus_identity(),
                     SessionKind::Gnome => gnome_focus_identity(),
                     SessionKind::CuaCompositor => cua_compositor_focus_identity(),
                     SessionKind::Missing => Ok(None),
@@ -1094,6 +1101,173 @@ pub mod linux {
 
     fn sway_available() -> bool {
         std::env::var_os("SWAYSOCK").is_some_and(|value| !value.is_empty()) && sway_tree().is_ok()
+    }
+
+    #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+    struct HyprlandWorkspace {
+        #[serde(default)]
+        id: i64,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+    struct HyprlandClient {
+        address: String,
+        #[serde(default)]
+        pid: u32,
+        #[serde(default)]
+        workspace: HyprlandWorkspace,
+        #[serde(default)]
+        size: [i64; 2],
+        #[serde(default)]
+        mapped: bool,
+        #[serde(default)]
+        hidden: bool,
+        #[serde(default)]
+        fullscreen: i64,
+    }
+
+    #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+    struct HyprlandMonitor {
+        #[serde(default, rename = "activeWorkspace")]
+        active_workspace: HyprlandWorkspace,
+    }
+
+    fn hyprctl_json<T: serde::de::DeserializeOwned>(query: &str) -> Result<T, ObserverError> {
+        let output = Command::new("hyprctl")
+            .args(["-j", query])
+            .output()
+            .map_err(|error| ObserverError::new(format!("hyprctl -j {query} failed: {error}")))?;
+        if !output.status.success() {
+            return Err(ObserverError::new(format!(
+                "hyprctl -j {query} exited with {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| ObserverError::new(format!("invalid hyprctl {query} JSON: {error}")))
+    }
+
+    fn parse_hyprland_address(address: &str) -> Option<u64> {
+        u64::from_str_radix(address.trim().trim_start_matches("0x"), 16)
+            .ok()
+            .filter(|address| *address != 0)
+    }
+
+    fn hyprland_clients() -> Result<Vec<HyprlandClient>, ObserverError> {
+        hyprctl_json("clients")
+    }
+
+    fn hyprland_active_address() -> Result<Option<u64>, ObserverError> {
+        let active: serde_json::Value = hyprctl_json("activewindow")?;
+        Ok(active["address"].as_str().and_then(parse_hyprland_address))
+    }
+
+    fn hyprland_active_workspaces() -> Result<HashSet<i64>, ObserverError> {
+        let monitors: Vec<HyprlandMonitor> = hyprctl_json("monitors")?;
+        Ok(monitors
+            .into_iter()
+            .map(|monitor| monitor.active_workspace.id)
+            .filter(|workspace| *workspace != 0)
+            .collect())
+    }
+
+    fn select_hyprland_pid_client(
+        clients: &[HyprlandClient],
+        pid: u32,
+    ) -> Result<Option<&HyprlandClient>, ObserverError> {
+        let candidates = clients
+            .iter()
+            .filter(|client| client.pid == pid && client.mapped)
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [] => Ok(None),
+            [client] => Ok(Some(*client)),
+            _ => {
+                // Canonical fixtures can transiently own a small child window.
+                // Select the unique largest mapped surface, but never guess on
+                // equal-area siblings.
+                let max_area = candidates
+                    .iter()
+                    .map(|client| client.size[0].saturating_mul(client.size[1]))
+                    .max()
+                    .unwrap_or_default();
+                let largest = candidates
+                    .into_iter()
+                    .filter(|client| client.size[0].saturating_mul(client.size[1]) == max_area)
+                    .collect::<Vec<_>>();
+                match largest.as_slice() {
+                    [client] => Ok(Some(*client)),
+                    _ => Err(ObserverError::new(format!(
+                        "Hyprland observer found ambiguous mapped clients for pid {pid}"
+                    ))),
+                }
+            }
+        }
+    }
+
+    pub(crate) fn hyprland_client_address(pid: u32) -> Result<String, ObserverError> {
+        select_hyprland_pid_client(&hyprland_clients()?, pid)?
+            .map(|client| client.address.clone())
+            .ok_or_else(|| {
+                ObserverError::new(format!(
+                    "Hyprland observer found no mapped client for pid {pid}"
+                ))
+            })
+    }
+
+    fn classify_hyprland_target(
+        clients: &[HyprlandClient],
+        active_address: Option<u64>,
+        active_workspaces: &HashSet<i64>,
+        target_pid: u32,
+    ) -> Result<TargetZ, ObserverError> {
+        let Some(target) = select_hyprland_pid_client(clients, target_pid)? else {
+            return Ok(TargetZ::NotFound);
+        };
+        let target_address = parse_hyprland_address(&target.address);
+        if target_address.is_some() && target_address == active_address {
+            return Ok(TargetZ::Foreground);
+        }
+        if target.hidden || !active_workspaces.contains(&target.workspace.id) {
+            return Ok(TargetZ::Minimized);
+        }
+        let active = active_address.and_then(|address| {
+            clients
+                .iter()
+                .find(|client| parse_hyprland_address(&client.address) == Some(address))
+        });
+        if active.is_some_and(|client| {
+            client.workspace.id == target.workspace.id && client.fullscreen != 0
+        }) {
+            Ok(TargetZ::BackgroundOccluded)
+        } else {
+            Ok(TargetZ::BackgroundVisible)
+        }
+    }
+
+    fn hyprland_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
+        let clients = hyprland_clients()?;
+        let active = hyprland_active_address()?;
+        let target_z =
+            classify_hyprland_target(&clients, active, &hyprland_active_workspaces()?, target.pid)?;
+        Ok(DesktopSnapshot {
+            foreground: active,
+            input_focus: active,
+            target_z,
+            cursor_pos: None,
+        })
+    }
+
+    fn hyprland_focus_identity() -> Result<Option<u64>, ObserverError> {
+        hyprland_active_address()
+    }
+
+    fn hyprland_available() -> bool {
+        std::env::var("XDG_CURRENT_DESKTOP")
+            .is_ok_and(|desktop| desktop.to_ascii_lowercase().contains("hyprland"))
+            && hyprland_clients().is_ok()
+            && hyprland_active_workspaces().is_ok()
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1787,6 +1961,70 @@ pub mod linux {
                 target: Some((20, false, Some(11))),
             };
             assert_eq!(classify_sway_target(&state), TargetZ::Minimized);
+        }
+
+        fn hyprland_client(
+            address: &str,
+            pid: u32,
+            workspace: i64,
+            size: [i64; 2],
+            fullscreen: i64,
+        ) -> HyprlandClient {
+            HyprlandClient {
+                address: address.to_owned(),
+                pid,
+                workspace: HyprlandWorkspace { id: workspace },
+                size,
+                mapped: true,
+                hidden: false,
+                fullscreen,
+            }
+        }
+
+        #[test]
+        fn hyprland_fullscreen_foreground_occludes_same_workspace_target() {
+            let clients = vec![
+                hyprland_client("0x10", 100, 1, [940, 780], 0),
+                hyprland_client("0x20", 200, 1, [1920, 1080], 1),
+            ];
+            assert_eq!(
+                classify_hyprland_target(&clients, Some(0x20), &HashSet::from([1]), 100)
+                    .expect("classified target"),
+                TargetZ::BackgroundOccluded
+            );
+        }
+
+        #[test]
+        fn hyprland_off_workspace_target_is_minimized_not_occluded() {
+            let clients = vec![
+                hyprland_client("0x10", 100, 98, [940, 780], 0),
+                hyprland_client("0x20", 200, 1, [1920, 1080], 1),
+            ];
+            assert_eq!(
+                classify_hyprland_target(&clients, Some(0x20), &HashSet::from([1]), 100)
+                    .expect("classified target"),
+                TargetZ::Minimized
+            );
+        }
+
+        #[test]
+        fn hyprland_pid_selection_uses_unique_largest_surface_and_refuses_ties() {
+            let clients = vec![
+                hyprland_client("0x10", 100, 1, [940, 780], 0),
+                hyprland_client("0x11", 100, 1, [320, 220], 0),
+            ];
+            assert_eq!(
+                select_hyprland_pid_client(&clients, 100)
+                    .expect("unique largest client")
+                    .map(|client| client.address.as_str()),
+                Some("0x10")
+            );
+
+            let tied = vec![
+                hyprland_client("0x10", 100, 1, [940, 780], 0),
+                hyprland_client("0x11", 100, 1, [940, 780], 0),
+            ];
+            assert!(select_hyprland_pid_client(&tied, 100).is_err());
         }
 
         #[test]

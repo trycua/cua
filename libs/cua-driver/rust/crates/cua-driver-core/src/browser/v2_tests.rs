@@ -1329,6 +1329,16 @@ async fn snapshot_composes_shadow_iframe_and_oopif_refs() {
 }
 
 #[tokio::test]
+async fn semantic_snapshot_refreshes_bind_time_title_from_main_document() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["page"]["title"], "Fixture inbox", "{snap}");
+}
+
+#[tokio::test]
 async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
     let f = fixture_with(|st| st.semantic_large_page = true).await;
     let (target, tab) = bind(&f).await;
@@ -1522,6 +1532,7 @@ async fn semantic_continuation_is_opaque_single_use_and_reaches_offscreen_conten
     let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
     assert_eq!(continued["status"], "ok", "{continued}");
     assert_eq!(continued["snapshot"]["scope"], "continuation");
+    assert_eq!(continued["page"]["title"], "Fixture inbox", "{continued}");
     assert!(
         continued["refs"]
             .as_array()

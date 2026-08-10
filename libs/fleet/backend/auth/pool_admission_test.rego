@@ -52,6 +52,16 @@ test_osworld_v2_repository_prefix_collision_denied {
 	}
 }
 
+test_ecr_secret_gymdriver_dev_image_allowed {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"object": {"spec": {"template": {
+			"containerDiskImage": "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-gymdriver-dev:latest",
+			"imagePullSecret": "ecr-credentials",
+		}}},
+	}
+}
+
 test_ecr_secret_disallowed_image_denied {
 	not pool_admission.allow with input as {
 		"method": "POST",

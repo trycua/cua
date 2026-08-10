@@ -5,6 +5,7 @@ default allow = false
 ecr_pull_secret := "ecr-credentials"
 
 allowed_image_repositories := {
+	"296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-gymdriver-dev",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo",

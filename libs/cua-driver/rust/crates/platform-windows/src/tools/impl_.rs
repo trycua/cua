@@ -947,26 +947,7 @@ impl Tool for ListWindowsTool {
         // front. Swift convention: higher z_index = closer to front.
         // Invert via `(len - 1 - i)` so the front-most window gets the
         // largest z.
-        let n = windows.len();
-        let records: Vec<serde_json::Value> = windows
-            .iter()
-            .enumerate()
-            .map(|(i, w)| {
-                let app_name = pid_to_name.get(&w.pid).cloned().unwrap_or_default();
-                let z_index = z_index_from_front_to_back(n, i) as i64;
-                json!({
-                    "window_id":  w.hwnd,
-                    "pid":        w.pid,
-                    "app_name":   app_name,
-                    "title":      w.title,
-                    "bounds":     { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
-                    "layer":      0,
-                    "z_index":    z_index,
-                    "is_on_screen": w.is_on_screen,
-                    "minimized":    w.minimized,
-                })
-            })
-            .collect();
+        let (records, legacy_windows) = list_windows_records(&windows, &pid_to_name);
 
         let total = records.len();
         let pid_count = windows
@@ -1010,23 +991,56 @@ impl Tool for ListWindowsTool {
 
         // Legacy alias: keep the old flat fields under each record for any
         // pre-existing Rust callers, but they read from the same source.
-        let legacy_windows: Vec<serde_json::Value> = windows
-            .iter()
-            .map(|w| {
-                json!({
-                    "window_id": w.hwnd, "pid": w.pid, "title": w.title,
-                    "x": w.x, "y": w.y, "width": w.width, "height": w.height,
-                    "is_on_screen": w.is_on_screen, "minimized": w.minimized,
-                })
-            })
-            .collect();
-        let structured = json!({
-            "windows":          records,
-            "current_space_id": serde_json::Value::Null,  // Windows has no Spaces
-            "_legacy_windows":  legacy_windows,
-        });
+        let structured = list_windows_structured_content(records, legacy_windows);
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
+}
+
+fn list_windows_records(
+    windows: &[crate::win32::WindowInfo],
+    pid_to_name: &std::collections::HashMap<u32, String>,
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    let n = windows.len();
+    let records = windows
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let app_name = pid_to_name.get(&w.pid).cloned().unwrap_or_default();
+            json!({
+                "window_id": w.hwnd,
+                "pid": w.pid,
+                "app_name": app_name,
+                "title": w.title,
+                "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+                "layer": 0,
+                "z_index": z_index_from_front_to_back(n, i) as i64,
+                "is_on_screen": w.is_on_screen,
+                "minimized": w.minimized,
+            })
+        })
+        .collect();
+    let legacy_windows = windows
+        .iter()
+        .map(|w| {
+            json!({
+                "window_id": w.hwnd, "pid": w.pid, "title": w.title,
+                "x": w.x, "y": w.y, "width": w.width, "height": w.height,
+                "is_on_screen": w.is_on_screen, "minimized": w.minimized,
+            })
+        })
+        .collect();
+    (records, legacy_windows)
+}
+
+fn list_windows_structured_content(
+    records: Vec<serde_json::Value>,
+    legacy_windows: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    json!({
+        "windows": records,
+        "current_space_id": serde_json::Value::Null,
+        "_legacy_windows": legacy_windows,
+    })
 }
 
 fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
@@ -1035,7 +1049,10 @@ fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
 
 #[cfg(test)]
 mod list_windows_z_index_tests {
-    use super::{exact_window_ownership_result, z_index_from_front_to_back};
+    use super::{
+        exact_window_ownership_result, list_windows_records, list_windows_structured_content,
+        z_index_from_front_to_back,
+    };
 
     #[test]
     fn enum_windows_front_to_back_order_normalizes_to_higher_is_frontmost() {
@@ -1044,6 +1061,39 @@ mod list_windows_z_index_tests {
             .collect();
         assert_eq!(indices, vec![2, 1, 0]);
         assert!(indices[0] > indices[2]);
+    }
+
+    #[test]
+    fn public_structured_output_satisfies_contract_for_window_and_pid_miss() {
+        let window = crate::win32::WindowInfo {
+            hwnd: 42,
+            pid: 1234,
+            title: "Example".to_owned(),
+            x: 10,
+            y: 20,
+            width: 300,
+            height: 400,
+            is_on_screen: true,
+            minimized: false,
+        };
+        let names = std::collections::HashMap::from([(1234, "example.exe".to_owned())]);
+        let (records, legacy) = list_windows_records(std::slice::from_ref(&window), &names);
+        let output = list_windows_structured_content(records, legacy);
+        assert_eq!(
+            cua_driver_contract::validate_success_output("list_windows", output),
+            Ok(true)
+        );
+
+        // A missing pid produces no records but still returns the same public
+        // envelope from the production path.
+        let (records, legacy) = list_windows_records(&[], &names);
+        let pid_miss = list_windows_structured_content(records, legacy);
+        assert_eq!(pid_miss["windows"], serde_json::json!([]));
+        assert_eq!(pid_miss["current_space_id"], serde_json::Value::Null);
+        assert_eq!(
+            cua_driver_contract::validate_success_output("list_windows", pid_miss),
+            Ok(true)
+        );
     }
 
     #[test]

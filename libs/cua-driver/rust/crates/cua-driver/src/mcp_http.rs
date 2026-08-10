@@ -508,6 +508,25 @@ mod tests {
         .expect("JSON-RPC response");
         let response: serde_json::Value = serde_json::from_str(&response).expect("response JSON");
         assert_eq!(response["result"]["tools"], expected["tools"]);
+        let list_windows = response["result"]["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .find(|tool| tool["name"] == "list_windows")
+            .expect("list_windows in public tools/list");
+        let record = &list_windows["outputSchema"]["anyOf"][0]["properties"]["windows"]["items"];
+        assert_eq!(
+            record["required"],
+            serde_json::json!([
+                "window_id",
+                "pid",
+                "app_name",
+                "title",
+                "bounds",
+                "z_index",
+                "is_on_screen"
+            ])
+        );
         sdk.shutdown().await.expect("SDK shutdown");
     }
 

@@ -68,15 +68,19 @@ impl Tool for ListWindowsTool {
             windows.retain(|w| w.pid == pid);
         }
 
-        let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
-
-        ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
-            serde_json::json!({
-                "windows": windows_json,
-                "current_space_id": current_space_id
-            }),
-        )
+        let structured = structured_content(&windows, current_space_id);
+        ToolResult::text(format!("Found {} window(s).", windows.len())).with_structured(structured)
     }
+}
+
+fn structured_content(
+    windows: &[crate::windows::WindowInfo],
+    current_space_id: Option<u64>,
+) -> Value {
+    serde_json::json!({
+        "windows": windows.iter().map(window_record_json).collect::<Vec<_>>(),
+        "current_space_id": current_space_id
+    })
 }
 
 pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
@@ -104,11 +108,10 @@ pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
 mod tests {
     use super::*;
 
-    #[test]
-    fn window_record_includes_observed_z_index() {
-        let window = crate::windows::WindowInfo {
+    fn window(pid: i32, z_index: usize) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
             window_id: 42,
-            pid: 123,
+            pid,
             app_name: "Example".into(),
             title: "Document".into(),
             bounds: crate::windows::WindowBounds {
@@ -118,12 +121,22 @@ mod tests {
                 height: 200.0,
             },
             layer: 0,
-            z_index: 7,
+            z_index,
             is_on_screen: true,
             current_space_id: Some(1),
             on_current_space: Some(true),
             space_ids: Some(vec![1]),
-        };
+        }
+    }
+
+    #[test]
+    fn public_structured_output_satisfies_contract_for_window_and_pid_miss() {
+        let window = window(123, 7);
+        let output = structured_content(std::slice::from_ref(&window), Some(1));
+        assert_eq!(
+            cua_driver_contract::validate_success_output("list_windows", output),
+            Ok(true)
+        );
 
         assert_eq!(window_record_json(&window)["z_index"], serde_json::json!(7));
         assert_eq!(
@@ -133,6 +146,15 @@ mod tests {
         assert_eq!(
             window_record_json(&window)["on_current_space"],
             serde_json::json!(true)
+        );
+
+        let mut filtered = vec![window];
+        filtered.retain(|window| window.pid == 999);
+        let pid_miss = structured_content(&filtered, Some(1));
+        assert_eq!(pid_miss["windows"], serde_json::json!([]));
+        assert_eq!(
+            cua_driver_contract::validate_success_output("list_windows", pid_miss),
+            Ok(true)
         );
     }
 }

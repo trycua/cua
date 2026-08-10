@@ -166,7 +166,8 @@ func TestLoadConfig_StateDatabaseURLs(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
 	t.Setenv("DATABASE_URL", "postgres://admin@db/cyclops")
-	t.Setenv("STATE_QUERY_DATABASE_URL", "postgres://k8s_query_broker@db/cyclops")
+	t.Setenv("STATE_QUERY_DATABASE_DSN", "postgres://db/cyclops?sslmode=require")
+	t.Setenv("STATE_QUERY_TENANT_PASSWORD", "tenant-password")
 	t.Setenv("STATE_WRITER_DATABASE_URL", "postgres://k8s_state_writer@db/cyclops")
 	t.Setenv("STATE_EXPORTER_DATABASE_URL", "postgres://k8s_state_exporter@db/cyclops")
 	t.Setenv("STATE_ROLE_ADMIN_DATABASE_URL", "postgres://k8s_role_admin@db/cyclops")
@@ -176,8 +177,11 @@ func TestLoadConfig_StateDatabaseURLs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if got, want := cfg.Database.StateQueryURL, "postgres://k8s_query_broker@db/cyclops"; got != want {
-		t.Fatalf("Database.StateQueryURL = %q, want %q", got, want)
+	if got, want := cfg.Database.StateQueryDSN, "postgres://db/cyclops?sslmode=require"; got != want {
+		t.Fatalf("Database.StateQueryDSN = %q, want %q", got, want)
+	}
+	if got, want := cfg.Database.StateQueryTenantPassword, "tenant-password"; got != want {
+		t.Fatalf("Database.StateQueryTenantPassword = %q, want %q", got, want)
 	}
 	if got, want := cfg.Database.StateWriterURL, "postgres://k8s_state_writer@db/cyclops"; got != want {
 		t.Fatalf("Database.StateWriterURL = %q, want %q", got, want)
@@ -186,24 +190,6 @@ func TestLoadConfig_StateDatabaseURLs(t *testing.T) {
 		t.Fatalf("Database.StateExporterURL = %q, want %q", got, want)
 	}
 	if got, want := cfg.Database.StateRoleAdminURL, "postgres://k8s_role_admin@db/cyclops"; got != want {
-		t.Fatalf("Database.StateRoleAdminURL = %q, want %q", got, want)
-	}
-}
-
-func TestLoadConfig_StateQueryLimits(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
-	t.Setenv("STATE_QUERY_MAX_ROWS", "250")
-	t.Setenv("STATE_QUERY_TIMEOUT_MS", "3000")
-	t.Setenv("STATE_QUERY_MAX_SQL_BYTES", "8192")
-	RegisterFlags(pflag.NewFlagSet("state-query-limits-test", pflag.ContinueOnError))
-
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.StateQuery.MaxRows != 250 || cfg.StateQuery.TimeoutMS != 3000 || cfg.StateQuery.MaxSQLBytes != 8192 {
-		t.Fatalf("StateQuery = %#v", cfg.StateQuery)
+		t.Fatalf("Database.StateRoleAdminURL (fixed-role bootstrap only) = %q, want %q", got, want)
 	}
 }

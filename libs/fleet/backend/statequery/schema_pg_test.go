@@ -47,6 +47,31 @@ func TestMigrateCreatesStateSchemaAndRLS(t *testing.T) {
 		}
 	}
 
+	for _, column := range []string{"role_name", "capsule_tenant", "credential_fingerprint", "created_at"} {
+		var exists bool
+		err := pool.QueryRow(ctx, `
+			select exists (
+				select 1
+				from information_schema.columns
+				where table_schema = 'k8s_state'
+				  and table_name = 'query_tenant_role'
+				  and column_name = $1
+			)`, column).Scan(&exists)
+		if err != nil || !exists {
+			t.Fatalf("query_tenant_role column %s exists=%t err=%v", column, exists, err)
+		}
+	}
+
+	for _, function := range []string{
+		"k8s_state.register_tenant_role(name,text,text)",
+		"k8s_state.unregister_tenant_role(name)",
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, "select to_regprocedure($1) is not null", function).Scan(&exists); err != nil || !exists {
+			t.Fatalf("function %s exists=%t err=%v", function, exists, err)
+		}
+	}
+
 	var forced bool
 	if err := pool.QueryRow(ctx, `select relforcerowsecurity from pg_class where oid = 'k8s_state.resource_state'::regclass`).Scan(&forced); err != nil {
 		t.Fatal(err)

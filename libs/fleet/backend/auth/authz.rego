@@ -389,12 +389,14 @@ valid_dns_label(s) {
 # Read-only state SQL. PostgreSQL RLS remains the row-visibility boundary.
 allow {
     input.route == "/api/state/query"
+    input.method == "QUERY"
     input.user.sub != ""
     is_interactive_client
 }
 
 allow {
     input.route == "/api/state/query"
+    input.method == "QUERY"
     input.user.sub != ""
     is_user_key_client
 }

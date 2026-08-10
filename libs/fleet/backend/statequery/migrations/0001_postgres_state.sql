@@ -79,6 +79,7 @@ CREATE TABLE k8s_state.resource_schema (
 CREATE TABLE k8s_state.query_tenant_role (
     role_name name PRIMARY KEY,
     capsule_tenant text NOT NULL UNIQUE,
+    credential_fingerprint text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
@@ -148,19 +149,34 @@ GRANT USAGE ON SCHEMA k8s_api TO k8s_query_tenant, k8s_query_admin;
 GRANT SELECT ON k8s_state.resource_state TO k8s_query_tenant, k8s_query_admin;
 GRANT SELECT ON k8s_api.current_resources TO k8s_query_tenant, k8s_query_admin;
 
-CREATE FUNCTION k8s_state.register_tenant_role(p_role_name name, p_capsule_tenant text)
+CREATE FUNCTION k8s_state.register_tenant_role(p_role_name name, p_capsule_tenant text, p_credential_fingerprint text)
 RETURNS void
 LANGUAGE sql
 VOLATILE
 SECURITY DEFINER
 SET search_path = k8s_state, pg_catalog
 AS $$
-    INSERT INTO k8s_state.query_tenant_role (role_name, capsule_tenant)
-    VALUES (p_role_name, p_capsule_tenant)
+    INSERT INTO k8s_state.query_tenant_role (role_name, capsule_tenant, credential_fingerprint)
+    VALUES (p_role_name, p_capsule_tenant, p_credential_fingerprint)
     ON CONFLICT (role_name) DO UPDATE
-    SET capsule_tenant = EXCLUDED.capsule_tenant
+    SET capsule_tenant = EXCLUDED.capsule_tenant,
+        credential_fingerprint = EXCLUDED.credential_fingerprint
 $$;
 
-REVOKE ALL ON FUNCTION k8s_state.register_tenant_role(name, text) FROM PUBLIC;
+CREATE FUNCTION k8s_state.unregister_tenant_role(p_role_name name)
+RETURNS void
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER
+SET search_path = k8s_state, pg_catalog
+AS $$
+    DELETE FROM k8s_state.query_tenant_role
+    WHERE role_name = p_role_name
+$$;
+
+REVOKE ALL ON FUNCTION k8s_state.register_tenant_role(name, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION k8s_state.unregister_tenant_role(name) FROM PUBLIC;
 GRANT USAGE ON SCHEMA k8s_state TO k8s_role_admin;
-GRANT EXECUTE ON FUNCTION k8s_state.register_tenant_role(name, text) TO k8s_role_admin;
+GRANT SELECT ON k8s_state.query_tenant_role TO k8s_role_admin;
+GRANT EXECUTE ON FUNCTION k8s_state.register_tenant_role(name, text, text) TO k8s_role_admin;
+GRANT EXECUTE ON FUNCTION k8s_state.unregister_tenant_role(name) TO k8s_role_admin;

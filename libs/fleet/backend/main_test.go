@@ -358,3 +358,24 @@ func TestBillingSummaryGeneratedContract(t *testing.T) {
 		t.Fatal("billing summary card must be explicitly nullable")
 	}
 }
+
+func TestStateQueryRouterUsesQueryMethod(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+
+	queryRequest := authorizedRequest(t, "QUERY", "/api/state/query", strings.NewReader("select 1"))
+	queryRequest.Header.Set("Content-Type", "application/sql")
+	queryResponse := httptest.NewRecorder()
+	router.ServeHTTP(queryResponse, queryRequest)
+	if queryResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("QUERY status = %d, want 503; body = %s", queryResponse.Code, queryResponse.Body.String())
+	}
+
+	postResponse := httptest.NewRecorder()
+	router.ServeHTTP(postResponse, authorizedRequest(t, http.MethodPost, "/api/state/query", strings.NewReader(`{"sql":"select 1"}`)))
+	if postResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want 405; body = %s", postResponse.Code, postResponse.Body.String())
+	}
+	if got := postResponse.Header().Get("Allow"); got != "QUERY" {
+		t.Fatalf("Allow = %q, want QUERY", got)
+	}
+}

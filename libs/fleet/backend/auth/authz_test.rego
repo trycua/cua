@@ -935,7 +935,7 @@ test_user_api_key_no_sub_denied if {
 test_state_query_spa_allowed if {
 	authz.allow with input as {
 		"route": "/api/state/query",
-		"method": "POST",
+		"method": "QUERY",
 		"path": "/api/state/query",
 		"params": {},
 		"user": {"sub": "alice", "azp": "cyclops-cs-spa"},
@@ -945,7 +945,7 @@ test_state_query_spa_allowed if {
 test_state_query_user_key_allowed if {
 	authz.allow with input as {
 		"route": "/api/state/query",
-		"method": "POST",
+		"method": "QUERY",
 		"path": "/api/state/query",
 		"params": {},
 		"user": {"sub": "alice", "azp": "ukey-alice"},
@@ -955,7 +955,7 @@ test_state_query_user_key_allowed if {
 test_state_query_untrusted_client_denied if {
 	not authz.allow with input as {
 		"route": "/api/state/query",
-		"method": "POST",
+		"method": "QUERY",
 		"path": "/api/state/query",
 		"params": {},
 		"user": {"sub": "alice", "azp": "untrusted"},
@@ -965,9 +965,19 @@ test_state_query_untrusted_client_denied if {
 test_state_query_empty_subject_denied if {
 	not authz.allow with input as {
 		"route": "/api/state/query",
-		"method": "POST",
+		"method": "QUERY",
 		"path": "/api/state/query",
 		"params": {},
 		"user": {"sub": "", "azp": "cyclops-cs-spa"},
+	}
+}
+
+test_state_query_post_denied if {
+	not authz.allow with input as {
+		"route": "/api/state/query",
+		"method": "POST",
+		"path": "/api/state/query",
+		"params": {},
+		"user": {"sub": "alice", "azp": "cyclops-cs-spa"},
 	}
 }

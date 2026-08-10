@@ -21,7 +21,6 @@ var fixedLoginRoles = []struct {
 }{
 	{"k8s_state_writer", func(urls FixedRoleURLs) string { return urls.Writer }, "LOGIN INHERIT NOCREATEROLE"},
 	{"k8s_state_exporter", func(urls FixedRoleURLs) string { return urls.Exporter }, "LOGIN INHERIT NOCREATEROLE"},
-	{"k8s_query_broker", func(urls FixedRoleURLs) string { return urls.Query }, "LOGIN NOINHERIT NOCREATEROLE"},
 	{"k8s_role_admin", func(urls FixedRoleURLs) string { return urls.RoleAdmin }, "LOGIN NOINHERIT CREATEROLE"},
 }
 
@@ -98,11 +97,13 @@ func ReconcileFixedRoles(ctx context.Context, adminURL string, urls FixedRoleURL
 			return err
 		}
 	}
+	if err := removeLegacyQueryBroker(ctx, tx); err != nil {
+		return err
+	}
 
 	adminIdentifier := pgx.Identifier{adminConfig.User}.Sanitize()
 	for _, statement := range []string{
 		"grant k8s_state_owner to " + adminIdentifier,
-		"grant k8s_query_admin to k8s_query_broker",
 		"grant k8s_query_tenant to k8s_role_admin with admin option",
 	} {
 		if _, err := tx.Exec(ctx, statement); err != nil {
@@ -112,6 +113,53 @@ func ReconcileFixedRoles(ctx context.Context, adminURL string, urls FixedRoleURL
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit fixed role reconciliation: %w", err)
+	}
+	return nil
+}
+
+func removeLegacyQueryBroker(ctx context.Context, tx pgx.Tx) error {
+	var exists bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from pg_roles where rolname = 'k8s_query_broker')`).Scan(&exists); err != nil {
+		return fmt.Errorf("check legacy query broker: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+
+	rows, err := tx.Query(ctx, `
+		select parent.rolname
+		from pg_auth_members membership
+		join pg_roles parent on parent.oid = membership.roleid
+		join pg_roles member on member.oid = membership.member
+		where member.rolname = 'k8s_query_broker'
+	`)
+	if err != nil {
+		return fmt.Errorf("list legacy query broker memberships: %w", err)
+	}
+	memberships := []string{}
+	for rows.Next() {
+		var roleName string
+		if err := rows.Scan(&roleName); err != nil {
+			return fmt.Errorf("scan legacy query broker membership: %w", err)
+		}
+		memberships = append(memberships, roleName)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate legacy query broker memberships: %w", err)
+	}
+	rows.Close()
+
+	for _, roleName := range memberships {
+		statement := "revoke " + pgx.Identifier{roleName}.Sanitize() + " from k8s_query_broker"
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("revoke legacy query broker membership: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, "revoke k8s_query_admin from k8s_query_broker"); err != nil {
+		return fmt.Errorf("revoke legacy query administrator membership: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "drop role k8s_query_broker"); err != nil {
+		return fmt.Errorf("drop legacy query broker: %w", err)
 	}
 	return nil
 }

@@ -100,7 +100,7 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	r.Handle("GET /api/config",
 		withMiddlewares("/api/config", nil, c.GetConfig))
 
-	r.Handle("POST /api/state/query",
+	r.Handle("QUERY /api/state/query",
 		withMiddlewares("/api/state/query", nil, c.QueryState))
 
 	// Stripe-hosted billing. Browser routes require the normal SPA JWT; the
@@ -324,10 +324,9 @@ func run() error {
 	stateRoleURLs := statequery.FixedRoleURLs{
 		Writer:    cfg.Database.StateWriterURL,
 		Exporter:  cfg.Database.StateExporterURL,
-		Query:     cfg.Database.StateQueryURL,
 		RoleAdmin: cfg.Database.StateRoleAdminURL,
 	}
-	if stateRoleURLs.Writer != "" || stateRoleURLs.Exporter != "" || stateRoleURLs.Query != "" || stateRoleURLs.RoleAdmin != "" {
+	if stateRoleURLs.Writer != "" || stateRoleURLs.Exporter != "" || stateRoleURLs.RoleAdmin != "" {
 		if err := statequery.ReconcileFixedRoles(ctx, cfg.Database.URL, stateRoleURLs); err != nil {
 			slog.Error("kubernetes state query: fixed-role reconciliation failed", "err", err)
 		} else if err := statequery.Migrate(ctx, cfg.Database.URL); err != nil {
@@ -337,14 +336,16 @@ func run() error {
 			stateSchemaReady = true
 		}
 	} else {
-		slog.Info("kubernetes state query: disabled (restricted database URLs unset)")
+		slog.Info("kubernetes state query: disabled (fixed-role database URLs unset)")
 	}
 	if stateSchemaReady {
-		executor, err := statequery.NewExecutor(ctx, cfg.Database.StateQueryURL, cfg.Database.StateRoleAdminURL)
+		executor, err := statequery.NewExecutor(
+			cfg.Database.StateQueryDSN,
+			cfg.Database.StateQueryTenantPassword,
+		)
 		if err != nil {
 			slog.Error("kubernetes state query: executor init failed; /api/state/query will return 503", "err", err)
 		} else {
-			defer executor.Close()
 			h.StateQueryExecutor = executor
 			slog.Info("kubernetes state query: query endpoint enabled")
 		}

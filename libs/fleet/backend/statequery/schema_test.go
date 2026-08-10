@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestEmbeddedMigrationDefinesStateSchemaAndRLS(t *testing.T) {
+func TestMigrationContainsRequiredObjects(t *testing.T) {
 	migration, err := migrationSQL("0001_postgres_state.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -24,10 +24,17 @@ func TestEmbeddedMigrationDefinesStateSchemaAndRLS(t *testing.T) {
 		"resource = 'namespaces'",
 		"CREATE VIEW k8s_api.current_resources",
 		"GRANT SELECT ON k8s_api.current_resources TO k8s_query_tenant, k8s_query_admin",
+		"credential_fingerprint text NOT NULL",
+		"CREATE FUNCTION k8s_state.register_tenant_role(p_role_name name, p_capsule_tenant text, p_credential_fingerprint text)",
+		"CREATE FUNCTION k8s_state.unregister_tenant_role(p_role_name name)",
+		"GRANT SELECT ON k8s_state.query_tenant_role TO k8s_role_admin",
 	} {
 		if !strings.Contains(migration, required) {
 			t.Errorf("migration missing %q", required)
 		}
+	}
+	if strings.Contains(migration, "k8s_query_broker") {
+		t.Fatal("migration retains the removed query broker")
 	}
 }
 

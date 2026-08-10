@@ -2544,9 +2544,16 @@ impl Tool for ClickTool {
                 // `element_index` — the coordinate-free path already verified
                 // working. (x,y) are screen coords here, matching the frames in
                 // `get_window_state`. Miss → fall through to the injection paths.
+                let webkitgtk = is_webkitgtk_embedder(pid);
                 if button == 1
                     && count == 1
-                    && (!delivery.is_foreground() || is_webkitgtk_embedder(pid))
+                    // Chromium's proven background AT-SPI fallback and
+                    // WebKitGTK's proven foreground AT-SPI fallback are
+                    // deliberately disjoint. Treating WebKitGTK background PX
+                    // coordinates as element-local delivered clicks violated
+                    // the compositor-global pixel contract.
+                    && ((!delivery.is_foreground() && !webkitgtk)
+                        || (delivery.is_foreground() && webkitgtk))
                 {
                     if let Ok(Some(_)) =
                         crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
@@ -4065,7 +4072,9 @@ impl Tool for SetValueTool {
 
 // ── scroll ────────────────────────────────────────────────────────────────────
 
-pub struct ScrollTool;
+pub struct ScrollTool {
+    state: Arc<ToolState>,
+}
 static SCROLL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -4225,7 +4234,14 @@ impl Tool for ScrollTool {
             args.get("x").and_then(|value| value.as_f64()),
             args.get("y").and_then(|value| value.as_f64()),
         ) {
-            (Some(x), Some(y)) => Some((x, y)),
+            (Some(x), Some(y)) => {
+                // Pixel targets are expressed in the latest screenshot's
+                // coordinate space. Apply the same buffer-to-window ratio as
+                // click/drag so fractional-scale Wayland captures land on the
+                // intended logical surface point rather than below it.
+                let ratio = self.state.resize_registry.ratio(pid).unwrap_or(1.0);
+                Some((x * ratio, y * ratio))
+            }
             (None, None) => None,
             _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
         };
@@ -6305,7 +6321,13 @@ impl Tool for GetDesktopStateTool {
             // Only fall back to the X11 root-window geometry off Wayland, so
             // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
             let (screen_w, screen_h) = if crate::wayland::is_wayland() {
-                (shot_w, shot_h)
+                // Window and input coordinates are compositor-logical on
+                // Hyprland. Preserve the native-resolution PNG, but report the
+                // uniquely matching output's logical dimensions so callers can
+                // map coordinates using screenshot/logical scale just as they
+                // do for fractional-scale window captures.
+                crate::wayland::hyprland::logical_output_size_for_capture(shot_w, shot_h)
+                    .unwrap_or((shot_w, shot_h))
             } else {
                 x11_screen_size()?
             };
@@ -7932,7 +7954,12 @@ pub fn build_registry_with_provider(
         &pid_window_candidates,
     ));
     r.register(pid_window_guarded(SetValueTool, &pid_window_candidates));
-    r.register(pid_window_guarded(ScrollTool, &pid_window_candidates));
+    r.register(pid_window_guarded(
+        ScrollTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
     cua_driver_core::clipboard::register_clipboard_tools(
         &mut r,
         Arc::new(crate::clipboard::LinuxClipboard::new()),

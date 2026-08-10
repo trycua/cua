@@ -551,7 +551,7 @@ wheels = [
 
 [[package]]
 name = "cua-sandbox"
-version = "0.1.26"
+version = "0.1.28"
 source = { editable = "." }
 dependencies = [
     { name = "cua-auto" },

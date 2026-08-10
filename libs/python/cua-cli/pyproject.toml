@@ -1,6 +1,6 @@
 [project]
 name = "cua-cli"
-version = "0.1.13"
+version = "0.1.14"
 description = "Unified CLI for CUA - Computer-Use Agents"
 readme = "README.md"
 license = "MIT"
@@ -27,6 +27,8 @@ classifiers = [
 requires-python = ">=3.12,<3.14"
 
 dependencies = [
+    # Sandbox lifecycle commands
+    "cua-sandbox>=0.1.28,<0.2.0",
     # Core CUA packages
     "cua-computer>=0.5.0",
     "cua-core>=0.3.0,<0.4.0",
@@ -113,3 +115,10 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.uv.sources]
+cua-sandbox = { path = "../cua-sandbox", editable = true }
+
+[[tool.uv.index]]
+name = "cua-wheels"
+url = "https://wheels.cua.ai/simple"

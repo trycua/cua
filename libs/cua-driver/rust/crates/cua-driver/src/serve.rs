@@ -1907,18 +1907,20 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
                         .unwrap_or("unavailable")
                 );
                 println!(
-                    "  session policy: configured={}, approved_at_startup={}, valid={}",
-                    status["session_policy_configured"]
+                    "  capability manifest: configured={}, approved_at_startup={}, valid={}",
+                    status["capability_manifest_configured"]
                         .as_bool()
                         .unwrap_or(false),
-                    status["session_policy_approved_at_startup"]
+                    status["capability_manifest_approved_at_startup"]
                         .as_bool()
                         .unwrap_or(false),
-                    status["session_policy_valid"].as_bool().unwrap_or(false),
+                    status["capability_manifest_valid"]
+                        .as_bool()
+                        .unwrap_or(false),
                 );
-                if let Some(manifest) = status["session_policy"].as_object() {
+                if let Some(manifest) = status["capability_manifest"].as_object() {
                     println!(
-                        "  session policy sha256: {}",
+                        "  capability manifest sha256: {}",
                         manifest
                             .get("sha256")
                             .and_then(serde_json::Value::as_str)
@@ -2421,6 +2423,7 @@ mod trusted_resume_tests {
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             },
             transport_session: transport_session.into(),

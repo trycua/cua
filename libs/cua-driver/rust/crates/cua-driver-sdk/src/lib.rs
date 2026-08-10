@@ -402,7 +402,10 @@ pub struct RuntimeAuthorizationOptions {
     /// Mode inherited by calls made through the released `CuaDriver` object
     /// rather than a trusted session-bound action surface.
     pub compatibility_mode: SessionPermissionMode,
-    /// Required only when `compatibility_mode` is bounded.
+    /// Optional in standard and unrestricted; required when compatibility mode is bounded.
+    #[uniffi(default = None)]
+    pub compatibility_capability_manifest_path: Option<String>,
+    /// Deprecated alias for `compatibility_capability_manifest_path`.
     pub compatibility_bounded_manifest_path: Option<String>,
     pub unrestricted_acknowledged: bool,
     pub max_session_ttl_seconds: u64,
@@ -429,6 +432,7 @@ fn configured_driver_options_json(options: &ConfiguredDriverOptions) -> Value {
         "authorization": {
             "allowed_modes": allowed_modes,
             "compatibility_mode": options.authorization.compatibility_mode.as_str(),
+            "compatibility_capability_manifest_path": options.authorization.compatibility_capability_manifest_path.clone(),
             "compatibility_bounded_manifest_path": options.authorization.compatibility_bounded_manifest_path.clone(),
             "unrestricted_acknowledged": options.authorization.unrestricted_acknowledged,
             "max_session_ttl_seconds": options.authorization.max_session_ttl_seconds,
@@ -444,6 +448,9 @@ pub struct TrustedSessionOptions {
     pub mode: SessionPermissionMode,
     pub ttl_seconds: u64,
     pub idle_ttl_seconds: u64,
+    #[uniffi(default = None)]
+    pub capability_manifest_path: Option<String>,
+    /// Deprecated alias for `capability_manifest_path`.
     pub bounded_manifest_path: Option<String>,
 }
 
@@ -1018,6 +1025,7 @@ impl CuaDriver {
                     "mode": options.mode.as_str(),
                     "ttl_seconds": options.ttl_seconds,
                     "idle_ttl_seconds": options.idle_ttl_seconds,
+                    "capability_manifest_path": options.capability_manifest_path,
                     "bounded_manifest_path": options.bounded_manifest_path,
                 });
                 Ok(Arc::new(CuaDriverSession {
@@ -1082,6 +1090,7 @@ impl CuaDriver {
             "mode": options.mode.as_str(),
             "ttl_seconds": options.ttl_seconds,
             "idle_ttl_seconds": options.idle_ttl_seconds,
+            "capability_manifest_path": options.capability_manifest_path,
             "bounded_manifest_path": options.bounded_manifest_path,
             "transport_session": transport_session,
         });
@@ -1155,14 +1164,10 @@ impl CuaDriver {
                     reason: format!("authorization configuration is invalid: {error}"),
                 }
             })?;
-        let manifest = if mode == cua_driver_core::authorization::PermissionMode::Bounded {
-            cua_driver_core::session_manifest::configured_session_manifest()
-                .map_err(|error| DriverError::Configuration { reason: error })?
-                .cloned()
-                .map(Arc::new)
-        } else {
-            None
-        };
+        let manifest = cua_driver_core::session_manifest::configured_capability_manifest()
+            .map_err(|error| DriverError::Configuration { reason: error })?
+            .cloned()
+            .map(Arc::new);
         let ceiling =
             cua_driver_core::session_authorization::SessionModeCeiling::for_trusted_sessions(
                 [mode],
@@ -1211,6 +1216,7 @@ impl CuaDriver {
             "authorization": {
                 "allowed_modes": allowed_modes,
                 "compatibility_mode": options.authorization.compatibility_mode.as_str(),
+                "compatibility_capability_manifest_path": options.authorization.compatibility_capability_manifest_path,
                 "compatibility_bounded_manifest_path": options.authorization.compatibility_bounded_manifest_path,
                 "unrestricted_acknowledged": options.authorization.unrestricted_acknowledged,
                 "max_session_ttl_seconds": options.authorization.max_session_ttl_seconds,
@@ -1865,6 +1871,7 @@ mod tests {
             authorization: RuntimeAuthorizationOptions {
                 allowed_modes: vec![SessionPermissionMode::Standard],
                 compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_capability_manifest_path: None,
                 compatibility_bounded_manifest_path: None,
                 unrestricted_acknowledged: false,
                 max_session_ttl_seconds: 60,
@@ -1895,6 +1902,7 @@ mod tests {
                 authorization: RuntimeAuthorizationOptions {
                     allowed_modes: vec![SessionPermissionMode::Standard],
                     compatibility_mode: SessionPermissionMode::Standard,
+                    compatibility_capability_manifest_path: None,
                     compatibility_bounded_manifest_path: None,
                     unrestricted_acknowledged: false,
                     max_session_ttl_seconds: 60,
@@ -1926,6 +1934,7 @@ mod tests {
             authorization: RuntimeAuthorizationOptions {
                 allowed_modes: vec![SessionPermissionMode::Unrestricted],
                 compatibility_mode: SessionPermissionMode::Unrestricted,
+                compatibility_capability_manifest_path: None,
                 compatibility_bounded_manifest_path: None,
                 unrestricted_acknowledged: true,
                 max_session_ttl_seconds: 60,
@@ -2169,6 +2178,7 @@ mod tests {
                     SessionPermissionMode::Unrestricted,
                 ],
                 compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_capability_manifest_path: None,
                 compatibility_bounded_manifest_path: None,
                 unrestricted_acknowledged: true,
                 max_session_ttl_seconds: 60,
@@ -2182,6 +2192,7 @@ mod tests {
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .unwrap();
@@ -2191,6 +2202,7 @@ mod tests {
                 mode: SessionPermissionMode::Unrestricted,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .unwrap();
@@ -2336,6 +2348,7 @@ mod tests {
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 2,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .unwrap();
@@ -2372,6 +2385,7 @@ mod tests {
             authorization: RuntimeAuthorizationOptions {
                 allowed_modes: vec![SessionPermissionMode::Standard],
                 compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_capability_manifest_path: None,
                 compatibility_bounded_manifest_path: None,
                 unrestricted_acknowledged: false,
                 max_session_ttl_seconds: 2,
@@ -2386,6 +2400,7 @@ mod tests {
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 1,
                 idle_ttl_seconds: 1,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .unwrap();
@@ -2395,6 +2410,7 @@ mod tests {
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .unwrap();
@@ -2429,6 +2445,7 @@ mod tests {
                     mode: SessionPermissionMode::Standard,
                     ttl_seconds: 60,
                     idle_ttl_seconds: 30,
+                    capability_manifest_path: None,
                     bounded_manifest_path: None,
                 })
                 .unwrap();
@@ -2473,6 +2490,7 @@ mod tests {
                     SessionPermissionMode::Unrestricted,
                 ],
                 compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_capability_manifest_path: None,
                 compatibility_bounded_manifest_path: None,
                 unrestricted_acknowledged: true,
                 max_session_ttl_seconds: 60,
@@ -2486,6 +2504,7 @@ mod tests {
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .unwrap();
@@ -2528,6 +2547,7 @@ mod tests {
                 mode: SessionPermissionMode::Unrestricted,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             }),
             Err(DriverError::Configuration { .. })
@@ -2538,6 +2558,7 @@ mod tests {
                 mode: SessionPermissionMode::Unrestricted,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .unwrap();
@@ -2898,6 +2919,7 @@ mod tests {
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .await
@@ -3100,6 +3122,7 @@ mod tests {
                 mode: SessionPermissionMode::Standard,
                 ttl_seconds: 60,
                 idle_ttl_seconds: 30,
+                capability_manifest_path: None,
                 bounded_manifest_path: None,
             })
             .await

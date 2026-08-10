@@ -311,11 +311,64 @@ deny:
     assert!(denied.is_error());
     assert!(denied
         .text()
-        .contains("bounded session policy denies tool 'list_apps'"));
+        .contains("capability manifest denies tool 'list_apps'"));
 
     let undeclared = driver.call("get_screen_size", serde_json::json!({}));
     assert!(undeclared.is_error());
     assert!(undeclared
         .text()
-        .contains("outside the bounded session policy"));
+        .contains("outside the capability manifest"));
+}
+
+#[test]
+fn capability_manifest_narrows_standard_mode() {
+    let directory = tempfile::tempdir().expect("temporary capability manifest directory");
+    let manifest_path = directory.path().join("standard-v3.yaml");
+    std::fs::write(
+        &manifest_path,
+        "version: 3\nallow:\n  tools: [get_config]\ndeny:\n  tools: [list_apps]\n",
+    )
+    .expect("write standard capability manifest");
+    let manifest = manifest_path.display().to_string();
+    let mut driver = CliDriver::with_daemon_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "standard"),
+        ("CUA_DRIVER_CAPABILITY_MANIFEST_FILE", &manifest),
+        ("CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED", "1"),
+    ]);
+    assert!(
+        driver.available(),
+        "standard manifest daemon failed to start"
+    );
+    assert!(!driver.call("get_config", serde_json::json!({})).is_error());
+    assert!(driver.call("list_apps", serde_json::json!({})).is_error());
+    assert!(driver
+        .call("get_screen_size", serde_json::json!({}))
+        .is_error());
+}
+
+#[test]
+fn capability_manifest_narrows_unrestricted_mode() {
+    let directory = tempfile::tempdir().expect("temporary capability manifest directory");
+    let manifest_path = directory.path().join("unrestricted-v3.yaml");
+    std::fs::write(
+        &manifest_path,
+        "version: 3\nallow:\n  tools: [get_config]\ndeny:\n  tools: [list_apps]\n",
+    )
+    .expect("write unrestricted capability manifest");
+    let manifest = manifest_path.display().to_string();
+    let mut driver = CliDriver::with_daemon_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+        ("CUA_DRIVER_CAPABILITY_MANIFEST_FILE", &manifest),
+        ("CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED", "1"),
+    ]);
+    assert!(
+        driver.available(),
+        "unrestricted manifest daemon failed to start"
+    );
+    assert!(!driver.call("get_config", serde_json::json!({})).is_error());
+    assert!(driver.call("list_apps", serde_json::json!({})).is_error());
+    assert!(driver
+        .call("get_screen_size", serde_json::json!({}))
+        .is_error());
 }

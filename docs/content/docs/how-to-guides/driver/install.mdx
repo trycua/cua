@@ -107,8 +107,8 @@ Cua Driver authorizes every agent action inside the native runtime, and the mode
 ```bash
 cua-driver serve \
   --permission-mode bounded \
-  --session-policy ~/cua-session.yaml \
-  --approve-session-policy
+  --capability-manifest ~/cua-session.yaml \
+  --approve-capability-manifest
 ```
 
 For `unrestricted`, pass the dangerous acknowledgement. `--permission-mode unrestricted` on its own fails closed:
@@ -122,11 +122,11 @@ On macOS, put those flags after `serve` in the app-bundle launch so TCC attribut
 ```bash
 open -n -g -a CuaDriver --args serve \
   --permission-mode bounded \
-  --session-policy ~/cua-session.yaml \
-  --approve-session-policy
+  --capability-manifest ~/cua-session.yaml \
+  --approve-capability-manifest
 ```
 
-See [Permission modes](/reference/cua-driver/permission-modes) for exactly what each mode allows, and [Write a bounded manifest](/how-to-guides/driver/write-a-bounded-manifest) for a tested manifest. To keep a non-default mode across reboots, its flags belong in the autostart entry — see [Pin a permission mode](/how-to-guides/driver/keep-running#pin-a-permission-mode).
+See [Permission modes](/reference/cua-driver/permission-modes) for exactly what each profile allows, and [Write a capability manifest](/how-to-guides/driver/write-a-bounded-manifest) for a tested manifest. To keep a non-default profile across reboots, its flags belong in the autostart entry — see [Pin a permission mode](/how-to-guides/driver/keep-running#pin-a-permission-mode).
 
 ## Grant TCC permissions (macOS only)
 

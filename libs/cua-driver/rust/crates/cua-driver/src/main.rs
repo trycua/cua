@@ -48,8 +48,8 @@ fn configure_startup_permission_mode(
     permission_mode: Option<&str>,
     dangerously_bypass_approvals: bool,
     allow_legacy_existing_profile_approval: bool,
-    session_policy: Option<&str>,
-    approve_session_policy: bool,
+    capability_manifest: Option<&str>,
+    approve_capability_manifest: bool,
     grants: &[String],
 ) -> anyhow::Result<()> {
     if let Some(mode) = permission_mode {
@@ -75,15 +75,15 @@ fn configure_startup_permission_mode(
             "1",
         );
     }
-    if let Some(path) = session_policy {
+    if let Some(path) = capability_manifest {
         std::env::set_var(
-            cua_driver_core::session_manifest::SESSION_POLICY_FILE_ENV,
+            cua_driver_core::session_manifest::CAPABILITY_MANIFEST_FILE_ENV,
             path,
         );
     }
-    if approve_session_policy {
+    if approve_capability_manifest {
         std::env::set_var(
-            cua_driver_core::session_manifest::SESSION_POLICY_APPROVED_ENV,
+            cua_driver_core::session_manifest::CAPABILITY_MANIFEST_APPROVED_ENV,
             "1",
         );
     }
@@ -512,8 +512,8 @@ fn main() {
             permission_mode,
             dangerously_bypass_approvals,
             allow_legacy_existing_profile_approval,
-            session_policy,
-            approve_session_policy,
+            capability_manifest,
+            approve_capability_manifest,
             no_permissions_gate,
             claude_code_compat,
             grants,
@@ -522,8 +522,8 @@ fn main() {
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
                 allow_legacy_existing_profile_approval,
-                session_policy.as_deref(),
-                approve_session_policy,
+                capability_manifest.as_deref(),
+                approve_capability_manifest,
                 &grants,
             ) {
                 eprintln!("cua-driver: authorization startup error: {error}");
@@ -897,8 +897,8 @@ fn main() -> anyhow::Result<()> {
             permission_mode,
             dangerously_bypass_approvals,
             allow_legacy_existing_profile_approval,
-            session_policy,
-            approve_session_policy,
+            capability_manifest,
+            approve_capability_manifest,
             no_permissions_gate,
             claude_code_compat,
             grants,
@@ -907,8 +907,8 @@ fn main() -> anyhow::Result<()> {
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
                 allow_legacy_existing_profile_approval,
-                session_policy.as_deref(),
-                approve_session_policy,
+                capability_manifest.as_deref(),
+                approve_capability_manifest,
                 &grants,
             )?;
             responsibility::reexec_disclaimed_if_needed();

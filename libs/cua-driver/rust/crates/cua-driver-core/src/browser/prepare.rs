@@ -803,10 +803,10 @@ impl BrowserEngine {
                     "bounded existing-profile attachment requires a live session authorization context",
                 )
             })?;
-            let manifest = context.bounded_manifest().ok_or_else(|| {
+            let manifest = context.capability_manifest().ok_or_else(|| {
                 refusal(
                     BrowserRefusalCode::BrowserConsentRequired,
-                    "bounded existing-profile attachment requires an approved session manifest",
+                    "bounded existing-profile attachment requires an approved capability manifest",
                 )
             })?;
             manifest
@@ -985,7 +985,7 @@ impl BrowserEngine {
 
         // Host authorization is requested only after the exact process,
         // native window, browser product, and endpoint owner have all been
-        // proven. Bounded manifests, launch grants, and unrestricted mode
+        // proven. Bounded capability manifests, launch grants, and unrestricted mode
         // never enter this callback path.
         let protected_consent = if matches!(consent_path, ConsentPath::Protected) {
             let transport_session = request

@@ -151,7 +151,11 @@ export type RuntimeAuthorizationOptions = {
      */
     compatibilityMode: SessionPermissionMode,
     /**
-     * Required only when `compatibility_mode` is bounded.
+     * Optional in standard and unrestricted; required when compatibility mode is bounded.
+     */
+    compatibilityCapabilityManifestPath?: string,
+    /**
+     * Deprecated alias for `compatibility_capability_manifest_path`.
      */
     compatibilityBoundedManifestPath?: string,
     unrestrictedAcknowledged: boolean,
@@ -164,6 +168,7 @@ export type RuntimeAuthorizationOptions = {
  */
 export const RuntimeAuthorizationOptions = (() => {
     const defaults = () => ({
+        compatibilityCapabilityManifestPath: undefined,
     });
     const create = (() => {
         return uniffiCreateRecord<RuntimeAuthorizationOptions, ReturnType<typeof defaults>>(defaults);
@@ -182,6 +187,7 @@ const FfiConverterTypeRuntimeAuthorizationOptions = (() => {
             return {
                 allowedModes: FfiConverterSequenceTypeSessionPermissionMode.read(from),
                 compatibilityMode: FfiConverterTypeSessionPermissionMode.read(from),
+                compatibilityCapabilityManifestPath: FfiConverterOptionalString.read(from),
                 compatibilityBoundedManifestPath: FfiConverterOptionalString.read(from),
                 unrestrictedAcknowledged: FfiConverterBool.read(from),
                 maxSessionTtlSeconds: FfiConverterUInt64.read(from),
@@ -191,6 +197,7 @@ const FfiConverterTypeRuntimeAuthorizationOptions = (() => {
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterSequenceTypeSessionPermissionMode.write(value.allowedModes, into);
             FfiConverterTypeSessionPermissionMode.write(value.compatibilityMode, into);
+            FfiConverterOptionalString.write(value.compatibilityCapabilityManifestPath, into);
             FfiConverterOptionalString.write(value.compatibilityBoundedManifestPath, into);
             FfiConverterBool.write(value.unrestrictedAcknowledged, into);
             FfiConverterUInt64.write(value.maxSessionTtlSeconds, into);
@@ -199,6 +206,7 @@ const FfiConverterTypeRuntimeAuthorizationOptions = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterSequenceTypeSessionPermissionMode.allocationSize(value.allowedModes) +
              FfiConverterTypeSessionPermissionMode.allocationSize(value.compatibilityMode) +
+             FfiConverterOptionalString.allocationSize(value.compatibilityCapabilityManifestPath) +
              FfiConverterOptionalString.allocationSize(value.compatibilityBoundedManifestPath) +
              FfiConverterBool.allocationSize(value.unrestrictedAcknowledged) +
              FfiConverterUInt64.allocationSize(value.maxSessionTtlSeconds) +
@@ -900,6 +908,11 @@ export type EmbeddedDriverHostOptions = {
     startupTimeoutMs?: bigint,
     shutdownTimeoutMs?: bigint,
     permissionMode?: EmbeddedPermissionMode,
+    capabilityManifestPath?: string,
+    approveCapabilityManifest: boolean,
+    /**
+     * Deprecated aliases retained for compatibility.
+     */
     sessionPolicyPath?: string,
     approveSessionPolicy: boolean,
     dangerouslyBypassApprovals: boolean,
@@ -912,6 +925,8 @@ export type EmbeddedDriverHostOptions = {
  */
 export const EmbeddedDriverHostOptions = (() => {
     const defaults = () => ({
+        capabilityManifestPath: undefined,
+        approveCapabilityManifest: false,
     });
     const create = (() => {
         return uniffiCreateRecord<EmbeddedDriverHostOptions, ReturnType<typeof defaults>>(defaults);
@@ -934,6 +949,8 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
                 startupTimeoutMs: FfiConverterOptionalUInt64.read(from),
                 shutdownTimeoutMs: FfiConverterOptionalUInt64.read(from),
                 permissionMode: FfiConverterOptionalTypeEmbeddedPermissionMode.read(from),
+                capabilityManifestPath: FfiConverterOptionalString.read(from),
+                approveCapabilityManifest: FfiConverterBool.read(from),
                 sessionPolicyPath: FfiConverterOptionalString.read(from),
                 approveSessionPolicy: FfiConverterBool.read(from),
                 dangerouslyBypassApprovals: FfiConverterBool.read(from),
@@ -948,6 +965,8 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
             FfiConverterOptionalUInt64.write(value.startupTimeoutMs, into);
             FfiConverterOptionalUInt64.write(value.shutdownTimeoutMs, into);
             FfiConverterOptionalTypeEmbeddedPermissionMode.write(value.permissionMode, into);
+            FfiConverterOptionalString.write(value.capabilityManifestPath, into);
+            FfiConverterBool.write(value.approveCapabilityManifest, into);
             FfiConverterOptionalString.write(value.sessionPolicyPath, into);
             FfiConverterBool.write(value.approveSessionPolicy, into);
             FfiConverterBool.write(value.dangerouslyBypassApprovals, into);
@@ -961,6 +980,8 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
              FfiConverterOptionalUInt64.allocationSize(value.startupTimeoutMs) +
              FfiConverterOptionalUInt64.allocationSize(value.shutdownTimeoutMs) +
              FfiConverterOptionalTypeEmbeddedPermissionMode.allocationSize(value.permissionMode) +
+             FfiConverterOptionalString.allocationSize(value.capabilityManifestPath) +
+             FfiConverterBool.allocationSize(value.approveCapabilityManifest) +
              FfiConverterOptionalString.allocationSize(value.sessionPolicyPath) +
              FfiConverterBool.allocationSize(value.approveSessionPolicy) +
              FfiConverterBool.allocationSize(value.dangerouslyBypassApprovals) +
@@ -1215,6 +1236,10 @@ export type TrustedSessionOptions = {
     mode: SessionPermissionMode,
     ttlSeconds: bigint,
     idleTtlSeconds: bigint,
+    capabilityManifestPath?: string,
+    /**
+     * Deprecated alias for `capability_manifest_path`.
+     */
     boundedManifestPath?: string
 }
 
@@ -1223,6 +1248,7 @@ export type TrustedSessionOptions = {
  */
 export const TrustedSessionOptions = (() => {
     const defaults = () => ({
+        capabilityManifestPath: undefined,
     });
     const create = (() => {
         return uniffiCreateRecord<TrustedSessionOptions, ReturnType<typeof defaults>>(defaults);
@@ -1243,6 +1269,7 @@ const FfiConverterTypeTrustedSessionOptions = (() => {
                 mode: FfiConverterTypeSessionPermissionMode.read(from),
                 ttlSeconds: FfiConverterUInt64.read(from),
                 idleTtlSeconds: FfiConverterUInt64.read(from),
+                capabilityManifestPath: FfiConverterOptionalString.read(from),
                 boundedManifestPath: FfiConverterOptionalString.read(from)
             };
         }
@@ -1251,6 +1278,7 @@ const FfiConverterTypeTrustedSessionOptions = (() => {
             FfiConverterTypeSessionPermissionMode.write(value.mode, into);
             FfiConverterUInt64.write(value.ttlSeconds, into);
             FfiConverterUInt64.write(value.idleTtlSeconds, into);
+            FfiConverterOptionalString.write(value.capabilityManifestPath, into);
             FfiConverterOptionalString.write(value.boundedManifestPath, into);
         }
         allocationSize(value: TypeName): number {
@@ -1258,6 +1286,7 @@ const FfiConverterTypeTrustedSessionOptions = (() => {
              FfiConverterTypeSessionPermissionMode.allocationSize(value.mode) +
              FfiConverterUInt64.allocationSize(value.ttlSeconds) +
              FfiConverterUInt64.allocationSize(value.idleTtlSeconds) +
+             FfiConverterOptionalString.allocationSize(value.capabilityManifestPath) +
              FfiConverterOptionalString.allocationSize(value.boundedManifestPath);
 
         }

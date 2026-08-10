@@ -58,11 +58,11 @@ pub enum Command {
         /// Temporary trusted-launcher compatibility path for the forgeable
         /// file-backed existing-profile approval artifact.
         allow_legacy_existing_profile_approval: bool,
-        /// Immutable bounded-autonomy manifest selected by the trusted
-        /// launcher. Valid only in bounded mode.
-        session_policy: Option<String>,
+        /// Immutable narrow-only capability manifest selected by the trusted
+        /// launcher. Required in bounded mode and optional in other profiles.
+        capability_manifest: Option<String>,
         /// Deliberate launch-time confirmation that the manifest was reviewed.
-        approve_session_policy: bool,
+        approve_capability_manifest: bool,
         /// True when `--no-permissions-gate` is on argv.  The env-var
         /// `CUA_DRIVER_RS_PERMISSIONS_GATE=0` short-circuits the gate too
         /// (checked inside the gate itself), so the flag is only one of
@@ -217,6 +217,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--permission-mode",
     "--grant",
     "--session-policy",
+    "--capability-manifest",
     "--pid-file",
     "--type",
     "--host-bundle-id",
@@ -510,10 +511,14 @@ pub fn parse_command() -> Command {
             "                                  controls the macOS OS-permission onboarding UI."
         );
         println!(
-            "  --session-policy <path>         Required in bounded mode; immutable tool manifest."
+            "  --capability-manifest <path>    Narrow-only tool/resource manifest; required in bounded mode."
         );
-        println!("  --approve-session-policy        Required with --session-policy; the trusted launcher asserts");
+        println!("  --approve-capability-manifest   Required with --capability-manifest; the trusted launcher asserts");
         println!("                                  that the human reviewed this exact manifest at startup.");
+        println!("  --session-policy <path>         Deprecated alias for --capability-manifest.");
+        println!(
+            "  --approve-session-policy        Deprecated alias for --approve-capability-manifest."
+        );
         println!();
         println!("authorization revocation:");
         println!("  cua-driver revoke --session <id>  Stop and revoke one session's grants.");
@@ -702,8 +707,14 @@ pub fn parse_command() -> Command {
             allow_legacy_existing_profile_approval: args
                 .iter()
                 .any(|a| a == "--allow-legacy-existing-profile-approval"),
-            session_policy: flag_value(&args, "--session-policy"),
-            approve_session_policy: args.iter().any(|a| a == "--approve-session-policy"),
+            capability_manifest: aliased_flag_value(
+                &args,
+                "--capability-manifest",
+                "--session-policy",
+            ),
+            approve_capability_manifest: args
+                .iter()
+                .any(|a| a == "--approve-capability-manifest" || a == "--approve-session-policy"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             claude_code_compat,
@@ -1068,6 +1079,19 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn aliased_flag_value(args: &[String], preferred: &str, deprecated: &str) -> Option<String> {
+    let preferred_value = flag_value(args, preferred);
+    let deprecated_value = flag_value(args, deprecated);
+    if preferred_value.is_some()
+        && deprecated_value.is_some()
+        && preferred_value != deprecated_value
+    {
+        eprintln!("{preferred} conflicts with deprecated {deprecated}");
+        process::exit(64);
+    }
+    preferred_value.or(deprecated_value)
 }
 
 /// Return every value of a repeatable `--flag value` or `--flag=value`.
@@ -1498,8 +1522,10 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary. Supported value: existing-profile." },
                   { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
                   { "name": "--allow-legacy-existing-profile-approval", "type": "flag", "description": "Temporary migration flag for the unprotected file-backed existing-profile artifact." },
-                  { "name": "--session-policy", "type": "string", "description": "Immutable tool manifest required in bounded mode." },
-                  { "name": "--approve-session-policy", "type": "flag", "description": "Trusted-launcher confirmation that the exact bounded manifest was reviewed." },
+                  { "name": "--capability-manifest", "type": "string", "description": "Optional narrow-only tool/resource ceiling; required in bounded mode." },
+                  { "name": "--approve-capability-manifest", "type": "flag", "description": "Trusted-launcher confirmation that the exact capability manifest was reviewed." },
+                  { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
+                  { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
@@ -3103,13 +3129,15 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true},
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
-                    {"name":"session-policy","short_name":null,"help":"Immutable tool manifest required in bounded mode.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"session-policy","short_name":null,"help":"Deprecated alias for capability-manifest.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
                     {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
                     {"name":"allow-legacy-existing-profile-approval","short_name":null,"help":"Temporary migration flag for the unprotected file-backed existing-profile artifact.","default_value":false},
-                    {"name":"approve-session-policy","short_name":null,"help":"Trusted-launcher confirmation that the exact bounded manifest was reviewed.","default_value":false},
+                    {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
+                    {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
                     {"name":"no-overlay","short_name":null,"help":"Disable the agent cursor overlay for this daemon.","default_value":false}
@@ -3925,6 +3953,26 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn deprecated_session_policy_flag_remains_a_capability_manifest_alias() {
+        let argv = args(&["serve", "--session-policy", "/tmp/legacy.yaml"]);
+        assert_eq!(
+            aliased_flag_value(&argv, "--capability-manifest", "--session-policy"),
+            Some("/tmp/legacy.yaml".to_owned())
+        );
+
+        let identical = args(&[
+            "serve",
+            "--capability-manifest=/tmp/shared.yaml",
+            "--session-policy",
+            "/tmp/shared.yaml",
+        ]);
+        assert_eq!(
+            aliased_flag_value(&identical, "--capability-manifest", "--session-policy"),
+            Some("/tmp/shared.yaml".to_owned())
+        );
     }
 
     #[test]

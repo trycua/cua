@@ -1629,6 +1629,24 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             }
             return;
         }
+        let semantic_target_without_geometry = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(false)
+                && value.get("click_point").is_none()
+                && (value["arguments"].get("element_index").is_some()
+                    || value["arguments"].get("element_token").is_some())
+        });
+        if semantic_target_without_geometry {
+            let click = manifest.as_ref().map(|value| &value["click"]);
+            if !click.is_some_and(|value| {
+                value["status"].as_str() == Some("not_applicable")
+                    && value["classification"].as_str() == Some("target_geometry_unavailable")
+            }) {
+                errors.push(format!(
+                    "invalid geometry-free click evidence for {cell_id}/{turn_name}: expected not_applicable/target_geometry_unavailable"
+                ));
+            }
+            return;
+        }
         validate_capture_status(
             manifest.as_ref(),
             &["click"],
@@ -2157,6 +2175,34 @@ mod tests {
 
         validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect("a pre-target refusal must not invent click evidence");
+    }
+
+    #[test]
+    fn validator_accepts_semantic_click_without_pixel_geometry() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2,"element_index":16},
+                "result_error":false
+            }"#,
+        )
+        .expect("write geometry-free semantic action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"target_geometry_unavailable"}
+            }"#,
+        )
+        .expect("write geometry-free semantic evidence");
+        std::fs::remove_file(turn.join("click.png")).expect("remove impossible click marker");
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("semantic element delivery need not invent pixel geometry");
     }
 
     #[test]

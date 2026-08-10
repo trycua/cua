@@ -292,6 +292,7 @@ class TestFleetServerPortForwarding:
         transport.connect = AsyncMock()
 
         with (
+            patch.object(Sandbox, "_uses_fleet", return_value=True),
             patch(
                 "cua_sandbox.sandbox.FleetCloudTransport",
                 return_value=transport,

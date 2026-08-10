@@ -18,6 +18,18 @@ from tests.live.fleet_e2e_support import (
 )
 
 
+def test_live_test_requires_both_oauth_values(monkeypatch) -> None:
+    monkeypatch.delenv("CUA_CLIENT_ID", raising=False)
+    monkeypatch.delenv("CUA_CLIENT_SECRET", raising=False)
+    from tests.live.test_fleet_ephemeral import has_oauth_credentials
+
+    assert not has_oauth_credentials()
+    monkeypatch.setenv("CUA_CLIENT_ID", "client")
+    assert not has_oauth_credentials()
+    monkeypatch.setenv("CUA_CLIENT_SECRET", "secret")
+    assert has_oauth_credentials()
+
+
 def test_build_namespace_name_is_dns_safe_and_bounded() -> None:
     name = build_namespace_name("published-package", "1234567890", "2")
     assert name == "cua-live-published-package-1234567890-2"

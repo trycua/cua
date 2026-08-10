@@ -39,12 +39,8 @@ def selected_namespace() -> str:
     )
     if not namespace.startswith("cua-live-"):
         raise ValueError("CUA_LIVE_E2E_NAMESPACE must start with cua-live-")
-    if len(namespace) > 63 or re.fullmatch(
-        r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", namespace
-    ) is None:
-        raise ValueError(
-            "CUA_LIVE_E2E_NAMESPACE must be a DNS-1123 label of at most 63 characters"
-        )
+    if len(namespace) > 63 or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", namespace) is None:
+        raise ValueError("CUA_LIVE_E2E_NAMESPACE must be a DNS-1123 label of at most 63 characters")
     return namespace
 
 
@@ -57,9 +53,7 @@ pytestmark = [
 async def run_fleet_ephemeral_live() -> None:
     lane = os.environ.get("CUA_LIVE_E2E_LANE", "local")
     namespace = selected_namespace()
-    artifact_dir = Path(
-        os.environ.get("CUA_LIVE_E2E_ARTIFACT_DIR", "/tmp/cua-live-e2e")
-    )
+    artifact_dir = Path(os.environ.get("CUA_LIVE_E2E_ARTIFACT_DIR", "/tmp/cua-live-e2e"))
     summary = {
         "lane": lane,
         "namespace": namespace,

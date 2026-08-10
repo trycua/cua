@@ -27,9 +27,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
     @staticmethod
     def steps_by_name(job: dict[str, object]) -> dict[str, dict[str, object]]:
         return {
-            step["name"]: step
-            for step in job["steps"]
-            if isinstance(step, dict) and "name" in step
+            step["name"]: step for step in job["steps"] if isinstance(step, dict) and "name" in step
         }
 
     def run_prepare_matrix(self, event_name: str, requested_lane: str) -> dict[str, object]:
@@ -49,9 +47,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
                 text=True,
             )
             outputs = dict(
-                line.split("=", 1)
-                for line in github_output.read_text().splitlines()
-                if "=" in line
+                line.split("=", 1) for line in github_output.read_text().splitlines() if "=" in line
             )
         return json.loads(outputs["matrix"])
 
@@ -106,9 +102,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
                     {"lane": "published-package"},
                 ]
             },
-            ("workflow_dispatch", "main-source"): {
-                "include": [{"lane": "main-source"}]
-            },
+            ("workflow_dispatch", "main-source"): {"include": [{"lane": "main-source"}]},
             ("workflow_dispatch", "published-package"): {
                 "include": [{"lane": "published-package"}]
             },
@@ -120,8 +114,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
 
     def test_docs_describe_the_remediated_workflow(self) -> None:
         docs = (
-            REPO_ROOT
-            / "docs/superpowers/specs/2026-08-09-periodic-cua-sandbox-live-e2e-design.md",
+            REPO_ROOT / "docs/superpowers/specs/2026-08-09-periodic-cua-sandbox-live-e2e-design.md",
             REPO_ROOT / "docs/superpowers/plans/2026-08-09-periodic-cua-sandbox-live-e2e.md",
         )
         required_contract = (
@@ -200,7 +193,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         live_run = steps["Run live Fleet smoke"]["run"]
         self.assertIn("$CUA_LIVE_E2E_TEST_ROOT/tests/live/test_fleet_ephemeral.py", live_run)
         self.assertNotIn("libs/python/cua-sandbox/tests/live", live_run)
-        self.assertIn("PYTHONPATH=\"$CUA_LIVE_E2E_TEST_ROOT", live_run)
+        self.assertIn('PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT', live_run)
 
     def test_failure_diagnostics_alerting_and_pinned_actions(self) -> None:
         workflow = self.workflow()

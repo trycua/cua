@@ -171,6 +171,21 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     if key.is_empty() {
         return;
     }
+    // The embedder tap first, before anything can drop the command.
+    //
+    // Only the Windows dispatcher did this, so on Linux — where every dataset
+    // actually runs — `cursor.jsonl` was empty for every run ever recorded, and
+    // the timeline had no cursor to draw. It matters most for accessibility
+    // clicks: an `element_index` action resolves to a point that only the
+    // overlay ever computes, so with nothing tapping the command there is no
+    // record anywhere of *where* the agent clicked. The pixel coordinates are
+    // not in the tool arguments to fall back on.
+    //
+    // Emitted ahead of the channel send for the same reason Windows does it:
+    // recording must see the interaction even when no overlay thread is
+    // running, which is the normal case for headless capture.
+    cursor_overlay::tap::emit(&key, &cmd);
+
     let msg = OverlayMsg::Cmd(KeyedOverlayCommand {
         key: key.clone(),
         cmd: cmd.clone(),

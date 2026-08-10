@@ -1182,14 +1182,33 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
 ///   2. an editable inside web/document content — for a browser this is the
 ///      page's field, not the address bar (which sorts first in the tree but is
 ///      chrome),
-///   3. the first editable anywhere (covers single-field apps like a GTK dialog
-///      entry, or a GTK4 GtkEntry).
+///   3. the *only* editable, when the app has exactly one (covers single-field
+///      apps like a GTK dialog entry, or a GTK4 GtkEntry).
+///
+/// Rung 3 used to be "the first editable anywhere", and tree order is not a
+/// guess worth making: in Geany the first editable is the toolbar search entry,
+/// several nodes above the document. When nothing reported focus — which happens
+/// whenever another process holds the X input focus, i.e. constantly on a shared
+/// desktop — text written "into Geany" went into that search box, silently, and
+/// the write was reported as confirmed. Editing tasks failed about half the time
+/// with no error anywhere and the file untouched on disk.
+///
+/// With more than one candidate and no focus to choose between them, there is no
+/// right answer available here. Returning `None` lets the caller fall through to
+/// real key events, which go wherever the user's focus actually is.
 fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>]) -> Option<&'v Visited<'a>> {
     visited
         .iter()
         .find(|v| v.has_editable && v.focused)
         .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
-        .or_else(|| visited.iter().find(|v| v.has_editable))
+        .or_else(|| {
+            let mut editables = visited.iter().filter(|v| v.has_editable);
+            match (editables.next(), editables.next()) {
+                (Some(only), None) => Some(only),
+                // Ambiguous: refuse rather than guess by tree order.
+                _ => None,
+            }
+        })
 }
 
 /// Try to write `text` into the best editable node in `visited` via AT-SPI

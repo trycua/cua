@@ -2835,11 +2835,30 @@ impl Tool for TypeTextTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        // Foreground means the caller explicitly permits activation. Chromium
-        // and WebKitGTK can acknowledge an accessibility write without
-        // producing the renderer input event, so web embedders use real XTest
-        // key events. Native toolkits keep their verifiable AT-SPI path below.
-        if delivery.is_foreground() && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid)) {
+        // Foreground means the caller explicitly permits activation, so it gets
+        // real key events — for every toolkit, not just the web embedders.
+        //
+        // This used to be gated on `is_chromium_embedder || is_webkitgtk_embedder`,
+        // on the reasoning that native toolkits have a "verifiable AT-SPI path
+        // below". That path is not verifiable, and for native GTK it was wrong
+        // often enough to invalidate a whole calibration campaign:
+        //
+        //   * `type_text{delivery_mode:"foreground", text:"import math"}` into
+        //     Geany fell through to AT-SPI, which picked the *first editable in
+        //     tree order* — the toolbar search entry — and the eleven characters
+        //     were never seen again. `press_key` and `hotkey ctrl+s` on the same
+        //     window landed correctly, so the file saved with a blank first line
+        //     and no import.
+        //   * The call returned "Typed 11 character(s) (via AT-SPI)" and
+        //     `verified: true`. The agent then searched the accessibility tree,
+        //     *found* "import math" in the entry, and correctly concluded it had
+        //     succeeded.
+        //
+        // Roughly half of all such calls no-opped this way. Silently downgrading
+        // an explicit foreground request to a background widget guess is the bug;
+        // the embedder check belongs on choosing the *default*, never on honouring
+        // what the caller asked for.
+        if delivery.is_foreground() {
             if let Some(idx) = resolved_elem_idx {
                 let focused =
                     tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))

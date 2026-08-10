@@ -8,7 +8,65 @@
 
 use anyhow::{bail, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// How long a capture subprocess may take before it is killed.
+///
+/// A screenshot of a single window is tens of milliseconds. Anything past a
+/// couple of seconds is not slow, it is stuck.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Run a capture command, killing it if it outstays [`CAPTURE_TIMEOUT`].
+///
+/// `Command::output()` waits forever, and that is not a theoretical problem
+/// here: ImageMagick's `import` takes an X server grab, and a grab held by a
+/// wedged process blocks *every other X client on the display*. One `import`
+/// stuck against a window that was being torn down froze the whole desktop —
+/// a click task that normally finishes in 25 seconds took 445, `wmctrl` hung,
+/// and even `docker exec` blocked. Nothing logged an error; runs simply got
+/// slower and then stopped returning, which reads as a flaky benchmark rather
+/// than as one wedged subprocess.
+///
+/// The output is read on a worker thread rather than after the wait, because a
+/// PNG is far larger than a pipe buffer: polling `try_wait` while nothing
+/// drains stdout would deadlock on any screenshot big enough to matter, which
+/// is all of them.
+fn output_bounded(mut command: Command) -> Result<Vec<u8>> {
+    let mut child = command.stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+    let pid = child.id() as i32;
+
+    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let reader = std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut buffer = Vec::new();
+        let _ = stdout.read_to_end(&mut buffer);
+        buffer
+    });
+
+    let deadline = Instant::now() + CAPTURE_TIMEOUT;
+    loop {
+        match child.try_wait()? {
+            Some(status) => {
+                let bytes = reader.join().unwrap_or_default();
+                if !status.success() || bytes.is_empty() {
+                    bail!("capture command failed");
+                }
+                return Ok(bytes);
+            }
+            None if Instant::now() >= deadline => {
+                // SIGKILL, not SIGTERM. A process wedged holding an X grab is
+                // by definition not servicing anything, so asking politely
+                // leaves the grab in place for the full grace period.
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+                let _ = child.wait();
+                let _ = reader.join();
+                bail!("capture command exceeded {CAPTURE_TIMEOUT:?} and was killed");
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+}
 
 /// Capture a window by X11 XID. Returns raw PNG bytes.
 pub fn screenshot_window_bytes(xid: u64) -> Result<Vec<u8>> {
@@ -36,13 +94,9 @@ pub fn screenshot_window(xid: u64) -> Result<(String, u32, u32)> {
 }
 
 fn capture_via_import(xid: u64) -> Result<Vec<u8>> {
-    let out = Command::new("import")
-        .args(["-window", &xid.to_string(), "png:-"])
-        .output()?;
-    if !out.status.success() || out.stdout.is_empty() {
-        bail!("import failed");
-    }
-    Ok(out.stdout)
+    let mut command = Command::new("import");
+    command.args(["-window", &xid.to_string(), "png:-"]);
+    output_bounded(command)
 }
 
 fn capture_via_xgetimage(xid: u64) -> Result<(String, u32, u32)> {
@@ -136,13 +190,10 @@ fn screenshot_display_bytes_with_dispatch(
 /// loop forever once we're on Wayland).
 pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
     // Try `import -window root png:-` (ImageMagick).
-    let out = Command::new("import")
-        .args(["-window", "root", "png:-"])
-        .output();
-    if let Ok(o) = out {
-        if o.status.success() && !o.stdout.is_empty() {
-            return Ok(o.stdout);
-        }
+    let mut command = Command::new("import");
+    command.args(["-window", "root", "png:-"]);
+    if let Ok(bytes) = output_bounded(command) {
+        return Ok(bytes);
     }
     // Fallback: x11rb XGetImage on the root window.
     use x11rb::connection::Connection;

@@ -113,6 +113,44 @@ fn resolve_onscreen_point_with_scroll(
 /// hook) we degrade to `GetWindowRect.top-left + (px, py)` — matches
 /// the capture fallback which also keeps the full PrintWindow bitmap
 /// without crop.
+/// The centre of a window in screen coordinates, from the window itself.
+///
+/// Uses the DWM extended frame bounds where available, for the same reason
+/// [`bitmap_to_screen`] does: `GetWindowRect` on a composited window includes
+/// the invisible resize border, so its centre is a few pixels off from what a
+/// person sees. Returns `None` only when the window has no rect at all —
+/// destroyed, or never shown.
+fn window_center(hwnd: u64) -> Option<(i32, i32)> {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    let h = HWND(hwnd as *mut _);
+    unsafe {
+        let mut dwm = RECT::default();
+        let hr = DwmGetWindowAttribute(
+            h,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut dwm as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        let rect = if hr.is_ok() && dwm.right > dwm.left && dwm.bottom > dwm.top {
+            dwm
+        } else {
+            let mut plain = RECT::default();
+            GetWindowRect(h, &mut plain).ok()?;
+            plain
+        };
+        if rect.right <= rect.left || rect.bottom <= rect.top {
+            return None;
+        }
+        Some((
+            rect.left + (rect.right - rect.left) / 2,
+            rect.top + (rect.bottom - rect.top) / 2,
+        ))
+    }
+}
+
 fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
@@ -5656,15 +5694,13 @@ impl Tool for ScrollTool {
             let center = if let (Some(x), Some(y)) = (px, py) {
                 Some(bitmap_to_screen(hwnd, x as i32, y as i32))
             } else {
-                tokio::task::spawn_blocking(move || {
-                    crate::win32::list_windows(Some(pid))
-                        .into_iter()
-                        .find(|w| w.hwnd == hwnd)
-                        .map(|w| (w.x + w.width / 2, w.y + w.height / 2))
-                })
-                .await
-                .ok()
-                .flatten()
+                // The window's own rect, not a search through every window the
+                // process owns. `list_windows` enumerates and inspects each
+                // window it finds; measured against a WinForms app it cost
+                // ~2.5s per call, which made a foreground scroll feel like it
+                // had been ignored (27ms once resolved directly). The HWND is
+                // already known here — there is nothing to look up.
+                window_center(hwnd)
             };
             let (cx, cy) = match center {
                 Some(c) => c,

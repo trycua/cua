@@ -2465,8 +2465,24 @@ fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Opti
 /// resolution — no server interaction — split out from keycode lookup so the
 /// keysym can be remapped onto a spare keycode when the keymap lacks it.
 fn key_name_to_keysym(key: &str) -> Result<u32> {
-    // Common X11 keysym names.
-    let keysym: u32 = match key.to_lowercase().as_str() {
+    // Separators dropped before matching, so the X keysym spelling and the
+    // compact spelling are the same key.
+    //
+    // The table below spells these `pagedown`, but the name X itself uses is
+    // `Page_Down`, and that is what a caller reading xmodmap output — or a model
+    // that learned X keysyms — will send. It was rejected outright: an agent
+    // scrolling a long list pressed `Page_Down` twice, got "Unknown key" twice,
+    // and fell back to a worse strategy. A rejected key is not a neutral event
+    // in a measurement; it pushes the run toward whatever the model tries next.
+    //
+    // Only the separators are removed, never characters, so `underscore` and
+    // `minus` still name themselves and the single-character branch is
+    // untouched.
+    let normalised = key.to_lowercase().replace(['_', '-', ' '], "");
+    // The single-character branch must see the original: " " is the space key,
+    // and normalising it away would turn it into the empty string.
+    let lookup = if key.chars().count() == 1 { key.to_lowercase() } else { normalised };
+    let keysym: u32 = match lookup.as_str() {
         "return" | "enter" => 0xFF0D,
         "tab" => 0xFF09,
         "escape" | "esc" => 0xFF1B,

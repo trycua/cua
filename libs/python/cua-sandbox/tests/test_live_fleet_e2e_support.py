@@ -751,7 +751,6 @@ async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup
     assert summaries[-1]["cleanup_error"] == {"type": "Failed"}
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("close_fails", "summary_fails"),

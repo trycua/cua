@@ -178,8 +178,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         oauth_steps = {
             step["name"]: step["env"]
             for step in live["steps"]
-            if "CUA_CLIENT_ID" in step.get("env", {})
-            or "CUA_CLIENT_SECRET" in step.get("env", {})
+            if "CUA_CLIENT_ID" in step.get("env", {}) or "CUA_CLIENT_SECRET" in step.get("env", {})
         }
         self.assertEqual(
             oauth_steps,

@@ -15,7 +15,7 @@ mints session-scoped tab and element capabilities.
 The canonical loop is:
 
 ```text
-start_session(session?)                                  # optional on MCP/SDK
+start_session(session?)                                  # optional; can name before acting
 list_windows or launch_app
 get_browser_state(pid, window_id, session?)               # bind
 get_browser_state(target_id, tab_id, session?,
@@ -27,7 +27,9 @@ get_browser_state(target_id, tab_id, session?,
 end_session(session?)                                     # optional cleanup
 ```
 
-One long-lived MCP or SDK transport may omit `session`; its first admitted call
+Pass `session` on the first action to create a named lifecycle session without
+calling `start_session`. One long-lived MCP or SDK transport may instead omit
+`session`; its first admitted call
 creates one implicit session and later unnamed calls reuse it. Direct one-shot
 CLI calls use disposable transports, so name a session for a multi-call browser
 workflow and pass that label throughout. Never substitute a raw CDP target id,

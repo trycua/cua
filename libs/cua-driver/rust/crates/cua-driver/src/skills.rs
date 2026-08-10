@@ -922,6 +922,8 @@ mod tests {
         for required in [
             "Choose the target on each action",
             "implicit session for the authenticated transport",
+            "Pass `session` on the first action",
+            "Use `start_session` to revive a name",
             "There is no `deescalate_session`",
             "--capability-manifest",
             "--approve-capability-manifest",
@@ -941,7 +943,8 @@ mod tests {
         }
         for required in [
             "start_session(session?)",
-            "optional on MCP/SDK",
+            "optional; can name before acting",
+            "Pass `session` on the first action",
             "CLI calls use disposable transports",
         ] {
             assert!(

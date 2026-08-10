@@ -86,8 +86,7 @@ Attaching an existing signed-in Chrome or Edge profile is more sensitive. A stan
 For unattended work, [bounded mode](https://cua.ai/docs/how-to-guides/driver/write-a-bounded-manifest) is the recommended path. A reviewed manifest can allow an existing profile while restricting tools, apps, origins, and files. For example:
 
 ```yaml
-version: 2
-mode: bounded
+version: 3
 expires_after: 8h
 idle_timeout: 30m
 
@@ -117,7 +116,7 @@ resources:
     display: false
 ```
 
-Start it with `cua-driver serve --permission-mode bounded --session-policy ./cua-session.yaml --approve-session-policy`. The example uses Chrome's macOS bundle id; Windows and Linux use its canonical absolute executable path. Generic desktop input is deliberately omitted because it could bypass the origin restriction.
+Start it with `cua-driver serve --permission-mode bounded --capability-manifest ./cua-capability-manifest.yaml --approve-capability-manifest`. The example uses Chrome's macOS bundle id; Windows and Linux use its canonical absolute executable path. Generic desktop input is deliberately omitted because it could bypass the origin restriction.
 
 Users who explicitly accept the risk can choose [unrestricted mode](https://cua.ai/docs/reference/cua-driver/permission-modes) with `cua-driver serve --dangerously-bypass-approvals`. That bypasses Cua approval checks after launch-time acknowledgement, so it should not be the default for a personal browser.
 

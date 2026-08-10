@@ -1,8 +1,8 @@
 """Factory for creating computer interfaces."""
 
-from typing import Dict, Literal, Optional
+from typing import Literal, Optional
 
-from .base import BaseComputerInterface
+from .base import ApiHeaders, BaseComputerInterface
 
 OSType = Literal["macos", "linux", "windows", "android"]
 
@@ -18,7 +18,7 @@ class InterfaceFactory:
         api_key: Optional[str] = None,
         vm_name: Optional[str] = None,
         api_base_url: Optional[str] = None,
-        api_headers: Optional[Dict[str, str]] = None,
+        api_headers: Optional[ApiHeaders] = None,
     ) -> BaseComputerInterface:
         """Create an interface for the specified OS.
 
@@ -32,7 +32,9 @@ class InterfaceFactory:
                 it sits behind an authenticated, path-prefixed reverse proxy. When set,
                 REST/WebSocket URIs are derived from it instead of ip_address + port.
             api_headers: Optional extra HTTP headers (e.g. ``Authorization: Bearer ...``)
-                sent on every REST request and the WebSocket upgrade.
+                sent on every REST request and the WebSocket upgrade. Either a dict,
+                or a sync/async callable returning one, which is re-resolved per
+                request and per connection attempt for credentials that expire.
 
         Returns:
             BaseComputerInterface: The appropriate interface for the OS

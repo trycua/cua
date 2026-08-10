@@ -18,7 +18,6 @@ from fleet_sdk import (
     HttpHeader,
     HttpRequest,
     HttpResponse,
-    SdkError,
 )
 
 DEFAULT_BASE_URL = "https://run.cua.ai"
@@ -53,8 +52,13 @@ class HttpxFleetClient(HttpClient):
         await self._client.aclose()
 
 
-def build_namespace_name(lane: str, run_id: str, run_attempt: str) -> str:
-    raw = f"cua-live-{lane}-{run_id}-{run_attempt}".lower()
+def build_namespace_name(lane: str, event_name: str) -> str:
+    event_class = {
+        "schedule": "schedule",
+        "push": "push",
+        "workflow_dispatch": "manual",
+    }.get(event_name, "manual")
+    raw = f"cua-live-{lane}-{event_class}".lower()
     normalized = re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
     return normalized[:63].rstrip("-")
 
@@ -75,21 +79,7 @@ def build_fleet_client() -> tuple[CyclopsClient, HttpxFleetClient]:
     return CyclopsClient.connect(configuration, http_client), http_client
 
 
-def is_not_found_error(error: BaseException) -> bool:
-    return isinstance(error, SdkError.Status) and error.status == 404
-
-
-async def namespace_exists(client: CyclopsClient, name: str) -> bool:
-    try:
-        await client.get_namespace(name)
-    except Exception as error:
-        if is_not_found_error(error):
-            return False
-        raise
-    return True
-
-
-async def wait_namespace_absent(
+async def wait_claims_absent(
     client: CyclopsClient,
     name: str,
     *,
@@ -98,15 +88,13 @@ async def wait_namespace_absent(
 ) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not await namespace_exists(client, name):
+        if not await client.list_claims(name):
             return True
         await asyncio.sleep(interval)
-    return not await namespace_exists(client, name)
+    return not await client.list_claims(name)
 
 
 async def collect_resource_inventory(client: CyclopsClient, name: str) -> dict[str, list[str]]:
-    if not await namespace_exists(client, name):
-        return {"templates": [], "pools": [], "claims": []}
     templates = await client.list_templates(name)
     pools = await client.list_pools(name)
     claims = await client.list_claims(name)

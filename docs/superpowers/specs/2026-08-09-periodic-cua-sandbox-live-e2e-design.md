@@ -21,8 +21,8 @@ testing the current Fleet-backed public SDK contract.
 - Test both the current repository `main` source and the latest published
   `cua-sandbox` package.
 - Run the source lane immediately after relevant changes merge to `main`.
-- Verify guest access, generated Fleet port configuration, and owned-namespace
-  cleanup.
+- Verify guest access, generated Fleet port configuration, and claim-only
+  cleanup with persistent reconciled resources.
 - Alert through Alertmanager with enough lane and version context to triage a
   failure.
 - Prevent failed or superseded runs from accumulating live infrastructure.
@@ -106,9 +106,9 @@ Place the stable scenario in
 opt-in and skips unless the OAuth environment is configured, keeping ordinary
 local and pull request test runs credential-free.
 
-Each lane generates a DNS-safe name containing the lane, GitHub run ID, and run
-attempt. That name is used for the SDK-created namespace and makes resources
-attributable to one workflow execution.
+Each lane and event class uses a reusable DNS-safe namespace. The workflow sets
+`cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`, yielding `schedule`, `push`, or `manual` namespaces.
+Event-and-lane concurrency serializes each deterministic claim.
 
 Provision with the exact certified image:
 
@@ -147,29 +147,25 @@ an unrelated default or stale resource.
 
 ## Cleanup And Leak Detection
 
-`Sandbox.ephemeral()` remains the primary cleanup mechanism. After its context
-exits, the test polls Fleet until the owned namespace is absent. Namespace
-absence is the terminal cleanup assertion because deletion also removes the
-template, pool, claim, sandbox, VMI, pod, and Service resources beneath it.
-
-Cleanup follows a diagnostic-only, leak-safe sequence:
+Fleet reconciliation intentionally preserves each dedicated namespace, pool, and
+template. After `Sandbox.ephemeral()` exits, the monitor performs claim-only
+cleanup verification:
 
 1. preserve the original scenario exception, if any;
-2. wait a bounded period for automatic namespace deletion;
-3. if the namespace remains, collect a sanitized resource inventory; and
-4. fail the test explicitly as an SDK cleanup regression.
+2. poll until claims are absent;
+3. collect a sanitized inventory; and
+4. require exactly the pool/template named after the namespace and zero claims.
 
-The test and workflow never call Fleet namespace deletion directly. Fleet
-namespace deletion is name-only and can race with namespace recreation, so
-`Sandbox.ephemeral()` remains the sole cleanup authority. Cleanup errors are
-reported alongside the primary exception.
+A remaining claim or any unexpected inventory is a diagnostic failure. The test
+and workflow never explicitly delete a namespace, pool, or template: name-only
+deletes can race with reconciliation. Cleanup errors are reported alongside the
+primary exception.
 
 ## Diagnostics And Artifacts
 
 The live test writes a sanitized JSON summary containing lane, source SHA,
 installed package versions, the resolved `cua_sandbox` module origin, namespace
-and resource names, assertion timing, screen and shell observations, automatic
-cleanup results, and remaining resources on a leak. On failure only, the
+and resource names, assertion timing, screen and shell observations, claim-only cleanup results and persistent reconciled resources. On failure only, the
 workflow uploads this summary and related diagnostics with short retention.
 
 A manual `force_failure` first runs `Write controlled failure diagnostics` to
@@ -214,7 +210,7 @@ Scripts CI installs `pyyaml` and runs this contract when the workflow changes.
 1. Add the live test, workflow, and workflow contract test with the schedule
    temporarily disabled or guarded.
 2. Manually dispatch `main-source` and verify assertions, diagnostics, and
-   complete namespace cleanup.
+   complete claim-only cleanup.
 3. Manually dispatch `published-package` and verify the installed release plus
    cleanup behavior.
 4. Exercise the Alertmanager payload without exposing secrets, then resolve the
@@ -233,3 +229,20 @@ Scripts CI installs `pyyaml` and runs this contract when the workflow changes.
 - Normal and failing runs leave no test namespace behind.
 - A forced failure produces one actionable, lane-specific Alertmanager alert
   and sanitized failure artifacts.
+
+## Live Evidence Remediation
+
+The monitor uses reusable, dedicated namespaces instead of per-run namespaces.
+Each lane has one DNS-safe namespace for each event class:
+
+- `cua-live-<lane>-schedule` for scheduled runs
+- `cua-live-<lane>-push` for pushes
+- `cua-live-<lane>-manual` for `workflow_dispatch`
+
+The event-and-lane concurrency group serializes use of each deterministic claim;
+only scheduled runs cancel an older scheduled run in the same lane. Fleet
+reconciliation preserves the namespace, pool, and template, all named after the
+namespace. `Sandbox.ephemeral()` is verified with claim-only cleanup: after
+exit the monitor polls until claims are absent, records persistent reconciled
+resources, and requires exactly the named pool/template with zero claims. It
+never explicitly deletes a namespace, pool, or template.

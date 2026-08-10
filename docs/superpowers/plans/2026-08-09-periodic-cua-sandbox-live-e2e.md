@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a 15-minute live Fleet smoke that independently certifies repository `main` and the latest published `cua-sandbox`, verifies explicit port `8000`, screen and shell access, detects namespace leaks, and alerts Alertmanager on failure.
+**Goal:** Add a 15-minute live Fleet smoke that independently certifies repository `main` and the latest published `cua-sandbox`, verifies explicit port `8000`, screen and shell access, detects claim leaks, and alerts Alertmanager on failure.
 
 **Architecture:** A public-API-only Python support module owns Fleet inspection and diagnostic-only leak detection; a thin opt-in pytest test owns the live scenario. One trigger-aware GitHub Actions workflow selects source and published lanes, while a repository-side contract test locks down schedule, security, cleanup, and alerting behavior.
 
@@ -17,7 +17,7 @@
 - Provision with `cpu=4`, `memory_mb=4096`, `server_port=8000`, `time_to_start=900`, `request_timeout=60`, and `telemetry_enabled=False`.
 - Authenticate only with `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, `CUA_FLEET_BASE_URL=https://run.cua.ai`, and the default Cyclops token endpoint.
 - Do not use `CUA_API_KEY`, legacy `/api/keys`, namespace-scoped key creation, repository-private SDK helpers, or mutable image tags.
-- A leaked namespace is a test failure; collect sanitized diagnostics without explicit deletion.
+- A leaked claim is a test failure; collect sanitized diagnostics without explicit deletion.
 - Upload diagnostics only on failure and never include credentials, tokens, or authorization headers.
 - Pin `actions/checkout`, `actions/setup-python`, and `actions/upload-artifact` by full commit SHA.
 - No nightly suite and no required pull request live check.
@@ -33,7 +33,7 @@
 
 **Interfaces:**
 - Consumes: public `fleet_sdk` records and exceptions; no `cua_sandbox` private modules.
-- Produces: `HttpxFleetClient`, `build_fleet_client()`, `namespace_exists()`, `wait_namespace_absent()`, `collect_resource_inventory()`, `assert_template_contract()`, and `write_summary()` for diagnostic-only live pytest cleanup verification.
+- Produces: `HttpxFleetClient`, `build_fleet_client()`, `build_namespace_name()`, `wait_claims_absent()`, `collect_resource_inventory()`, `assert_template_contract()`, and `write_summary()` for diagnostic-only live pytest cleanup verification.
 
 - [ ] **Step 1: Create the live test package marker**
 
@@ -55,13 +55,13 @@ from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_namespace_name,
     collect_resource_inventory,
-    wait_namespace_absent,
+    wait_claims_absent,
 )
 
 
-def test_build_namespace_name_is_dns_safe_and_bounded() -> None:
-    name = build_namespace_name("published-package", "1234567890", "2")
-    assert name == "cua-live-published-package-1234567890-2"
+def test_build_namespace_name_is_stable_for_each_lane_and_event_class() -> None:
+    name = build_namespace_name("published-package", "workflow_dispatch")
+    assert name == "cua-live-published-package-manual"
     assert len(name) <= 63
 
 
@@ -126,7 +126,7 @@ async def test_collect_resource_inventory_lists_owned_resources() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wait_namespace_absent_polls_until_404(monkeypatch) -> None:
+async def test_wait_claims_absent_polls_until_claims_are_gone(monkeypatch) -> None:
     class StatusError(Exception):
         def __init__(self, status: int) -> None:
             self.status = status
@@ -147,7 +147,7 @@ async def test_wait_namespace_absent_polls_until_404(monkeypatch) -> None:
     )
     monkeypatch.setattr("asyncio.sleep", lambda _: _completed())
 
-    assert await wait_namespace_absent(FakeClient(), "demo", timeout=1, interval=0)
+    assert await wait_claims_absent(FakeClient(), "demo", timeout=1, interval=0)
     assert calls == 2
 
 
@@ -228,8 +228,11 @@ class HttpxFleetClient(HttpClient):
         await self._client.aclose()
 
 
-def build_namespace_name(lane: str, run_id: str, run_attempt: str) -> str:
-    raw = f"cua-live-{lane}-{run_id}-{run_attempt}".lower()
+def build_namespace_name(lane: str, event_name: str) -> str:
+    event_class = {"schedule": "schedule", "push": "push", "workflow_dispatch": "manual"}.get(
+        event_name, "manual"
+    )
+    raw = f"cua-live-{lane}-{event_class}".lower()
     normalized = re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
     return normalized[:63].rstrip("-")
 
@@ -250,21 +253,7 @@ def build_fleet_client() -> tuple[CyclopsClient, HttpxFleetClient]:
     return CyclopsClient.connect(configuration, http_client), http_client
 
 
-def is_not_found_error(error: BaseException) -> bool:
-    return isinstance(error, SdkError.Status) and error.status == 404
-
-
-async def namespace_exists(client: CyclopsClient, name: str) -> bool:
-    try:
-        await client.get_namespace(name)
-    except Exception as error:
-        if is_not_found_error(error):
-            return False
-        raise
-    return True
-
-
-async def wait_namespace_absent(
+async def wait_claims_absent(
     client: CyclopsClient,
     name: str,
     *,
@@ -273,17 +262,15 @@ async def wait_namespace_absent(
 ) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not await namespace_exists(client, name):
+        if not await client.list_claims(name):
             return True
         await asyncio.sleep(interval)
-    return not await namespace_exists(client, name)
+    return not await client.list_claims(name)
 
 
 async def collect_resource_inventory(
     client: CyclopsClient, name: str
 ) -> dict[str, list[str]]:
-    if not await namespace_exists(client, name):
-        return {"templates": [], "pools": [], "claims": []}
     templates = await client.list_templates(name)
     pools = await client.list_pools(name)
     claims = await client.list_claims(name)
@@ -394,7 +381,7 @@ from tests.live.fleet_e2e_support import (
     build_fleet_client,
     build_namespace_name,
     collect_resource_inventory,
-    wait_namespace_absent,
+    wait_claims_absent,
     write_summary,
 )
 
@@ -418,8 +405,7 @@ async def test_fleet_ephemeral_live() -> None:
     lane = os.environ.get("CUA_LIVE_E2E_LANE", "local")
     namespace = os.environ.get("CUA_LIVE_E2E_NAMESPACE") or build_namespace_name(
         lane,
-        os.environ.get("GITHUB_RUN_ID", str(int(time.time()))),
-        os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+        os.environ.get("CUA_LIVE_E2E_EVENT", "manual"),
     )
     artifact_dir = Path(
         os.environ.get("CUA_LIVE_E2E_ARTIFACT_DIR", "/tmp/cua-live-e2e")
@@ -479,15 +465,17 @@ async def test_fleet_ephemeral_live() -> None:
     finally:
         try:
             cleanup_started = time.monotonic()
-            cleaned = await wait_namespace_absent(fleet, namespace)
-            summary["automatic_cleanup"] = cleaned
-            if not cleaned:
-                summary["remaining_resources"] = await collect_resource_inventory(
-                    fleet, namespace
-                )
-                summary["namespace_leak"] = True
-                if primary_error is None:
-                    pytest.fail(f"namespace {namespace} leaked after Sandbox.ephemeral()")
+            claims_absent = await wait_claims_absent(fleet, namespace)
+            inventory = await collect_resource_inventory(fleet, namespace)
+            expected_inventory = {"templates": [namespace], "pools": [namespace], "claims": []}
+            summary["claims_absent"] = claims_absent
+            summary["persistent_resources"] = inventory
+            if not claims_absent:
+                summary["claim_leak"] = True
+                pytest.fail(f"claims remain in namespace {namespace} after Sandbox.ephemeral()")
+            if inventory != expected_inventory:
+                summary["unexpected_inventory"] = True
+                pytest.fail(f"unexpected reconciled resource inventory: {inventory}")
             summary["cleanup_seconds"] = time.monotonic() - cleanup_started
         finally:
             write_summary(artifact_dir / "summary.json", summary)
@@ -775,7 +763,7 @@ Set the OAuth secrets in the environment and run:
 ```bash
 export CUA_FLEET_BASE_URL=https://run.cua.ai
 export CUA_LIVE_E2E_LANE=main-source
-export CUA_LIVE_E2E_NAMESPACE="cua-live-main-source-$(date -u +%Y%m%d%H%M%S)"
+export CUA_LIVE_E2E_NAMESPACE="cua-live-main-source-manual"
 export CUA_LIVE_E2E_ARTIFACT_DIR=/tmp/cua-live-main-source
 LIVE_TEST_ROOT=$(mktemp -d /tmp/cua-live-e2e-suite.XXXXXX)
 mkdir -p "$LIVE_TEST_ROOT/tests/live"
@@ -786,7 +774,7 @@ PYTHONPATH="$LIVE_TEST_ROOT" \
   "$LIVE_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
 ```
 
-Expected: PASS; summary reports `1024x768`, `Linux`, port `8000`, the editable `cua_sandbox` module origin, and automatic namespace cleanup.
+Expected: PASS; summary reports `1024x768`, `Linux`, port `8000`, the editable `cua_sandbox` module origin, and claim-only cleanup.
 
 - [ ] **Step 3: Run the published lane in an isolated environment**
 
@@ -803,7 +791,7 @@ uv pip install \
   --upgrade cua-sandbox pytest pytest-asyncio
 export CUA_FLEET_BASE_URL=https://run.cua.ai
 export CUA_LIVE_E2E_LANE=published-package
-export CUA_LIVE_E2E_NAMESPACE="cua-live-published-$(date -u +%Y%m%d%H%M%S)"
+export CUA_LIVE_E2E_NAMESPACE="cua-live-published-package-manual"
 export CUA_LIVE_E2E_ARTIFACT_DIR=/tmp/cua-live-published-package
 LIVE_TEST_ROOT=$(mktemp -d /tmp/cua-live-e2e-suite.XXXXXX)
 mkdir -p "$LIVE_TEST_ROOT/tests/live"
@@ -814,7 +802,7 @@ PYTHONPATH="$LIVE_TEST_ROOT" \
   "$LIVE_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
 ```
 
-Expected: PASS with the installed package version in `summary.json` and no remaining namespace.
+Expected: PASS with the installed package version in `summary.json` and the expected persistent pool/template and no claims.
 
 - [ ] **Step 4: Push the branch and open the implementation PR**
 
@@ -825,7 +813,7 @@ cat > /tmp/periodic-live-e2e-pr.md <<'EOF'
 
 - restore a Fleet-backed live `cua-sandbox` smoke every 15 minutes
 - test repository `main` and the latest published package independently
-- verify port `8000`, screen dimensions, screenshot, shell, and namespace cleanup
+- verify port `8000`, screen dimensions, screenshot, shell, and claim-only cleanup
 - notify Alertmanager with lane-specific failure context
 
 ## Verification
@@ -879,8 +867,30 @@ Expected: the workflow fails intentionally and Alertmanager returns one matching
 
 - [ ] **Step 7: Observe two consecutive scheduled intervals**
 
-After merge, inspect two consecutive `:07/:22/:37/:52` runs. Confirm both lanes pass, a newer schedule cancels only an older scheduled run of the same lane, artifacts are absent on success, and no `cua-live-*` namespace remains after either run.
+After merge, inspect two consecutive `:07/:22/:37/:52` runs. Confirm both lanes pass, a newer schedule cancels only an older scheduled run of the same lane, artifacts are absent on success, and each dedicated namespace retains only its named pool/template with no claims.
 
 - [ ] **Step 8: Record rollout evidence**
 
 Update the merged PR or implementation issue with workflow run links, observed versions, cleanup evidence, and the Alertmanager test. The rollout is complete only after two consecutive scheduled runs pass for both lanes.
+
+## Live Evidence Remediation
+
+The monitor uses reusable, dedicated namespaces instead of per-run namespaces.
+Each lane has one DNS-safe namespace for each event class:
+
+- `cua-live-<lane>-schedule` for scheduled runs
+- `cua-live-<lane>-push` for pushes
+- `cua-live-<lane>-manual` for `workflow_dispatch`
+
+The event-and-lane concurrency group serializes use of each deterministic claim;
+only scheduled runs cancel an older scheduled run in the same lane. Fleet
+reconciliation preserves the namespace, pool, and template, all named after the
+namespace. `Sandbox.ephemeral()` is verified with claim-only cleanup: after
+exit the monitor polls until claims are absent, records persistent reconciled
+resources, and requires exactly the named pool/template with zero claims. It
+never explicitly deletes a namespace, pool, or template.
+
+
+Workflow namespace expression: `cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`.
+
+persistent reconciled resources are intentionally retained between runs; only deterministic claims are ephemeral.

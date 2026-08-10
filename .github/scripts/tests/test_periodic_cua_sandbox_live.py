@@ -125,12 +125,16 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             "CUA_LIVE_E2E_TEST_ROOT",
             'tee -a "$GITHUB_OUTPUT"',
             "Write controlled failure diagnostics",
-            "without explicit deletion",
+            "persistent reconciled resources",
+            "claim-only cleanup",
+            "cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
         )
         stale_contract = (
             "Concurrency is scoped\nper lane",
             "python - <<'PY' >> \"$GITHUB_OUTPUT\"",
             "Emergency namespace cleanup",
+            "namespace leak",
+            "automatic namespace cleanup",
         )
 
         for document in docs:
@@ -165,6 +169,13 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             "${{ secrets.CUA_CLIENT_SECRET }}",
         )
         self.assertNotIn("CUA_API_KEY", live["env"])
+        self.assertEqual(live["env"]["CUA_LIVE_E2E_EVENT"], "${{ github.event_name }}")
+        self.assertEqual(
+            live["env"]["CUA_LIVE_E2E_NAMESPACE"],
+            "cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
+        )
+        self.assertNotIn("github.run_id", live["env"]["CUA_LIVE_E2E_NAMESPACE"])
+        self.assertNotIn("github.run_attempt", live["env"]["CUA_LIVE_E2E_NAMESPACE"])
 
         checkout = steps["Checkout main"]
         self.assertEqual(
@@ -233,7 +244,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         self.assertIn('"lane": "${{ matrix.lane }}"', alert["run"])
         self.assertIn("${{ steps.versions.outputs.sandbox }}", alert["run"])
 
-    def test_cleanup_remains_automatic_and_diagnostic_only(self) -> None:
+    def test_cleanup_is_claim_only_and_inventory_is_diagnostic(self) -> None:
         workflow = WORKFLOW.read_text()
         live_test = LIVE_TEST.read_text()
 
@@ -241,9 +252,12 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         self.assertNotIn("delete_namespace", workflow)
         self.assertNotIn("Emergency namespace cleanup", workflow)
         self.assertIn("Sandbox.ephemeral", live_test)
-        self.assertIn("wait_namespace_absent", live_test)
-        self.assertIn("namespace_leak", live_test)
-        self.assertIn("remaining_resources", live_test)
+        self.assertNotIn("wait_namespace_absent", live_test)
+        self.assertNotIn("namespace_leak", live_test)
+        self.assertIn("wait_claims_absent", live_test)
+        self.assertIn("claim_leak", live_test)
+        self.assertIn("persistent_resources", live_test)
+        self.assertIn("unexpected_inventory", live_test)
         self.assertIn("module_origins", live_test)
         self.assertIn("cua_sandbox", live_test)
 

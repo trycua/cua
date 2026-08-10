@@ -15,8 +15,7 @@ from tests.live.fleet_e2e_support import (
     build_fleet_client,
     build_namespace_name,
     collect_resource_inventory,
-    namespace_exists,
-    wait_namespace_absent,
+    wait_claims_absent,
     write_summary,
 )
 
@@ -34,8 +33,7 @@ def selected_namespace() -> str:
     lane = os.environ.get("CUA_LIVE_E2E_LANE", "local")
     namespace = os.environ.get("CUA_LIVE_E2E_NAMESPACE") or build_namespace_name(
         lane,
-        os.environ.get("GITHUB_RUN_ID", str(int(time.time()))),
-        os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+        os.environ.get("CUA_LIVE_E2E_EVENT", os.environ.get("GITHUB_EVENT_NAME", "manual")),
     )
     if not namespace.startswith("cua-live-"):
         raise ValueError("CUA_LIVE_E2E_NAMESPACE must start with cua-live-")
@@ -84,8 +82,6 @@ async def run_fleet_ephemeral_live() -> None:
             summary.setdefault("cleanup_secondary_errors", []).append(error_summary)
 
     try:
-        if await namespace_exists(fleet, namespace):
-            raise RuntimeError(f"namespace {namespace} already exists")
         started = time.monotonic()
         async with Sandbox.ephemeral(
             Image.from_registry(IMAGE),
@@ -138,14 +134,19 @@ async def run_fleet_ephemeral_live() -> None:
         if sandbox_yielded:
             cleanup_started = time.monotonic()
             try:
-                cleaned = await wait_namespace_absent(fleet, namespace)
-                summary["automatic_cleanup"] = cleaned
-                if not cleaned:
-                    summary["namespace_leak"] = True
-                    summary["remaining_resources"] = await collect_resource_inventory(
-                        fleet, namespace
+                claims_absent = await wait_claims_absent(fleet, namespace)
+                inventory = await collect_resource_inventory(fleet, namespace)
+                expected_inventory = {"templates": [namespace], "pools": [namespace], "claims": []}
+                summary["claims_absent"] = claims_absent
+                summary["persistent_resources"] = inventory
+                if not claims_absent:
+                    summary["claim_leak"] = True
+                    pytest.fail(f"claims remain in namespace {namespace} after Sandbox.ephemeral()")
+                if inventory != expected_inventory:
+                    summary["unexpected_inventory"] = True
+                    pytest.fail(
+                        f"unexpected reconciled resource inventory for namespace {namespace}: {inventory}"
                     )
-                    pytest.fail(f"namespace {namespace} leaked after Sandbox.ephemeral()")
                 summary["cleanup_seconds"] = time.monotonic() - cleanup_started
             except BaseException as error:
                 record_cleanup_error(error)

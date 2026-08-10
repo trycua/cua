@@ -29,21 +29,59 @@ test.describe("Settings GitHub trust policies", () => {
     const workflowSnippet = page.locator("pre").filter({
       hasText: "Get GitHub WIF token for Fleets",
     })
-    await expect(workflowSnippet).toContainText("pip install cua-cli==0.1.13")
+    await expect(workflowSnippet).toContainText(
+      "pip install cua-cli==0.1.14 --extra-index-url https://wheels.cua.ai/simple",
+    )
     await expect(workflowSnippet).toContainText('token="$(cua wif-token github)"')
+    await expect(workflowSnippet).toContainText('echo "::add-mask::$token"')
     await expect(workflowSnippet).toContainText(
       'printf \'token=%s\\n\' "$token" >> "$GITHUB_OUTPUT"',
     )
-    await expect(workflowSnippet).toContainText("curl --fail-with-body -sSL")
     await expect(workflowSnippet).toContainText(
-      "https://run.cua.ai/api/namespaces",
+      'sandbox="replace-with-an-authorized-namespace"',
+    )
+    await expect(workflowSnippet).toContainText(
+      "This exact value is authorized by the repository trust policy.",
     )
     await expect(workflowSnippet).toContainText("FLEETS_TOKEN")
     await expect(workflowSnippet).toContainText("Get GitHub WIF token for Fleets")
+    await expect(workflowSnippet).toContainText("status=$?")
+    await expect(workflowSnippet).toContainText("trap cleanup EXIT")
+    await expect(workflowSnippet).toContainText(
+      'cua sb delete --force "$sandbox"',
+    )
+    await expect(workflowSnippet).toContainText(
+      'if [ "$status" -eq 0 ]; then status=1; fi',
+    )
+    await expect(workflowSnippet).toContainText('exit "$status"')
+    await expect(workflowSnippet).toContainText(
+      "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest",
+    )
+    await expect(workflowSnippet).toContainText("cua sb launch")
+    await expect(workflowSnippet).toContainText('--name "$sandbox"')
+    await expect(workflowSnippet).toContainText(
+      "cua sb exec \"$sandbox\" sh -lc 'uname -a; id; pwd'",
+    )
+    await expect(workflowSnippet).not.toContainText("curl")
+    await expect(workflowSnippet).not.toContainText("/api/namespaces")
+    await expect(workflowSnippet).not.toContainText("--namespace")
     await expect(workflowSnippet).not.toContainText(
       "ACTIONS_ID_TOKEN_REQUEST_URL",
     )
+    await expect(workflowSnippet).not.toContainText(
+      "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    )
     await expect(workflowSnippet).not.toContainText("CYCLOPS_CS_TOKEN")
+    await expect(workflowSnippet).not.toContainText("CYCLOPS_TOKEN")
+    await expect(workflowSnippet).not.toContainText("${GITHUB_RUN_ID}")
+    await expect(workflowSnippet).not.toContainText("${GITHUB_RUN_ATTEMPT}")
+
+    const workflowSnippetText = await workflowSnippet.textContent()
+    expect(
+      workflowSnippetText?.match(
+        /sandbox="replace-with-an-authorized-namespace"/g,
+      ) ?? [],
+    ).toHaveLength(1)
   })
 
   test("shows GitHub WIF below payment method in a collapsed section", async ({
@@ -64,7 +102,10 @@ test.describe("Settings GitHub trust policies", () => {
 
     await page.goto("/settings")
 
-    const paymentHeading = page.getByRole("heading", { name: "Payment method" })
+    const paymentHeading = page.getByRole("heading", {
+      name: "Payment method",
+      exact: true,
+    })
     const githubToggle = page.getByRole("button", {
       name: "GitHub Actions OIDC",
     })

@@ -174,21 +174,36 @@ steps:
       python-version: "3.12"
 
   - name: Install Cua CLI
-    run: pip install cua-cli==0.1.13
+    run: pip install cua-cli==0.1.14 --extra-index-url https://wheels.cua.ai/simple
 
   - name: Get GitHub WIF token for Fleets
     id: fleets-token
     run: |
       token="$(cua wif-token github)"
+      echo "::add-mask::$token"
       printf 'token=%s\\n' "$token" >> "$GITHUB_OUTPUT"
 
-  - name: Call Fleets
+  - name: Create and use an authorized Fleets sandbox
     env:
       FLEETS_TOKEN: \${{ steps.fleets-token.outputs.token }}
     run: |
-      curl --fail-with-body -sSL https://run.cua.ai/api/namespaces \\
-        -H "Authorization: Bearer $FLEETS_TOKEN"`
+      set -euo pipefail
+      # This exact value is authorized by the repository trust policy.
+      # Cleanup releases this claim; its pool, template, and namespace persist.
+      sandbox="replace-with-an-authorized-namespace"
+      cleanup() {
+        status=$?
+        if ! cua sb delete --force "$sandbox"; then
+          if [ "$status" -eq 0 ]; then status=1; fi
+        fi
+        exit "$status"
+      }
+      trap cleanup EXIT
 
+      cua sb launch \\
+        296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest \\
+        --name "$sandbox"
+      cua sb exec "$sandbox" sh -lc 'uname -a; id; pwd'`
   return (
     <SpaceBetween size="l">
       {error && (

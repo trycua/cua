@@ -6,9 +6,12 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Mapping, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
+import httpx
 from cua_sandbox._config import (
     get_client_id,
     get_client_secret,
@@ -21,6 +24,7 @@ from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport
 from fleet_sdk import (
     AccessTokenProvider,
+    AccessTokenProviderError,
     CreateClaimRequest,
     CreatePoolRequest,
     CreatePoolRequestBuilder,
@@ -61,6 +65,81 @@ def _claim_name(pool_name: str) -> str:
     return f"{prefix}-{hash_suffix}"
 
 
+_GITHUB_WIF_AUDIENCE = "fleets"
+_GitHubTokenRequest = Callable[[str, dict[str, str]], Awaitable[tuple[int, Mapping[str, Any]]]]
+
+
+async def _httpx_json_get(url: str, headers: dict[str, str]) -> tuple[int, Mapping[str, Any]]:
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(url, headers=headers)
+    payload = response.json()
+    if not isinstance(payload, Mapping):
+        raise ValueError("GitHub OIDC endpoint returned an invalid response")
+    return response.status_code, payload
+
+
+def _with_audience(request_url: str, audience: str) -> str:
+    parts = urlsplit(request_url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key != "audience"
+    ]
+    query.append(("audience", audience))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+class _GitHubActionsAccessTokenProvider(AccessTokenProvider):
+    """Refresh a Fleet workload token through GitHub Actions OIDC after a 401."""
+
+    def __init__(
+        self,
+        token: str,
+        *,
+        environ: Mapping[str, str] | None = None,
+        request: _GitHubTokenRequest = _httpx_json_get,
+    ) -> None:
+        self._token = token
+        self._environ = os.environ if environ is None else environ
+        self._request = request
+
+    async def get_access_token(self, force_refresh: bool) -> str:
+        if not force_refresh:
+            return self._token
+
+        request_url = self._environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "").strip()
+        request_token = self._environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "").strip()
+        if not request_url or not request_token:
+            raise AccessTokenProviderError.Failed(
+                "GitHub Actions OIDC environment is unavailable for token refresh"
+            )
+
+        try:
+            status, payload = await self._request(
+                _with_audience(request_url, _GITHUB_WIF_AUDIENCE),
+                {
+                    "Accept": "application/json",
+                    "Authorization": f"bearer {request_token}",
+                },
+            )
+        except AccessTokenProviderError:
+            raise
+        except Exception as error:
+            raise AccessTokenProviderError.Failed("GitHub OIDC token refresh failed") from error
+
+        if status != 200:
+            raise AccessTokenProviderError.Failed(
+                f"GitHub OIDC token refresh failed with HTTP {status}"
+            )
+        token = payload.get("value")
+        if not isinstance(token, str) or not token.strip():
+            raise AccessTokenProviderError.Failed(
+                "GitHub OIDC token refresh returned an empty token"
+            )
+        self._token = token.strip()
+        return self._token
+
+
 class _StaticAccessTokenProvider(AccessTokenProvider):
     """Return a configured Fleet workload token without attempting refresh."""
 
@@ -95,7 +174,14 @@ class _FleetClient:
                 claim_poll_limit=300,
             )
             self._client = CyclopsClient.connect_with_access_token_provider(
-                configuration, _StaticAccessTokenProvider(fleet_token), self._http_client
+                configuration,
+                (
+                    _GitHubActionsAccessTokenProvider(fleet_token)
+                    if os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "").strip()
+                    and os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "").strip()
+                    else _StaticAccessTokenProvider(fleet_token)
+                ),
+                self._http_client,
             )
             return
         configuration = CyclopsConfiguration(

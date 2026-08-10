@@ -2,7 +2,17 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-from cua_sandbox.transport.fleet_cloud import _FleetClient
+from cua_sandbox.transport.fleet_cloud import (
+    _FleetClient,
+    _GitHubActionsAccessTokenProvider,
+)
+from fleet_sdk import (
+    AccessTokenProviderError,
+    CyclopsClient,
+    CyclopsTokenProviderConfiguration,
+    HttpClient,
+    HttpResponse,
+)
 
 
 @pytest.mark.asyncio
@@ -121,7 +131,107 @@ async def test_service_request_delegates_to_generated_client():
 
 
 @pytest.mark.asyncio
+async def test_github_actions_token_provider_refreshes_and_caches_token():
+    calls = []
+
+    async def request(url, headers):
+        calls.append((url, headers))
+        return 200, {"value": "refreshed-token"}
+
+    provider = _GitHubActionsAccessTokenProvider(
+        "initial-token",
+        environ={
+            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://github.example/oidc?existing=value",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+        },
+        request=request,
+    )
+
+    assert await provider.get_access_token(False) == "initial-token"
+    assert calls == []
+    assert await provider.get_access_token(True) == "refreshed-token"
+    assert await provider.get_access_token(False) == "refreshed-token"
+    assert calls == [
+        (
+            "https://github.example/oidc?existing=value&audience=fleets",
+            {
+                "Accept": "application/json",
+                "Authorization": "bearer request-token",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_github_actions_token_provider_maps_refresh_failures():
+    async def request(url, headers):
+        return 403, {"message": "forbidden"}
+
+    provider = _GitHubActionsAccessTokenProvider(
+        "initial-token",
+        environ={
+            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://github.example/oidc",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+        },
+        request=request,
+    )
+
+    with pytest.raises(AccessTokenProviderError.Failed, match="HTTP 403"):
+        await provider.get_access_token(True)
+
+
+@pytest.mark.asyncio
+async def test_generated_sdk_retries_unauthorized_request_with_refreshed_github_token():
+    refresh_calls = 0
+
+    async def refresh_token(url, headers):
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return 200, {"value": "refreshed-token"}
+
+    class ScriptedHttpClient(HttpClient):
+        def __init__(self):
+            self.authorization = []
+
+        async def execute(self, request):
+            authorization = next(
+                header.value for header in request.headers if header.name.lower() == "authorization"
+            )
+            self.authorization.append(authorization)
+            if len(self.authorization) == 1:
+                return HttpResponse(status=401, headers=[], body=b'{"error":"expired"}')
+            return HttpResponse(status=200, headers=[], body=b'{"items":[]}')
+
+    provider = _GitHubActionsAccessTokenProvider(
+        "initial-token",
+        environ={
+            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://github.example/oidc",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+        },
+        request=refresh_token,
+    )
+    http_client = ScriptedHttpClient()
+    client = CyclopsClient.connect_with_access_token_provider(
+        CyclopsTokenProviderConfiguration(
+            base_url="https://fleet.example",
+            pool_poll_interval_ms=1,
+            pool_poll_limit=1,
+            claim_poll_interval_ms=1,
+            claim_poll_limit=1,
+        ),
+        provider,
+        http_client,
+    )
+
+    assert await client.list_pools("cua-cli-wif-smoke") == []
+    assert http_client.authorization == ["Bearer initial-token", "Bearer refreshed-token"]
+    assert refresh_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_fleet_client_uses_static_workload_token_and_closes_http_client(monkeypatch, caplog):
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_URL", raising=False)
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     from cua_sandbox.transport import fleet_cloud
     from fleet_sdk import AccessTokenProvider, CyclopsTokenProviderConfiguration
 
@@ -172,6 +282,34 @@ async def test_fleet_client_uses_static_workload_token_and_closes_http_client(mo
 
     await client.close()
     assert calls["http_client"].close_calls == 1
+
+
+def test_fleet_client_uses_refreshable_provider_in_github_actions(monkeypatch):
+    from cua_sandbox.transport import fleet_cloud
+
+    calls = {}
+
+    class HttpClient:
+        async def aclose(self):
+            pass
+
+    class Client:
+        @staticmethod
+        def connect_with_access_token_provider(configuration, provider, http_client):
+            calls["provider"] = provider
+            return "token-client"
+
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://github.example/oidc")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-token")
+    monkeypatch.setattr(fleet_cloud, "get_fleet_token", lambda: "initial-token")
+    monkeypatch.setattr(fleet_cloud, "get_fleet_base_url", lambda: "https://fleet.example/")
+    monkeypatch.setattr(fleet_cloud, "CyclopsHttpClient", HttpClient)
+    monkeypatch.setattr(fleet_cloud, "CyclopsClient", Client)
+
+    client = _FleetClient()
+
+    assert client._client == "token-client"
+    assert isinstance(calls["provider"], _GitHubActionsAccessTokenProvider)
 
 
 def test_fleet_client_falls_back_to_client_credentials_without_workload_token(monkeypatch):

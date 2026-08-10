@@ -318,6 +318,13 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                 cdp_port.expect("Electron CDP port").to_string(),
             );
         }
+        "tauri" if std::env::var("CUA_E2E_WAYLAND_SESSION").as_deref() == Ok("hyprland") => {
+            // Current WebKitGTK can commit a DMA-BUF before assigning the
+            // explicit-sync acquire point. Hyprland correctly rejects that
+            // protocol violation ("Missing acquire timeline"), so exercise
+            // the same WebKit content through its supported SHM renderer.
+            command.env("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
         "webview2" => {
             command.env(
                 "CUA_WEBVIEW_CDP_PORT",
@@ -481,7 +488,23 @@ fn screenshot_scale(state: &ToolResponse) -> f64 {
         .and_then(|elements| {
             elements
                 .iter()
-                .find(|element| element["role"].as_str() == Some("AXWindow"))
+                .find(|element| {
+                    element["role"].as_str() == Some("AXWindow")
+                        || (cfg!(target_os = "linux")
+                            && element["depth"].as_u64() == Some(0)
+                            && element["role"].as_str() == Some("frame"))
+                })
+                .or_else(|| {
+                    cfg!(target_os = "linux").then(|| {
+                        elements.iter().max_by(|left, right| {
+                            let area = |element: &serde_json::Value| {
+                                element["frame"]["w"].as_f64().unwrap_or(0.0)
+                                    * element["frame"]["h"].as_f64().unwrap_or(0.0)
+                            };
+                            area(left).total_cmp(&area(right))
+                        })
+                    })?
+                })
         })
         .and_then(|window| window["frame"]["w"].as_f64())
         .unwrap_or(0.0);
@@ -763,12 +786,15 @@ fn unverified_background_protocol_oracle(
 }
 
 fn background_refusal_code(response: &ToolResponse, delivery: &str) -> Option<RefusalCode> {
-    if delivery != "background" || !response.is_error() {
+    if !response.is_error() {
         return None;
     }
-    response.structured()["code"]
+    let code = response.structured()["code"]
         .as_str()
-        .and_then(RefusalCode::from_driver_code)
+        .and_then(RefusalCode::from_driver_code)?;
+    ((delivery == "background" && code != RefusalCode::ForegroundUnavailable)
+        || (delivery == "foreground" && code == RefusalCode::ForegroundUnavailable))
+        .then_some(code)
 }
 
 fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -1199,6 +1225,26 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             }
             _ => Vec::new(),
         }
+    } else if cfg!(target_os = "linux")
+        && spec.name == "tauri"
+        && std::env::var("CUA_E2E_WAYLAND_SESSION").as_deref() == Ok("hyprland")
+        && delivery_kind == Delivery::Foreground
+        && matches!(action, "right_click" | "double_click" | "drag")
+    {
+        vec![RefusalCode::ForegroundUnavailable]
+    } else if cfg!(target_os = "linux")
+        && cua_driver_testkit::e2e::DisplayServer::current()
+            == cua_driver_testkit::e2e::DisplayServer::Wayland
+        && delivery_kind == Delivery::Background
+        && (targeting == Targeting::Px
+            || matches!(action, "right_click" | "double_click" | "scroll"))
+        && std::env::var_os("CUA_INJECT_SOCKET").is_none()
+    {
+        // A compositor-global pointer cannot truthfully deliver to an occluded,
+        // unfocused Wayland surface. Pixel-addressed background input therefore
+        // fails closed unless the nested compositor's target-local injection
+        // socket is available.
+        vec![RefusalCode::BackgroundUnavailable]
     } else if cfg!(target_os = "linux")
         && spec.name == "electron"
         && delivery_kind == Delivery::Background

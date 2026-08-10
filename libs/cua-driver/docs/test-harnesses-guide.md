@@ -238,6 +238,13 @@ representative runs use `hyprctl` only as an out-of-band test oracle for exact
 focus, active-workspace visibility, and fullscreen sentinel posture; product
 capture identity remains owned by the driver's Hyprland adapter. The desktop
 wrapper rejects a Hyprland selector unless it can query the active compositor.
+For the Tauri fixture, the harness disables WebKitGTK's DMA-BUF renderer because
+current WebKitGTK can commit without an explicit-sync acquire point and
+Hyprland correctly terminates that client with `Missing acquire timeline`; the
+SHM renderer exercises the same web content without violating the protocol.
+WebKitGTK also ignores Hyprland virtual-pointer button events: element-addressed
+left clicks use AT-SPI, while foreground right-click, double-click, and drag
+return the typed `foreground_unavailable` limitation instead of false success.
 Its capture catalog also launches an actual XWayland Electron fixture, moves
 that exact client to an inactive workspace, and requires target-specific pixels
 without any focus or active-workspace change. KDE requires a future

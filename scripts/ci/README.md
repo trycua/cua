@@ -127,6 +127,8 @@ The Hyprland mode requires the active session's `hyprctl` IPC and uses it only
 as an out-of-band test oracle for focus, workspace visibility, fullscreen
 occlusion, and selection of the focused output for `wf-recorder`. Override that
 video output with `CUA_WAYLAND_RECORDING_OUTPUT` when fixtures run elsewhere.
+The Tauri row uses WebKitGTK's SHM renderer because current DMA-BUF builds can
+violate explicit-sync ordering and Hyprland rejects the invalid commit.
 Like every representative-desktop run, the complete matrix launches,
 focuses, moves, and captures fixture windows. Run it only in a disposable or
 dedicated validation session, not on a personal desktop containing unrelated

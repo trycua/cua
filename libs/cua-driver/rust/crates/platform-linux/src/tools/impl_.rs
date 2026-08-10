@@ -91,6 +91,20 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
+fn screenshot_to_window_ratio(
+    compositor_width: Option<u32>,
+    original_capture_width: Option<u32>,
+    screenshot_width: u32,
+) -> Option<f64> {
+    if screenshot_width == 0 {
+        return None;
+    }
+    compositor_width
+        .filter(|width| *width > 0)
+        .or(original_capture_width.filter(|width| *width > 0))
+        .map(|width| width as f64 / screenshot_width as f64)
+}
+
 pub struct ResizeRegistry {
     ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
 }
@@ -913,9 +927,17 @@ impl Tool for GetWindowStateTool {
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
                     if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                        let compositor_width = crate::wayland::is_wayland()
+                            .then(|| crate::wayland::window_geometry(xid))
+                            .flatten()
+                            .map(|(_, _, width, _)| width)
+                            .filter(|width| *width > 0);
+                        if let Some(ratio) = screenshot_to_window_ratio(compositor_width, orig_w, w)
+                        {
+                            if (ratio - 1.0).abs() > f64::EPSILON {
+                                state.resize_registry.set_ratio(pid, ratio);
+                            } else {
+                                state.resize_registry.clear_ratio(pid);
                             }
                         } else {
                             state.resize_registry.clear_ratio(pid);
@@ -981,6 +1003,19 @@ mod get_window_state_capture_tests {
         assert!(error["reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("surface_identity_unproven")));
+    }
+
+    #[test]
+    fn screenshot_coordinates_prefer_compositor_geometry_over_buffer_scale() {
+        assert_eq!(
+            screenshot_to_window_ratio(Some(1261), Some(1423), 1423),
+            Some(1261.0 / 1423.0)
+        );
+        assert_eq!(
+            screenshot_to_window_ratio(None, Some(2536), 1567),
+            Some(2536.0 / 1567.0)
+        );
+        assert_eq!(screenshot_to_window_ratio(Some(800), None, 0), None);
     }
 }
 
@@ -1659,6 +1694,22 @@ fn unavailable_webkit_background(
         crate::input::delivery::background_unavailable_error(
             crate::input::delivery::BackgroundUnavailable::WebKitSyntheticInput,
         )
+    })
+}
+
+fn unavailable_webkit_hyprland_pointer(pid: u32) -> Option<ToolResult> {
+    (is_webkitgtk_embedder(pid)
+        && crate::wayland::hyprland::is_session()
+        && !crate::wayland::is_inject_mode())
+    .then(|| {
+        ToolResult::error(
+            "Foreground pointer delivery is unavailable: WebKitGTK ignores Hyprland's virtual-pointer button events. Use an element-addressed left click when possible; right-click, double-click, and drag require a target-local compositor input backend.",
+        )
+        .with_structured(json!({
+            "code": "foreground_unavailable",
+            "reason": "webkitgtk_hyprland_virtual_pointer_buttons",
+            "delivery_mode": "foreground"
+        }))
     })
 }
 
@@ -2493,7 +2544,10 @@ impl Tool for ClickTool {
                 // `element_index` — the coordinate-free path already verified
                 // working. (x,y) are screen coords here, matching the frames in
                 // `get_window_state`. Miss → fall through to the injection paths.
-                if !delivery.is_foreground() && button == 1 && count == 1 {
+                if button == 1
+                    && count == 1
+                    && (!delivery.is_foreground() || is_webkitgtk_embedder(pid))
+                {
                     if let Ok(Some(_)) =
                         crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
@@ -4106,9 +4160,9 @@ impl Tool for ScrollTool {
             Err(e) => return e,
         };
         let xid_opt: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => window_id
-                .map(|v| v as u64)
-                .or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
+                .opt_u64("window_id")
+                .or_else(|| window_id.map(|v| v as u64)),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
 
@@ -4467,6 +4521,11 @@ impl Tool for DoubleClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
+        }
         let elem_idx_resolved = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -4701,6 +4760,11 @@ impl Tool for RightClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
+        }
         let elem_idx_resolved = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -4980,6 +5044,11 @@ impl Tool for DragTool {
         }
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
+        }
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
         }
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;

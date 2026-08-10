@@ -85,8 +85,15 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
 
     def test_prepare_matrix_selects_lanes_for_each_trigger(self) -> None:
         expected_matrices = {
+            ("push", ""): {"include": [{"lane": "main-source"}]},
             ("push", "both"): {"include": [{"lane": "main-source"}]},
             ("push", "published-package"): {"include": [{"lane": "main-source"}]},
+            ("schedule", ""): {
+                "include": [
+                    {"lane": "main-source"},
+                    {"lane": "published-package"},
+                ]
+            },
             ("schedule", "main-source"): {
                 "include": [
                     {"lane": "main-source"},

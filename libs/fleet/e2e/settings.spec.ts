@@ -15,9 +15,11 @@ test.describe("Settings GitHub trust policies", () => {
   test("renders existing trust policies and workflow guidance", async ({ page }) => {
     await page.goto("/settings")
 
-    await expect(
-      page.getByRole("heading", { name: "GitHub Actions OIDC" }),
-    ).toBeVisible()
+    const githubToggle = page.getByRole("button", {
+      name: "GitHub Actions OIDC",
+    })
+    await expect(githubToggle).toBeVisible()
+    await githubToggle.click()
     await expect(page.getByText("cloud-ci")).toBeVisible()
     await expect(page.getByText("trycua/cloud")).toBeVisible()
     await expect(page.getByText("https://token.actions.githubusercontent.com")).toBeVisible()
@@ -44,8 +46,53 @@ test.describe("Settings GitHub trust policies", () => {
     await expect(workflowSnippet).not.toContainText("CYCLOPS_CS_TOKEN")
   })
 
+  test("shows GitHub WIF below payment method in a collapsed section", async ({
+    page,
+  }) => {
+    await page.route("**/api/config", route =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ admin: false, billing: true }),
+      }),
+    )
+    await page.route("**/api/billing/summary", route =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ payment_method_present: false, card: null }),
+      }),
+    )
+
+    await page.goto("/settings")
+
+    const paymentHeading = page.getByRole("heading", { name: "Payment method" })
+    const githubToggle = page.getByRole("button", {
+      name: "GitHub Actions OIDC",
+    })
+    await expect(paymentHeading).toBeVisible()
+    await expect(githubToggle).toBeVisible()
+    const paymentBeforeGitHub = await page.evaluate(() => {
+      const payment = [...document.querySelectorAll("h1, h2, h3, h4")].find(
+        element => element.textContent?.trim() === "Payment method",
+      )
+      const github = [...document.querySelectorAll("button, [role=\"button\"]")].find(element =>
+        element.textContent?.trim().startsWith("GitHub Actions OIDC"),
+      )
+      return Boolean(
+        payment &&
+          github &&
+          payment.compareDocumentPosition(github) & Node.DOCUMENT_POSITION_FOLLOWING,
+      )
+    })
+    expect(paymentBeforeGitHub).toBe(true)
+    await expect(page.getByLabel("Display name")).toBeHidden()
+
+    await githubToggle.click()
+    await expect(page.getByLabel("Display name")).toBeVisible()
+  })
+
   test("can create, edit, disable, and delete a trust policy", async ({ page }) => {
     await page.goto("/settings")
+    await page.getByRole("button", { name: "GitHub Actions OIDC" }).click()
 
     await page.getByLabel("Display name").fill("preview-ci")
     await page.getByLabel("Repository").fill("trycua/preview")

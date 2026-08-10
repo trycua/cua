@@ -7,6 +7,7 @@ import Box from "@cloudscape-design/components/box"
 import Button from "@cloudscape-design/components/button"
 import Container from "@cloudscape-design/components/container"
 import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard"
+import ExpandableSection from "@cloudscape-design/components/expandable-section"
 import Form from "@cloudscape-design/components/form"
 import FormField from "@cloudscape-design/components/form-field"
 import Header from "@cloudscape-design/components/header"
@@ -229,15 +230,12 @@ steps:
         </SpaceBetween>
       </Container>
 
-      <Container
-        header={
-          <Header
-            variant="h2"
-            description="Trust GitHub repositories to call Fleets directly with GitHub Actions OIDC tokens."
-          >
-            GitHub Actions OIDC
-          </Header>
-        }
+      {billing && <BillingSettings />}
+
+      <ExpandableSection
+        variant="container"
+        headerText="GitHub Actions OIDC"
+        headerDescription="Trust GitHub repositories to call Fleets directly with GitHub Actions OIDC tokens."
       >
         <SpaceBetween size="l">
           <Form
@@ -404,9 +402,7 @@ steps:
             </SpaceBetween>
           </Container>
         </SpaceBetween>
-      </Container>
-
-      {billing && <BillingSettings />}
+      </ExpandableSection>
 
       {confirmDelete && (
         <Modal

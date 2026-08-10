@@ -785,6 +785,7 @@ export type HttpRequest = {
   url: string;
   headers: Array<HttpHeader>;
   body?: ArrayBuffer;
+  timeoutSecs?: bigint;
 };
 
 /**
@@ -813,6 +814,7 @@ const FfiConverterTypeHttpRequest = (() => {
         url: FfiConverterString.read(from),
         headers: FfiConverterSequenceTypeHttpHeader.read(from),
         body: FfiConverterOptionalBytes.read(from),
+        timeoutSecs: FfiConverterOptionalUInt64.read(from),
       };
     }
     write(value: TypeName, into: RustBuffer): void {
@@ -820,13 +822,15 @@ const FfiConverterTypeHttpRequest = (() => {
       FfiConverterString.write(value.url, into);
       FfiConverterSequenceTypeHttpHeader.write(value.headers, into);
       FfiConverterOptionalBytes.write(value.body, into);
+      FfiConverterOptionalUInt64.write(value.timeoutSecs, into);
     }
     allocationSize(value: TypeName): number {
       return (
         FfiConverterString.allocationSize(value.method) +
         FfiConverterString.allocationSize(value.url) +
         FfiConverterSequenceTypeHttpHeader.allocationSize(value.headers) +
-        FfiConverterOptionalBytes.allocationSize(value.body)
+        FfiConverterOptionalBytes.allocationSize(value.body) +
+        FfiConverterOptionalUInt64.allocationSize(value.timeoutSecs)
       );
     }
   }
@@ -5052,6 +5056,9 @@ const FfiConverterSequenceTypeHttpHeader = new FfiConverterArray(
 const FfiConverterOptionalBytes = new FfiConverterOptional(
   FfiConverterArrayBuffer,
 );
+
+// FfiConverter for bigint | undefined
+const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
 // FfiConverter for Array<Claim>
 const FfiConverterSequenceTypeClaim = new FfiConverterArray(

@@ -3223,14 +3223,16 @@ public struct HttpRequest: Equatable, Hashable {
     public var url: String
     public var headers: [HttpHeader]
     public var body: Data?
+    public var timeoutSecs: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(method: String, url: String, headers: [HttpHeader], body: Data?) {
+    public init(method: String, url: String, headers: [HttpHeader], body: Data?, timeoutSecs: UInt64?) {
         self.method = method
         self.url = url
         self.headers = headers
         self.body = body
+        self.timeoutSecs = timeoutSecs
     }
 
 
@@ -3252,7 +3254,8 @@ public struct FfiConverterTypeHttpRequest: FfiConverterRustBuffer {
                 method: FfiConverterString.read(from: &buf),
                 url: FfiConverterString.read(from: &buf),
                 headers: FfiConverterSequenceTypeHttpHeader.read(from: &buf),
-                body: FfiConverterOptionData.read(from: &buf)
+                body: FfiConverterOptionData.read(from: &buf),
+                timeoutSecs: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
@@ -3261,6 +3264,7 @@ public struct FfiConverterTypeHttpRequest: FfiConverterRustBuffer {
         FfiConverterString.write(value.url, into: &buf)
         FfiConverterSequenceTypeHttpHeader.write(value.headers, into: &buf)
         FfiConverterOptionData.write(value.body, into: &buf)
+        FfiConverterOptionUInt64.write(value.timeoutSecs, into: &buf)
     }
 }
 
@@ -4186,6 +4190,30 @@ public func FfiConverterTypeSdkError_lift(_ buf: RustBuffer) throws -> SdkError 
 #endif
 public func FfiConverterTypeSdkError_lower(_ value: SdkError) -> RustBuffer {
     return FfiConverterTypeSdkError.lower(value)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = UInt64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
 }
 
 #if swift(>=5.8)

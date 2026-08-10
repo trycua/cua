@@ -349,6 +349,7 @@ private_constant :UniffiHandleMap
 
     RustBuffer.check_lower_SequenceTypeHttpHeader(v.headers)
     RustBuffer.check_lower_Optionalbytes(v.body)
+    RustBuffer.check_lower_Optionalu64(v.timeout_secs)
   end
 
   def self.alloc_from_TypeHttpRequest(v)
@@ -548,6 +549,27 @@ private_constant :UniffiHandleMap
 
 
 
+
+  # The Optional<T> type for u64.
+
+  def self.check_lower_Optionalu64(v)
+    if not v.nil?
+
+    end
+  end
+
+  def self.alloc_from_Optionalu64(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_Optionalu64(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoOptionalu64
+    consumeWithStream do |stream|
+      return stream.readOptionalu64
+    end
+  end
 
   # The Optional<T> type for string.
 
@@ -1087,7 +1109,8 @@ class RustBufferStream
       method: readString,
       url: readString,
       headers: readSequenceTypeHttpHeader,
-      body: readOptionalbytes
+      body: readOptionalbytes,
+      timeout_secs: readOptionalu64
     )
   end
 
@@ -1305,6 +1328,20 @@ class RustBufferStream
     raise InternalError, 'Unexpected variant tag for TypeSdkError'
   end
 
+
+  # The Optional<T> type for u64.
+
+  def readOptionalu64
+    flag = unpack_from 1, 'c'
+
+    if flag == 0
+      return nil
+    elsif flag == 1
+      return readU64
+    else
+      raise InternalError, 'Unexpected flag byte for Optionalu64'
+    end
+  end
 
   # The Optional<T> type for string.
 
@@ -1738,6 +1775,7 @@ class RustBufferBuilder
     self.write_String(v.url)
     self.write_SequenceTypeHttpHeader(v.headers)
     self.write_Optionalbytes(v.body)
+    self.write_Optionalu64(v.timeout_secs)
   end
 
   # The Record type HttpResponse.
@@ -1820,6 +1858,17 @@ class RustBufferBuilder
 
 
 
+
+  # The Optional<T> type for u64.
+
+  def write_Optionalu64(v)
+    if v.nil?
+      pack_into(1, 'c', 0)
+    else
+      pack_into(1, 'c', 1)
+      self.write_U64(v)
+    end
+  end
 
   # The Optional<T> type for string.
 
@@ -3173,13 +3222,14 @@ end
 
   # Record type HttpRequest
 class HttpRequest
-  attr_reader :method, :url, :headers, :body
+  attr_reader :method, :url, :headers, :body, :timeout_secs
 
-  def initialize(method:, url:, headers:, body:)
+  def initialize(method:, url:, headers:, body:, timeout_secs:)
     @method = method
     @url = url
     @headers = headers
     @body = body
+    @timeout_secs = timeout_secs
   end
 
   def ==(other)
@@ -3193,6 +3243,9 @@ class HttpRequest
       return false
     end
     if @body != other.body
+      return false
+    end
+    if @timeout_secs != other.timeout_secs
       return false
     end
 

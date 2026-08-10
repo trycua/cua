@@ -69,7 +69,7 @@ def offline_sandbox():
     return Sandbox(namespace='default', claim='default', name='offline-sandbox', services=['mcp'])
 
 def service_request(body):
-    return HttpRequest(method='POST', url='https://ignored.invalid/mcp', headers=[], body=body)
+    return HttpRequest(method='POST', url='https://ignored.invalid/mcp', headers=[], body=body, timeout_secs=None)
 
 def pool_spec():
     return OsGymSandboxWarmPoolSpec(replicas=1, sandbox_template_ref=SandboxTemplateRef(name='default'), autoscaling=None)

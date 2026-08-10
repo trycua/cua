@@ -5928,6 +5928,8 @@ data class HttpRequest (
     var `headers`: List<HttpHeader>
     ,
     var `body`: kotlin.ByteArray?
+    ,
+    var `timeoutSecs`: kotlin.ULong?
 
 ){
 
@@ -5948,6 +5950,7 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterString.read(buf),
             FfiConverterSequenceTypeHttpHeader.read(buf),
             FfiConverterOptionalByteArray.read(buf),
+            FfiConverterOptionalULong.read(buf),
         )
     }
 
@@ -5955,7 +5958,8 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterString.allocationSize(value.`method`) +
             FfiConverterString.allocationSize(value.`url`) +
             FfiConverterSequenceTypeHttpHeader.allocationSize(value.`headers`) +
-            FfiConverterOptionalByteArray.allocationSize(value.`body`)
+            FfiConverterOptionalByteArray.allocationSize(value.`body`) +
+            FfiConverterOptionalULong.allocationSize(value.`timeoutSecs`)
     )
 
     override fun write(value: HttpRequest, buf: ByteBuffer) {
@@ -5963,6 +5967,7 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterString.write(value.`url`, buf)
             FfiConverterSequenceTypeHttpHeader.write(value.`headers`, buf)
             FfiConverterOptionalByteArray.write(value.`body`, buf)
+            FfiConverterOptionalULong.write(value.`timeoutSecs`, buf)
     }
 }
 
@@ -6832,6 +6837,38 @@ public object FfiConverterTypeSdkError : FfiConverterRustBuffer<SdkException> {
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
+    override fun read(buf: ByteBuffer): kotlin.ULong? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterULong.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ULong?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterULong.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ULong?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterULong.write(value, buf)
+        }
+    }
 }
 
 

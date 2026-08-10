@@ -102,7 +102,7 @@ def configuration
 end
 
 def service_request(body)
-  FleetSdk::HttpRequest.new(method: 'POST', url: 'https://ignored.invalid/mcp', headers: [], body: body)
+  FleetSdk::HttpRequest.new(method: 'POST', url: 'https://ignored.invalid/mcp', headers: [], body: body, timeout_secs: nil)
 end
 
 sandbox = FleetSdk::Sandbox.new(namespace: 'default', claim: 'default', name: 'offline-sandbox', services: ['mcp'])

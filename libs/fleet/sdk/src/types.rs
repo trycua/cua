@@ -293,6 +293,7 @@ pub struct HttpRequest {
     pub url: String,
     pub headers: Vec<HttpHeader>,
     pub body: Option<Vec<u8>>,
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]

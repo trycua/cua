@@ -407,6 +407,19 @@ grep -Fq -- "public var creationTimestamp: String?" "$swift_sdk_source" || fail 
 grep -Fq -- "attr_reader :namespace, :name, :labels, :creation_timestamp" "$ruby_sdk_source" || fail "Ruby bindings omit creation_timestamp"
 grep -Fq -- "creationTimestamp?: string" "$node_sdk_source" || fail "Node bindings omit creationTimestamp"
 grep -Fq -- "CreationTimestamp *string" "$go_sdk_source" || fail "Go bindings omit CreationTimestamp"
+
+for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
+  grep -Fq -- "timeoutSecs?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.timeoutSecs: $typescript_binding"
+  grep -Fq -- "timeoutSecs: FfiConverterOptionalUInt64.read(from)" "$typescript_binding" || fail "TypeScript bindings do not read HttpRequest.timeoutSecs: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt64.write(value.timeoutSecs, into)" "$typescript_binding" || fail "TypeScript bindings do not write HttpRequest.timeoutSecs: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt64.allocationSize(value.timeoutSecs)" "$typescript_binding" || fail "TypeScript bindings do not allocate HttpRequest.timeoutSecs: $typescript_binding"
+  grep -Fq -- "const FfiConverterOptionalUInt64 = new FfiConverterOptional" "$typescript_binding" || fail "TypeScript bindings omit the optional UInt64 converter: $typescript_binding"
+done
+grep -Fq -- "TimeoutSecs *uint64" "$go_sdk_source" || fail "Go bindings omit HttpRequest.TimeoutSecs"
+grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Read(reader)" "$go_sdk_source" || fail "Go bindings do not read HttpRequest.TimeoutSecs"
+grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Write(writer, value.TimeoutSecs)" "$go_sdk_source" || fail "Go bindings do not write HttpRequest.TimeoutSecs"
+grep -Fq -- "FfiDestroyerOptionalUint64{}.Destroy(r.TimeoutSecs)" "$go_sdk_source" || fail "Go bindings do not destroy HttpRequest.TimeoutSecs"
+grep -Fq -- "type FfiConverterOptionalUint64 struct{}" "$go_sdk_source" || fail "Go bindings omit the optional uint64 converter"
 grep -Fq -- "@uniffi_handle_map = UniffiHandleMap.new" "$ruby_sdk_source" || fail "Ruby callback bindings do not retain native callback objects"
 grep -Fq -- "module UniffiCallbackInterfaceHttpClient" "$ruby_sdk_source" || fail "Ruby callback bindings do not register an HTTP callback vtable"
 grep -Fq -- "[VTableCallbackInterfaceHttpClient.by_ref]" "$ruby_sdk_source" || fail "Ruby callback vtable initializer has the wrong FFI signature"

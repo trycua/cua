@@ -108,7 +108,7 @@ private fun configuration() = CyclopsConfiguration(
     2u,
 )
 
-private fun serviceRequest(body: ByteArray?) = HttpRequest("POST", "https://ignored.invalid/mcp", emptyList(), body)
+private fun serviceRequest(body: ByteArray?) = HttpRequest("POST", "https://ignored.invalid/mcp", emptyList(), body, null)
 private val sandbox = Sandbox("default", "default", "offline-sandbox", listOf("mcp"))
 
 fun main() = runBlocking {

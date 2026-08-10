@@ -97,6 +97,7 @@ fn json_request(method: &str, url: url::Url, body: Option<Vec<u8>>) -> HttpReque
             },
         ],
         body,
+        timeout_secs: None,
     }
 }
 

@@ -2845,10 +2845,11 @@ func (_ FfiDestroyerHttpHeader) Destroy(value HttpHeader) {
 }
 
 type HttpRequest struct {
-	Method  string
-	Url     string
-	Headers []HttpHeader
-	Body    *[]byte
+	Method      string
+	Url         string
+	Headers     []HttpHeader
+	Body        *[]byte
+	TimeoutSecs *uint64
 }
 
 func (r *HttpRequest) Destroy() {
@@ -2856,6 +2857,7 @@ func (r *HttpRequest) Destroy() {
 	FfiDestroyerString{}.Destroy(r.Url)
 	FfiDestroyerSequenceHttpHeader{}.Destroy(r.Headers)
 	FfiDestroyerOptionalBytes{}.Destroy(r.Body)
+	FfiDestroyerOptionalUint64{}.Destroy(r.TimeoutSecs)
 }
 
 type FfiConverterHttpRequest struct{}
@@ -2872,6 +2874,7 @@ func (c FfiConverterHttpRequest) Read(reader io.Reader) HttpRequest {
 		FfiConverterStringINSTANCE.Read(reader),
 		FfiConverterSequenceHttpHeaderINSTANCE.Read(reader),
 		FfiConverterOptionalBytesINSTANCE.Read(reader),
+		FfiConverterOptionalUint64INSTANCE.Read(reader),
 	}
 }
 
@@ -2888,6 +2891,7 @@ func (c FfiConverterHttpRequest) Write(writer io.Writer, value HttpRequest) {
 	FfiConverterStringINSTANCE.Write(writer, value.Url)
 	FfiConverterSequenceHttpHeaderINSTANCE.Write(writer, value.Headers)
 	FfiConverterOptionalBytesINSTANCE.Write(writer, value.Body)
+	FfiConverterOptionalUint64INSTANCE.Write(writer, value.TimeoutSecs)
 }
 
 type FfiDestroyerHttpRequest struct{}
@@ -4105,6 +4109,47 @@ type FfiDestroyerOptionalBytes struct{}
 func (_ FfiDestroyerOptionalBytes) Destroy(value *[]byte) {
 	if value != nil {
 		FfiDestroyerBytes{}.Destroy(*value)
+	}
+}
+
+type FfiConverterOptionalUint64 struct{}
+
+var FfiConverterOptionalUint64INSTANCE = FfiConverterOptionalUint64{}
+
+func (c FfiConverterOptionalUint64) Lift(rb RustBufferI) *uint64 {
+	return LiftFromRustBuffer[*uint64](c, rb)
+}
+
+func (_ FfiConverterOptionalUint64) Read(reader io.Reader) *uint64 {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterUint64INSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalUint64) Lower(value *uint64) C.RustBuffer {
+	return LowerIntoRustBuffer[*uint64](c, value)
+}
+
+func (c FfiConverterOptionalUint64) LowerExternal(value *uint64) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*uint64](c, value))
+}
+
+func (_ FfiConverterOptionalUint64) Write(writer io.Writer, value *uint64) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterUint64INSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalUint64 struct{}
+
+func (_ FfiDestroyerOptionalUint64) Destroy(value *uint64) {
+	if value != nil {
+		FfiDestroyerUint64{}.Destroy(*value)
 	}
 }
 

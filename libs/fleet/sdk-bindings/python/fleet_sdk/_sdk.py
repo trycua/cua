@@ -2581,19 +2581,45 @@ class _UniffiFfiConverterOptionalBytes(_UniffiConverterRustBuffer):
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalUInt64(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterUInt64.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterUInt64.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterUInt64.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class HttpRequest:
-    def __init__(self, *, method:str, url:str, headers:typing.List[HttpHeader], body:typing.Optional[bytes]):
+    def __init__(self, *, method:str, url:str, headers:typing.List[HttpHeader], body:typing.Optional[bytes], timeout_secs:typing.Optional[int]):
         self.method = method
         self.url = url
         self.headers = headers
         self.body = body
+        self.timeout_secs = timeout_secs
 
 
 
 
     def __str__(self):
-        return "HttpRequest(method={}, url={}, headers={}, body={})".format(self.method, self.url, self.headers, self.body)
+        return "HttpRequest(method={}, url={}, headers={}, body={}, timeout_secs={})".format(self.method, self.url, self.headers, self.body, self.timeout_secs)
     def __eq__(self, other):
         if self.method != other.method:
             return False
@@ -2602,6 +2628,8 @@ class HttpRequest:
         if self.headers != other.headers:
             return False
         if self.body != other.body:
+            return False
+        if self.timeout_secs != other.timeout_secs:
             return False
         return True
 
@@ -2613,6 +2641,7 @@ class _UniffiFfiConverterTypeHttpRequest(_UniffiConverterRustBuffer):
             url=_UniffiFfiConverterString.read(buf),
             headers=_UniffiFfiConverterSequenceTypeHttpHeader.read(buf),
             body=_UniffiFfiConverterOptionalBytes.read(buf),
+            timeout_secs=_UniffiFfiConverterOptionalUInt64.read(buf),
         )
 
     @staticmethod
@@ -2621,6 +2650,7 @@ class _UniffiFfiConverterTypeHttpRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.url)
         _UniffiFfiConverterSequenceTypeHttpHeader.check_lower(value.headers)
         _UniffiFfiConverterOptionalBytes.check_lower(value.body)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.timeout_secs)
 
     @staticmethod
     def write(value, buf):
@@ -2628,6 +2658,7 @@ class _UniffiFfiConverterTypeHttpRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.url, buf)
         _UniffiFfiConverterSequenceTypeHttpHeader.write(value.headers, buf)
         _UniffiFfiConverterOptionalBytes.write(value.body, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.timeout_secs, buf)
 
 class _UniffiFfiConverterUInt16(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u16"

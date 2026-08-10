@@ -1,14 +1,14 @@
 ---
 title: Run a local model with Cua Driver
-description: Connect a locally served computer-use model to Cua Driver through Claude Code while keeping the model's tool context small.
+description: Connect Muse Glimmer to Cua Driver through Claude Code using Ollama or llama.cpp while keeping the model's tool context small.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-This guide shows you how to serve Muse Glimmer 30B locally with llama.cpp, use Claude Code as the
-agent harness, and let the model operate desktop applications through Cua Driver. The same pattern
-works for another model when its serving layer provides multimodal input, tool calling, and an API
-that the chosen harness accepts.
+This guide shows you how to serve Muse Glimmer 30B locally, use Claude Code as the agent harness,
+and let the model operate desktop applications through Cua Driver. Choose Ollama for the shorter
+Apple Silicon setup. Choose llama.cpp with an Unsloth GGUF when you want the configuration used for
+the recorded runs or need direct control over inference settings.
 
 The configuration below reproduces the architecture used for these verified macOS runs:
 
@@ -42,7 +42,7 @@ You need:
 
 - [Cua Driver installed](/how-to-guides/driver/install) on the computer the model will operate;
 - Cua Driver's required operating-system permissions, confirmed with `cua-driver doctor`;
-- a current `llama-server` build with multimodal and tool-calling support;
+- Ollama or a current `llama-server` build with multimodal and tool-calling support;
 - Claude Code; and
 - enough memory and storage for the selected quant and context size.
 
@@ -85,7 +85,38 @@ Create `muse-cua-mcp.json`:
 
 Keep the allowlist as small as the task permits. Add a tool only when the task needs it.
 
-## Start Muse Glimmer
+## Choose a serving path
+
+Both paths connect the same filtered Cua Driver MCP server to Claude Code. The Ollama path uses the
+official `muse-glimmer:30b-mlx` model. The llama.cpp path uses Unsloth's `UD-Q4_K_XL` GGUF and
+matches the recorded configuration.
+
+### Path 1: Use Ollama on Apple Silicon
+
+Pull the official Muse Glimmer model:
+
+```bash
+ollama pull muse-glimmer:30b-mlx
+```
+
+From the directory that contains `muse-cua-mcp.json`, launch Claude Code:
+
+```bash
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072 \
+ollama launch claude \
+  --model muse-glimmer:30b-mlx \
+  --yes \
+  -- \
+  --bare \
+  --strict-mcp-config \
+  --mcp-config ./muse-cua-mcp.json \
+  --tools ""
+```
+
+Ollama serves the model through its Anthropic-compatible API. The published model has a 128K
+context window and supports images and tools.
+
+### Path 2: Use llama.cpp with an Unsloth GGUF
 
 Run llama.cpp's server in a separate terminal:
 
@@ -115,8 +146,6 @@ Wait for the server to finish loading, then check its health from another termin
 curl -fsS http://127.0.0.1:8001/health
 ```
 
-## Start Claude Code against the local endpoint
-
 From the directory that contains `muse-cua-mcp.json`, run:
 
 ```bash
@@ -131,9 +160,9 @@ claude \
   --model muse-glimmer-local
 ```
 
-`--bare` avoids loading unrelated project instructions and integrations. `--tools ""` removes
-Claude Code's built-in tools from this session, while the explicit MCP configuration keeps the
-Cua Driver tools available.
+For either path, `--bare` avoids loading unrelated project instructions and integrations.
+`--tools ""` removes Claude Code's built-in tools from this session, while the explicit MCP
+configuration keeps the Cua Driver tools available.
 
 ## Run a bounded smoke task
 
@@ -198,8 +227,9 @@ global Cua Driver registration can otherwise load alongside the filtered server.
 
 ### The model stops after a few actions
 
-Reduce `max_elements` and `max_depth`, remove unused tools, and shorten the task. If llama.cpp lowers
-the usable context to fit memory, restart it with a context size the machine can hold reliably.
+Reduce `max_elements` and `max_depth`, remove unused tools, and shorten the task. With Ollama,
+confirm the selected model has at least a 64K context window. If llama.cpp lowers the usable context
+to fit memory, restart it with a context size the machine can hold reliably.
 
 ### Screenshots do not reach the model
 
@@ -214,6 +244,7 @@ daemon and grant Accessibility and Screen Recording to the guest's Cua Driver id
 ## Related guides
 
 - [Muse Glimmer model and quant documentation](https://unsloth.ai/docs/models/muse-glimmer)
+- [Connect Ollama to Claude Code](https://docs.ollama.com/integrations/claude-code)
 - [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent)
 - [Run Cua Driver in a macOS Lume VM](/how-to-guides/driver/run-in-macos-lume-vm)
 - [Record and render a Cua Driver trajectory](/how-to-guides/driver/record-and-render-a-trajectory)

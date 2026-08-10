@@ -46,9 +46,7 @@ def test_build_namespace_name_normalizes_invalid_overlong_input() -> None:
 
 def test_assert_template_contract_accepts_server_port_8000() -> None:
     probes = SimpleNamespace(
-        to_json=lambda: json.dumps(
-            {"readinessProbe": {"tcpSocket": {"port": 8000}}}
-        )
+        to_json=lambda: json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
     )
     template = SimpleNamespace(
         spec=SimpleNamespace(
@@ -63,9 +61,7 @@ def test_assert_template_contract_accepts_server_port_8000() -> None:
 
 def test_assert_template_contract_rejects_wrong_service_port() -> None:
     probes = SimpleNamespace(
-        to_json=lambda: json.dumps(
-            {"readinessProbe": {"tcpSocket": {"port": 8000}}}
-        )
+        to_json=lambda: json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
     )
     template = SimpleNamespace(
         spec=SimpleNamespace(
@@ -81,9 +77,7 @@ def test_assert_template_contract_rejects_wrong_service_port() -> None:
 
 def test_assert_template_contract_rejects_missing_server_service() -> None:
     probes = SimpleNamespace(
-        to_json=lambda: json.dumps(
-            {"readinessProbe": {"tcpSocket": {"port": 8000}}}
-        )
+        to_json=lambda: json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
     )
     template = SimpleNamespace(
         spec=SimpleNamespace(
@@ -421,6 +415,7 @@ async def test_raced_attached_namespace_leak_records_inventory_without_deletion(
 
     async def collect_resource_inventory(fleet, namespace: str):
         return {"templates": ["raced-template"], "pools": [], "claims": []}
+
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-raced")
     monkeypatch.setenv("CUA_LIVE_E2E_ARTIFACT_DIR", str(tmp_path))
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (FakeFleet(), FakeHttpClient()))

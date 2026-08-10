@@ -22,9 +22,7 @@ from fleet_sdk import (
 )
 
 DEFAULT_BASE_URL = "https://run.cua.ai"
-DEFAULT_TOKEN_URL = (
-    "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
-)
+DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
 SENSITIVE_SUMMARY_KEY_NAMES = {"api_key", "apikey"}
 SENSITIVE_SUMMARY_KEY_PARTS = {"authorization", "password", "secret", "token"}
 
@@ -46,8 +44,7 @@ class HttpxFleetClient(HttpClient):
         return HttpResponse(
             status=response.status_code,
             headers=[
-                HttpHeader(name=name, value=value)
-                for name, value in response.headers.multi_items()
+                HttpHeader(name=name, value=value) for name, value in response.headers.multi_items()
             ],
             body=response.content,
         )
@@ -107,9 +104,7 @@ async def wait_namespace_absent(
     return not await namespace_exists(client, name)
 
 
-async def collect_resource_inventory(
-    client: CyclopsClient, name: str
-) -> dict[str, list[str]]:
+async def collect_resource_inventory(client: CyclopsClient, name: str) -> dict[str, list[str]]:
     if not await namespace_exists(client, name):
         return {"templates": [], "pools": [], "claims": []}
     templates = await client.list_templates(name)
@@ -131,9 +126,7 @@ def assert_template_contract(template: Any, expected_port: int) -> None:
     )
     probes = json.loads(vm_template.probes.to_json())
     observed = probes["readinessProbe"]["tcpSocket"]["port"]
-    assert observed == expected_port, (
-        f"readiness probe port={observed}, expected {expected_port}"
-    )
+    assert observed == expected_port, f"readiness probe port={observed}, expected {expected_port}"
 
 
 def _is_sensitive_summary_key(key: object) -> bool:
@@ -149,9 +142,7 @@ def _is_sensitive_summary_key(key: object) -> bool:
 def _redact_summary(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: "<redacted>"
-            if _is_sensitive_summary_key(key)
-            else _redact_summary(item)
+            key: "<redacted>" if _is_sensitive_summary_key(key) else _redact_summary(item)
             for key, item in value.items()
         }
     if isinstance(value, list):

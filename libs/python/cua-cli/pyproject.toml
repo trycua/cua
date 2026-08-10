@@ -122,3 +122,8 @@ cua-sandbox = { path = "../cua-sandbox", editable = true }
 [[tool.uv.index]]
 name = "cua-wheels"
 url = "https://wheels.cua.ai/simple"
+
+[[tool.pdm.source]]
+name = "cua-wheels"
+url = "https://wheels.cua.ai/simple"
+include_packages = ["cua-fleet"]

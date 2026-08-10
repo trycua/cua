@@ -374,7 +374,7 @@ Before starting UI work, classify the desired postcondition. For a non-GUI outco
 For an app or window outcome, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
 
 Workflow per turn:
-0. `start_session(session)` once; reuse that id and end it when done.
+0. `start_session` is optional. Ordinary calls create and reuse the transport's implicit session. Use `start_session(session)` only to name a run; use `end_session` for explicit cleanup.
 1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
 2. Act with the fresh index.
 3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
@@ -465,7 +465,7 @@ mod action_record_wire_tests {
 
 #[cfg(test)]
 mod agent_instruction_tests {
-    use super::agent_instructions;
+    use super::{agent_instructions, initialize_result};
 
     #[test]
     fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
@@ -488,6 +488,22 @@ mod agent_instruction_tests {
         assert!(
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"
+        );
+    }
+
+    #[test]
+    fn initialize_instructions_describe_implicit_session_lifecycle() {
+        let result = initialize_result();
+        let instructions = result["instructions"]
+            .as_str()
+            .expect("initialize result should carry agent instructions");
+
+        assert!(instructions.contains("`start_session` is optional"));
+        assert!(instructions.contains("transport's implicit session"));
+        assert!(instructions.contains("`end_session` for explicit cleanup"));
+        assert!(
+            !instructions.contains("`start_session(session)` once"),
+            "initialize instructions must not require explicit session setup"
         );
     }
 }

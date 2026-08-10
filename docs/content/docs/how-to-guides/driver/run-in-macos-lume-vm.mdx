@@ -194,6 +194,12 @@ Follow the printed command, then restart the client. See [Connect your agent to
 Cua Driver](/how-to-guides/driver/connect-your-agent) for other supported
 clients.
 
+To use a locally served model, keep Cua Driver inside the guest and connect it
+to the model's harness through the generated MCP command. [Run a local model
+with Cua Driver](/how-to-guides/driver/run-with-local-model) shows a tested Muse
+Glimmer and Claude Code configuration. Running the exact driver in the guest
+keeps screenshots, input, and recording attached to the guest's macOS identity.
+
 ### Run the agent on the host
 
 The host can expose the guest's MCP process over SSH. First, copy only your host
@@ -267,6 +273,7 @@ session that owns the visible desktop.
 
 ## Related guides
 
+- [Run a local model with Cua Driver](/how-to-guides/driver/run-with-local-model)
 - [Manage local Lume VMs](/how-to-guides/lume/manage-vms)
 - [macOS permissions reference](/reference/cua-driver/macos-permissions)
 - [Run Cua Driver macOS tests in a Lume VM](/how-to-guides/driver/run-tests-in-macos-lume-vm)

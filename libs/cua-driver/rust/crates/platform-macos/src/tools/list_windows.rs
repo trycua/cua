@@ -71,10 +71,7 @@ impl Tool for ListWindowsTool {
         // PID filtering can remove windows from the middle of the native
         // front-to-back list. Re-normalize so the public result remains
         // contiguous and zero-based.
-        let total = windows.len();
-        for (position, window) in windows.iter_mut().enumerate() {
-            window.z_index = total.saturating_sub(1).saturating_sub(position);
-        }
+        normalize_z_indices(&mut windows);
 
         let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
 
@@ -84,6 +81,13 @@ impl Tool for ListWindowsTool {
                 "current_space_id": current_space_id
             }),
         )
+    }
+}
+
+fn normalize_z_indices(windows: &mut [crate::windows::WindowInfo]) {
+    let total = windows.len();
+    for (position, window) in windows.iter_mut().enumerate() {
+        window.z_index = total.saturating_sub(1).saturating_sub(position);
     }
 }
 
@@ -111,6 +115,43 @@ pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pid_filtered_windows_receive_contiguous_zero_based_z_indices() {
+        let mut windows = vec![test_window(100), test_window(200), test_window(100)];
+        windows.retain(|window| window.pid == 100);
+
+        normalize_z_indices(&mut windows);
+
+        assert_eq!(
+            windows
+                .iter()
+                .map(|window| window.z_index)
+                .collect::<Vec<_>>(),
+            vec![1, 0]
+        );
+    }
+
+    fn test_window(pid: i32) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id: pid as u32,
+            pid,
+            app_name: "Example".into(),
+            title: "Document".into(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+            layer: 0,
+            z_index: 99,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
 
     #[test]
     fn window_record_includes_observed_z_index() {

@@ -120,6 +120,8 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         required_contract = (
             "libs/python/cua-fleet/**",
             "Check Fleet OAuth credentials",
+            "step-scoped OAuth credentials",
+            "CUA_LIVE_E2E_SOURCE_SHA",
             "periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}",
             "Prepare isolated live test suite",
             "CUA_LIVE_E2E_TEST_ROOT",
@@ -166,12 +168,26 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             live["concurrency"]["cancel-in-progress"],
             "${{ github.event_name == 'schedule' }}",
         )
-        self.assertEqual(live["env"]["CUA_CLIENT_ID"], "${{ secrets.CUA_CLIENT_ID }}")
-        self.assertEqual(
-            live["env"]["CUA_CLIENT_SECRET"],
-            "${{ secrets.CUA_CLIENT_SECRET }}",
-        )
+        expected_oauth_env = {
+            "CUA_CLIENT_ID": "${{ secrets.CUA_CLIENT_ID }}",
+            "CUA_CLIENT_SECRET": "${{ secrets.CUA_CLIENT_SECRET }}",
+        }
+        self.assertNotIn("CUA_CLIENT_ID", live["env"])
+        self.assertNotIn("CUA_CLIENT_SECRET", live["env"])
         self.assertNotIn("CUA_API_KEY", live["env"])
+        oauth_steps = {
+            step["name"]: step["env"]
+            for step in live["steps"]
+            if "CUA_CLIENT_ID" in step.get("env", {})
+            or "CUA_CLIENT_SECRET" in step.get("env", {})
+        }
+        self.assertEqual(
+            oauth_steps,
+            {
+                "Check Fleet OAuth credentials": expected_oauth_env,
+                "Run live Fleet smoke": expected_oauth_env,
+            },
+        )
         self.assertEqual(live["env"]["CUA_LIVE_E2E_EVENT"], "${{ github.event_name }}")
         self.assertEqual(
             live["env"]["CUA_LIVE_E2E_NAMESPACE"],
@@ -179,6 +195,12 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         )
         self.assertNotIn("github.run_id", live["env"]["CUA_LIVE_E2E_NAMESPACE"])
         self.assertNotIn("github.run_attempt", live["env"]["CUA_LIVE_E2E_NAMESPACE"])
+
+        step_names = [step["name"] for step in live["steps"]]
+        self.assertLess(
+            step_names.index("Checkout main"),
+            step_names.index("Record checked out source SHA"),
+        )
 
         checkout = steps["Checkout main"]
         self.assertEqual(
@@ -196,15 +218,27 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         self.assertIn("-e libs/python/cua-sandbox", steps["Install main source"]["run"])
         self.assertIn("--upgrade cua-sandbox", steps["Install published package"]["run"])
 
-        preflight = steps["Check Fleet OAuth credentials"]["run"]
+        preflight_step = steps["Check Fleet OAuth credentials"]
+        self.assertEqual(preflight_step["env"], expected_oauth_env)
+        preflight = preflight_step["run"]
         self.assertIn("CUA_CLIENT_ID", preflight)
         self.assertIn("CUA_CLIENT_SECRET", preflight)
         self.assertIn("exit 1", preflight)
 
+        source_sha = steps["Record checked out source SHA"]
+        self.assertEqual(source_sha["id"], "source_sha")
+        self.assertIn("git rev-parse HEAD", source_sha["run"])
+        self.assertIn("source_sha=", source_sha["run"])
+        self.assertIn("GITHUB_OUTPUT", source_sha["run"])
+        self.assertIn("CUA_LIVE_E2E_SOURCE_SHA", source_sha["run"])
+        self.assertIn("GITHUB_ENV", source_sha["run"])
+
         isolated_suite = steps["Prepare isolated live test suite"]["run"]
         self.assertIn("CUA_LIVE_E2E_TEST_ROOT", isolated_suite)
         self.assertIn("tests/live", isolated_suite)
-        live_run = steps["Run live Fleet smoke"]["run"]
+        live_step = steps["Run live Fleet smoke"]
+        self.assertEqual(live_step["env"], expected_oauth_env)
+        live_run = live_step["run"]
         self.assertIn("$CUA_LIVE_E2E_TEST_ROOT/tests/live/test_fleet_ephemeral.py", live_run)
         self.assertNotIn("libs/python/cua-sandbox/tests/live", live_run)
         self.assertIn('PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT', live_run)
@@ -231,6 +265,8 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         )
         self.assertIn("summary.json", controlled_summary["run"])
         self.assertIn("ControlledFailure", controlled_summary["run"])
+        self.assertIn('os.environ["CUA_LIVE_E2E_SOURCE_SHA"]', controlled_summary["run"])
+        self.assertNotIn('os.environ.get("GITHUB_SHA")', controlled_summary["run"])
         self.assertEqual(
             steps["Controlled alert test failure"]["if"],
             "github.event_name == 'workflow_dispatch' && inputs.force_failure",
@@ -246,6 +282,8 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         self.assertIn("PeriodicCuaSandboxLiveE2EFailed", alert["run"])
         self.assertIn('"lane": "${{ matrix.lane }}"', alert["run"])
         self.assertIn("${{ steps.versions.outputs.sandbox }}", alert["run"])
+        self.assertIn("${{ steps.source_sha.outputs.source_sha }}", alert["run"])
+        self.assertNotIn('"source_sha": "${{ github.sha }}"', alert["run"])
 
     def test_cleanup_is_claim_only_and_inventory_is_diagnostic(self) -> None:
         workflow = WORKFLOW.read_text()

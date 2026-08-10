@@ -60,8 +60,6 @@ jobs:
       group: periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}
       cancel-in-progress: ${{ github.event_name == 'schedule' }}
     env:
-      CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
-      CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
       CUA_FLEET_BASE_URL: https://run.cua.ai
       CUA_LIVE_E2E_LANE: ${{ matrix.lane }}
       CUA_LIVE_E2E_EVENT: ${{ github.event_name }}
@@ -70,6 +68,9 @@ jobs:
       CUA_TELEMETRY_ENABLED: "false"
     steps:
       - name: Check Fleet OAuth credentials
+        env:
+          CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+          CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
@@ -82,6 +83,15 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
+
+      - name: Record checked out source SHA
+        id: source_sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "CUA_LIVE_E2E_SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -143,7 +153,7 @@ jobs:
                   {
                       "lane": os.environ["CUA_LIVE_E2E_LANE"],
                       "namespace": os.environ["CUA_LIVE_E2E_NAMESPACE"],
-                      "source_sha": os.environ.get("GITHUB_SHA"),
+                      "source_sha": os.environ["CUA_LIVE_E2E_SOURCE_SHA"],
                       "error": {"type": "ControlledFailure"},
                   },
                   indent=2,
@@ -159,6 +169,9 @@ jobs:
 
       - name: Run live Fleet smoke
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.force_failure) }}
+        env:
+          CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+          CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
         run: |
           PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT" python -m pytest -q -s \
             "$CUA_LIVE_E2E_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
@@ -191,7 +204,7 @@ jobs:
               "annotations": {
                 "summary": "Cua Sandbox live Fleet E2E failed (${{ matrix.lane }})",
                 "description": "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-                "source_sha": "${{ github.sha }}",
+                "source_sha": "${{ steps.source_sha.outputs.source_sha }}",
                 "package_version": "${{ steps.versions.outputs.sandbox }}",
                 "image_digest": "sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
               },

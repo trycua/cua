@@ -86,7 +86,10 @@ PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT" python -m pytest -q -s \
 The checkout package root is not on that test path. Therefore the source lane
 uses its editable install while the published lane imports `cua_sandbox` from
 site-packages. The live summary records the resolved `cua_sandbox` module
-origin alongside package versions and source SHA.
+origin alongside package versions and source SHA. After checkout, `Record checked out source SHA`
+uses `git rev-parse HEAD` to publish `CUA_LIVE_E2E_SOURCE_SHA`; the live summary,
+controlled-failure summary, and Alertmanager annotation use that exact value rather
+than the triggering event SHA.
 
 ## Authentication And Secrets
 
@@ -95,6 +98,10 @@ and `CUA_CLIENT_SECRET`, with `CUA_FLEET_BASE_URL=https://run.cua.ai`. Before
 checkout, installation, or pytest, `Check Fleet OAuth credentials` exits with
 an error if either value is empty. This prevents production monitoring from
 passing through the live test's credential-free pytest skip.
+
+The workflow uses step-scoped OAuth credentials only on `Check Fleet OAuth credentials`
+and `Run live Fleet smoke`; checkout, setup, package installation, and copied-suite
+preparation do not inherit either secret.
 
 No credential value, access token, or authorization header is written to logs
 or uploaded artifacts. The workflow does not create temporary user keys.

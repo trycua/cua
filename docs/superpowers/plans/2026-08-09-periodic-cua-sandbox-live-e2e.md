@@ -896,3 +896,8 @@ pool, or template.
 Workflow namespace expression: `cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`.
 
 persistent reconciled resources are intentionally retained between runs; only deterministic claims are ephemeral.
+
+The workflow uses step-scoped OAuth credentials only for credential preflight and the
+live pytest step. After checkout, `git rev-parse HEAD` is exported as
+`CUA_LIVE_E2E_SOURCE_SHA` and is the source SHA recorded by live, controlled-failure,
+and Alertmanager evidence.

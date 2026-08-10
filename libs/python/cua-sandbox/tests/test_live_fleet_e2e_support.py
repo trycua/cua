@@ -698,6 +698,62 @@ async def test_live_runner_uses_pinned_ephemeral_configuration(monkeypatch) -> N
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("sandbox_name", "message"),
+    [("", "non-empty string"), ("cua-live-unexpected", "must equal namespace")],
+)
+async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup(
+    monkeypatch, tmp_path, sandbox_name: str, message: str
+) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    summaries = []
+
+    class FakeSandbox:
+        name = sandbox_name
+
+    class FakeEphemeral:
+        async def __aenter__(self):
+            return FakeSandbox()
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+    class FakeFleet:
+        async def get_template(self, namespace: str, name: str):
+            raise AssertionError("template inspection must not follow an invalid identity")
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+    async def wait_claims_absent(fleet, namespace: str) -> bool:
+        return False
+
+    async def collect_resource_inventory(fleet, namespace: str):
+        return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-identity")
+    monkeypatch.setenv("CUA_LIVE_E2E_SOURCE_SHA", "checked-out-sha")
+    monkeypatch.setenv("GITHUB_SHA", "event-sha")
+    monkeypatch.setenv("CUA_LIVE_E2E_ARTIFACT_DIR", str(tmp_path))
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (FakeFleet(), FakeHttpClient()))
+    monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FakeEphemeral())
+    monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
+    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
+
+    with pytest.raises(AssertionError, match=message):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert summaries[-1]["source_sha"] == "checked-out-sha"
+    assert summaries[-1]["claim_leak"] is True
+    assert summaries[-1]["persistent_resources"]["claims"] == ["claim-a"]
+    assert summaries[-1]["cleanup_error"] == {"type": "Failed"}
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("close_fails", "summary_fails"),
     [(True, False), (False, True), (True, True)],
 )

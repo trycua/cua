@@ -56,7 +56,7 @@ async def run_fleet_ephemeral_live() -> None:
         "lane": lane,
         "namespace": namespace,
         "image": IMAGE,
-        "source_sha": os.environ.get("GITHUB_SHA"),
+        "source_sha": os.environ.get("CUA_LIVE_E2E_SOURCE_SHA") or os.environ.get("GITHUB_SHA"),
         "packages": {
             "cua-sandbox": version("cua-sandbox"),
             "cua-fleet": version("cua-fleet"),
@@ -99,6 +99,13 @@ async def run_fleet_ephemeral_live() -> None:
             summary["provision_seconds"] = time.monotonic() - started
             summary["sandbox_name"] = sandbox.name
             try:
+                assert isinstance(sandbox.name, str) and sandbox.name, (
+                    "sandbox name must be a non-empty string"
+                )
+                assert sandbox.name == namespace, (
+                    f"sandbox name {sandbox.name!r} must equal namespace {namespace!r}"
+                )
+
                 template = await fleet.get_template(namespace, namespace)
                 assert_template_contract(template, expected_port=8000)
 

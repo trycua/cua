@@ -550,14 +550,18 @@ fn migrate_legacy_cache() {
     if !legacy.is_file() {
         return;
     }
-    if !current.exists() {
+    if !current.is_file() {
         if let Some(parent) = current.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if std::fs::create_dir_all(parent).is_err() {
+                return;
+            }
         }
-        let _ = std::fs::rename(&legacy, &current);
+        if std::fs::rename(&legacy, &current).is_err() {
+            return;
+        }
     }
-    // Either the rename already took it, or the canonical cache wins and the
-    // stale copy goes. Both paths end with the legacy home unreferenced.
+    // The rename already took the source, or a canonical cache was already
+    // present and wins. Only the latter path still has a stale copy to remove.
     let _ = std::fs::remove_file(&legacy);
     if let Some(parent) = legacy.parent() {
         let _ = std::fs::remove_dir(parent);
@@ -847,6 +851,31 @@ mod tests {
             // removal must never turn into a recursive delete.
             assert!(!legacy_home.join(CACHE_FILE_NAME).exists());
             assert!(legacy_home.join(".telemetry_id").is_file());
+        });
+    }
+
+    #[test]
+    fn failed_migration_preserves_the_legacy_cache() {
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
+            let legacy_cache = legacy_home.join(CACHE_FILE_NAME);
+            let legacy_json = r#"{"latest_version":"0.1.4","dismissed_versions":["0.1.4"]}"#;
+            std::fs::create_dir_all(&legacy_home).unwrap();
+            std::fs::write(&legacy_cache, legacy_json).unwrap();
+
+            // A regular file at the canonical home prevents parent-directory
+            // creation, making migration fail deterministically on every platform.
+            std::fs::write(
+                home.join(crate::bundle::user_home_subdirectory()),
+                "not a directory",
+            )
+            .unwrap();
+
+            assert!(read_cache().is_none());
+            assert!(legacy_cache.is_file());
+            let preserved = std::fs::read_to_string(legacy_cache).unwrap();
+            assert_eq!(preserved, legacy_json);
         });
     }
 

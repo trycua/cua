@@ -194,7 +194,13 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         )
         launch_parser.add_argument(
             "image",
+            nargs="?",
             help="Image to launch (e.g. macos, ubuntu:24.04, windows:11)",
+        )
+        launch_parser.add_argument(
+            "--pool",
+            default=None,
+            help="Claim the named pre-created Fleet pool",
         )
         launch_parser.add_argument(
             "--local",
@@ -421,10 +427,19 @@ def execute(args: argparse.Namespace) -> int:
 def cmd_launch(args: argparse.Namespace) -> int:
     """Launch a new sandbox."""
 
+    image_arg = getattr(args, "image", None)
+    pool = getattr(args, "pool", None)
+    if bool(image_arg) == bool(pool):
+        print_error("Specify exactly one of IMAGE or --pool")
+        return 1
+    if pool and not getattr(args, "name", None):
+        print_error("--name is required with --pool")
+        return 1
+
     async def _run() -> int:
         from cua_sandbox import Sandbox
 
-        image = _parse_image(args.image, vm=getattr(args, "vm", False))
+        image = _parse_image(image_arg, vm=getattr(args, "vm", False)) if image_arg else None
 
         memory_mb = _parse_memory(args.memory) if args.memory else None
         disk_gb = _parse_disk(args.disk) if args.disk else None
@@ -432,7 +447,9 @@ def cmd_launch(args: argparse.Namespace) -> int:
         local = getattr(args, "local", False)
 
         try:
-            if local:
+            if pool:
+                sb = await Sandbox.create(pool=pool, name=args.name)
+            elif local:
                 sb = await Sandbox.create(
                     image,
                     local=True,

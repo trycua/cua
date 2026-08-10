@@ -1,0 +1,13 @@
+# Cua CLI GitHub WIF smoke pool
+
+This stack keeps the `cua-cli-wif-smoke` Fleet pool and namespace available at zero replicas and authorizes GitHub Actions workflows from `trycua/cua` to claim it through GitHub WIF.
+
+Apply it with the manual `Infra: Fleets WIF smoke pool` workflow. The workflow builds `trycua/terraform-provider-fleets` at the pinned merged commit until `trycua/fleets` is published in the Terraform Registry.
+
+The apply job requires these protected repository or environment secrets from a Fleets user key:
+
+- `FLEETS_TERRAFORM_CLIENT_ID`
+- `FLEETS_TERRAFORM_CLIENT_SECRET`
+- `FLEETS_TERRAFORM_TOKEN_URL`
+
+The pool autoscaler is bounded from zero to one replica. The daily smoke workflow claims a UUID-suffixed sandbox, runs commands through `cua sb exec`, deletes the claim, and suspends the pool back to zero replicas.

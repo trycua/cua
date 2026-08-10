@@ -402,9 +402,10 @@ class Sandbox:
     @classmethod
     async def create(
         cls,
-        image: Image,
+        image: Optional[Image] = None,
         *,
         name: Optional[str] = None,
+        pool: Optional[str] = None,
         api_key: Optional[str] = None,
         local: bool = False,
         runtime: Optional["Runtime"] = None,
@@ -425,7 +426,8 @@ class Sandbox:
 
         Args:
             image: Image to run (e.g. ``Image.desktop("ubuntu")``).
-            name: Optional name to assign to the sandbox.
+            name: Optional name to assign to the sandbox. Required with ``pool``.
+            pool: Pre-created Fleet pool to claim instead of creating from an image.
             api_key: Legacy CUA API key. Providing one uses the legacy VM API;
                 Fleet cloud sandboxes use OAuth client credentials instead.
             local: Use a local runtime instead of cloud.
@@ -453,9 +455,13 @@ class Sandbox:
             print(sb.name)  # save to reconnect later
             await sb.disconnect()
         """
+        if (image is None) == (pool is None):
+            raise ValueError("Specify exactly one of image or pool")
+
         return await cls._create(
             image=image,
             name=name,
+            pool=pool,
             ephemeral=False,
             api_key=api_key,
             local=local,
@@ -1002,7 +1008,13 @@ class Sandbox:
 
             await cloud_vm_action(name, "delete", api_key=api_key)
             return
-        await FleetCloudTransport.delete_sandbox(name)
+        from cua_sandbox import sandbox_state
+
+        state = sandbox_state.load(name)
+        pool_name = state.get("pool_name") if state else None
+        await FleetCloudTransport.delete_sandbox(name, pool_name=pool_name)
+        if pool_name:
+            sandbox_state.delete(name)
 
     @classmethod
     async def _delete_local(cls, name: str) -> None:
@@ -1044,6 +1056,7 @@ class Sandbox:
         image: Optional[Image] = None,
         runtime: Optional["Runtime"] = None,
         name: Optional[str] = None,
+        pool: Optional[str] = None,
         ephemeral: Optional[bool] = None,
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
@@ -1062,6 +1075,13 @@ class Sandbox:
             or server_port > 65535
         ):
             raise ValueError("server_port must be an integer between 1 and 65535")
+
+        if image is not None and pool is not None:
+            raise ValueError("Specify exactly one of image or pool")
+        if pool and not name:
+            raise ValueError("Pool-backed sandboxes require a name")
+        if pool and local:
+            raise ValueError("Pool-backed sandboxes are cloud-only")
 
         _t_start = time.monotonic()
         if ephemeral is None:
@@ -1109,6 +1129,25 @@ class Sandbox:
             sb = cls(transport, name=name, _ephemeral=False, _telemetry_enabled=telemetry_enabled)
             await sb._connect()
             _record_sandbox_create(sb, image=None, local=local, ephemeral=False, t_start=_t_start)
+            return sb
+
+        if pool:
+            transport = FleetCloudTransport(
+                image=None,
+                name=name,
+                pool_name=pool,
+                create_claim=True,
+                region=region,
+                time_to_start=time_to_start,
+                request_timeout=request_timeout,
+                server_port=server_port,
+            )
+            sb = cls(transport, name=name, _ephemeral=False, _telemetry_enabled=telemetry_enabled)
+            await sb._connect()
+            from cua_sandbox import sandbox_state
+
+            sandbox_state.save_fleet_claim(name, pool)
+            _record_sandbox_create(sb, image=None, local=False, ephemeral=False, t_start=_t_start)
             return sb
 
         if image and not runtime and local:
@@ -1243,9 +1282,14 @@ class Sandbox:
                 )
         else:
             if name and cls._uses_fleet(api_key) and not ws_url and not http_url:
+                from cua_sandbox import sandbox_state
+
+                state = sandbox_state.load(name)
+                pool_name = state.get("pool_name") if state else None
                 transport = FleetCloudTransport(
                     image=None,
                     name=name,
+                    pool_name=pool_name,
                     cpu=cpu,
                     memory_mb=memory_mb,
                     disk_gb=disk_gb,

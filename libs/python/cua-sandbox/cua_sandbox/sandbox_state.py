@@ -1,11 +1,10 @@
-"""Persistent state tracking for local sandboxes.
+"""Persistent state tracking for local sandboxes and Fleet claims.
 
-Each running local sandbox writes a JSON file at ~/.cua/sandboxes/{name}.json.
-This allows Sandbox.connect(name, local=True), Sandbox.list(local=True), etc.
-to work across Python process restarts.
+Each running local sandbox or named Fleet claim writes a JSON file at
+~/.cua/sandboxes/{name}.json. This lets later connect and delete commands route
+to the original runtime or pre-created Fleet pool across process restarts.
 
-State files are written by Sandbox.create() for local runtimes and deleted by
-Sandbox.delete(). Ephemeral sandboxes never write state files.
+Ephemeral sandboxes never write state files.
 """
 
 from __future__ import annotations
@@ -103,3 +102,16 @@ def list_all() -> list[dict]:
         except (json.JSONDecodeError, OSError):
             pass
     return result
+
+
+def save_fleet_claim(name: str, pool_name: str) -> None:
+    """Persist the pool association for a named Fleet claim."""
+    SANDBOX_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {
+        "name": name,
+        "runtime_type": "fleet",
+        "pool_name": pool_name,
+        "status": "running",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _state_path(name).write_text(json.dumps(data, indent=2))

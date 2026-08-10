@@ -301,6 +301,7 @@ pub enum OracleKind {
 #[serde(rename_all = "snake_case")]
 pub enum RefusalCode {
     BackgroundUnavailable,
+    ForegroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,
     BrowserRouteUnavailable,
@@ -323,6 +324,7 @@ impl RefusalCode {
     pub fn from_driver_code(code: &str) -> Option<Self> {
         match code {
             "background_unavailable" => Some(Self::BackgroundUnavailable),
+            "foreground_unavailable" => Some(Self::ForegroundUnavailable),
             "background_occluded" => Some(Self::BackgroundOccluded),
             "background_uipi_blocked" => Some(Self::BackgroundUipiBlocked),
             "browser_route_unavailable" => Some(Self::BrowserRouteUnavailable),
@@ -575,24 +577,37 @@ impl CaseSpec {
             return Err(format!("{}: no external oracle declared", self.cell_id));
         }
         if let ContractExpectation::Refuse { allowed_codes } = &self.expected_behavior {
-            if self.delivery != Delivery::Background {
-                return Err(format!(
-                    "{}: only background delivery may declare refusal",
-                    self.cell_id
-                ));
-            }
             if allowed_codes.is_empty() {
                 return Err(format!("{}: refusal has no allowed code", self.cell_id));
             }
-            for required in [
-                OracleKind::Focus,
-                OracleKind::ZOrder,
-                OracleKind::NoLeakedInput,
-            ] {
-                if !self.oracles.contains(&required) {
+            match self.delivery {
+                Delivery::Background => {
+                    for required in [
+                        OracleKind::Focus,
+                        OracleKind::ZOrder,
+                        OracleKind::NoLeakedInput,
+                    ] {
+                        if !self.oracles.contains(&required) {
+                            return Err(format!(
+                                "{}: refusal is missing {:?} oracle",
+                                self.cell_id, required
+                            ));
+                        }
+                    }
+                }
+                Delivery::Foreground
+                    if allowed_codes.as_slice() == [RefusalCode::ForegroundUnavailable]
+                        && self.oracles.contains(&OracleKind::FixtureState) => {}
+                Delivery::Foreground => {
                     return Err(format!(
-                        "{}: refusal is missing {:?} oracle",
-                        self.cell_id, required
+                        "{}: foreground refusal must declare only foreground_unavailable and the fixture-state oracle",
+                        self.cell_id
+                    ));
+                }
+                Delivery::NotApplicable => {
+                    return Err(format!(
+                        "{}: not-applicable delivery may not declare refusal",
+                        self.cell_id
                     ));
                 }
             }
@@ -1367,7 +1382,10 @@ impl CatalogPolicy {
 fn case_requires_action_turn(case: &CaseSpec) -> bool {
     !matches!(
         case.driver_route,
-        DriverRoute::CaptureScopeGate | DriverRoute::AxRead | DriverRoute::WindowState
+        DriverRoute::CaptureScopeGate
+            | DriverRoute::AxRead
+            | DriverRoute::WindowState
+            | DriverRoute::LinuxHyprlandToplevelExport
     ) && case.action != "screenshot"
 }
 
@@ -1812,6 +1830,21 @@ mod tests {
     }
 
     #[test]
+    fn foreground_limitation_requires_its_typed_code_and_fixture_oracle() {
+        let mut case = delivered_case("foreground-limitation");
+        case.delivery = Delivery::Foreground;
+        case.expected_behavior = ContractExpectation::Refuse {
+            allowed_codes: vec![RefusalCode::ForegroundUnavailable],
+        };
+        assert!(case.validate().is_ok());
+
+        case.expected_behavior = ContractExpectation::Refuse {
+            allowed_codes: vec![RefusalCode::BackgroundUnavailable],
+        };
+        assert!(case.validate().is_err());
+    }
+
+    #[test]
     fn refusal_requires_explicit_code_and_side_effect_oracles() {
         let case = delivered_case("expected-refusal")
             .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
@@ -1988,6 +2021,18 @@ mod tests {
 
         validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect("readonly cells have no action turn to capture");
+    }
+
+    #[test]
+    fn strict_hyprland_capture_does_not_invent_an_action_turn() {
+        let case = native_readonly_case(
+            "electron",
+            "hyprland_off_workspace_xwayland_capture",
+            Targeting::NotApplicable,
+            DriverRoute::LinuxHyprlandToplevelExport,
+            vec![OracleKind::AxState, OracleKind::Pixels],
+        );
+        assert!(!case_requires_action_turn(&case));
     }
 
     #[test]

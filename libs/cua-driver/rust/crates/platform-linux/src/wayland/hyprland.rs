@@ -7,8 +7,16 @@
 //! title and app-id observed on the Wayland connection.
 
 use anyhow::{bail, Context, Result};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::process::Command;
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct Workspace {
+    #[serde(default)]
+    id: i64,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 struct Client {
@@ -21,6 +29,54 @@ struct Client {
     title: String,
     #[serde(default)]
     class: String,
+    #[serde(default)]
+    at: [i32; 2],
+    #[serde(default)]
+    size: [i32; 2],
+    #[serde(default)]
+    workspace: Workspace,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct Monitor {
+    #[serde(default, rename = "activeWorkspace")]
+    active_workspace: Workspace,
+    #[serde(default)]
+    x: i32,
+    #[serde(default)]
+    y: i32,
+    #[serde(default)]
+    width: u32,
+    #[serde(default)]
+    height: u32,
+    #[serde(default)]
+    scale: f64,
+    #[serde(default)]
+    transform: u8,
+}
+
+/// Logical compositor coordinate space accepted by Hyprland virtual pointers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OutputLayout {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Compositor-owned Hyprland metadata for one mapped toplevel.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Window {
+    pub address: u64,
+    pub pid: u32,
+    pub title: String,
+    pub app_id: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub workspace: i64,
+    pub visible: bool,
 }
 
 pub fn is_session() -> bool {
@@ -28,6 +84,198 @@ pub fn is_session() -> bool {
         && std::env::var("XDG_CURRENT_DESKTOP")
             .ok()
             .is_some_and(|desktop| desktop.to_ascii_lowercase().contains("hyprland"))
+}
+
+fn windows_from_clients(clients: &[Client], active_workspaces: &HashSet<i64>) -> Vec<Window> {
+    clients
+        .iter()
+        .filter(|client| client.mapped)
+        .filter_map(|client| {
+            let address = parse_address(&client.address)?;
+            let pid = u32::try_from(client.pid).ok().filter(|pid| *pid != 0)?;
+            Some(Window {
+                address,
+                pid,
+                title: client.title.clone(),
+                app_id: client.class.clone(),
+                x: client.at[0],
+                y: client.at[1],
+                width: u32::try_from(client.size[0]).unwrap_or_default(),
+                height: u32::try_from(client.size[1]).unwrap_or_default(),
+                workspace: client.workspace.id,
+                visible: !client.hidden && active_workspaces.contains(&client.workspace.id),
+            })
+        })
+        .collect()
+}
+
+/// Read all mapped Hyprland clients with compositor-owned process, geometry,
+/// workspace, and visibility metadata.
+pub fn list_windows() -> Result<Vec<Window>> {
+    if !is_session() {
+        bail!("not a Hyprland session");
+    }
+    let monitors: Vec<Monitor> = hyprctl_json("monitors")?;
+    let active_workspaces = monitors
+        .into_iter()
+        .map(|monitor| monitor.active_workspace.id)
+        .filter(|workspace| *workspace != 0)
+        .collect::<HashSet<_>>();
+    Ok(windows_from_clients(&clients()?, &active_workspaces))
+}
+
+/// Return the logical bounding rectangle of all Hyprland outputs. Hyprland's
+/// monitor positions and client coordinates are logical, while monitor mode
+/// dimensions are physical and must be divided by scale. Virtual-pointer
+/// absolute coordinates are normalized across this complete layout, not one
+/// arbitrarily selected `wl_output`.
+pub fn output_layout() -> Result<OutputLayout> {
+    if !is_session() {
+        bail!("not a Hyprland session");
+    }
+    let monitors: Vec<Monitor> = hyprctl_json("monitors")?;
+    layout_from_monitors(&monitors).context("Hyprland reported no valid monitor layout")
+}
+
+/// Position the real Hyprland seat cursor in compositor-logical coordinates.
+/// Hyprland's compositor dispatcher is authoritative across mixed-scale and
+/// multi-monitor layouts; button and axis events still use the standard
+/// wlroots virtual-pointer protocol.
+pub fn move_cursor(x: i32, y: i32) -> Result<()> {
+    if !is_session() {
+        bail!("not a Hyprland session");
+    }
+    let binary = hyprctl_binary();
+    let output = Command::new(binary)
+        .args(["dispatch", "movecursor", &x.to_string(), &y.to_string()])
+        .output()
+        .context("launch hyprctl dispatch movecursor")?;
+    if !output.status.success() || !output.stdout.starts_with(b"ok") {
+        bail!("hyprctl dispatch movecursor failed");
+    }
+    Ok(())
+}
+
+fn layout_from_monitors(monitors: &[Monitor]) -> Option<OutputLayout> {
+    let rectangles = monitors.iter().filter_map(|monitor| {
+        if monitor.width == 0
+            || monitor.height == 0
+            || !monitor.scale.is_finite()
+            || monitor.scale <= 0.0
+        {
+            return None;
+        }
+        let (physical_width, physical_height) = if monitor.transform % 2 == 0 {
+            (monitor.width, monitor.height)
+        } else {
+            (monitor.height, monitor.width)
+        };
+        let width = (f64::from(physical_width) / monitor.scale).round() as i64;
+        let height = (f64::from(physical_height) / monitor.scale).round() as i64;
+        (width > 0 && height > 0).then_some((
+            i64::from(monitor.x),
+            i64::from(monitor.y),
+            i64::from(monitor.x) + width,
+            i64::from(monitor.y) + height,
+        ))
+    });
+
+    let (min_x, min_y, max_x, max_y) =
+        rectangles.fold(None, |bounds: Option<(i64, i64, i64, i64)>, rect| {
+            Some(match bounds {
+                None => rect,
+                Some((min_x, min_y, max_x, max_y)) => (
+                    min_x.min(rect.0),
+                    min_y.min(rect.1),
+                    max_x.max(rect.2),
+                    max_y.max(rect.3),
+                ),
+            })
+        })?;
+    Some(OutputLayout {
+        x: i32::try_from(min_x).ok()?,
+        y: i32::try_from(min_y).ok()?,
+        width: u32::try_from(max_x - min_x).ok()?,
+        height: u32::try_from(max_y - min_y).ok()?,
+    })
+}
+
+pub fn window_for_address(address: u64) -> Option<Window> {
+    list_windows()
+        .ok()?
+        .into_iter()
+        .find(|window| window.address == address)
+}
+
+/// Correlate an accessibility observation to one compositor client. PID is
+/// mandatory; title and app-id disambiguate sibling windows, and a sole
+/// PID-owned client is the final safe fallback.
+pub fn matching_window<'a>(
+    windows: &'a [Window],
+    pid: u32,
+    title: &str,
+    app_id: &str,
+) -> Option<&'a Window> {
+    let owned = windows
+        .iter()
+        .filter(|window| window.pid == pid)
+        .collect::<Vec<_>>();
+    let title_matches = owned
+        .iter()
+        .copied()
+        .filter(|window| !title.is_empty() && window.title == title)
+        .collect::<Vec<_>>();
+    if let [window] = title_matches.as_slice() {
+        return Some(*window);
+    }
+    let app_matches = owned
+        .iter()
+        .copied()
+        .filter(|window| !app_id.is_empty() && window.app_id == app_id)
+        .collect::<Vec<_>>();
+    if let [window] = app_matches.as_slice() {
+        return Some(*window);
+    }
+    match owned.as_slice() {
+        [window] => Some(*window),
+        _ => None,
+    }
+}
+
+pub fn window_for_pid(pid: u32) -> Option<Window> {
+    let matching = list_windows()
+        .ok()?
+        .into_iter()
+        .filter(|window| window.pid == pid)
+        .collect::<Vec<_>>();
+    match matching.as_slice() {
+        [window] => Some(window.clone()),
+        _ => None,
+    }
+}
+
+pub fn window_for_title(title: &str) -> Option<Window> {
+    let matching = list_windows()
+        .ok()?
+        .into_iter()
+        .filter(|window| !title.is_empty() && window.title == title)
+        .collect::<Vec<_>>();
+    match matching.as_slice() {
+        [window] => Some(window.clone()),
+        _ => None,
+    }
+}
+
+pub fn window_for_app_id(app_id: &str) -> Option<Window> {
+    let matching = list_windows()
+        .ok()?
+        .into_iter()
+        .filter(|window| !app_id.is_empty() && window.app_id == app_id)
+        .collect::<Vec<_>>();
+    match matching.as_slice() {
+        [window] => Some(window.clone()),
+        _ => None,
+    }
 }
 
 /// Resolve one exact Hyprland compositor address for a Wayland observation.
@@ -83,19 +331,26 @@ fn resolve_from_clients(
 }
 
 fn clients() -> Result<Vec<Client>> {
-    let binary = if std::path::Path::new("/usr/bin/hyprctl").is_file() {
+    hyprctl_json("clients")
+}
+
+fn hyprctl_binary() -> &'static str {
+    if std::path::Path::new("/usr/bin/hyprctl").is_file() {
         "/usr/bin/hyprctl"
     } else {
         "hyprctl"
-    };
-    let output = Command::new(binary)
-        .args(["-j", "clients"])
-        .output()
-        .context("launch hyprctl for compositor identity")?;
-    if !output.status.success() || output.stdout.is_empty() {
-        bail!("hyprctl clients failed");
     }
-    serde_json::from_slice(&output.stdout).context("parse hyprctl clients JSON")
+}
+
+fn hyprctl_json<T: DeserializeOwned>(query: &str) -> Result<T> {
+    let output = Command::new(hyprctl_binary())
+        .args(["-j", query])
+        .output()
+        .with_context(|| format!("launch hyprctl -j {query}"))?;
+    if !output.status.success() || output.stdout.is_empty() {
+        bail!("hyprctl -j {query} failed");
+    }
+    serde_json::from_slice(&output.stdout).with_context(|| format!("parse hyprctl {query} JSON"))
 }
 
 fn parse_address(address: &str) -> Option<u64> {
@@ -114,6 +369,20 @@ mod tests {
             pid,
             title: title.to_owned(),
             class: class.to_owned(),
+            at: [10, 20],
+            size: [800, 600],
+            workspace: Workspace { id: 1 },
+        }
+    }
+
+    fn monitor(x: i32, y: i32, width: u32, height: u32, scale: f64) -> Monitor {
+        Monitor {
+            x,
+            y,
+            width,
+            height,
+            scale,
+            ..Monitor::default()
         }
     }
 
@@ -156,6 +425,96 @@ mod tests {
         assert_eq!(
             resolve_from_clients(&clients, 0x2222, 42, "stale", "stale").unwrap(),
             0x2222
+        );
+    }
+
+    #[test]
+    fn compositor_metadata_preserves_geometry_and_workspace_visibility() {
+        let mut visible = client("0x1111", 42, "Target", "fixture");
+        visible.at = [-20, 30];
+        visible.size = [940, 780];
+        visible.workspace.id = 7;
+        let mut hidden = client("0x2222", 43, "Hidden", "fixture");
+        hidden.workspace.id = 8;
+
+        let windows = windows_from_clients(&[visible, hidden], &HashSet::from([7]));
+        assert_eq!(
+            windows[0],
+            Window {
+                address: 0x1111,
+                pid: 42,
+                title: "Target".to_owned(),
+                app_id: "fixture".to_owned(),
+                x: -20,
+                y: 30,
+                width: 940,
+                height: 780,
+                workspace: 7,
+                visible: true,
+            }
+        );
+        assert!(!windows[1].visible);
+    }
+
+    #[test]
+    fn accessibility_matching_uses_pid_then_unique_title() {
+        let windows = windows_from_clients(
+            &[
+                client("0x1111", 42, "Main", "fixture"),
+                client("0x2222", 42, "Child", "fixture"),
+                client("0x3333", 43, "Main", "fixture"),
+            ],
+            &HashSet::from([1]),
+        );
+        assert_eq!(
+            matching_window(&windows, 42, "Main", "fixture").map(|window| window.address),
+            Some(0x1111)
+        );
+        assert!(matching_window(&windows, 42, "Unknown", "fixture").is_none());
+        assert!(matching_window(&windows, 44, "Main", "fixture").is_none());
+    }
+
+    #[test]
+    fn malformed_process_or_size_metadata_fails_closed() {
+        let mut invalid_pid = client("0x1111", -1, "Bad", "fixture");
+        invalid_pid.size = [800, 600];
+        let mut invalid_size = client("0x2222", 42, "Target", "fixture");
+        invalid_size.size = [-1, 600];
+
+        let windows = windows_from_clients(&[invalid_pid, invalid_size], &HashSet::from([1]));
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].width, 0);
+    }
+
+    #[test]
+    fn output_layout_uses_logical_scaled_bounds() {
+        let monitors = [
+            monitor(384, 288, 1920, 1080, 1.25),
+            monitor(1920, 0, 3840, 2160, 1.5),
+        ];
+        assert_eq!(
+            layout_from_monitors(&monitors),
+            Some(OutputLayout {
+                x: 384,
+                y: 0,
+                width: 4096,
+                height: 1440,
+            })
+        );
+    }
+
+    #[test]
+    fn output_layout_translates_negative_and_rotated_outputs() {
+        let mut rotated = monitor(-1080, -200, 1920, 1080, 1.0);
+        rotated.transform = 1;
+        assert_eq!(
+            layout_from_monitors(&[rotated, monitor(0, 0, 2560, 1440, 1.0)]),
+            Some(OutputLayout {
+                x: -1080,
+                y: -200,
+                width: 3640,
+                height: 1920,
+            })
         );
     }
 }

@@ -5,6 +5,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
+from cua_sandbox import Image
 from fleet_sdk import SdkError
 
 from tests.live.fleet_e2e_support import (
@@ -482,6 +483,55 @@ async def test_provisioning_failure_before_yield_never_deletes_namespace(monkeyp
         await live_test.run_fleet_ephemeral_live()
 
     assert summaries[-1]["provisioning"] == {"sandbox_yielded": False}
+
+
+@pytest.mark.asyncio
+async def test_live_runner_uses_pinned_ephemeral_configuration(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    class StopProvisioning(Exception):
+        pass
+
+    captured = {}
+
+    class FailingEphemeral:
+        async def __aenter__(self):
+            raise StopProvisioning("stop after capturing arguments")
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+    async def namespace_exists(fleet, namespace: str) -> bool:
+        return False
+
+    def ephemeral(image, **kwargs):
+        captured["image"] = image
+        captured["kwargs"] = kwargs
+        return FailingEphemeral()
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-configuration")
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
+    monkeypatch.setattr(live_test, "namespace_exists", namespace_exists)
+    monkeypatch.setattr(live_test.Sandbox, "ephemeral", ephemeral)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: None)
+
+    with pytest.raises(StopProvisioning, match="capturing arguments"):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert captured["image"] == Image.from_registry(live_test.IMAGE)
+    assert captured["kwargs"] == {
+        "name": "cua-live-configuration",
+        "cpu": 4,
+        "memory_mb": 4096,
+        "server_port": 8000,
+        "time_to_start": 900,
+        "request_timeout": 60,
+        "telemetry_enabled": False,
+    }
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,11 @@ testing the current Fleet-backed public SDK contract.
 3. `workflow_dispatch` accepts `both`, `main-source`, or `published-package`,
    plus manual-only `force_failure`.
 
+Both jobs are guarded with `if: github.repository == 'trycua/cua'`. A fork
+that syncs `main` or enables the schedule therefore never runs the live smoke,
+never fails the credential preflight, and never posts a fork-originated
+`PeriodicCuaSandboxLiveE2EFailed` alert to the public Alertmanager endpoint.
+
 The preparation script emits a JSON matrix: every `push` selects only
 `main-source`; every `schedule` selects both lanes; manual runs select their
 requested lane or both. The workflow contract executes this extracted shell
@@ -206,7 +211,8 @@ source regression with a published-package or shared-infrastructure failure.
 ## Workflow Contract Coverage
 
 The repository-side contract parses the workflow with `yaml.BaseLoader` and
-asserts triggers, path filters, the executed preparation matrix, checkout ref,
+asserts triggers, path filters, the upstream-repository fork guard on both
+jobs, the executed preparation matrix, checkout ref,
 event-and-lane concurrency, credential preflight, copied-suite isolation,
 version output handling, controlled-failure diagnostics, failure-only artifacts,
 Alertmanager labels, full-SHA action pins, and absence of explicit deletion.

@@ -545,6 +545,11 @@ on:
       - ".github/scripts/tests/test_periodic_cua_sandbox_live.py"
 ```
 
+Both the `prepare` and `live` jobs carry
+`if: github.repository == 'trycua/cua'`, so a fork that syncs `main` or
+enables the schedule cannot run the live smoke or post a fork-originated
+alert to Alertmanager.
+
 The `prepare` job emits `main-source` for every `push`, both lanes for
 `schedule`, and the requested `workflow_dispatch` lane. The contract test
 extracts this shell script from parsed YAML, runs it with a temporary

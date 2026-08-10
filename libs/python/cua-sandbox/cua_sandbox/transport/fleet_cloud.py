@@ -286,11 +286,6 @@ class FleetCloudTransport(FleetTransport):
     def name(self) -> str:
         return self._name
 
-    @property
-    def owns_namespace(self) -> bool:
-        """Whether this transport created and owns its Fleet namespace."""
-        return self._owns_namespace
-
     async def connect(self) -> None:
         if not self._provisioned:
             if self._sdk is None:

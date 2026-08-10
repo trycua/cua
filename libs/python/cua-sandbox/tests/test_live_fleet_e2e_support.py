@@ -10,7 +10,6 @@ from fleet_sdk import SdkError
 from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_namespace_name,
-    cleanup_namespace,
     collect_resource_inventory,
     is_not_found_error,
     wait_namespace_absent,
@@ -193,58 +192,15 @@ def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
     assert summary["nested"]["items"][1]["safe"] == "visible"
 
 
-@pytest.mark.asyncio
-async def test_cleanup_namespace_treats_delete_404_as_success(monkeypatch) -> None:
-    class FakeClient:
-        async def get_namespace(self, name: str):
-            return SimpleNamespace(name=name)
+def test_live_cleanup_exposes_no_explicit_namespace_deletion_api() -> None:
+    from cua_sandbox import Sandbox as CuaSandbox
+    from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
+    from tests.live import fleet_e2e_support, test_fleet_ephemeral as live_test
 
-        async def delete_namespace(self, name: str):
-            raise SdkError.Status("delete namespace", 404, b"not found")
-
-    class FakeHttpClient:
-        closed = False
-
-        async def aclose(self):
-            self.closed = True
-
-    client = FakeClient()
-    http_client = FakeHttpClient()
-    monkeypatch.setattr(
-        "tests.live.fleet_e2e_support.build_fleet_client",
-        lambda: (client, http_client),
-    )
-
-    assert await cleanup_namespace("demo")
-    assert http_client.closed
-
-
-@pytest.mark.asyncio
-async def test_cleanup_namespace_propagates_non_404_delete_error(monkeypatch) -> None:
-    class FakeClient:
-        async def get_namespace(self, name: str):
-            return SimpleNamespace(name=name)
-
-        async def delete_namespace(self, name: str):
-            raise SdkError.Status("delete namespace", 500, b"failure")
-
-    class FakeHttpClient:
-        closed = False
-
-        async def aclose(self):
-            self.closed = True
-
-    client = FakeClient()
-    http_client = FakeHttpClient()
-    monkeypatch.setattr(
-        "tests.live.fleet_e2e_support.build_fleet_client",
-        lambda: (client, http_client),
-    )
-
-    with pytest.raises(SdkError.Status) as error:
-        await cleanup_namespace("demo")
-    assert error.value.status == 500
-    assert http_client.closed
+    assert not hasattr(fleet_e2e_support, "cleanup_namespace")
+    assert not hasattr(live_test, "cleanup_namespace")
+    assert not hasattr(CuaSandbox, "owns_namespace")
+    assert not hasattr(FleetCloudTransport, "owns_namespace")
 
 
 def test_selected_namespace_rejects_unsafe_override(monkeypatch) -> None:
@@ -274,15 +230,10 @@ async def test_existing_safe_namespace_never_provisions_or_deletes(monkeypatch) 
         calls.append("provision")
         raise AssertionError("pre-existing namespace must not be provisioned")
 
-    async def cleanup_namespace(namespace: str) -> bool:
-        calls.append(f"cleanup:{namespace}")
-        return True
-
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-existing")
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
     monkeypatch.setattr(live_test, "namespace_exists", namespace_exists)
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", ephemeral)
-    monkeypatch.setattr(live_test, "cleanup_namespace", cleanup_namespace)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: None)
 
     with pytest.raises(RuntimeError, match="already exists"):
@@ -306,7 +257,6 @@ async def test_cleanup_failure_does_not_mask_primary_failure(
 
     class FakeSandbox:
         name = "cua-live-primary-failure"
-        owns_namespace = True
 
     class FailingEphemeral:
         async def __aenter__(self):
@@ -423,17 +373,15 @@ def test_selected_namespace_requires_dns_1123_label(monkeypatch, namespace: str)
 
 
 @pytest.mark.asyncio
-async def test_raced_attached_namespace_leak_never_uses_emergency_cleanup(
+async def test_raced_attached_namespace_leak_records_inventory_without_deletion(
     monkeypatch, tmp_path
 ) -> None:
     from tests.live import test_fleet_ephemeral as live_test
 
-    cleanup_calls = []
     summaries = []
 
     class FakeSandbox:
         name = "cua-live-raced"
-        owns_namespace = False
 
         class screen:
             @staticmethod
@@ -472,10 +420,6 @@ async def test_raced_attached_namespace_leak_never_uses_emergency_cleanup(
 
     async def collect_resource_inventory(fleet, namespace: str):
         return {"templates": ["raced-template"], "pools": [], "claims": []}
-    async def cleanup_namespace(namespace: str) -> bool:
-        cleanup_calls.append(namespace)
-        return True
-
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-raced")
     monkeypatch.setenv("CUA_LIVE_E2E_ARTIFACT_DIR", str(tmp_path))
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (FakeFleet(), FakeHttpClient()))
@@ -484,24 +428,26 @@ async def test_raced_attached_namespace_leak_never_uses_emergency_cleanup(
     monkeypatch.setattr(live_test, "assert_template_contract", lambda template, expected_port: None)
     monkeypatch.setattr(live_test, "wait_namespace_absent", wait_namespace_absent)
     monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
-    monkeypatch.setattr(live_test, "cleanup_namespace", cleanup_namespace)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     with pytest.raises(pytest.fail.Exception, match="leaked"):
         await live_test.run_fleet_ephemeral_live()
 
-    assert cleanup_calls == []
-    assert summaries[-1]["owns_namespace"] is False
+    assert summaries[-1]["namespace_leak"] is True
+    assert summaries[-1]["remaining_resources"] == {
+        "templates": ["raced-template"],
+        "pools": [],
+        "claims": [],
+    }
 
 
 @pytest.mark.asyncio
-async def test_provisioning_failure_before_yield_never_uses_emergency_cleanup(monkeypatch) -> None:
+async def test_provisioning_failure_before_yield_never_deletes_namespace(monkeypatch) -> None:
     from tests.live import test_fleet_ephemeral as live_test
 
     class ProvisioningFailure(Exception):
         pass
 
-    cleanup_calls = []
     summaries = []
 
     class FailingEphemeral:
@@ -524,23 +470,17 @@ async def test_provisioning_failure_before_yield_never_uses_emergency_cleanup(mo
     async def collect_resource_inventory(fleet, namespace: str):
         return {"templates": [], "pools": [], "claims": []}
 
-    async def cleanup_namespace(namespace: str) -> bool:
-        cleanup_calls.append(namespace)
-        return True
-
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-provisioning-failure")
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
     monkeypatch.setattr(live_test, "namespace_exists", namespace_exists)
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FailingEphemeral())
     monkeypatch.setattr(live_test, "wait_namespace_absent", wait_namespace_absent)
     monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
-    monkeypatch.setattr(live_test, "cleanup_namespace", cleanup_namespace)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     with pytest.raises(ProvisioningFailure, match="provisioning failed"):
         await live_test.run_fleet_ephemeral_live()
 
-    assert cleanup_calls == []
     assert summaries[-1]["provisioning"] == {"sandbox_yielded": False}
 
 
@@ -564,7 +504,6 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
 
     class FakeSandbox:
         name = "cua-live-owned"
-        owns_namespace = True
 
         class screen:
             @staticmethod
@@ -605,9 +544,6 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
     async def collect_resource_inventory(fleet, namespace: str):
         return {"templates": ["owned-template"], "pools": [], "claims": []}
 
-    async def cleanup_namespace(namespace: str) -> bool:
-        return True
-
     def write_summary(path, summary) -> None:
         summaries.append(summary)
         if summary_fails:
@@ -621,7 +557,6 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
     monkeypatch.setattr(live_test, "assert_template_contract", lambda template, expected_port: None)
     monkeypatch.setattr(live_test, "wait_namespace_absent", wait_namespace_absent)
     monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
-    monkeypatch.setattr(live_test, "cleanup_namespace", cleanup_namespace)
     monkeypatch.setattr(live_test, "write_summary", write_summary)
 
     with pytest.raises(pytest.fail.Exception, match="leaked"):

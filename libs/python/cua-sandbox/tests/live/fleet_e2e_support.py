@@ -164,19 +164,3 @@ def _redact_summary(value: Any) -> Any:
 def write_summary(path: Path, summary: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_redact_summary(summary), indent=2, sort_keys=True) + "\n")
-
-
-async def cleanup_namespace(name: str) -> bool:
-    client, http_client = build_fleet_client()
-    try:
-        if not await namespace_exists(client, name):
-            return False
-        try:
-            await client.delete_namespace(name)
-        except Exception as error:
-            if is_not_found_error(error):
-                return True
-            raise
-        return await wait_namespace_absent(client, name)
-    finally:
-        await http_client.aclose()

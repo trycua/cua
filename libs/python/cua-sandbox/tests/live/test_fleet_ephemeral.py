@@ -13,7 +13,6 @@ from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_fleet_client,
     build_namespace_name,
-    cleanup_namespace,
     collect_resource_inventory,
     namespace_exists,
     wait_namespace_absent,
@@ -76,7 +75,6 @@ async def run_fleet_ephemeral_live() -> None:
     close_error: BaseException | None = None
     summary_error: BaseException | None = None
     sandbox_yielded = False
-    owns_namespace = False
 
     def record_cleanup_error(error: BaseException) -> None:
         nonlocal cleanup_error
@@ -102,8 +100,6 @@ async def run_fleet_ephemeral_live() -> None:
             telemetry_enabled=False,
         ) as sandbox:
             sandbox_yielded = True
-            owns_namespace = sandbox.owns_namespace
-            summary["owns_namespace"] = owns_namespace
             summary["provision_seconds"] = time.monotonic() - started
             summary["sandbox_name"] = sandbox.name
             try:
@@ -147,11 +143,10 @@ async def run_fleet_ephemeral_live() -> None:
                 cleaned = await wait_namespace_absent(fleet, namespace)
                 summary["automatic_cleanup"] = cleaned
                 if not cleaned:
+                    summary["namespace_leak"] = True
                     summary["remaining_resources"] = await collect_resource_inventory(
                         fleet, namespace
                     )
-                    if owns_namespace:
-                        summary["emergency_cleanup"] = await cleanup_namespace(namespace)
                     pytest.fail(f"namespace {namespace} leaked after Sandbox.ephemeral()")
                 summary["cleanup_seconds"] = time.monotonic() - cleanup_started
             except BaseException as error:

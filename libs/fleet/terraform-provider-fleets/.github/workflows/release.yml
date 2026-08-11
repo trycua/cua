@@ -4,32 +4,130 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build without the v prefix
+        required: true
+        default: "0.2.0"
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        name: Determine release version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$DISPATCH_VERSION"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-22.04
+            cc: gcc
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            cc: gcc
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+            cc: clang
+          - goos: darwin
+            goarch: arm64
+            runner: macos-14
+            cc: clang
+          - goos: windows
+            goarch: amd64
+            runner: windows-2022
+            cc: clang
+          - goos: windows
+            goarch: arm64
+            runner: windows-11-arm
+            cc: clang
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
         with:
           go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # 1.97.0
+        with:
+          toolchain: "1.97.0"
+      - name: Build provider archive
+        shell: bash
+        env:
+          CC: ${{ matrix.cc }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: ./scripts/build-release-archive.sh "$VERSION" dist
+      - name: Upload provider archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: terraform-provider-fleets-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Download provider archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: terraform-provider-fleets-*
+          path: dist
+          merge-multiple: true
       - name: Import release signing key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
+          set -euo pipefail
           test -n "$GPG_PRIVATE_KEY"
           printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
-      - name: Release signed provider archives
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
+      - name: Create signed checksums
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "$GPG_FINGERPRINT"
+          cd dist
+          test "$(find . -maxdepth 1 -name '*.zip' | wc -l)" -eq 6
+          sha256sum ./*.zip | sed 's# \./# #' > "terraform-provider-fleets_${VERSION}_SHA256SUMS"
+          gpg --batch --armor --detach-sign \
+            --local-user "$GPG_FINGERPRINT" \
+            --output "terraform-provider-fleets_${VERSION}_SHA256SUMS.sig" \
+            "terraform-provider-fleets_${VERSION}_SHA256SUMS"
+          cp ../terraform-registry-manifest.json .
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "v$VERSION" dist/* \
+            --title "v$VERSION" \
+            --generate-notes \
+            --verify-tag

@@ -25,7 +25,6 @@ goos="$(go env GOOS)"
 goarch="$(go env GOARCH)"
 go_build_cc="${GO_BUILD_CC:-$(go env CC)}"
 rust_target="${RUST_TARGET:-}"
-cargo_target_args=()
 
 if [ "$goos" = windows ] && command -v cygpath >/dev/null 2>&1; then
   native_root_for_tools="$(cygpath -m "$native_root")"
@@ -37,15 +36,19 @@ else
   target_dir_for_tools="$target_dir"
 fi
 
+cargo_args=(rustc --locked)
+cargo_args+=(--manifest-path "$native_root_for_tools/Cargo.toml")
+cargo_args+=(--package cyclops-sdk --release)
 target_release_dir="$target_dir_for_tools/release"
 if [ -n "$rust_target" ]; then
-  cargo_target_args=(--target "$rust_target")
+  cargo_args+=(--target "$rust_target")
   target_release_dir="$target_dir_for_tools/$rust_target/release"
   rust_target_env="${rust_target^^}"
   rust_target_env="${rust_target_env//-/_}"
   export "CARGO_TARGET_${rust_target_env}_LINKER=$go_build_cc"
   export "CC_${rust_target//-/_}=$go_build_cc"
 fi
+cargo_args+=(--target-dir "$target_dir_for_tools")
 
 case "$goos" in
   linux|darwin)
@@ -70,13 +73,7 @@ mkdir -p "$dist_dir"
 build_log="$(mktemp)"
 trap 'rm -f "$build_log"' EXIT
 
-CARGO_TERM_COLOR=never cargo rustc \
-  --locked \
-  --manifest-path "$native_root_for_tools/Cargo.toml" \
-  --package cyclops-sdk \
-  --release \
-  "${cargo_target_args[@]}" \
-  --target-dir "$target_dir_for_tools" \
+CARGO_TERM_COLOR=never cargo "${cargo_args[@]}" \
   -- \
   --crate-type staticlib \
   --print native-static-libs 2>&1 | tee "$build_log"

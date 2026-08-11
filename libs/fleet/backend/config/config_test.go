@@ -168,9 +168,6 @@ func TestLoadConfig_StateDatabaseURLs(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://admin@db/cyclops")
 	t.Setenv("STATE_QUERY_DATABASE_DSN", "postgres://db/cyclops?sslmode=require")
 	t.Setenv("STATE_QUERY_TENANT_PASSWORD", "tenant-password")
-	t.Setenv("STATE_WRITER_DATABASE_URL", "postgres://k8s_state_writer@db/cyclops")
-	t.Setenv("STATE_EXPORTER_DATABASE_URL", "postgres://k8s_state_exporter@db/cyclops")
-	t.Setenv("STATE_ROLE_ADMIN_DATABASE_URL", "postgres://k8s_role_admin@db/cyclops")
 	RegisterFlags(pflag.NewFlagSet("state-database-test", pflag.ContinueOnError))
 
 	cfg, err := LoadConfig()
@@ -182,14 +179,5 @@ func TestLoadConfig_StateDatabaseURLs(t *testing.T) {
 	}
 	if got, want := cfg.Database.StateQueryTenantPassword, "tenant-password"; got != want {
 		t.Fatalf("Database.StateQueryTenantPassword = %q, want %q", got, want)
-	}
-	if got, want := cfg.Database.StateWriterURL, "postgres://k8s_state_writer@db/cyclops"; got != want {
-		t.Fatalf("Database.StateWriterURL = %q, want %q", got, want)
-	}
-	if got, want := cfg.Database.StateExporterURL, "postgres://k8s_state_exporter@db/cyclops"; got != want {
-		t.Fatalf("Database.StateExporterURL = %q, want %q", got, want)
-	}
-	if got, want := cfg.Database.StateRoleAdminURL, "postgres://k8s_role_admin@db/cyclops"; got != want {
-		t.Fatalf("Database.StateRoleAdminURL (fixed-role bootstrap only) = %q, want %q", got, want)
 	}
 }

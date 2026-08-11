@@ -31,6 +31,8 @@ type Handlers struct {
 
 	StateQueryExecutor StateQueryExecutor
 
+	Readiness *Readiness
+
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
 	// the feature (CreateNamespace then skips OIDC credential provisioning).

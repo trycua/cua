@@ -22,8 +22,6 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.53.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.28.0
 	golang.org/x/sync v0.17.0
-	gorm.io/driver/postgres v1.5.11
-	gorm.io/gorm v1.25.12
 )
 
 require (
@@ -38,8 +36,6 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20231201235250-de7065d80cb9 // indirect
 	github.com/jackc/puddle/v2 v2.2.1 // indirect
-	github.com/jinzhu/inflection v1.0.0 // indirect
-	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/open-feature/go-sdk-contrib/providers/aws-ssm v1.0.0 // indirect
 	github.com/open-feature/go-sdk-contrib/providers/from-env v0.1.6 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect

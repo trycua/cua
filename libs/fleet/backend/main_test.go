@@ -43,6 +43,27 @@ func TestGatewayRoutesAreRemoved(t *testing.T) {
 	}
 }
 
+func TestHealthAndReadinessRoutes(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+
+	for _, test := range []struct {
+		path       string
+		statusCode int
+	}{
+		{path: "/healthz", statusCode: http.StatusOK},
+		{path: "/readyz", statusCode: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+
+			if response.Code != test.statusCode {
+				t.Fatalf("status = %d, want %d", response.Code, test.statusCode)
+			}
+		})
+	}
+}
+
 func TestSwaggerOmitsGatewayRoute(t *testing.T) {
 	data, err := os.ReadFile("docs/swagger.json")
 	if err != nil {

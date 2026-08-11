@@ -71,7 +71,7 @@ type staticRoleContract struct {
 	createRole      bool
 	createDB        bool
 	connectionLimit int
-	validUntil      string
+	validUntil      staticRoleValidUntil
 }
 
 type staticRoleAttributes struct {
@@ -139,14 +139,6 @@ var expectedCredentialRoles = map[string]string{
 	"role-admin":  "k8s_role_admin",
 	"metabase":    "k8s_metabase",
 }
-
-const createAppliedMigrationsTableStatement = `create table if not exists cyclops_migrations.applied_migrations (
-	application_order bigint generated always as identity unique,
-	version bigint primary key,
-	filename text not null unique,
-	sha256 text not null,
-	applied_at timestamptz not null default clock_timestamp()
-)`
 
 const selectAppliedMigrationsStatement = `select version, filename, sha256 from cyclops_migrations.applied_migrations order by application_order`
 
@@ -323,24 +315,20 @@ func Run(ctx context.Context, config Config) (runErr error) {
 	}
 	defer transaction.Rollback(ctx)
 
-	ledgerStatements := []string{
-		`select pg_advisory_xact_lock(hashtext('cyclops-database-migrations'))`,
-		`create schema if not exists cyclops_migrations`,
-		createAppliedMigrationsTableStatement,
+	if err := validateNoPublicSecurityDefiner(ctx, transaction); err != nil {
+		return err
 	}
-	for index, statement := range ledgerStatements {
-		started := time.Now()
-		if _, err := transaction.Exec(ctx, statement); err != nil {
-			return fmt.Errorf("prepare migration ledger: %w", err)
-		}
-		if index == 0 {
-			slog.Info("database migration advisory lock acquired",
-				"database_host", connectionConfig.Host,
-				"database_name", connectionConfig.Database,
-				"duration_ms", time.Since(started).Milliseconds(),
-			)
-		}
+
+	ddl := newRuntimeDDL(transaction)
+	started := time.Now()
+	if err := ddl.ensureMigrationLedger(ctx); err != nil {
+		return fmt.Errorf("prepare migration ledger: %w", err)
 	}
+	slog.Info("database migration advisory lock acquired",
+		"database_host", connectionConfig.Host,
+		"database_name", connectionConfig.Database,
+		"duration_ms", time.Since(started).Milliseconds(),
+	)
 
 	rows, err := transaction.Query(ctx, selectAppliedMigrationsStatement)
 	if err != nil {
@@ -405,6 +393,9 @@ func Run(ctx context.Context, config Config) (runErr error) {
 
 	roleEvents, membershipEvents, err := reconcileStaticRoleContracts(ctx, transaction)
 	if err != nil {
+		return err
+	}
+	if err := reconcileReportingBoundary(ctx, transaction); err != nil {
 		return err
 	}
 	credentialEvents, err := reconcilePasswords(ctx, transaction, credentials)
@@ -482,24 +473,24 @@ func parseCredentialURLs(urls CredentialURLs) ([]credential, error) {
 
 func staticRoleContracts() []staticRoleContract {
 	return []staticRoleContract{
-		{role: "cyclops_app", login: true, connectionLimit: -1, validUntil: "infinity"},
-		{role: "k8s_state_owner", inherit: true, connectionLimit: -1, validUntil: "infinity"},
-		{role: "k8s_state_writer", login: true, connectionLimit: -1, validUntil: "infinity"},
-		{role: "k8s_state_exporter", login: true, connectionLimit: -1, validUntil: "infinity"},
-		{role: "k8s_query_tenant", inherit: true, connectionLimit: -1, validUntil: "infinity"},
-		{role: "k8s_query_admin", inherit: true, connectionLimit: -1, validUntil: "infinity"},
-		{role: "k8s_role_admin", login: true, createRole: true, connectionLimit: -1, validUntil: "infinity"},
-		{role: "k8s_reporting_owner", inherit: true, connectionLimit: -1, validUntil: "infinity"},
-		{role: "k8s_metabase", login: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "cyclops_app", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "k8s_state_owner", inherit: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "k8s_state_writer", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "k8s_state_exporter", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "k8s_query_tenant", inherit: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "k8s_query_admin", inherit: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "k8s_role_admin", login: true, createRole: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "k8s_reporting_owner", inherit: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "k8s_metabase", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 	}
 }
 
-func staticRoleSettingsContracts() map[string]map[string]string {
-	return map[string]map[string]string{
+func staticRoleSettingsContracts() map[string]staticRoleSettingsContract {
+	return map[string]staticRoleSettingsContract{
 		"k8s_metabase": {
-			"default_transaction_read_only":       "on",
-			"statement_timeout":                   "20000ms",
-			"idle_in_transaction_session_timeout": "20000ms",
+			staticRoleSettingDefaultTransactionReadOnly:      "on",
+			staticRoleSettingStatementTimeout:                "20000ms",
+			staticRoleSettingIdleInTransactionSessionTimeout: "20000ms",
 		},
 	}
 }
@@ -511,50 +502,6 @@ func staticMembershipContracts(migrationOwner string) []staticMembershipContract
 		{role: "k8s_query_tenant", member: "k8s_role_admin", admin: true, inherit: false, set: false},
 		{role: "k8s_query_admin", member: "k8s_reporting_owner", admin: false, inherit: true, set: false},
 	}
-}
-
-func postgresBoolean(value bool) string {
-	if value {
-		return "TRUE"
-	}
-	return "FALSE"
-}
-
-func staticRoleAlterClauses(contract staticRoleContract, attributes staticRoleAttributes) (string, error) {
-	unsafeAttributes := make([]string, 0, 4)
-	if attributes.createDB {
-		unsafeAttributes = append(unsafeAttributes, "rolcreatedb=true")
-	}
-	if attributes.super {
-		unsafeAttributes = append(unsafeAttributes, "rolsuper=true")
-	}
-	if attributes.replication {
-		unsafeAttributes = append(unsafeAttributes, "rolreplication=true")
-	}
-	if attributes.bypassRLS {
-		unsafeAttributes = append(unsafeAttributes, "rolbypassrls=true")
-	}
-	if len(unsafeAttributes) != 0 {
-		return "", fmt.Errorf("static role %s has unsafe privileged drift: %s; the migration owner cannot safely repair these attributes", contract.role, strings.Join(unsafeAttributes, ", "))
-	}
-
-	clauses := make([]string, 0, 6)
-	if attributes.login != contract.login {
-		clauses = append(clauses, map[bool]string{true: "LOGIN", false: "NOLOGIN"}[contract.login])
-	}
-	if attributes.inherit != contract.inherit {
-		clauses = append(clauses, map[bool]string{true: "INHERIT", false: "NOINHERIT"}[contract.inherit])
-	}
-	if attributes.createRole != contract.createRole {
-		clauses = append(clauses, map[bool]string{true: "CREATEROLE", false: "NOCREATEROLE"}[contract.createRole])
-	}
-	if attributes.connectionLimit != contract.connectionLimit {
-		clauses = append(clauses, "CONNECTION LIMIT "+strconv.Itoa(contract.connectionLimit))
-	}
-	if attributes.validUntil != contract.validUntil {
-		clauses = append(clauses, "VALID UNTIL '"+contract.validUntil+"'")
-	}
-	return strings.Join(clauses, " "), nil
 }
 
 func readStaticRoleAttributes(ctx context.Context, transaction pgx.Tx, role string) (staticRoleAttributes, error) {
@@ -579,6 +526,246 @@ func readStaticRoleAttributes(ctx context.Context, transaction pgx.Tx, role stri
 	return attributes, nil
 }
 
+type reportingACL struct {
+	object    reportingObject
+	owner     string
+	privilege reportingPrivilege
+	grantee   string
+	grantor   string
+	grantable bool
+}
+
+func reconcileReportingBoundary(ctx context.Context, transaction pgx.Tx) error {
+	if err := validateReportingBoundary(ctx, transaction); err != nil {
+		return err
+	}
+
+	var migrationOwner string
+	if err := transaction.QueryRow(ctx, `select current_user`).Scan(&migrationOwner); err != nil {
+		return fmt.Errorf("read migration role for reporting ACL reconciliation: %w", err)
+	}
+	acls, err := readReportingACLs(ctx, transaction)
+	if err != nil {
+		return err
+	}
+	for _, acl := range acls {
+		if isExpectedReportingACL(acl) {
+			continue
+		}
+		if !isSafeReportingACLAuthority(acl, migrationOwner) {
+			return fmt.Errorf("unsafe reporting ACL on %s: privilege=%s grantee=%s grantor=%s owner=%s; migration authority cannot safely revoke this grant", reportingObjectDescription(acl.object), acl.privilege.sqlName(), acl.grantee, acl.grantor, acl.owner)
+		}
+	}
+
+	for _, acl := range acls {
+		if isExpectedReportingACL(acl) {
+			continue
+		}
+		if err := newRuntimeDDL(transaction).revokeReportingACL(ctx, acl); err != nil {
+			return err
+		}
+	}
+	for _, acl := range expectedReportingACLs() {
+		if err := newRuntimeDDL(transaction).grantReportingACL(ctx, acl); err != nil {
+			return fmt.Errorf("reconcile reporting ACLs: %w", err)
+		}
+	}
+
+	finalACLs, err := readReportingACLs(ctx, transaction)
+	if err != nil {
+		return err
+	}
+	for _, acl := range finalACLs {
+		if !isExpectedReportingACL(acl) {
+			return fmt.Errorf("reporting ACL contract drift remains on %s: privilege=%s grantee=%s grantor=%s owner=%s", reportingObjectDescription(acl.object), acl.privilege.sqlName(), acl.grantee, acl.grantor, acl.owner)
+		}
+	}
+	for _, expected := range expectedReportingACLs() {
+		if !containsReportingACL(finalACLs, expected) {
+			return fmt.Errorf("reporting ACL contract is missing %s on %s for %s", expected.privilege.sqlName(), reportingObjectDescription(expected.object), expected.grantee)
+		}
+	}
+	return nil
+}
+
+func validateReportingBoundary(ctx context.Context, transaction pgx.Tx) error {
+	var schemaOwner string
+	if err := transaction.QueryRow(ctx, `select nspowner::regrole::text from pg_namespace where nspname = 'k8s_reporting'`).Scan(&schemaOwner); err != nil {
+		return fmt.Errorf("read reporting schema: %w", err)
+	}
+	if schemaOwner != "k8s_reporting_owner" {
+		return fmt.Errorf("reporting schema owner is %s, want k8s_reporting_owner", schemaOwner)
+	}
+
+	var relationKind, viewOwner string
+	if err := transaction.QueryRow(ctx, `
+		select relation.relkind::text, relation.relowner::regrole::text
+		from pg_class as relation
+		join pg_namespace as namespace on namespace.oid = relation.relnamespace
+		where namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources'`).Scan(&relationKind, &viewOwner); err != nil {
+		return fmt.Errorf("read reporting relation: %w", err)
+	}
+	if relationKind != "v" {
+		return fmt.Errorf("reporting relation current_resources has kind %s, want view", relationKind)
+	}
+	if viewOwner != "k8s_reporting_owner" {
+		return fmt.Errorf("reporting view owner is %s, want k8s_reporting_owner", viewOwner)
+	}
+	return nil
+}
+
+func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL, error) {
+	rows, err := transaction.Query(ctx, `
+		select object_type, schema_name, object_name, routine_oid, owner_name, privilege_type, grantee_name, grantor_name, is_grantable
+		from (
+			select
+				'schema'::text as object_type,
+				namespace.nspname as schema_name,
+				''::text as object_name,
+				0::oid as routine_oid,
+				namespace.nspowner::regrole::text as owner_name,
+				acl.privilege_type,
+				case when acl.grantee = 0 then 'PUBLIC' else acl.grantee::regrole::text end as grantee_name,
+				case when acl.grantor = 0 then 'PUBLIC' else acl.grantor::regrole::text end as grantor_name,
+				acl.is_grantable
+			from pg_namespace as namespace
+			join lateral aclexplode(namespace.nspacl) as acl on true
+			where namespace.nspname !~ '^pg_'
+			  and namespace.nspname <> 'information_schema'
+			  and acl.grantee <> namespace.nspowner
+			  and (acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			       or (namespace.nspname = 'k8s_reporting' and acl.grantee <> namespace.nspowner))
+			union all
+			select
+				case when relation.relkind = 'S' then 'sequence' else 'relation' end,
+				namespace.nspname,
+				relation.relname,
+				0::oid,
+				relation.relowner::regrole::text,
+				acl.privilege_type,
+				case when acl.grantee = 0 then 'PUBLIC' else acl.grantee::regrole::text end,
+				case when acl.grantor = 0 then 'PUBLIC' else acl.grantor::regrole::text end,
+				acl.is_grantable
+			from pg_class as relation
+			join pg_namespace as namespace on namespace.oid = relation.relnamespace
+			join lateral aclexplode(relation.relacl) as acl on true
+			where namespace.nspname !~ '^pg_'
+			  and namespace.nspname <> 'information_schema'
+			  and acl.grantee <> relation.relowner
+			  and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
+			  and (acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			       or (namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources' and acl.grantee <> relation.relowner))
+			union all
+			select
+				'routine'::text,
+				''::text,
+				''::text,
+				routine.oid,
+				routine.proowner::regrole::text,
+				acl.privilege_type,
+				case when acl.grantee = 0 then 'PUBLIC' else acl.grantee::regrole::text end,
+				case when acl.grantor = 0 then 'PUBLIC' else acl.grantor::regrole::text end,
+				acl.is_grantable
+			from pg_proc as routine
+			join pg_namespace as namespace on namespace.oid = routine.pronamespace
+			join lateral aclexplode(routine.proacl) as acl on true
+			where namespace.nspname !~ '^pg_'
+			  and namespace.nspname <> 'information_schema'
+			  and acl.grantee <> routine.proowner
+			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+		) as reporting_acl
+		order by object_type, schema_name, object_name, routine_oid, privilege_type, grantee_name, grantor_name`)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate reporting ACLs: %w", err)
+	}
+	defer rows.Close()
+
+	acls := make([]reportingACL, 0)
+	for rows.Next() {
+		var acl reportingACL
+		var objectKindSQL, privilegeSQL string
+		if err := rows.Scan(
+			&objectKindSQL,
+			&acl.object.schema,
+			&acl.object.name,
+			&acl.object.routineOID,
+			&acl.owner,
+			&privilegeSQL,
+			&acl.grantee,
+			&acl.grantor,
+			&acl.grantable,
+		); err != nil {
+			return nil, fmt.Errorf("read reporting ACL: %w", err)
+		}
+		var ok bool
+		acl.object.kind, ok = reportingObjectKindFromSQL(objectKindSQL)
+		if !ok {
+			return nil, fmt.Errorf("read reporting ACL with unsupported object kind %q", objectKindSQL)
+		}
+		acl.privilege, ok = reportingPrivilegeFromSQL(acl.object.kind, privilegeSQL)
+		if !ok {
+			return nil, fmt.Errorf("read reporting ACL with unsupported %s privilege %q", reportingObjectDescription(acl.object), privilegeSQL)
+		}
+		acls = append(acls, acl)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read reporting ACLs: %w", err)
+	}
+	return acls, nil
+}
+
+func expectedReportingACLs() []reportingACL {
+	return []reportingACL{
+		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_state"}, owner: "k8s_state_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_reporting_owner", grantor: "k8s_state_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_state", name: "resource_state"}, owner: "k8s_state_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "k8s_state_owner"},
+		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "current_resources"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
+	}
+}
+
+func isExpectedReportingACL(acl reportingACL) bool {
+	return containsReportingACL(expectedReportingACLs(), acl)
+}
+
+func containsReportingACL(acls []reportingACL, want reportingACL) bool {
+	for _, acl := range acls {
+		if acl.object == want.object && acl.owner == want.owner && acl.privilege == want.privilege && acl.grantee == want.grantee && acl.grantor == want.grantor && acl.grantable == want.grantable {
+			return true
+		}
+	}
+	return false
+}
+
+func isSafeReportingACLAuthority(acl reportingACL, migrationOwner string) bool {
+	if acl.grantor != acl.owner {
+		return false
+	}
+	return acl.owner == migrationOwner || acl.owner == "k8s_state_owner" || acl.owner == "k8s_reporting_owner"
+}
+
+func validateNoPublicSecurityDefiner(ctx context.Context, transaction pgx.Tx) error {
+	var routine string
+	err := transaction.QueryRow(ctx, `
+		select routine.oid::regprocedure::text
+		from pg_proc as routine
+		join pg_namespace as namespace on namespace.oid = routine.pronamespace
+		join lateral aclexplode(coalesce(routine.proacl, acldefault('f'::"char", routine.proowner))) as acl on true
+		where namespace.nspname !~ '^pg_'
+		  and namespace.nspname <> 'information_schema'
+		  and routine.prokind in ('f', 'p')
+		  and routine.prosecdef
+		  and acl.grantee = 0
+		  and acl.privilege_type = 'EXECUTE'
+		limit 1`).Scan(&routine)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect SECURITY DEFINER routines: %w", err)
+	}
+	return fmt.Errorf("PUBLIC-executable SECURITY DEFINER routine blocks reporting access: %s", routine)
+}
+
 func reconcileStaticRoleContracts(ctx context.Context, transaction pgx.Tx) ([]roleReconciliationEvent, []membershipReconciliationEvent, error) {
 	var migrationOwner string
 	if err := transaction.QueryRow(ctx, `select current_user`).Scan(&migrationOwner); err != nil {
@@ -596,14 +783,8 @@ func reconcileStaticRoleContracts(ctx context.Context, transaction pgx.Tx) ([]ro
 		if err != nil {
 			return nil, nil, err
 		}
-		clauses, err := staticRoleAlterClauses(contract, attributes)
-		if err != nil {
+		if err := newRuntimeDDL(transaction).reconcileStaticRole(ctx, contract, attributes); err != nil {
 			return nil, nil, err
-		}
-		if clauses != "" {
-			if _, err := transaction.Exec(ctx, "alter role "+pgx.Identifier{contract.role}.Sanitize()+" "+clauses); err != nil {
-				return nil, nil, fmt.Errorf("reconcile static role %s: %w", contract.role, err)
-			}
 		}
 		roleEvents = append(roleEvents, roleReconciliationEvent{Role: contract.role, DurationMS: time.Since(started).Milliseconds()})
 	}
@@ -630,21 +811,13 @@ func reconcileStaticRoleContracts(ctx context.Context, transaction pgx.Tx) ([]ro
 		}
 
 		if migrationOwnerGrant == nil || migrationOwnerGrant.admin != contract.admin || migrationOwnerGrant.inherit != contract.inherit || migrationOwnerGrant.set != contract.set {
-			roleIdentifier := pgx.Identifier{contract.role}.Sanitize()
-			memberIdentifier := pgx.Identifier{contract.member}.Sanitize()
-			grantorIdentifier := pgx.Identifier{migrationOwner}.Sanitize()
+			ddl := newRuntimeDDL(transaction)
 			if migrationOwnerGrant != nil {
-				statement := "revoke " + roleIdentifier + " from " + memberIdentifier + " granted by " + grantorIdentifier + " restrict"
-				if _, err := transaction.Exec(ctx, statement); err != nil {
+				if err := ddl.revokeStaticMembership(ctx, contract, migrationOwner); err != nil {
 					return nil, nil, fmt.Errorf("remove drifted static role membership %s -> %s: %w", contract.role, contract.member, err)
 				}
 			}
-			statement := "grant " + roleIdentifier + " to " + memberIdentifier +
-				" with admin " + postgresBoolean(contract.admin) +
-				", inherit " + postgresBoolean(contract.inherit) +
-				", set " + postgresBoolean(contract.set) +
-				" granted by " + grantorIdentifier
-			if _, err := transaction.Exec(ctx, statement); err != nil {
+			if err := ddl.grantStaticMembership(ctx, contract, migrationOwner); err != nil {
 				return nil, nil, fmt.Errorf("reconcile static role membership %s -> %s: %w", contract.role, contract.member, err)
 			}
 		}
@@ -739,12 +912,13 @@ func validateStaticRoleMembers(ctx context.Context, transaction pgx.Tx, migratio
 }
 
 func validateQueryTenantRoleMembers(ctx context.Context, transaction pgx.Tx, migrationOwner string, contracts []staticMembershipContract) (map[string]dynamicTenantRole, error) {
-	if _, err := transaction.Exec(ctx, `set local role k8s_state_owner`); err != nil {
+	ddl := newRuntimeDDL(transaction)
+	if err := ddl.setLocalRole(ctx, "k8s_state_owner"); err != nil {
 		return nil, fmt.Errorf("validate k8s_query_tenant memberships requires SET ROLE k8s_state_owner; restore the declared migration-owner membership before rerunning the migration: %w", err)
 	}
 	dynamicTenants, err := readRegisteredDynamicTenantRoles(ctx, transaction)
 	if err != nil {
-		_, _ = transaction.Exec(ctx, `reset role`)
+		_ = ddl.resetRole(ctx)
 		return nil, err
 	}
 	rows, err := transaction.Query(ctx, `
@@ -754,7 +928,7 @@ func validateQueryTenantRoleMembers(ctx context.Context, transaction pgx.Tx, mig
 		where membership.roleid = 'k8s_query_tenant'::regrole
 		order by member_role.rolname`)
 	if err != nil {
-		_, _ = transaction.Exec(ctx, `reset role`)
+		_ = ddl.resetRole(ctx)
 		return nil, fmt.Errorf("read k8s_query_tenant members: %w", err)
 	}
 
@@ -763,7 +937,7 @@ func validateQueryTenantRoleMembers(ctx context.Context, transaction pgx.Tx, mig
 		var member string
 		if err := rows.Scan(&member); err != nil {
 			rows.Close()
-			_, _ = transaction.Exec(ctx, `reset role`)
+			_ = ddl.resetRole(ctx)
 			return nil, fmt.Errorf("scan k8s_query_tenant member: %w", err)
 		}
 		if member == migrationOwner || isDeclaredStaticMembership("k8s_query_tenant", member, contracts) {
@@ -776,11 +950,11 @@ func validateQueryTenantRoleMembers(ctx context.Context, transaction pgx.Tx, mig
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		_, _ = transaction.Exec(ctx, `reset role`)
+		_ = ddl.resetRole(ctx)
 		return nil, fmt.Errorf("iterate k8s_query_tenant members: %w", err)
 	}
 	rows.Close()
-	if _, err := transaction.Exec(ctx, `reset role`); err != nil {
+	if err := ddl.resetRole(ctx); err != nil {
 		return nil, fmt.Errorf("reset role after validating k8s_query_tenant memberships: %w", err)
 	}
 	if len(unexpected) != 0 {
@@ -993,39 +1167,17 @@ func reconcileStaticRoleSettings(ctx context.Context, transaction pgx.Tx) error 
 			continue
 		}
 
-		roleIdentifier := pgx.Identifier{roleContract.role}.Sanitize()
-		for _, setting := range actual {
-			statement := "alter role " + roleIdentifier
-			if setting.database != "" {
-				statement += " in database " + pgx.Identifier{setting.database}.Sanitize()
-			}
-			statement += " reset all"
-			if _, err := transaction.Exec(ctx, statement); err != nil {
-				return fmt.Errorf("reset static role settings for %s: %w", roleContract.role, err)
-			}
-		}
-
-		settingNames := make([]string, 0, len(desired))
-		for name := range desired {
-			settingNames = append(settingNames, name)
-		}
-		sort.Strings(settingNames)
-		for _, name := range settingNames {
-			var value string
-			if err := transaction.QueryRow(ctx, `select format('%L', $1::text)`, desired[name]).Scan(&value); err != nil {
-				return fmt.Errorf("quote static role setting %s for %s: %w", name, roleContract.role, err)
-			}
-			if _, err := transaction.Exec(ctx, "alter role "+roleIdentifier+" set "+name+" = "+value); err != nil {
-				return fmt.Errorf("reconcile static role setting %s for %s: %w", name, roleContract.role, err)
-			}
+		if err := newRuntimeDDL(transaction).reconcileStaticRoleSettings(ctx, roleContract, actual, desired); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
 type staticRoleSetting struct {
-	database string
-	values   map[string]string
+	database   string
+	values     staticRoleSettingsContract
+	hasUnknown bool
 }
 
 func readStaticRoleSettings(ctx context.Context, transaction pgx.Tx, role string) ([]staticRoleSetting, error) {
@@ -1048,11 +1200,16 @@ func readStaticRoleSettings(ctx context.Context, transaction pgx.Tx, role string
 		if err := rows.Scan(&setting.database, &values); err != nil {
 			return nil, fmt.Errorf("scan static role settings for %s: %w", role, err)
 		}
-		setting.values = make(map[string]string, len(values))
+		setting.values = make(staticRoleSettingsContract, len(values))
 		for _, value := range values {
-			name, configuredValue, ok := strings.Cut(value, "=")
+			sqlName, configuredValue, ok := strings.Cut(value, "=")
 			if !ok {
 				return nil, fmt.Errorf("static role %s has malformed setting %q", role, value)
+			}
+			name, approved := staticRoleSettingNameFromSQL(sqlName)
+			if !approved {
+				setting.hasUnknown = true
+				continue
 			}
 			setting.values[name] = configuredValue
 		}
@@ -1064,19 +1221,15 @@ func readStaticRoleSettings(ctx context.Context, transaction pgx.Tx, role string
 	return settings, nil
 }
 
-func staticRoleSettingsMatch(actual []staticRoleSetting, desired map[string]string) bool {
+func staticRoleSettingsMatch(actual []staticRoleSetting, desired staticRoleSettingsContract) bool {
 	if len(desired) == 0 {
 		return len(actual) == 0
 	}
-	return len(actual) == 1 && actual[0].database == "" && mapsEqual(actual[0].values, desired)
-}
-
-func mapsEqual(left, right map[string]string) bool {
-	if len(left) != len(right) {
+	if len(actual) != 1 || actual[0].database != "" || actual[0].hasUnknown || len(actual[0].values) != len(desired) {
 		return false
 	}
-	for key, leftValue := range left {
-		if right[key] != leftValue {
+	for name, desiredValue := range desired {
+		if actual[0].values[name] != desiredValue {
 			return false
 		}
 	}
@@ -1132,11 +1285,7 @@ func reconcilePasswords(ctx context.Context, transaction pgx.Tx, credentials []c
 	events := make([]credentialEvent, 0, len(credentials))
 	for _, credential := range credentials {
 		started := time.Now()
-		var quotedPassword string
-		if err := transaction.QueryRow(ctx, `select format('%L', $1::text)`, credential.Password).Scan(&quotedPassword); err != nil {
-			return nil, fmt.Errorf("quote password for role %s: %w", credential.Role, err)
-		}
-		if _, err := transaction.Exec(ctx, "alter role "+pgx.Identifier{credential.Role}.Sanitize()+" password "+quotedPassword); err != nil {
+		if err := newRuntimeDDL(transaction).setPassword(ctx, credential); err != nil {
 			return nil, fmt.Errorf("reconcile password for role %s: %w", credential.Role, err)
 		}
 		events = append(events, credentialEvent{Role: credential.Role, DurationMS: time.Since(started).Milliseconds()})

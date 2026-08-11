@@ -790,7 +790,7 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/handlers.HealthResponse'
-      summary: Liveness/readiness probe
+      summary: Liveness probe
       tags:
       - health
 securityDefinitions:

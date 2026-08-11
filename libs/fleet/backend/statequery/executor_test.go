@@ -2,8 +2,12 @@ package statequery
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"testing"
+
+	"cyclops-cs-backend/database"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -62,19 +66,15 @@ func TestNewExecutorRequiresDSNAndPassword(t *testing.T) {
 }
 
 func TestExecutorListsOnlyTenantOwnedNamespaces(t *testing.T) {
-	adminURL := os.Getenv("CYCLOPS_TEST_DATABASE_URL")
-	if adminURL == "" {
-		t.Skip("set CYCLOPS_TEST_DATABASE_URL to run the PostgreSQL RLS test")
+	runtimeURL := os.Getenv("CYCLOPS_TEST_RUNTIME_DATABASE_URL")
+	writerURL := os.Getenv("CYCLOPS_TEST_STATE_WRITER_DATABASE_URL")
+	roleAdminURL := os.Getenv("CYCLOPS_TEST_STATE_ROLE_ADMIN_DATABASE_URL")
+	if runtimeURL == "" || writerURL == "" || roleAdminURL == "" {
+		t.Skip("set CYCLOPS_TEST_RUNTIME_DATABASE_URL, CYCLOPS_TEST_STATE_WRITER_DATABASE_URL, and CYCLOPS_TEST_STATE_ROLE_ADMIN_DATABASE_URL to run the PostgreSQL RLS test")
 	}
 	ctx := context.Background()
-	urls := fixedTestRoleURLs(t, adminURL)
-	if err := ReconcileFixedRoles(ctx, adminURL, urls); err != nil {
-		t.Fatal(err)
-	}
-	if err := Migrate(ctx, adminURL); err != nil {
-		t.Fatal(err)
-	}
-	admin, err := pgxpool.New(ctx, adminURL)
+	requireMigratedDatabase(t, ctx, runtimeURL)
+	admin, err := pgxpool.New(ctx, writerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,9 +96,9 @@ func TestExecutorListsOnlyTenantOwnedNamespaces(t *testing.T) {
 		_, _ = admin.Exec(context.Background(), `delete from k8s_state.resource_state where cluster_id = 'rls-test'`)
 	})
 
-	reconcileTestTenantRole(t, admin, "user-alice", "test-tenant-password")
+	reconcileTestTenantRole(t, roleAdminURL, "user-alice", "test-tenant-password")
 
-	executor, err := NewExecutor(adminURL, "test-tenant-password")
+	executor, err := NewExecutor(writerURL, "test-tenant-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,18 +113,15 @@ func TestExecutorListsOnlyTenantOwnedNamespaces(t *testing.T) {
 }
 
 func TestDirectTenantLoginCannotEscapeTenantIsolation(t *testing.T) {
-	adminURL := os.Getenv("CYCLOPS_TEST_DATABASE_URL")
-	if adminURL == "" {
-		t.Skip("set CYCLOPS_TEST_DATABASE_URL to run the PostgreSQL direct-login isolation test")
+	runtimeURL := os.Getenv("CYCLOPS_TEST_RUNTIME_DATABASE_URL")
+	writerURL := os.Getenv("CYCLOPS_TEST_STATE_WRITER_DATABASE_URL")
+	roleAdminURL := os.Getenv("CYCLOPS_TEST_STATE_ROLE_ADMIN_DATABASE_URL")
+	if runtimeURL == "" || writerURL == "" || roleAdminURL == "" {
+		t.Skip("set CYCLOPS_TEST_RUNTIME_DATABASE_URL, CYCLOPS_TEST_STATE_WRITER_DATABASE_URL, and CYCLOPS_TEST_STATE_ROLE_ADMIN_DATABASE_URL to run the PostgreSQL direct-login isolation test")
 	}
 	ctx := context.Background()
-	if err := ReconcileFixedRoles(ctx, adminURL, fixedTestRoleURLs(t, adminURL)); err != nil {
-		t.Fatal(err)
-	}
-	if err := Migrate(ctx, adminURL); err != nil {
-		t.Fatal(err)
-	}
-	admin, err := pgxpool.New(ctx, adminURL)
+	requireMigratedDatabase(t, ctx, runtimeURL)
+	admin, err := pgxpool.New(ctx, writerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,8 +133,8 @@ func TestDirectTenantLoginCannotEscapeTenantIsolation(t *testing.T) {
 		bob      = "user-bob"
 		cluster  = "direct-login-isolation-test"
 	)
-	aliceRole := reconcileTestTenantRole(t, admin, alice, password)
-	bobRole := reconcileTestTenantRole(t, admin, bob, password)
+	aliceRole := reconcileTestTenantRole(t, roleAdminURL, alice, password)
+	bobRole := reconcileTestTenantRole(t, roleAdminURL, bob, password)
 	if _, err := admin.Exec(ctx, `delete from k8s_state.resource_state where cluster_id = $1`, cluster); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +152,7 @@ func TestDirectTenantLoginCannotEscapeTenantIsolation(t *testing.T) {
 		_, _ = admin.Exec(context.Background(), `drop table if exists tenant_escape`)
 	})
 
-	aliceConfig, err := pgx.ParseConfig(adminURL)
+	aliceConfig, err := pgx.ParseConfig(writerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,4 +196,65 @@ func TestDirectTenantLoginCannotEscapeTenantIsolation(t *testing.T) {
 	if _, err = aliceConn.Exec(ctx, `create table tenant_escape(id integer)`); err == nil {
 		t.Fatal("tenant role created a table")
 	}
+}
+
+func requireMigratedDatabase(t *testing.T, ctx context.Context, url string) {
+	t.Helper()
+
+	if err := database.RequireVersion(ctx, url, 1); err != nil {
+		t.Fatalf("database must be migrated to version 1: %v", err)
+	}
+}
+
+func reconcileTestTenantRole(t *testing.T, roleAdminURL, tenant, password string) string {
+	t.Helper()
+
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, roleAdminURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	role := TenantRoleName(tenant)
+	identifier := pgx.Identifier{role}.Sanitize()
+	t.Cleanup(func() {
+		if _, err := admin.Exec(context.Background(), `select k8s_state.unregister_tenant_role($1)`, role); err != nil {
+			t.Errorf("unregister tenant role %s: %v", role, err)
+		}
+		if _, err := admin.Exec(context.Background(), "drop role if exists "+identifier); err != nil {
+			t.Errorf("drop tenant role %s: %v", role, err)
+		}
+	})
+	if _, err := admin.Exec(ctx, "drop role if exists "+identifier); err != nil {
+		t.Fatal(err)
+	}
+
+	var passwordClause string
+	if err := admin.QueryRow(
+		ctx,
+		`select format(' password %L', $1::text)`,
+		password,
+	).Scan(&passwordClause); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"create role " + identifier + " login inherit nocreaterole" + passwordClause,
+		"grant k8s_query_tenant to " + identifier,
+	} {
+		if _, err := admin.Exec(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fingerprint := sha256.Sum256([]byte(password))
+	if _, err := admin.Exec(
+		ctx,
+		`select k8s_state.register_tenant_role($1, $2, $3)`,
+		role,
+		tenant,
+		hex.EncodeToString(fingerprint[:]),
+	); err != nil {
+		t.Fatal(err)
+	}
+	return role
 }

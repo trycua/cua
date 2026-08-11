@@ -92,12 +92,9 @@ type StripeConfiguration struct {
 // GitHub OIDC trust policies). An empty URL disables those routes (503),
 // keeping the backend bootable without a database — see CUA-675.
 type DatabaseConfiguration struct {
-	URL                      string // DATABASE_URL — migration/control and GitHub trust-policy storage
+	URL                      string // DATABASE_URL — application database and GitHub trust-policy storage
 	StateQueryDSN            string // STATE_QUERY_DATABASE_DSN — tenant query connection options
 	StateQueryTenantPassword string // STATE_QUERY_TENANT_PASSWORD — shared tenant query login password
-	StateWriterURL           string // STATE_WRITER_DATABASE_URL — restricted projector writer
-	StateExporterURL         string // STATE_EXPORTER_DATABASE_URL — restricted outbox exporter
-	StateRoleAdminURL        string // STATE_ROLE_ADMIN_DATABASE_URL — fixed-role bootstrap only
 }
 
 type MetricsConfiguration struct {
@@ -144,9 +141,6 @@ var specs = []flagSpec{
 	{"database.url", "database-url", "DATABASE_URL", "", "Postgres URL for trust-policy storage (enables /api/github-trust-policies)"},
 	{"database.state-query-dsn", "state-query-database-dsn", "STATE_QUERY_DATABASE_DSN", "", "Postgres connection options for tenant state queries"},
 	{"database.state-query-tenant-password", "state-query-tenant-password", "STATE_QUERY_TENANT_PASSWORD", "", "Shared password for tenant query login roles"},
-	{"database.state-writer-url", "state-writer-database-url", "STATE_WRITER_DATABASE_URL", "", "Restricted Postgres URL for Kubernetes state projection"},
-	{"database.state-exporter-url", "state-exporter-database-url", "STATE_EXPORTER_DATABASE_URL", "", "Restricted Postgres URL for Kubernetes state history export"},
-	{"database.state-role-admin-url", "state-role-admin-database-url", "STATE_ROLE_ADMIN_DATABASE_URL", "", "Restricted Postgres URL for Kubernetes tenant-role reconciliation"},
 	{"stripe.secret-key", "stripe-secret-key", "STRIPE_SECRET_KEY", "", "Stripe secret key (server-only)"},
 	{"stripe.webhook-secret", "stripe-webhook-secret", "STRIPE_WEBHOOK_SECRET", "", "Stripe webhook signing secret"},
 	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
@@ -236,9 +230,6 @@ func LoadConfig() (*Configuration, error) {
 			URL:                      viper.GetString("database.url"),
 			StateQueryDSN:            viper.GetString("database.state-query-dsn"),
 			StateQueryTenantPassword: viper.GetString("database.state-query-tenant-password"),
-			StateWriterURL:           viper.GetString("database.state-writer-url"),
-			StateExporterURL:         viper.GetString("database.state-exporter-url"),
-			StateRoleAdminURL:        viper.GetString("database.state-role-admin-url"),
 		},
 		Stripe: StripeConfiguration{
 			SecretKey:          viper.GetString("stripe.secret-key"),

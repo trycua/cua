@@ -945,7 +945,7 @@ const docTemplate = `{
                 "tags": [
                     "health"
                 ],
-                "summary": "Liveness/readiness probe",
+                "summary": "Liveness probe",
                 "responses": {
                     "200": {
                         "description": "OK",

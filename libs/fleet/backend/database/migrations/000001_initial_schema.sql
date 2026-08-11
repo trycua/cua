@@ -326,8 +326,8 @@ RESET ROLE;
 -- 6. Runtime roles may inspect, but never modify, migration state.
 REVOKE ALL ON SCHEMA cyclops_migrations FROM PUBLIC;
 REVOKE ALL ON TABLE cyclops_migrations.applied_migrations FROM PUBLIC;
-GRANT USAGE ON SCHEMA cyclops_migrations TO cyclops_app, k8s_state_writer, k8s_state_exporter, k8s_role_admin, k8s_metabase;
-GRANT SELECT ON TABLE cyclops_migrations.applied_migrations TO cyclops_app, k8s_state_writer, k8s_state_exporter, k8s_role_admin, k8s_metabase;
+GRANT USAGE ON SCHEMA cyclops_migrations TO cyclops_app, k8s_state_writer, k8s_state_exporter, k8s_role_admin;
+GRANT SELECT ON TABLE cyclops_migrations.applied_migrations TO cyclops_app, k8s_state_writer, k8s_state_exporter, k8s_role_admin;
 
 -- 7. Fail closed if reporting reaches state or application data.
 SET LOCAL ROLE k8s_state_owner;

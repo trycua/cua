@@ -30,6 +30,41 @@ var staticMigrationRoles = []string{
 	"k8s_metabase",
 }
 
+func TestRequireVersionRejectsAbsentLedger(t *testing.T) {
+	maintenanceURL := os.Getenv("CYCLOPS_TEST_DATABASE_URL")
+	if maintenanceURL == "" {
+		t.Skip("set CYCLOPS_TEST_DATABASE_URL to run PostgreSQL migration tests")
+	}
+	if os.Getenv(migratorIntegrationOptIn) != "1" {
+		t.Skipf("set %s=1 to run against a dedicated empty PostgreSQL cluster", migratorIntegrationOptIn)
+	}
+
+	migrationURL, _ := isolatedMigrationDatabase(t, context.Background(), maintenanceURL)
+	err := RequireVersion(context.Background(), migrationURL, 1)
+	if err == nil || !strings.Contains(err.Error(), "older than required version 1") {
+		t.Fatalf("RequireVersion() error = %v, want missing-ledger version error", err)
+	}
+}
+
+func TestRequireVersionAllowsRestrictedApplicationRoleAfterMigration(t *testing.T) {
+	maintenanceURL := os.Getenv("CYCLOPS_TEST_DATABASE_URL")
+	if maintenanceURL == "" {
+		t.Skip("set CYCLOPS_TEST_DATABASE_URL to run PostgreSQL migration tests")
+	}
+	if os.Getenv(migratorIntegrationOptIn) != "1" {
+		t.Skipf("set %s=1 to run against a dedicated empty PostgreSQL cluster", migratorIntegrationOptIn)
+	}
+
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireVersion(ctx, credentials.Application, 1); err != nil {
+		t.Fatalf("restricted cyclops_app RequireVersion() error = %v", err)
+	}
+}
+
 func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	maintenanceURL := os.Getenv("CYCLOPS_TEST_DATABASE_URL")
 	if maintenanceURL == "" {
@@ -43,6 +78,7 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
 	inspectionURL := maintenanceURLForDatabase(t, maintenanceURL, migrationURL)
 	assertMigrationOwnerFixture(t, ctx, migrationURL)
+	assertInitialMigrationRejectsPublicSecurityDefiner(t, ctx, migrationURL, credentials)
 	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +113,375 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	assertWriterBoundary(t, ctx, credentials.Writer)
 	assertExporterBoundary(t, ctx, credentials.Exporter)
 	assertTenantReadPath(t, ctx, tenantURL)
-	assertMetabaseBoundary(t, ctx, credentials.Metabase)
+	assertMetabaseBoundary(t, ctx, inspectionURL, credentials.Metabase)
 	assertApplicationBoundary(t, ctx, credentials.Application)
+}
+
+func TestRunReconcilesReportingDirectACLDrift(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `
+		create schema reporting_acl_drift;
+		create table reporting_acl_drift.probe (id integer primary key);
+		create function reporting_acl_drift.probe_function() returns integer language sql as $$ select 1 $$;
+		create procedure reporting_acl_drift.probe_procedure() language sql as $$ select 1 $$;
+		grant select on reporting_acl_drift.probe to k8s_metabase, k8s_reporting_owner;
+		grant execute on function reporting_acl_drift.probe_function() to k8s_metabase, k8s_reporting_owner;
+		grant execute on procedure reporting_acl_drift.probe_procedure() to k8s_metabase, k8s_reporting_owner`); err != nil {
+		t.Fatal("introduce reporting direct ACL drift")
+	}
+
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatalf("Run() reconcile reporting direct ACL drift: %v", err)
+	}
+	assertExactReportingACLContract(t, ctx, connection)
+	for _, role := range []string{"k8s_metabase", "k8s_reporting_owner"} {
+		var relationACL, routineACL bool
+		if err := connection.QueryRow(ctx, `
+			select
+				exists (
+					select 1 from pg_class relation
+					join lateral aclexplode(coalesce(relation.relacl, acldefault('r', relation.relowner))) acl on true
+					where relation.oid = 'reporting_acl_drift.probe'::regclass
+					  and acl.grantee = $1::regrole
+				),
+				exists (
+					select 1 from pg_proc routine
+					join lateral aclexplode(coalesce(routine.proacl, acldefault('f', routine.proowner))) acl on true
+					where routine.pronamespace = 'reporting_acl_drift'::regnamespace
+					  and acl.grantee = $1::regrole
+				)`, role).Scan(&relationACL, &routineACL); err != nil {
+			t.Fatalf("inspect %s direct ACLs: %v", role, err)
+		}
+		if relationACL || routineACL {
+			t.Errorf("%s retains arbitrary direct ACLs: relation=%t routine=%t", role, relationACL, routineACL)
+		}
+	}
+
+	var reportingCanReadState bool
+	if err := connection.QueryRow(ctx, `
+		select has_table_privilege('k8s_reporting_owner'::regrole, relation.oid, 'SELECT')
+		from pg_class as relation
+		join pg_namespace as namespace on namespace.oid = relation.relnamespace
+		where namespace.nspname = 'k8s_state' and relation.relname = 'resource_state'`).Scan(&reportingCanReadState); err != nil || !reportingCanReadState {
+		t.Errorf("k8s_reporting_owner state read grant = %t err=%v, want true", reportingCanReadState, err)
+	}
+}
+
+func TestRunPreservesOwnerDerivedReportingACLsWhileRepairingExplicitDrift(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatalf("initial Run(): %v", err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	before := reportingOwnerACLRows(t, ctx, connection)
+	if before == "" {
+		t.Fatal("reporting fixtures must expose owner-derived ACL rows")
+	}
+	if _, err := connection.Exec(ctx, `
+		set role k8s_reporting_owner;
+		grant insert on k8s_reporting.current_resources to k8s_metabase;
+		reset role`); err != nil {
+		t.Fatal("introduce explicit reporting view write drift")
+	}
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatalf("Run() repair explicit reporting view drift: %v", err)
+	}
+	if after := reportingOwnerACLRows(t, ctx, connection); after != before {
+		t.Fatalf("owner-derived reporting ACL rows changed: before=%q after=%q", before, after)
+	}
+	assertExactReportingACLContract(t, ctx, connection)
+}
+
+func TestRunRepairsExactReportingACLContract(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	t.Cleanup(func() { dropRole(t, context.Background(), maintenanceURL, "reporting_acl_unexpected") })
+	if _, err := connection.Exec(ctx, `
+		create schema reporting_acl_drift;
+		create table reporting_acl_drift.probe (id integer primary key);
+		create sequence reporting_acl_drift.probe_sequence;
+		create function reporting_acl_drift.probe_function() returns integer language sql as $$ select 1 $$;
+		create schema "reporting ACL drift";
+		create table "reporting ACL drift"."probe.table" (id integer primary key);
+		create sequence "reporting ACL drift"."probe.sequence";
+		create function "reporting ACL drift"."probe.function"(integer) returns integer language sql as $$ select $1 $$;
+		set role k8s_state_owner;
+		grant usage, create on schema k8s_state to k8s_metabase;
+		reset role;
+		grant create on schema cyclops_migrations to k8s_metabase;
+		grant insert, update, delete on cyclops_migrations.applied_migrations to k8s_metabase;
+		set role k8s_reporting_owner;
+		grant insert, update, delete on k8s_reporting.current_resources to k8s_metabase;
+		grant usage, create on schema k8s_reporting to public;
+		reset role;
+		grant select on reporting_acl_drift.probe to k8s_metabase, k8s_reporting_owner;
+		grant usage on sequence reporting_acl_drift.probe_sequence to k8s_metabase, k8s_reporting_owner;
+		grant execute on function reporting_acl_drift.probe_function() to k8s_metabase, k8s_reporting_owner;
+		grant usage on schema "reporting ACL drift" to k8s_metabase, k8s_reporting_owner;
+		grant select on "reporting ACL drift"."probe.table" to k8s_metabase, k8s_reporting_owner;
+		grant usage on sequence "reporting ACL drift"."probe.sequence" to k8s_metabase, k8s_reporting_owner;
+		grant execute on function "reporting ACL drift"."probe.function"(integer) to k8s_metabase, k8s_reporting_owner;
+		create role reporting_acl_unexpected nologin;
+		set role k8s_reporting_owner;
+		grant usage on schema k8s_reporting to reporting_acl_unexpected;
+		grant select on k8s_reporting.current_resources to reporting_acl_unexpected;
+		reset role`); err != nil {
+		t.Fatalf("introduce recoverable reporting ACL drift: %v", err)
+	}
+
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatalf("Run() reconcile exact reporting ACL contract: %v", err)
+	}
+	assertExactReportingACLContract(t, ctx, connection)
+}
+
+func TestRunFailsClosedBeforeReportingACLMutation(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `
+		create schema reporting_acl_sentinel;
+		create table reporting_acl_sentinel.probe (id integer primary key);
+		grant select on reporting_acl_sentinel.probe to k8s_metabase;
+		set role k8s_reporting_owner;
+		drop view k8s_reporting.current_resources;
+		create table k8s_reporting.current_resources (id integer);
+		reset role`); err != nil {
+		t.Fatalf("introduce incompatible reporting relation and ACL sentinel: %v", err)
+	}
+
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err == nil || !strings.Contains(err.Error(), "reporting relation") {
+		t.Fatalf("Run() error = %v, want reporting relation fail-closed error", err)
+	}
+	var retained bool
+	if err := connection.QueryRow(ctx, `select has_table_privilege('k8s_metabase', 'reporting_acl_sentinel.probe', 'SELECT')`).Scan(&retained); err != nil || !retained {
+		t.Fatalf("unrelated ACL sentinel changed after rejected reporting drift: retained=%t err=%v", retained, err)
+	}
+}
+
+func TestRunFailsClosedForExternalReportingACLGrantor(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	t.Cleanup(func() {
+		cleanup := connect(t, context.Background(), migrationURL)
+		defer cleanup.Close(context.Background())
+		if _, err := cleanup.Exec(context.Background(), `set role reporting_acl_external_owner; drop schema reporting_acl_external cascade; reset role`); err != nil {
+			t.Errorf("drop externally owned reporting ACL fixture: %v", err)
+		}
+		dropRole(t, context.Background(), maintenanceURL, "reporting_acl_external_owner")
+	})
+	if _, err := connection.Exec(ctx, `
+		create role reporting_acl_external_owner nologin;
+		grant reporting_acl_external_owner to current_user with inherit false, set true;
+		create schema reporting_acl_external;
+		alter schema reporting_acl_external owner to reporting_acl_external_owner;
+		set role reporting_acl_external_owner;
+		create table reporting_acl_external.probe (id integer primary key);
+		create function reporting_acl_external.probe_function() returns integer language sql as $$ select 1 $$;
+		grant usage on schema reporting_acl_external to k8s_metabase;
+		grant select on reporting_acl_external.probe to k8s_reporting_owner;
+		grant execute on function reporting_acl_external.probe_function() to k8s_metabase;
+		reset role`); err != nil {
+		t.Fatalf("introduce externally owned reporting ACL drift: %v", err)
+	}
+
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err == nil || !strings.Contains(err.Error(), "unsafe reporting ACL") {
+		t.Fatalf("Run() error = %v, want unsafe reporting ACL fail-closed error", err)
+	}
+	for _, statement := range []string{
+		`select has_schema_privilege('k8s_metabase', namespace.oid, 'USAGE') from pg_namespace as namespace where namespace.nspname = 'reporting_acl_external'`,
+		`select has_table_privilege('k8s_reporting_owner', relation.oid, 'SELECT') from pg_class as relation join pg_namespace as namespace on namespace.oid = relation.relnamespace where namespace.nspname = 'reporting_acl_external' and relation.relname = 'probe'`,
+		`select has_function_privilege('k8s_metabase', routine.oid, 'EXECUTE') from pg_proc as routine join pg_namespace as namespace on namespace.oid = routine.pronamespace where namespace.nspname = 'reporting_acl_external' and routine.proname = 'probe_function'`,
+	} {
+		var retained bool
+		if err := connection.QueryRow(ctx, statement).Scan(&retained); err != nil || !retained {
+			t.Fatalf("external ACL changed after rejected drift for %q: retained=%t err=%v", statement, retained, err)
+		}
+	}
+}
+
+func TestRunRechecksPublicSecurityDefinerBeforeMutations(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `create function public.repeat_run_public_definer() returns integer language sql security definer as $$ select 1 $$`); err != nil {
+		t.Fatal("create public security-definer fixture")
+	}
+	var before string
+	if err := connection.QueryRow(ctx, `select coalesce(proacl::text, '<default>') from pg_proc where oid = 'public.repeat_run_public_definer()'::regprocedure`).Scan(&before); err != nil {
+		t.Fatal("read public security-definer ACL before Run")
+	}
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err == nil || !strings.Contains(err.Error(), "PUBLIC-executable SECURITY DEFINER routine") {
+		t.Fatalf("Run() error = %v, want PUBLIC-executable SECURITY DEFINER routine", err)
+	}
+	var after string
+	if err := connection.QueryRow(ctx, `select coalesce(proacl::text, '<default>') from pg_proc where oid = 'public.repeat_run_public_definer()'::regprocedure`).Scan(&after); err != nil {
+		t.Fatal("read public security-definer ACL after Run")
+	}
+	if after != before {
+		t.Fatalf("Run() changed blocked security-definer routine ACL: before=%q after=%q", before, after)
+	}
+}
+
+func TestRunDeniesMetabaseProcedureWriteAfterReadOnlyGUCBypass(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `
+		set role k8s_reporting_owner;
+		create procedure k8s_reporting.write_probe() language plpgsql as $$
+		begin
+			insert into k8s_state.resource_state (
+				cluster_id, api_group, resource, namespace, name, schema_hash, watch_epoch, observed_sequence, labels, object
+			) values ('metabase-write-probe', '', 'pods', 'default', 'probe', 'probe', 1, 1, '{}'::jsonb, '{}'::jsonb);
+		end
+		$$;
+		grant execute on procedure k8s_reporting.write_probe() to k8s_metabase;
+		reset role`); err != nil {
+		t.Fatal("create executable metabase write probe")
+	}
+
+	metabase := connect(t, ctx, credentials.Metabase)
+	defer metabase.Close(ctx)
+	if _, err := metabase.Exec(ctx, `set default_transaction_read_only = off`); err != nil {
+		t.Fatal("disable metabase read-only default")
+	}
+	if _, err := metabase.Exec(ctx, `call k8s_reporting.write_probe()`); err == nil || !strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+		t.Fatalf("metabase procedure write error = %v, want privilege denial", err)
+	}
+}
+
+func TestMetabaseReadOnlyDefaultBlocksExecutableWriteProcedure(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `
+		set role k8s_reporting_owner;
+		create table k8s_reporting.read_only_probe (id integer primary key);
+		create procedure k8s_reporting.read_only_write_probe() language sql as $$ insert into k8s_reporting.read_only_probe values (1) $$;
+		grant execute on procedure k8s_reporting.read_only_write_probe() to k8s_metabase;
+		reset role`); err != nil {
+		t.Fatal("create metabase read-only procedure fixture")
+	}
+
+	metabase := connect(t, ctx, credentials.Metabase)
+	defer metabase.Close(ctx)
+	if _, err := metabase.Exec(ctx, `call k8s_reporting.read_only_write_probe()`); err == nil || !strings.Contains(strings.ToLower(err.Error()), "read-only") {
+		t.Fatalf("metabase read-only procedure error = %v, want read-only failure", err)
+	}
+}
+
+func TestRunFailsClosedForReportingObjectDrift(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+
+	for _, testCase := range []struct {
+		name            string
+		introduce       func(t *testing.T, connection *pgx.Conn)
+		assertUnchanged func(t *testing.T, connection *pgx.Conn)
+		wantError       string
+	}{
+		{
+			name: "relation type",
+			introduce: func(t *testing.T, connection *pgx.Conn) {
+				t.Helper()
+				if _, err := connection.Exec(ctx, `drop view k8s_reporting.current_resources; create table k8s_reporting.current_resources (id integer)`); err != nil {
+					t.Fatal("replace reporting view with table")
+				}
+			},
+			assertUnchanged: func(t *testing.T, connection *pgx.Conn) {
+				t.Helper()
+				var relationKind string
+				if err := connection.QueryRow(ctx, `select relkind::text from pg_class where oid = 'k8s_reporting.current_resources'::regclass`).Scan(&relationKind); err != nil || relationKind != "r" {
+					t.Fatalf("reporting relation kind after rejected drift = %q err=%v, want r", relationKind, err)
+				}
+			},
+			wantError: "reporting relation",
+		},
+
+		{
+			name: "view owner",
+			introduce: func(t *testing.T, connection *pgx.Conn) {
+				t.Helper()
+				if _, err := connection.Exec(ctx, `alter view k8s_reporting.current_resources owner to current_user`); err != nil {
+					t.Fatal("change reporting view owner")
+				}
+			},
+			assertUnchanged: func(t *testing.T, connection *pgx.Conn) {
+				t.Helper()
+				var owner string
+				if err := connection.QueryRow(ctx, `select relowner::regrole::text from pg_class where oid = 'k8s_reporting.current_resources'::regclass`).Scan(&owner); err != nil || owner == "k8s_reporting_owner" {
+					t.Fatalf("reporting view owner after rejected drift = %q err=%v, want non-reporting owner", owner, err)
+				}
+			},
+			wantError: "reporting view owner",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+			if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+				t.Fatal(err)
+			}
+			inspectionURL := maintenanceURLForDatabase(t, maintenanceURL, migrationURL)
+			connection := connect(t, ctx, inspectionURL)
+			defer connection.Close(ctx)
+			testCase.introduce(t, connection)
+			if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+				t.Fatalf("Run() error = %v, want fail-closed error containing %q", err, testCase.wantError)
+			}
+			testCase.assertUnchanged(t, connection)
+		})
+	}
 }
 
 func TestRunReconcilesStaticRoleContractDrift(t *testing.T) {
@@ -1105,7 +1508,6 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		"writer":      credentials.Writer,
 		"exporter":    credentials.Exporter,
 		"role-admin":  credentials.RoleAdmin,
-		"metabase":    credentials.Metabase,
 	} {
 		connection := connect(t, ctx, databaseURL)
 		var count int
@@ -1118,6 +1520,10 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		assertStatementFails(t, ctx, databaseURL, `update cyclops_migrations.applied_migrations set filename = 'invalid.sql' where version = 1`)
 		assertStatementFails(t, ctx, databaseURL, `delete from cyclops_migrations.applied_migrations where version = 1`)
 	}
+	assertStatementFails(t, ctx, credentials.Metabase, `select 1 from cyclops_migrations.applied_migrations limit 1`)
+	assertStatementFails(t, ctx, credentials.Metabase, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)
+	assertStatementFails(t, ctx, credentials.Metabase, `update cyclops_migrations.applied_migrations set filename = 'invalid.sql' where version = 1`)
+	assertStatementFails(t, ctx, credentials.Metabase, `delete from cyclops_migrations.applied_migrations where version = 1`)
 }
 
 func createTenantRolePath(t *testing.T, ctx context.Context, roleAdminURL, tenantRole, tenantPassword, tenant string) string {
@@ -1261,13 +1667,42 @@ func tenantResourceNames(t *testing.T, ctx context.Context, tenantURL string) []
 	return names
 }
 
-func assertMetabaseBoundary(t *testing.T, ctx context.Context, metabaseURL string) {
+func assertMetabaseBoundary(t *testing.T, ctx context.Context, inspectionURL, metabaseURL string) {
 	t.Helper()
+	inspection := connect(t, ctx, inspectionURL)
+	defer inspection.Close(ctx)
+	var tenantForRoleOID uint32
+	if err := inspection.QueryRow(ctx, `
+		select routine.oid
+		from pg_proc as routine
+		join pg_namespace as namespace on namespace.oid = routine.pronamespace
+		where namespace.nspname = 'k8s_state'
+		  and routine.proname = 'tenant_for_role'
+		  and routine.proargtypes = '19'::oidvector`).Scan(&tenantForRoleOID); err != nil {
+		t.Fatalf("resolve k8s_state.tenant_for_role OID: %v", err)
+	}
 	connection := connect(t, ctx, metabaseURL)
 	defer connection.Close(ctx)
 	var count int
 	if err := connection.QueryRow(ctx, `select count(*) from k8s_reporting.current_resources where cluster_id = 'migration-test'`).Scan(&count); err != nil || count != 4 {
 		t.Errorf("metabase cannot read reporting view: count=%d err=%v", count, err)
+	}
+	var readOnly string
+	if err := connection.QueryRow(ctx, `show default_transaction_read_only`).Scan(&readOnly); err != nil || readOnly != "on" {
+		t.Errorf("metabase default_transaction_read_only = %q err=%v, want on", readOnly, err)
+	}
+	if err := connection.QueryRow(ctx, `select count(*) from pg_auth_members where member = 'k8s_metabase'::regrole`).Scan(&count); err != nil || count != 0 {
+		t.Errorf("k8s_metabase membership count = %d err=%v, want 0", count, err)
+	}
+	var canExecute bool
+	if err := connection.QueryRow(ctx, `select has_function_privilege('k8s_metabase'::regrole, $1::oid, 'EXECUTE')`, tenantForRoleOID).Scan(&canExecute); err != nil || canExecute {
+		t.Errorf("k8s_metabase execute k8s_state.tenant_for_role = %t err=%v, want false", canExecute, err)
+	}
+	if _, err := connection.Exec(ctx, `set default_transaction_read_only = off`); err != nil {
+		t.Fatalf("disable metabase read-only default: %v", err)
+	}
+	if _, err := connection.Exec(ctx, `delete from k8s_reporting.current_resources`); err == nil {
+		t.Error("metabase can write reporting view after disabling read-only default")
 	}
 	for _, statement := range []string{
 		`select 1 from k8s_state.resource_state limit 1`,
@@ -1276,6 +1711,28 @@ func assertMetabaseBoundary(t *testing.T, ctx context.Context, metabaseURL strin
 		`delete from k8s_reporting.current_resources`,
 	} {
 		assertStatementFails(t, ctx, metabaseURL, statement)
+	}
+}
+
+func assertInitialMigrationRejectsPublicSecurityDefiner(t *testing.T, ctx context.Context, migrationURL string, credentials CredentialURLs) {
+	t.Helper()
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `create function public.migration_public_definer() returns integer language sql security definer as $$ select 1 $$`); err != nil {
+		t.Fatal("create public security-definer fixture")
+	}
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err == nil || !strings.Contains(err.Error(), "PUBLIC-executable SECURITY DEFINER routine") {
+		t.Fatalf("Run() error = %v, want PUBLIC-executable SECURITY DEFINER routine", err)
+	}
+	var reportingSchemaExists, metabaseRoleExists bool
+	if err := connection.QueryRow(ctx, `select exists (select 1 from pg_namespace where nspname = 'k8s_reporting'), exists (select 1 from pg_roles where rolname = 'k8s_metabase')`).Scan(&reportingSchemaExists, &metabaseRoleExists); err != nil {
+		t.Fatal("check rolled-back reporting migration")
+	}
+	if reportingSchemaExists || metabaseRoleExists {
+		t.Fatalf("failed migration left reporting authority behind: schema=%t role=%t", reportingSchemaExists, metabaseRoleExists)
+	}
+	if _, err := connection.Exec(ctx, `revoke execute on function public.migration_public_definer() from public`); err != nil {
+		t.Fatal("revoke public execute from security-definer fixture")
 	}
 }
 
@@ -1332,6 +1789,96 @@ func assertRunFailsBeforeStaticRoleRepair(t *testing.T, ctx context.Context, mig
 	}
 	if !inherit {
 		t.Fatal("role reconciliation changed a role before rejecting membership drift")
+	}
+}
+
+func reportingOwnerACLRows(t *testing.T, ctx context.Context, connection *pgx.Conn) string {
+	t.Helper()
+	var rows string
+	if err := connection.QueryRow(ctx, `
+		select coalesce(string_agg(object_identity || ':' || privilege_type, ',' order by object_identity, privilege_type), '')
+		from (
+			select 'schema:' || namespace.nspname as object_identity, acl.privilege_type
+			from pg_namespace as namespace
+			join lateral aclexplode(namespace.nspacl) as acl on true
+			where namespace.nspname = 'k8s_reporting' and acl.grantee = namespace.nspowner
+			union all
+			select 'relation:' || namespace.nspname || '.' || relation.relname, acl.privilege_type
+			from pg_class as relation
+			join pg_namespace as namespace on namespace.oid = relation.relnamespace
+			join lateral aclexplode(relation.relacl) as acl on true
+			where namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources' and acl.grantee = relation.relowner
+		) as owner_acl`).Scan(&rows); err != nil {
+		t.Fatalf("read reporting owner ACL rows: %v", err)
+	}
+	return rows
+}
+
+func assertExactReportingACLContract(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+	t.Helper()
+	var differences int
+	if err := connection.QueryRow(ctx, `
+		with actual as (
+			select 'schema:' || namespace.nspname as object_identity, acl.privilege_type, acl.grantee::regrole::text, acl.grantor::regrole::text, acl.is_grantable
+			from pg_namespace as namespace
+			join lateral aclexplode(namespace.nspacl) as acl on true
+			where acl.grantee <> namespace.nspowner
+			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			union all
+			select 'relation:' || namespace.nspname || '.' || relation.relname, acl.privilege_type, acl.grantee::regrole::text, acl.grantor::regrole::text, acl.is_grantable
+			from pg_class as relation
+			join pg_namespace as namespace on namespace.oid = relation.relnamespace
+			join lateral aclexplode(relation.relacl) as acl on true
+			where relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
+			  and acl.grantee <> relation.relowner
+			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			union all
+			select 'routine:' || namespace.nspname || '.' || routine.oid::regprocedure::text, acl.privilege_type, acl.grantee::regrole::text, acl.grantor::regrole::text, acl.is_grantable
+			from pg_proc as routine
+			join pg_namespace as namespace on namespace.oid = routine.pronamespace
+			join lateral aclexplode(routine.proacl) as acl on true
+			where acl.grantee <> routine.proowner
+			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+		), expected as (
+			values
+				('schema:k8s_state', 'USAGE', 'k8s_reporting_owner', 'k8s_state_owner', false),
+				('relation:k8s_state.resource_state', 'SELECT', 'k8s_reporting_owner', 'k8s_state_owner', false),
+				('schema:k8s_reporting', 'USAGE', 'k8s_metabase', 'k8s_reporting_owner', false),
+				('relation:k8s_reporting.current_resources', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false)
+		)
+		select count(*) from (
+			(select * from actual except select * from expected)
+			union all
+			(select * from expected except select * from actual)
+		) as difference`).Scan(&differences); err != nil {
+		t.Fatalf("read reporting ACL contract: %v", err)
+	}
+	if differences != 0 {
+		t.Fatalf("reporting ACL contract differences = %d, want 0", differences)
+	}
+
+	var reportingObjectDrift bool
+	if err := connection.QueryRow(ctx, `
+		select exists (
+			select 1
+			from pg_namespace as namespace
+			join lateral aclexplode(namespace.nspacl) as acl on true
+			where namespace.nspname = 'k8s_reporting'
+			  and acl.grantee <> namespace.nspowner
+			  and (acl.grantee <> 'k8s_metabase'::regrole or acl.privilege_type <> 'USAGE' or acl.is_grantable)
+			union all
+			select 1
+			from pg_class as relation
+			join pg_namespace as namespace on namespace.oid = relation.relnamespace
+			join lateral aclexplode(relation.relacl) as acl on true
+			where namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources'
+			  and acl.grantee <> relation.relowner
+			  and (acl.grantee <> 'k8s_metabase'::regrole or acl.privilege_type <> 'SELECT' or acl.is_grantable)
+		)`).Scan(&reportingObjectDrift); err != nil {
+		t.Fatalf("read reporting schema and view ACLs: %v", err)
+	}
+	if reportingObjectDrift {
+		t.Fatal("reporting schema or view retains a PUBLIC or unexpected grantee ACL")
 	}
 }
 

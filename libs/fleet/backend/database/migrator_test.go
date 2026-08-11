@@ -66,7 +66,7 @@ func TestTenantCredentialFingerprintLookupIsParameterized(t *testing.T) {
 }
 
 func TestStaticRoleAlterClausesOnlyContainPermittedDrift(t *testing.T) {
-	contract := staticRoleContract{role: "cyclops_app", login: true, connectionLimit: -1, validUntil: "infinity"}
+	contract := staticRoleContract{role: "cyclops_app", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity}
 	clauses, err := staticRoleAlterClauses(contract, staticRoleAttributes{
 		login:           false,
 		inherit:         true,
@@ -86,15 +86,25 @@ func TestStaticRoleAlterClausesOnlyContainPermittedDrift(t *testing.T) {
 }
 
 func TestStaticRoleSettingsContractsAreExact(t *testing.T) {
-	want := map[string]map[string]string{
+	want := map[string]staticRoleSettingsContract{
 		"k8s_metabase": {
-			"default_transaction_read_only":       "on",
-			"statement_timeout":                   "20000ms",
-			"idle_in_transaction_session_timeout": "20000ms",
+			staticRoleSettingDefaultTransactionReadOnly:      "on",
+			staticRoleSettingStatementTimeout:                "20000ms",
+			staticRoleSettingIdleInTransactionSessionTimeout: "20000ms",
 		},
 	}
 	if !reflect.DeepEqual(staticRoleSettingsContracts(), want) {
 		t.Fatalf("static role settings contracts = %#v, want %#v", staticRoleSettingsContracts(), want)
+	}
+}
+
+func TestStaticRoleAlterClausesRejectUnsupportedValidUntilContract(t *testing.T) {
+	_, err := staticRoleAlterClauses(
+		staticRoleContract{role: "cyclops_app", login: true, validUntil: staticRoleValidUntil(255)},
+		staticRoleAttributes{login: true, validUntil: "2026-08-10 00:00:00+00"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "unsupported valid-until contract") {
+		t.Fatalf("static role valid-until error = %v, want closed infinity-only contract", err)
 	}
 }
 
@@ -296,6 +306,17 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 		t.Fatal("embedded initial schema migration digest does not match its contents")
 	}
 	for _, expected := range []string{
+		"CREATE TABLE k8s_state.resource_state",
+		"CREATE TABLE k8s_state.watch_checkpoint",
+		"CREATE TABLE k8s_state.resource_event_outbox",
+		"CREATE TABLE k8s_state.resource_schema",
+		"CREATE TABLE k8s_state.query_tenant_role",
+		"ALTER TABLE k8s_state.resource_state FORCE ROW LEVEL SECURITY",
+		"CREATE POLICY writer_current_state",
+		"CREATE POLICY tenant_current_state",
+		"resource = 'namespaces'",
+		"CREATE VIEW k8s_api.current_resources",
+		"GRANT SELECT ON k8s_api.current_resources TO k8s_query_tenant, k8s_query_admin",
 		"credential_fingerprint text NOT NULL",
 		"CREATE FUNCTION k8s_state.register_tenant_role(p_role_name name, p_capsule_tenant text, p_credential_fingerprint text)",
 		"CREATE FUNCTION k8s_state.unregister_tenant_role(p_role_name name)",
@@ -444,17 +465,17 @@ func TestStaticRoleContractsAreAllowlistedAndFixed(t *testing.T) {
 	want := map[string]struct {
 		login, inherit, createRole, createDB bool
 		connectionLimit                      int
-		validUntil                           string
+		validUntil                           staticRoleValidUntil
 	}{
-		"cyclops_app":         {true, false, false, false, -1, "infinity"},
-		"k8s_state_owner":     {false, true, false, false, -1, "infinity"},
-		"k8s_state_writer":    {true, false, false, false, -1, "infinity"},
-		"k8s_state_exporter":  {true, false, false, false, -1, "infinity"},
-		"k8s_query_tenant":    {false, true, false, false, -1, "infinity"},
-		"k8s_query_admin":     {false, true, false, false, -1, "infinity"},
-		"k8s_role_admin":      {true, false, true, false, -1, "infinity"},
-		"k8s_reporting_owner": {false, true, false, false, -1, "infinity"},
-		"k8s_metabase":        {true, false, false, false, -1, "infinity"},
+		"cyclops_app":         {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_owner":     {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_writer":    {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_exporter":  {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_query_tenant":    {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_query_admin":     {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_role_admin":      {true, false, true, false, -1, staticRoleValidUntilInfinity},
+		"k8s_reporting_owner": {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_metabase":        {true, false, false, false, -1, staticRoleValidUntilInfinity},
 	}
 	if len(contracts) != len(want) {
 		t.Fatalf("static role contract count = %d, want %d", len(contracts), len(want))
@@ -465,7 +486,7 @@ func TestStaticRoleContractsAreAllowlistedAndFixed(t *testing.T) {
 			t.Fatalf("static role contract includes non-allowlisted role %q", contract.role)
 		}
 		if contract.login != expected.login || contract.inherit != expected.inherit || contract.createRole != expected.createRole || contract.createDB != expected.createDB || contract.connectionLimit != expected.connectionLimit || contract.validUntil != expected.validUntil {
-			t.Errorf("role %s contract = login:%t inherit:%t createrole:%t createdb:%t connection_limit:%d valid_until:%q, want login:%t inherit:%t createrole:%t createdb:%t connection_limit:%d valid_until:%q", contract.role, contract.login, contract.inherit, contract.createRole, contract.createDB, contract.connectionLimit, contract.validUntil, expected.login, expected.inherit, expected.createRole, expected.createDB, expected.connectionLimit, expected.validUntil)
+			t.Errorf("role %s contract = login:%t inherit:%t createrole:%t createdb:%t connection_limit:%d valid_until:%d, want login:%t inherit:%t createrole:%t createdb:%t connection_limit:%d valid_until:%d", contract.role, contract.login, contract.inherit, contract.createRole, contract.createDB, contract.connectionLimit, contract.validUntil, expected.login, expected.inherit, expected.createRole, expected.createDB, expected.connectionLimit, expected.validUntil)
 		}
 		delete(want, contract.role)
 	}

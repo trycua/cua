@@ -3912,6 +3912,83 @@ pub struct TypeTextTool {
     state: Arc<ToolState>,
 }
 
+fn wait_for_cached_element_keyboard_focus(
+    state: &ToolState,
+    pid: u32,
+    hwnd: u64,
+    element_index: usize,
+    timeout: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if state
+            .element_cache
+            .element_has_keyboard_focus(pid, hwnd, element_index)
+            == Some(true)
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Establish exact UIA child focus after the owning top-level HWND is already
+/// confirmed foreground. Chromium providers sometimes reject UIA `SetFocus`;
+/// in that case a real click at the accessibility-derived center is the
+/// bounded fallback. Both routes require `CurrentHasKeyboardFocus` read-back
+/// before any keyboard input is allowed to leave the driver.
+fn focus_cached_element_for_foreground(
+    state: &ToolState,
+    pid: u32,
+    hwnd: u64,
+    element_index: usize,
+    click_point: Option<(i32, i32)>,
+) -> anyhow::Result<()> {
+    // `fg_bypass` is a background-only shield: for Chromium it disables the
+    // top-level HWND while UIA runs so the provider cannot self-activate. A
+    // disabled foreground window immediately loses foreground on Windows,
+    // which would make the enclosing verify-before-SendInput transaction
+    // fail closed. The foreground route has already activated the exact HWND,
+    // so focus the cached element directly and verify it below.
+    let set_focus = state.element_cache.focus_element(pid, hwnd, element_index);
+    if set_focus.is_ok()
+        && wait_for_cached_element_keyboard_focus(
+            state,
+            pid,
+            hwnd,
+            element_index,
+            std::time::Duration::from_millis(350),
+        )
+    {
+        return Ok(());
+    }
+
+    if let Some((x, y)) = click_point {
+        crate::input::send_click_synthesized_active_mods(hwnd, x, y, 1, "left", &[])?;
+        if wait_for_cached_element_keyboard_focus(
+            state,
+            pid,
+            hwnd,
+            element_index,
+            std::time::Duration::from_millis(500),
+        ) {
+            return Ok(());
+        }
+    }
+
+    let detail = set_focus
+        .err()
+        .map(|error| format!("; UIA SetFocus failed: {error}"))
+        .unwrap_or_default();
+    anyhow::bail!(
+        "foreground_unavailable: Windows did not confirm keyboard focus on exact UIA element \
+         [{element_index}] in HWND 0x{hwnd:x}{detail}; no keyboard input was sent"
+    )
+}
+
 static TYPE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -4170,12 +4247,10 @@ impl Tool for TypeTextTool {
         // rejected (daemon not at UIAccess integrity), it returns an error
         // rather than a false success.
         if delivery == DeliveryMode::Foreground {
-            // An indexed foreground type targets that element, not whichever
-            // child happened to retain focus in the top-level window. UIA
-            // SetFocus is not sufficient for Chromium renderer controls, so
-            // establish real system focus with the same foreground coordinate
-            // actuator used by an indexed click before sending Unicode input.
-            if let Some(idx) = elem_idx {
+            // Resolve the optional click fallback before entering the atomic
+            // activation/focus/input transaction. The focus itself happens
+            // only after exact top-level foreground is confirmed.
+            let focus_target = if let Some(idx) = elem_idx {
                 let (cx, cy) =
                     match self
                         .state
@@ -4201,25 +4276,19 @@ impl Tool for TypeTextTool {
                     Ok(point) => point,
                     Err(result) => return result,
                 };
-                let focus_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized_active_mods(hwnd, cx, cy, 1, "left", &[])
-                })
-                .await;
-                match focus_result {
-                    Ok(Ok(())) => {
-                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-                    }
-                    Ok(Err(error)) => return ToolResult::error(error.to_string()),
-                    Err(error) => {
-                        return ToolResult::error(format!(
-                            "foreground element-focus task failed: {error}"
-                        ))
-                    }
-                }
-            }
+                Some((idx as usize, (cx, cy)))
+            } else {
+                None
+            };
             let text_fg = text.clone();
+            let state = self.state.clone();
             let r = tokio::task::spawn_blocking(move || {
-                crate::input::send_text_synthesized(hwnd, &text_fg)
+                crate::input::send_text_synthesized_after_focus(hwnd, &text_fg, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, Some(point))?;
+                    }
+                    Ok(())
+                })
             })
             .await;
             return match r {
@@ -4949,7 +5018,7 @@ impl Tool for PressKeyTool {
             {
                 return error;
             }
-        } else if let Some(idx) = elem_idx {
+        } else if let Some(idx) = elem_idx.filter(|_| delivery != DeliveryMode::Foreground) {
             let state = self.state.clone();
             let focused = tokio::task::spawn_blocking(move || {
                 crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
@@ -4975,9 +5044,22 @@ impl Tool for PressKeyTool {
         // Skipped when px-focus already fronted/clicked the target — the key then
         // goes via the plain background post path below.
         if !px_focus && delivery == DeliveryMode::Foreground {
+            let focus_target = elem_idx.map(|idx| {
+                let point = self
+                    .state
+                    .element_cache
+                    .get_element_center(pid, hwnd, idx as usize);
+                (idx as usize, point)
+            });
+            let state = self.state.clone();
             let send_result = tokio::task::spawn_blocking(move || {
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                crate::input::send_key_synthesized(hwnd, &key, &m)
+                crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, point)?;
+                    }
+                    Ok(())
+                })
             })
             .await;
             return match send_result {
@@ -5073,6 +5155,9 @@ impl Tool for HotkeyTool {
                     "pid":{"type":"integer","description":"Target process ID."},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) and one non-modifier key, e.g. [\"ctrl\", \"c\"]."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y (see x)."},
                     "window_id":{"type":"integer","description":"Explicit HWND when the pid owns multiple windows."},
@@ -5172,12 +5257,41 @@ impl Tool for HotkeyTool {
         } else {
             return ToolResult::error("Missing required array field keys.");
         };
-        let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
             Err(e) => return e,
         };
         let pid = raw_pid as u32;
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|value| value as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id").map(|value| value as u32),
+            "hotkey",
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => return error,
+        };
+        let elem_idx = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => window_id
+                .map(|value| value as u64)
+                .or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
+        if elem_idx.is_some() && hwnd_opt.is_none() {
+            return ToolResult::error(
+                "window_id is required when element_index is used — the element_index cache \
+                 is scoped per (pid, window_id). Pass the same window_id you used in \
+                 `get_window_state`.",
+            );
+        }
         let delivery = DeliveryMode::from_args(&args);
 
         // Resolve HWND: use window_id if given, else pick first window for pid.
@@ -5213,6 +5327,11 @@ impl Tool for HotkeyTool {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
+                if elem_idx.is_some() {
+                    return ToolResult::error(
+                        "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+                    );
+                }
                 let from_zoom = args
                     .get("from_zoom")
                     .and_then(|v| v.as_bool())
@@ -5334,10 +5453,20 @@ impl Tool for HotkeyTool {
         // global modifier state, so Chromium never observes Ctrl+Shift+H as a
         // chord even though the renderer control is focused.
         let use_send_input = delivery == DeliveryMode::Foreground;
+        let focus_target = elem_idx.map(|idx| {
+            let point = self.state.element_cache.get_element_center(pid, hwnd, idx);
+            (idx, point)
+        });
+        let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             if use_send_input {
-                crate::input::send_key_synthesized(hwnd, &key, &m)
+                crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, point)?;
+                    }
+                    Ok(())
+                })
             } else {
                 crate::input::post_key(hwnd, &key, &m)
             }

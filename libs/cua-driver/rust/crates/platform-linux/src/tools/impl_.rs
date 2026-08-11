@@ -2995,24 +2995,18 @@ impl Tool for TypeTextTool {
             && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid))
         {
             if let Some(idx) = resolved_elem_idx {
-                let focused =
-                    tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))
-                        .await;
-                match focused {
-                    Ok(Ok(true)) => {}
-                    Ok(Ok(false)) => {
-                        return ToolResult::error(format!(
-                            "AT-SPI Component.GrabFocus returned false for element {idx}"
-                        ))
-                    }
-                    Ok(Err(error)) => return ToolResult::error(error.to_string()),
-                    Err(error) => return ToolResult::error(format!("Task error: {error}")),
-                }
-
                 let text_w = text.clone();
-                let result =
-                    tokio::task::spawn_blocking(move || crate::wayland::type_text(xid, &text_w))
-                        .await;
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::wayland::with_target_foreground(pid, xid, || {
+                        if !crate::atspi::focus_element(pid, idx)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {idx}"
+                            );
+                        }
+                        crate::wayland::type_text_focused(&text_w)
+                    })
+                })
+                .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
@@ -3062,8 +3056,20 @@ impl Tool for TypeTextTool {
                 );
             }
             let text_w = text.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::type_text(xid, &text_w)).await;
+            let idx = resolved_elem_idx;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::with_target_foreground(pid, xid, || {
+                    if let Some(idx) = idx {
+                        if !crate::atspi::focus_element(pid, idx)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {idx}"
+                            );
+                        }
+                    }
+                    crate::wayland::type_text_focused(&text_w)
+                })
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
@@ -3131,24 +3137,17 @@ impl Tool for TypeTextTool {
         // producing the renderer input event, so web embedders use real XTest
         // key events. Native toolkits keep their verifiable AT-SPI path below.
         if delivery.is_foreground() && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid)) {
-            if let Some(idx) = resolved_elem_idx {
-                let focused =
-                    tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))
-                        .await;
-                match focused {
-                    Ok(Ok(true)) => {}
-                    Ok(Ok(false)) => {
-                        return ToolResult::error(format!(
-                            "AT-SPI Component.GrabFocus returned false for element {idx}"
-                        ))
-                    }
-                    Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
-                }
-            }
             let text_f = text.clone();
+            let idx = resolved_elem_idx;
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::with_x11_foreground(xid, 80, || {
+                    if let Some(idx) = idx {
+                        if !crate::atspi::focus_element(pid, idx)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {idx}"
+                            );
+                        }
+                    }
                     crate::input::send_type_text_xtest(&text_f)
                 })
             })
@@ -3445,10 +3444,10 @@ impl Tool for PressKeyTool {
         };
         let mods: Vec<String> = args.str_array("modifiers");
 
-        // Surface 6: resolve element_token / element_index for the window-id
-        // hint. press_key targets a window via XSendEvent, so we only need
-        // the resolved window_id — element_index itself is not used to
-        // address an AX node here (no focus-grab path).
+        // Surface 6: resolve the element token/index into both its owning
+        // window and exact child. Foreground delivery establishes child focus
+        // inside the verified top-level activation transaction; background
+        // XSendEvent retains the historical direct-window path.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
@@ -3468,6 +3467,12 @@ impl Tool for PressKeyTool {
                 window_id_arg.or_else(|| window_id.map(|v| v as u64))
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
+        };
+        let resolved_element_idx = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let xid = match xid_opt {
             Some(x) => x,
@@ -3511,7 +3516,7 @@ impl Tool for PressKeyTool {
         if px.is_some() != py.is_some() {
             return ToolResult::error("Pass both x and y to press_key, or neither.");
         }
-        if px.is_some() && element_index_arg.is_some() {
+        if px.is_some() && resolved_element_idx.is_some() {
             return ToolResult::error(
                 "Pass either element_index (ax) or x,y (px) to press_key, not both.",
             );
@@ -3521,7 +3526,7 @@ impl Tool for PressKeyTool {
         // Preserve legacy modifiers by promoting the request to a chord.
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
-                focus_nested_inject_target(pid, xid, element_index_arg, px.zip(py)).await
+                focus_nested_inject_target(pid, xid, resolved_element_idx, px.zip(py)).await
             {
                 return error;
             }
@@ -3547,28 +3552,6 @@ impl Tool for PressKeyTool {
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
-        }
-
-        // An element-addressed keypress needs to establish the target's
-        // focus before the window-level X11 key event is sent. AT-SPI's
-        // primary action is the focus-free route for editable web controls;
-        // resolving the element only for its window ID silently loses the key
-        // on Chromium inputs whose window is backgrounded.
-        if let Some(element_index) = element_index_arg {
-            let focused = tokio::task::spawn_blocking(move || {
-                crate::atspi::focus_element(pid, element_index)
-            })
-            .await;
-            match focused {
-                Ok(Ok(true)) => {}
-                Ok(Ok(false)) => {
-                    return ToolResult::error(format!(
-                        "AT-SPI Component.GrabFocus returned false for element {element_index}"
-                    ))
-                }
-                Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                Err(e) => return ToolResult::error(format!("Task error: {e}")),
-            }
         }
 
         let px_target = {
@@ -3599,16 +3582,25 @@ impl Tool for PressKeyTool {
         // to become a chord here — otherwise the modifiers are dropped and the
         // bare key is typed as a character (Ctrl+S inserts a literal "s").
         if crate::wayland::wayland_input_enabled() {
-            let result = match press_key_chord(&mods, &key) {
-                None => {
-                    let key_w = key.clone();
-                    tokio::task::spawn_blocking(move || crate::wayland::press_key(xid, &key_w))
-                        .await
-                }
-                Some(chord) => {
-                    tokio::task::spawn_blocking(move || crate::wayland::hotkey(xid, &chord)).await
-                }
-            };
+            let key_w = key.clone();
+            let chord = press_key_chord(&mods, &key);
+            let idx = resolved_element_idx;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::with_target_foreground(pid, xid, || {
+                    if let Some(idx) = idx {
+                        if !crate::atspi::focus_element(pid, idx)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {idx}"
+                            );
+                        }
+                    }
+                    match chord {
+                        Some(keys) => crate::wayland::hotkey_focused(&keys),
+                        None => crate::wayland::press_key_focused(&key_w),
+                    }
+                })
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Pressed key '{key}' (via Wayland virtual-keyboard)."
@@ -3624,7 +3616,10 @@ impl Tool for PressKeyTool {
         // click restores the prior top-level before returning.
         let deliver_fg = delivery.is_foreground();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
+            if resolved_element_idx.is_none()
+                && mods.is_empty()
+                && key_for_task.eq_ignore_ascii_case("enter")
+            {
                 if inject_terminal_input(pid, xid, "\n")? {
                     return Ok(());
                 }
@@ -3637,8 +3632,22 @@ impl Tool for PressKeyTool {
             // XSendEvent (no focus steal) for apps that accept it.
             if deliver_fg {
                 return crate::input::with_x11_foreground(xid, 80, || {
+                    if let Some(element_index) = resolved_element_idx {
+                        if !crate::atspi::focus_element(pid, element_index)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {element_index}"
+                            );
+                        }
+                    }
                     crate::input::send_key_xtest(&key_for_task, &m)
                 });
+            }
+            if let Some(element_index) = resolved_element_idx {
+                if !crate::atspi::focus_element(pid, element_index)? {
+                    anyhow::bail!(
+                        "AT-SPI Component.GrabFocus returned false for element {element_index}"
+                    );
+                }
             }
             if let Some((x, y)) = px_target {
                 crate::input::send_key_at(xid, x, y, &key_for_task, &m)

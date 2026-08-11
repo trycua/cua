@@ -5,6 +5,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workflow="$repo_root/.github/workflows/release.yml"
 builder="$repo_root/scripts/build-release-archive.sh"
 
+reject() {
+  local needle=$1
+  local file=$2
+  if grep -Fq -- "$needle" "$file"; then
+    printf 'unexpected release contract in %s: %s\n' "$file" "$needle" >&2
+    exit 1
+  fi
+}
+
 require() {
   local needle=$1
   local file=$2
@@ -30,7 +39,10 @@ require 'LLVM_MINGW_VERSION: "20260616"' "$workflow"
 require 'x86_64-w64-mingw32-clang' "$workflow"
 require 'aarch64-w64-mingw32-clang' "$workflow"
 require 'Install llvm-mingw' "$workflow"
-require "GO_BUILD_CC: \${{ matrix.cc }}" "$workflow"
+require "cygpath -m \"\$toolchain_bin/\${{ matrix.cc }}.exe\"" "$workflow"
+require "echo \"GO_BUILD_CC=\$go_build_cc\" >> \"\$GITHUB_ENV\"" "$workflow"
+require "GO_BUILD_CC=\${{ matrix.cc }}" "$workflow"
+reject 'GITHUB_PATH' "$workflow"
 require "./scripts/build-release-archive.sh \"\$VERSION\" dist" "$workflow"
 require "terraform-provider-fleets_\${VERSION}_SHA256SUMS" "$workflow"
 require 'gpg --batch --armor --detach-sign' "$workflow"

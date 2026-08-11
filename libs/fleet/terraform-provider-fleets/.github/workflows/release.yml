@@ -93,11 +93,15 @@ jobs:
           unzip -q "$RUNNER_TEMP/$archive" -d "$toolchain_root"
           toolchain_bin="$(find "$toolchain_root" -mindepth 2 -maxdepth 2 -type d -name bin -print -quit)"
           test -n "$toolchain_bin"
-          echo "$toolchain_bin" >> "$GITHUB_PATH"
+          go_build_cc="$(cygpath -m "$toolchain_bin/${{ matrix.cc }}.exe")"
+          echo "GO_BUILD_CC=$go_build_cc" >> "$GITHUB_ENV"
+      - name: Configure release compiler
+        if: matrix.goos != 'windows'
+        shell: bash
+        run: echo "GO_BUILD_CC=${{ matrix.cc }}" >> "$GITHUB_ENV"
       - name: Build provider archive
         shell: bash
         env:
-          GO_BUILD_CC: ${{ matrix.cc }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: ./scripts/build-release-archive.sh "$VERSION" dist
       - name: Upload provider archive

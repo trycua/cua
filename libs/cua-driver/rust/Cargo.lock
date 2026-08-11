@@ -2965,6 +2965,7 @@ dependencies = [
  "async-trait",
  "atspi",
  "base64",
+ "bitflags 2.11.1",
  "calloop",
  "clipboard-rs",
  "crossbeam-channel",

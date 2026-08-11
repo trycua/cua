@@ -451,6 +451,41 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if crate::wayland::hyprland::is_session() {
+                let window =
+                    crate::wayland::hyprland::window_for_address(window_id).ok_or_else(|| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!("Hyprland window {window_id} is not mapped"),
+                        )
+                    })?;
+                if window.pid != pid_u32 {
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        format!("Hyprland window {window_id} is not owned by pid {pid}"),
+                    ));
+                }
+                return Ok(NativeWindowInfo {
+                    pid,
+                    window_id,
+                    title: window.title,
+                    bounds: Rect::new(
+                        f64::from(window.x),
+                        f64::from(window.y),
+                        f64::from(window.width),
+                        f64::from(window.height),
+                    ),
+                    geometry_exact: true,
+                    ownership: NativeOwnershipProof {
+                        method: NativeOwnershipMethod::PlatformAttested,
+                        owner_pid: pid,
+                        detail: Some(
+                            "Hyprland IPC stable address, pid, and compositor-logical rect"
+                                .to_owned(),
+                        ),
+                    },
+                });
+            }
             if let Some(window) = crate::wayland::sway_ipc::window_for_id(window_id) {
                 if window.pid != pid_u32 {
                     return Err(refusal(
@@ -584,6 +619,20 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if crate::wayland::hyprland::is_session() {
+                let owned = crate::wayland::hyprland::list_windows()
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!("could not enumerate Hyprland browser windows: {error}"),
+                        )
+                    })?
+                    .into_iter()
+                    .filter(|window| window.pid == pid_u32)
+                    .map(|window| window.address)
+                    .collect::<Vec<_>>();
+                return Ok(Some(owned.len() == 1 && owned[0] == window_id));
+            }
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
                 if let Some(owned) =
                     crate::wayland::shell_helper::trusted_window_ids_for_pid(pid_u32)

@@ -85,7 +85,7 @@ and native harnesses, see
 | `linux/run-rust-e2e.sh`         | Existing Linux X11 or Wayland desktop                              | no selector       |
 | `linux/run-rust-e2e-wayland.sh` | Headless native Sway session                                       | no selector       |
 | `linux/run-rust-e2e-inject.sh`  | Nested `cua-compositor` session                                    | no selector       |
-| `linux/run-rust-e2e-desktop.sh` | Existing representative Linux desktop                              | no selector       |
+| `linux/run-rust-e2e-desktop.sh` | Existing representative GNOME, KDE, Hyprland, or Xorg desktop      | environment name  |
 | `windows/run-rust-e2e.ps1`      | Windows console/RDP user session                                   | `-RequireGui`     |
 | `macos/run-rust-e2e.sh`         | Logged-in macOS session already prepared by the maintainer wrapper | no selector       |
 
@@ -113,8 +113,26 @@ scenario to `run-rust-e2e.sh`.
 
 Run the nested compositor wrapper through
 `nix develop .#cua-driver-inject-e2e`. This environment is experimental and
-proves only the private compositor-owned route. Use `run-rust-e2e-desktop.sh`
-for maintainer checks on representative GNOME, KDE, or real-Xorg sessions.
+proves only the private compositor-owned route. Use the representative desktop
+wrapper with an explicit environment name for maintainer checks:
+
+```bash
+scripts/ci/linux/run-rust-e2e-desktop.sh gnome
+scripts/ci/linux/run-rust-e2e-desktop.sh kde
+scripts/ci/linux/run-rust-e2e-desktop.sh hyprland
+scripts/ci/linux/run-rust-e2e-desktop.sh xorg
+```
+
+The Hyprland mode requires the active session's `hyprctl` IPC and uses it only
+as an out-of-band test oracle for focus, workspace visibility, fullscreen
+occlusion, and selection of the focused output for `wf-recorder`. Override that
+video output with `CUA_WAYLAND_RECORDING_OUTPUT` when fixtures run elsewhere.
+The Tauri row uses WebKitGTK's SHM renderer because current DMA-BUF builds can
+violate explicit-sync ordering and Hyprland rejects the invalid commit.
+Like every representative-desktop run, the complete matrix launches,
+focuses, moves, and captures fixture windows. Run it only in a disposable or
+dedicated validation session, not on a personal desktop containing unrelated
+windows.
 
 The GitHub-hosted Windows workflow is canonical when its strict preflight proves
 an interactive desktop. The workflow also accepts a runner label so maintainers

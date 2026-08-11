@@ -43,6 +43,8 @@ meval = "0.2"
 wayland-client = "0.31"
 wayland-backend = "0.3"
 wayland-scanner = "0.31"
+# Generated hyprland-toplevel-export-v1 bindings reference bitflags directly.
+bitflags = "2"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # Wayland staging protocols: ext-foreign-toplevel-list-v1,
 # ext-image-capture-source-v1, ext-image-copy-capture-v1 (per-window

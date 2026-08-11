@@ -413,8 +413,8 @@ than silently changing coordinate spaces.
 ### `hotkey`
 
 Press a key combination — e.g. `["cmd", "c"]` for Copy, `["cmd", "shift", "4"]` for screenshot selection. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:
-• `background` (default): post the combo to the target pid WITHOUT fronting or raising it — uses the macOS 14+ auth-message envelope so Chromium/Electron accept it as trusted live input. No focus steal. `window_id` here only targets the combo; it does not raise.
-• `foreground`: briefly front the window (NSMenu path, &lt; 1 ms via SLPSSetFrontProcessWithOptions) so native menu key-equivalents (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the explicit escalation for menu-bar shortcuts on non-Chromium apps that ignore a background combo. With x,y, the focused field receives the chord through the foreground HID queue (needed by native Chromium fields such as the omnibox). Requires window_id.
+• `background` (default): post the combo to the target pid WITHOUT fronting or raising it — uses the macOS 14+ auth-message envelope so Chromium/Electron accept it as trusted live input. With an AX target, focus that exact element first. No top-level focus steal. `window_id` here only targets the combo; it does not raise.
+• `foreground`: briefly front the window (NSMenu path, &lt; 1 ms via SLPSSetFrontProcessWithOptions) so native menu key-equivalents (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the explicit escalation for menu-bar shortcuts on non-Chromium apps that ignore a background combo. With an AX target or x,y, the focused field receives the chord through the foreground HID queue (needed by native Chromium fields such as the omnibox). Requires window_id.
 
 A combo is never driver-verifiable (no read-back) → effect:"unverifiable"; confirm via screenshot. NOTE: a keyboard combo does NOT focus a text field — to type into a backgrounded Electron input, establish real renderer focus with a PIXEL click first, then `type_text`. If an app only accepts paste, call `clipboard_write`, then `clipboard_read` and verify its types (and text when applicable) before selecting or replacing editor content; only then send Cmd+V.
 
@@ -423,10 +423,13 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
+- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `keys` (array of string, required): Modifier(s) and one non-modifier key, e.g. ["cmd", "c"]. items: 2–unbounded
 - `pid` (integer, optional): Target process ID.
 - `scope` (string, optional): Use desktop with no pid/window_id to send the chord to the frontmost application. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.

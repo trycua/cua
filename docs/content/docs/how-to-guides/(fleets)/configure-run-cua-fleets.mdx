@@ -50,10 +50,9 @@ Every `fleets_pool` must configure exactly one sizing mode:
 - Set `replicas` for a static warm-pool target and omit `autoscaling`.
 - Set an `autoscaling` block for claim-driven scaling and omit `replicas`.
 
-In autoscaling mode, `replicas` is still available as computed state. It reports
-the live KEDA-managed `spec.replicas` target after apply and refresh, so external
-scaling changes remain visible in Terraform. If you later switch to static mode,
-the plan replaces that live target with the `replicas` value you configure.
+In autoscaling mode, do not configure `replicas`; after apply and refresh it
+reports the current pool target. If you later switch to static mode, review the
+plan because the pool will use the `replicas` value you configure.
 
 ## Create a Linux fleet
 

@@ -8,7 +8,7 @@ Today, we're sharing the first result from a broader effort to connect that `Vir
 
 We're releasing this work today as a research release under the same permissive license as Lume and Cua, so others can reproduce the results and help map which Apple Silicon chips, macOS releases, and Metal workloads benefit.
 
-![Apple Silicon macOS VM LLM inference benchmark showing 7.2× faster prompt processing and 14.5× faster token generation.](./assets/lume-metal-capability-unlock.gif)
+![Apple Silicon macOS VM LLM inference benchmark showing 7.2× faster prompt processing and 14.5× faster token generation.](https://github.com/user-attachments/assets/6e3aa770-d274-4c77-b99b-ae74668b5f5e)
 
 Apple Vz users have been running into these limitations elsewhere too. Tart, another notable CLI built on Apple's `Virtualization.framework`, has an open [“No GPU passthrough in macOS guest?”](https://github.com/openai/tart/issues/1032) issue asking whether the framework can provide usable graphics and decent LLM performance in a macOS VM guest. The VM continues to use the virtual GPU that Apple provides. Our work exposes newer Metal paths on that device and closes part of the practical gap.
 
@@ -26,7 +26,7 @@ In our stock Tahoe VM, the paravirtualized device reported roughly an Apple 5-er
 
 Apple documents GPU capability through [GPU families and feature tables](https://developer.apple.com/metal/capabilities/) and recommends [querying the device at runtime](https://developer.apple.com/documentation/metal/detecting-gpu-features-and-metal-software-versions). That makes the reported capability boundary consequential: applications are doing exactly what the platform tells them to do.
 
-![An illustrative Apple GPU capability ladder: the stock macOS guest reports an older capability band, while the tested profile exposes newer Metal paths including SIMD-group matrix operations, bfloat16, and 64 KB threadgroup memory.](./assets/gpu-capability-ladder.png)
+![An illustrative Apple GPU capability ladder: the stock macOS guest reports an older capability band, while the tested profile exposes newer Metal paths including SIMD-group matrix operations, bfloat16, and 64 KB threadgroup memory.](https://github.com/user-attachments/assets/55b9d614-f94b-4840-b97c-ea5d51e595b5)
 
 ## The solution: a process-scoped Metal capability shim
 
@@ -48,8 +48,8 @@ That was enough for the tested llama.cpp build to select newer SIMD-group reduct
 The tested profile changes two reported values: Apple-family answers and the threadgroup-memory limit. Common, Mac, Metal, and working-set-size values keep their stock settings during the benchmark. We removed the original research hook's private feature-profile hook, clock and timing interposition, mesh substitution, ray-tracing override, argument-layout guard, and pipeline-compilation fallback. Its source is small enough to audit, and malformed or missing configuration keeps the process on its stock capability path.
 
 <picture>
-  <source media="(max-width: 600px)" srcset="./assets/metal-kernel-path-mobile.png">
-  <img src="./assets/metal-kernel-path.png" alt="From conservative capability answers to faster Metal kernels: the host Apple GPU, Virtualization.framework bridge, and guest paravirtualized GPU stay unchanged while a process-scoped capability query selects either the stock Apple 5 and 32 KB path or the tested Apple 9 and 64 KB path.">
+  <source media="(max-width: 600px)" srcset="https://github.com/user-attachments/assets/6c7e1a9e-bb01-4eba-887b-ff362bac340b">
+  <img src="https://github.com/user-attachments/assets/34f15072-f18b-4747-9a98-6397601cbffc" alt="From conservative capability answers to faster Metal kernels: the host Apple GPU, Virtualization.framework bridge, and guest paravirtualized GPU stay unchanged while a process-scoped capability query selects either the stock Apple 5 and 32 KB path or the tested Apple 9 and 64 KB path.">
 </picture>
 
 The workload stays on Apple's `Virtualization.framework` graphics path and executes on the host's Apple GPU. The capability changes are scoped to the injected guest process.

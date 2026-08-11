@@ -43,6 +43,18 @@ export CYCLOPS_ENDPOINT="https://run.cua.ai"
 export CYCLOPS_ACCESS_TOKEN="<your-access-token>"
 ```
 
+## Choose a sizing mode
+
+Every `fleets_pool` must configure exactly one sizing mode:
+
+- Set `replicas` for a static warm-pool target and omit `autoscaling`.
+- Set an `autoscaling` block for claim-driven scaling and omit `replicas`.
+
+In autoscaling mode, `replicas` is still available as computed state. It reports
+the live KEDA-managed `spec.replicas` target after apply and refresh, so external
+scaling changes remain visible in Terraform. If you later switch to static mode,
+the plan replaces that live target with the `replicas` value you configure.
+
 ## Create a Linux fleet
 
 Create a new directory, save this as `main.tf`, and choose a unique lowercase
@@ -64,7 +76,6 @@ provider "fleets" {
 
 resource "fleets_pool" "linux" {
   name                 = "linux-fleet"
-  replicas             = 0
   cpu_cores            = 4
   memory               = "8Gi"
   container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:main-38352d34"
@@ -86,9 +97,11 @@ resource "fleets_pool" "linux" {
 
 output "linux_fleet" {
   value = {
-    name      = fleets_pool.linux.name
-    namespace = fleets_pool.linux.namespace
-    phase     = fleets_pool.linux.phase
+    name             = fleets_pool.linux.name
+    namespace        = fleets_pool.linux.namespace
+    target_replicas  = fleets_pool.linux.replicas
+    current_replicas = fleets_pool.linux.current_replicas
+    ready_replicas   = fleets_pool.linux.ready_replicas
   }
 }
 ```
@@ -115,7 +128,6 @@ provider "fleets" {
 
 resource "fleets_pool" "windows" {
   name                 = "windows-fleet"
-  replicas             = 0
   cpu_cores            = 4
   memory               = "4Gi"
   container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest"
@@ -145,9 +157,11 @@ resource "fleets_pool" "windows" {
 
 output "windows_fleet" {
   value = {
-    name      = fleets_pool.windows.name
-    namespace = fleets_pool.windows.namespace
-    phase     = fleets_pool.windows.phase
+    name             = fleets_pool.windows.name
+    namespace        = fleets_pool.windows.namespace
+    target_replicas  = fleets_pool.windows.replicas
+    current_replicas = fleets_pool.windows.current_replicas
+    ready_replicas   = fleets_pool.windows.ready_replicas
   }
 }
 ```
@@ -168,9 +182,9 @@ terraform output
 ```
 
 `terraform init` uses the locally built provider and must not resolve
-`trycua/fleets` from the public Registry. The provider returns `namespace`,
-`phase`, `total_count`, `available_count`, and `claimed_count`. A ready fleet
-has available sandboxes after its warm pool provisions.
+`trycua/fleets` from the public Registry. The provider returns the backing `namespace` and template name, the live
+`replicas` target, and the `current_replicas` and `ready_replicas` status counts.
+A ready fleet has at least one ready sandbox after its warm pool provisions.
 
 Destroy the pool when finished. This deletes both the pool and its same-named
 namespace:

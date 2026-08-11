@@ -79,7 +79,7 @@ fn def() -> &'static ToolDef {
             // schema — keeps the contract consistent across platforms.
             "required": ["direction"],
             "properties": {
-                "session": { "type": "string", "description": "Optional public session label. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid": { "type": "integer" },
                 "direction": {
                     "type": "string",

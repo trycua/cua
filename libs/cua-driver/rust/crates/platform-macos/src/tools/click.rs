@@ -159,7 +159,7 @@ fn def() -> &'static ToolDef {
             // cua_driver_core::tool_schema.)
             "required": [],
             "properties": {
-                "session": { "type": "string", "description": "Optional public session label. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),

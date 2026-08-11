@@ -74,7 +74,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid", "window_id"],
             "properties": {
-                "session": { "type": "string", "description": "Optional public session label. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values." },

@@ -34,6 +34,7 @@ pub use inputs::{
     ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
     SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
     SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
+    MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
     advertised_output_schema, refusal_envelope_schema, ActionDelivery, ActionDeliveryMode,
@@ -343,6 +344,45 @@ mod tests {
                 ["properties"]["exists"]["enum"],
             serde_json::json!([true])
         );
+    }
+
+    #[test]
+    fn portable_action_sessions_explain_named_multi_call_runs() {
+        for name in [
+            "click",
+            "clipboard_read",
+            "clipboard_write",
+            "drag",
+            "get_cursor_position",
+            "get_desktop_state",
+            "get_screen_size",
+            "hotkey",
+            "invoke_menu",
+            "move_cursor",
+            "press_key",
+            "scroll",
+            "set_window_frame",
+            "type_text",
+        ] {
+            let contract = tool_contract(name).expect("portable action contract");
+            let description = contract.input_schema["properties"]["session"]["description"]
+                .as_str()
+                .expect("portable session description")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(description, MULTI_CALL_SESSION_DESCRIPTION, "{name}");
+        }
+
+        let verify = tool_contract("verify_state").expect("verify_state contract");
+        let description = verify.input_schema["properties"]["session"]["description"]
+            .as_str()
+            .expect("verify_state session description")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(description.starts_with(MULTI_CALL_SESSION_DESCRIPTION));
+        assert!(description.contains("never selects capture modality or authorization"));
     }
 
     #[test]

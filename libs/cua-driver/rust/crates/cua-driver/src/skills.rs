@@ -912,6 +912,56 @@ mod tests {
     }
 
     #[test]
+    fn bundled_skill_keeps_sessions_and_authorization_as_separate_concepts() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
+            .expect("canonical browser skill must be readable");
+
+        for required in [
+            "Choose the target on each action",
+            "transport's implicit session",
+            "prefer a short public",
+            "pass the same label on every call that accepts it",
+            "Passing it once is not sticky",
+            "revive a name after",
+            "There is no `deescalate_session`",
+            "--capability-manifest",
+            "--approve-capability-manifest",
+            "It can remove tools or typed resources",
+            "permission authority. A public session",
+        ] {
+            assert!(
+                skill.contains(required),
+                "skill lost required lifecycle/authorization guidance: {required}"
+            );
+        }
+        for forbidden in [
+            "one-way session phase",
+            "if session policy allows",
+            "Pass `session` on the first action",
+        ] {
+            assert!(
+                !skill.contains(forbidden),
+                "skill restored stale session-state guidance: {forbidden}"
+            );
+        }
+        for required in [
+            "start_session(session?)",
+            "optional; can name before acting",
+            "prefer a short `session` label",
+            "Passing it once is not sticky",
+            "one-shot CLI calls use disposable transports",
+        ] {
+            assert!(
+                browser.contains(required),
+                "browser skill lost required session guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn extract_flat_tarball_v_0_2_20_plus() {
         // Post-fix shape: one wrapper dir, files directly under it.
         //   cua-driver-rs-v0.2.20-skills/SKILL.md

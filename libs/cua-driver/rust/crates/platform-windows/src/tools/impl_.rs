@@ -7268,7 +7268,7 @@ impl Tool for GetDesktopStateTool {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "description": "Optional public session label. Omit it to use the authenticated transport's implicit lifecycle session." },
+                    "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                     "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." }
                 },
                 "additionalProperties": false

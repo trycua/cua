@@ -5383,7 +5383,9 @@ impl Tool for MouseButtonDownTool {
                 Does not release the button; pair with mouse_drag / mouse_button_up. \
                 Returns the current held-button state.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id","x","y"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
@@ -5531,7 +5533,9 @@ impl Tool for MouseDragTool {
                 Requires an active mouse_button_down state; does not release the button. \
                 Returns the updated held-button state.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
@@ -5735,7 +5739,9 @@ impl Tool for MouseButtonUpTool {
             description: "Release a previously-held mouse button via background X11 delivery. \
                 If x/y are omitted, releases at the last held position. Returns the current held-button state.".into(),
             input_schema: json!({"type":"object","properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
@@ -6274,7 +6280,7 @@ impl Tool for GetDesktopStateTool {
                 Use its native-size PNG as the coordinate source for actions whose target is \
                 {kind:\"desktop\",display_id:\"primary\"}. No AT-SPI walk.".into(),
             input_schema: json!({"type":"object","properties":{
-                "session":{"type":"string","description":"Optional public session label. Omit it to use the authenticated transport's implicit lifecycle session."},
+                "session":{"type":"string","description":"For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session."},
                 "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: false, open_world: false,

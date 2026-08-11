@@ -181,7 +181,12 @@ The default idle TTL is five minutes. Shutdown, explicit end, and transport
 close run the same cleanup hooks. A call that is still in flight cannot expire,
 and only completed calls refresh the idle timer.
 
-Use `start_session` when the run needs a public label or initial cursor theme.
+For multi-call work, prefer a short public `session` label and pass the same
+value on every call that accepts it. Passing it once is not sticky: a later call
+that omits the field uses the transport's implicit session instead. Use
+`start_session` to name or configure a run before acting, or to revive a public
+name after it has ended. For one-off or deliberately unlabeled work, omitting
+`session` is valid.
 `get_session` and `list_sessions` return content-free state only for sessions
 visible to that transport. The public label is a map key, never an
 authorization credential. A trusted host can inspect its wider runtime

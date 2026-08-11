@@ -39,7 +39,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
 fn start() -> ToolContract {
     contract::<StartSessionInput, StartSessionOutput>(
         "start_session",
-        "Optionally name and start a lifecycle session for this agent run. When `session` is omitted, create or return the authenticated transport lease's implicit session. Ordinary actions create that implicit session automatically, so this tool is optional. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.",
+        "Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.",
         &["session.lifecycle.start", "session.capture_scope"],
         ToolAnnotations {
             read_only: false,
@@ -118,4 +118,19 @@ fn end() -> ToolContract {
             open_world: false,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_description_explains_direct_naming_and_explicit_revival() {
+        let description = start().description;
+        assert!(description.contains("prefer a short public `session` label"));
+        assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("omitted value uses the authenticated transport"));
+        assert!(description.contains("revive a public name after it has ended"));
+        assert!(description.contains("ordinary actions never revive ended names"));
+    }
 }

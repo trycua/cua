@@ -323,7 +323,11 @@ jobs:
 
       - name: Install Python agent SDK example dependencies
         working-directory: libs/cua-driver/examples/agent-sdks
-        run: python -m pip install -r requirements.txt
+        run: |
+          python -m pip install -r requirements.txt
+          # Exercise the examples against this PR's candidate SDK contract,
+          # not the previously published package with the same source version.
+          python -m pip install --force-reinstall /tmp/cua-driver-wheels/*.whl
 
       - name: Check Python agent SDK examples and fixture
         working-directory: libs/cua-driver/examples/agent-sdks
@@ -336,7 +340,11 @@ jobs:
 
       - name: Install agent SDK example dependencies
         working-directory: libs/cua-driver/examples/agent-sdks
-        run: npm ci
+        run: |
+          npm ci
+          VERSION=$(node -p "require('../../typescript/package.json').version")
+          npm install --no-save \
+            "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz"
 
       - name: Check TypeScript agent SDK example
         working-directory: libs/cua-driver/examples/agent-sdks

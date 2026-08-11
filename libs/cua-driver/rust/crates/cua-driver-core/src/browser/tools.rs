@@ -23,6 +23,7 @@ use super::platform::{
 };
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::session_schema as schema_session;
 use super::store::BrowserActionKind;
 use super::types::BindingQuality;
 
@@ -84,13 +85,6 @@ fn schema_ref() -> Value {
         "description": "Page element ref in the p<snapshot>:<index> namespace from \
             get_browser_state. Refs are invalidated by navigation and by newer \
             snapshots of the same tab."
-    })
-}
-
-fn schema_session() -> Value {
-    json!({
-        "type": "string",
-        "description": "Optional public session label. Browser targets, tabs, and refs use the authenticated transport's implicit lifecycle session when omitted."
     })
 }
 

@@ -59,3 +59,7 @@ does not. That is why assets are minted here rather than in the destination page
 | `browser-background-control-demo.mp4` | [`4c155fba…`](https://github.com/user-attachments/assets/4c155fba-2e8f-492f-a40e-e142199edd42) | `blog/extension-free-browser-use.md` |
 | `browser-isolated-profile-demo.mp4` | [`63ea24a8…`](https://github.com/user-attachments/assets/63ea24a8-7c6c-41b0-8d82-2bb672d6cbc6) | `blog/extension-free-browser-use.md` |
 | `browser-multi-tab-demo.mp4` | [`56de26d9…`](https://github.com/user-attachments/assets/56de26d9-3433-46e3-b907-8b1aef6f12bf) | `blog/extension-free-browser-use.md` |
+| `lume-metal-capability-unlock.gif` | [`6e3aa770…`](https://github.com/user-attachments/assets/6e3aa770-d274-4c77-b99b-ae74668b5f5e) | `blog/gpu-passthrough-macos-vms.md` |
+| `gpu-capability-ladder.png` | [`55b9d614…`](https://github.com/user-attachments/assets/55b9d614-f94b-4840-b97c-ea5d51e595b5) | `blog/gpu-passthrough-macos-vms.md` |
+| `metal-kernel-path.png` | [`34f15072…`](https://github.com/user-attachments/assets/34f15072-f18b-4747-9a98-6397601cbffc) | `blog/gpu-passthrough-macos-vms.md` |
+| `metal-kernel-path-mobile.png` | [`6c7e1a9e…`](https://github.com/user-attachments/assets/6c7e1a9e-bb01-4eba-887b-ff362bac340b) | `blog/gpu-passthrough-macos-vms.md` |

@@ -335,12 +335,15 @@ impl Tool for HotkeyTool {
                 .await
                 .unwrap_or(true);
                 if is_web {
-                    tokio::task::spawn_blocking(move || {
-                        crate::recording_hooks::element_window_local_xy(
-                            wid as u64,
-                            pid as i64,
-                            index as u32,
-                        )
+                    tokio::task::spawn_blocking(move || unsafe {
+                        let (screen_x, screen_y) = crate::ax::bindings::element_screen_center(
+                            ptr as crate::ax::bindings::AXUIElementRef,
+                        )?;
+                        let frame = super::px_frame::resolve_window_px_frame(wid).ok()?;
+                        Some((
+                            (screen_x - frame.bounds.x) * frame.scale,
+                            (screen_y - frame.bounds.y) * frame.scale,
+                        ))
                     })
                     .await
                     .unwrap_or(None)

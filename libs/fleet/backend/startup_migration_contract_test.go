@@ -755,12 +755,11 @@ func TestBackendReadinessStartsFailClosedAndRequiresSchema(t *testing.T) {
 	}
 }
 
-func TestBackendDeploymentUsesSeparateReadinessProbe(t *testing.T) {
+func TestBackendDeploymentKeepsCoreAPIReadyWithoutDatabaseSchema(t *testing.T) {
 	source := readSource(t, filepath.Join("..", "..", "clusters", "kopf-k3s", "cyclops-cs", "backend-deployment.yaml"))
-	if !strings.Contains(source, "readinessProbe:\n            httpGet:\n              path: /readyz") {
-		t.Fatal("backend readiness probe must use /readyz")
-	}
-	if !strings.Contains(source, "livenessProbe:\n            httpGet:\n              path: /healthz") {
-		t.Fatal("backend liveness probe must use /healthz")
+	for _, probe := range []string{"readinessProbe", "livenessProbe"} {
+		if !strings.Contains(source, probe+":\n            httpGet:\n              path: /healthz") {
+			t.Fatalf("backend %s must use /healthz", probe)
+		}
 	}
 }

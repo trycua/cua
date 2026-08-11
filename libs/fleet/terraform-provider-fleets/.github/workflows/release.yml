@@ -66,11 +66,13 @@ jobs:
             runner: windows-2022
             cc: x86_64-w64-mingw32-clang
             llvm_mingw_host: x86_64
+            rust_target: x86_64-pc-windows-gnu
           - goos: windows
             goarch: arm64
             runner: windows-11-arm
             cc: aarch64-w64-mingw32-clang
             llvm_mingw_host: aarch64
+            rust_target: aarch64-pc-windows-gnullvm
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
@@ -79,6 +81,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # 1.97.0
         with:
           toolchain: "1.97.0"
+      - name: Install Windows Rust target
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: rustup target add "${{ matrix.rust_target }}"
       - name: Install llvm-mingw
         if: matrix.goos == 'windows'
         shell: bash
@@ -95,6 +101,7 @@ jobs:
           test -n "$toolchain_bin"
           go_build_cc="$(cygpath -m "$toolchain_bin/${{ matrix.cc }}.exe")"
           echo "GO_BUILD_CC=$go_build_cc" >> "$GITHUB_ENV"
+          echo "RUST_TARGET=${{ matrix.rust_target }}" >> "$GITHUB_ENV"
       - name: Configure release compiler
         if: matrix.goos != 'windows'
         shell: bash

@@ -24,6 +24,8 @@ target_dir="${CYCLOPS_SDK_TARGET_DIR:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/terraform-
 goos="$(go env GOOS)"
 goarch="$(go env GOARCH)"
 go_build_cc="${GO_BUILD_CC:-$(go env CC)}"
+rust_target="${RUST_TARGET:-}"
+cargo_target_args=()
 
 if [ "$goos" = windows ] && command -v cygpath >/dev/null 2>&1; then
   native_root_for_tools="$(cygpath -m "$native_root")"
@@ -35,13 +37,27 @@ else
   target_dir_for_tools="$target_dir"
 fi
 
+target_release_dir="$target_dir_for_tools/release"
+if [ -n "$rust_target" ]; then
+  cargo_target_args=(--target "$rust_target")
+  target_release_dir="$target_dir_for_tools/$rust_target/release"
+  rust_target_env="${rust_target^^}"
+  rust_target_env="${rust_target_env//-/_}"
+  export "CARGO_TARGET_${rust_target_env}_LINKER=$go_build_cc"
+  export "CC_${rust_target//-/_}=$go_build_cc"
+fi
+
 case "$goos" in
   linux|darwin)
-    static_library="$target_dir_for_tools/release/deps/libcyclops_sdk.a"
+    static_library="$target_release_dir/deps/libcyclops_sdk.a"
     executable="terraform-provider-fleets_v${version}"
     ;;
   windows)
-    static_library="$target_dir_for_tools/release/deps/cyclops_sdk.lib"
+    if [ -n "$rust_target" ]; then
+      static_library="$target_release_dir/deps/libcyclops_sdk.a"
+    else
+      static_library="$target_release_dir/deps/cyclops_sdk.lib"
+    fi
     executable="terraform-provider-fleets_v${version}.exe"
     ;;
   *)
@@ -59,6 +75,7 @@ CARGO_TERM_COLOR=never cargo rustc \
   --manifest-path "$native_root_for_tools/Cargo.toml" \
   --package cyclops-sdk \
   --release \
+  "${cargo_target_args[@]}" \
   --target-dir "$target_dir_for_tools" \
   -- \
   --crate-type staticlib \

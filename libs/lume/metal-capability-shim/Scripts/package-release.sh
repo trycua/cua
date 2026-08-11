@@ -4,8 +4,8 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(dirname "$SCRIPT_DIR")
 REPOSITORY_ROOT=$(git -C "$PROJECT_DIR" rev-parse --show-toplevel)
-SOURCE_REVISION=1629eb71e78dd5682cf39a241ff68517438ea629
-SOURCE_ARCHIVE=LumeMetalCapabilities-source-1629eb71.tar.gz
+SOURCE_REVISION=d95545418f4789b5fc9ae13b8614c920071f11b5
+SOURCE_ARCHIVE=LumeMetalCapabilities-source-d9554541.tar.gz
 
 if [ "$#" -ne 2 ]; then
   echo "usage: $0 ARTIFACT_DIR RELEASE_DIR" >&2
@@ -45,7 +45,7 @@ cp "$ARTIFACT_DIR/metal-capabilities" "$RELEASE_DIR/"
 
 git -C "$REPOSITORY_ROOT" archive \
   --format=tar.gz \
-  --prefix=cua-1629eb71/ \
+  --prefix=cua-d9554541/ \
   --output="$RELEASE_DIR/$SOURCE_ARCHIVE" \
   "$SOURCE_REVISION" \
   libs/lume/metal-capability-shim

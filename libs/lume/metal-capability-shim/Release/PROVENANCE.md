@@ -5,13 +5,13 @@ published release.
 
 ## Source
 
-- Frozen source revision: `1629eb71e78dd5682cf39a241ff68517438ea629`
+- Frozen source revision: `d95545418f4789b5fc9ae13b8614c920071f11b5`
 - Source file SHA-256: `e1371b1e579bca895e6b3a2b581b9f328203d9786bf809912a4a5d1672010cce`
 - Evidence build source revision: `5336ee9b61f35ffa058c746af237cb334e58bab9`
 - Evidence build source file SHA-256: `a0d055caa64afe60d1139ded329d4062f271ab6f1a7f24e6f5738a6f3da4fd40`
 - Build script SHA-256 at the frozen revision: `f60b741bca2005d22f4af5f1398614e4f5aa1d49171cc73cd5d1d20bf60cb264`
 - Probe source SHA-256: `481dd635efcbee2b614b5ae47defa277a792cb91e3f99e5d0954400a5a787edc`
-- Source archive: `git archive --format=tar.gz --prefix=cua-1629eb71/ 1629eb71e78dd5682cf39a241ff68517438ea629 libs/lume/metal-capability-shim`
+- Source archive: `git archive --format=tar.gz --prefix=cua-d9554541/ d95545418f4789b5fc9ae13b8614c920071f11b5 libs/lume/metal-capability-shim`
 
 The clean source revision carries the same executable statements as the evidence build used by the
 M1 Ultra/Tahoe TinyLlama, MLX-LM, and Gemma 4 runs. The packaged binaries retain the exact

@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workflow="$repo_root/.github/workflows/release.yml"
 builder="$repo_root/scripts/build-release-archive.sh"
+manifest="$repo_root/terraform-registry-manifest.json"
 
 reject() {
   local needle=$1
@@ -48,7 +49,9 @@ require "GO_BUILD_CC=\${{ matrix.cc }}" "$workflow"
 reject 'GITHUB_PATH' "$workflow"
 require "./scripts/build-release-archive.sh \"\$VERSION\" dist" "$workflow"
 require "terraform-provider-fleets_\${VERSION}_SHA256SUMS" "$workflow"
-require 'gpg --batch --armor --detach-sign' "$workflow"
+require 'gpg --batch --detach-sign' "$workflow"
+reject 'gpg --batch --armor --detach-sign' "$workflow"
+require "terraform-provider-fleets_\${VERSION}_manifest.json" "$workflow"
 require "terraform-provider-fleets_\${VERSION}_SHA256SUMS.sig" "$workflow"
 require "gh release create \"v\$VERSION\"" "$workflow"
 
@@ -71,3 +74,8 @@ require "CC_\${rust_target//-/_}" "$builder"
 require 'libcyclops_sdk.a' "$builder"
 require 'CGO_ENABLED=1' "$builder"
 require "terraform-provider-fleets_\${version}_\${goos}_\${goarch}.zip" "$builder"
+
+require '"protocol_versions"' "$manifest"
+require '"6.0"' "$manifest"
+reject '"protocols"' "$manifest"
+reject '"os_arch"' "$manifest"

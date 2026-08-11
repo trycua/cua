@@ -147,11 +147,11 @@ jobs:
           cd dist
           test "$(find . -maxdepth 1 -name '*.zip' | wc -l)" -eq 6
           sha256sum ./*.zip | sed 's# \./# #' > "terraform-provider-fleets_${VERSION}_SHA256SUMS"
-          gpg --batch --armor --detach-sign \
+          gpg --batch --detach-sign \
             --local-user "$GPG_FINGERPRINT" \
             --output "terraform-provider-fleets_${VERSION}_SHA256SUMS.sig" \
             "terraform-provider-fleets_${VERSION}_SHA256SUMS"
-          cp ../terraform-registry-manifest.json .
+          cp ../terraform-registry-manifest.json "terraform-provider-fleets_${VERSION}_manifest.json"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

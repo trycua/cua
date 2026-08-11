@@ -74,6 +74,39 @@ native_static_libs="$(sed -n 's/.*native-static-libs: //p' "$build_log" | tail -
   exit 1
 }
 
+if [ "$goos" = windows ]; then
+  windows_linker_flags=()
+  for library in $native_static_libs; do
+    case "$library" in
+      /defaultlib:*.lib)
+        windows_linker_flags+=("-l${library#/defaultlib:}")
+        ;;
+      /defaultlib:*)
+        windows_linker_flags+=("-l${library#/defaultlib:}")
+        ;;
+      *.lib)
+        packaged_library=
+        cargo_registry_src="${CARGO_HOME:-$HOME/.cargo}/registry/src"
+        if [ -d "$cargo_registry_src" ]; then
+          while IFS= read -r candidate; do
+            packaged_library="$candidate"
+            break
+          done < <(find "$cargo_registry_src" -type f -name "$library" -print)
+        fi
+        if [ -n "$packaged_library" ]; then
+          windows_linker_flags+=("$(cygpath -m "$packaged_library")")
+        else
+          windows_linker_flags+=("-l${library%.lib}")
+        fi
+        ;;
+      *)
+        windows_linker_flags+=("$library")
+        ;;
+    esac
+  done
+  native_static_libs="${windows_linker_flags[*]}"
+fi
+
 build_dir="$(mktemp -d)"
 trap 'rm -f "$build_log"; rm -rf "$build_dir"' EXIT
 

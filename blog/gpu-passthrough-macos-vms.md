@@ -4,7 +4,7 @@ _Published on August 11, 2026 by Francesco Bonacci and Johnny Franks_
 
 If you've been following Cua from the start, you may remember that it began with a [Show HN](https://news.ycombinator.com/item?id=42908061) launch for Lume, our macOS virtualization stack.
 
-Today, we're sharing the first result from a broader effort to connect that `Virtualization.framework` foundation to the local computer-use environments behind Cua Driver and the infrastructure behind [Cua Cloud and Fleets](https://cua.ai/signup?redirect_url=%2Fwaitlist): a small, process-scoped compatibility layer that unlocks newer Metal fast paths inside a macOS guest.
+Today, we're sharing the first result from a broader effort to connect that `Virtualization.framework` foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/tutorials/drive-your-first-app) and the infrastructure behind [Cua Cloud and Fleets](https://cua.ai/signup?redirect_url=%2Fwaitlist): a small, process-scoped compatibility layer that unlocks newer Metal fast paths inside a macOS guest.
 
 We're releasing this work today as a research release under the same permissive license as Lume and Cua, so others can reproduce the results and help map which Apple Silicon chips, macOS releases, and Metal workloads benefit.
 

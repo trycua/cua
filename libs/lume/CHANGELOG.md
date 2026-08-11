@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/trycua/cua/compare/lume-v0.5.2...lume-v0.5.3) (2026-08-11)
+
+
+### Bug Fixes
+
+* **lume:** handle reused OCI disk layer digests ([#3066](https://github.com/trycua/cua/issues/3066)) ([69a5e38](https://github.com/trycua/cua/commit/69a5e38caea9f29538a1bc57cc6b79617d9a8af1))
+
 ## [0.5.2](https://github.com/trycua/cua/compare/lume-v0.5.1...lume-v0.5.2) (2026-08-11)
 
 

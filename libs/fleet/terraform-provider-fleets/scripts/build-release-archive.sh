@@ -53,7 +53,7 @@ mkdir -p "$dist_dir"
 build_log="$(mktemp)"
 trap 'rm -f "$build_log"' EXIT
 
-cargo rustc \
+CARGO_TERM_COLOR=never cargo rustc \
   --locked \
   --manifest-path "$native_root_for_tools/Cargo.toml" \
   --package cyclops-sdk \
@@ -68,7 +68,7 @@ cargo rustc \
   exit 1
 }
 
-native_static_libs="$(sed -n 's/^note: native-static-libs: //p' "$build_log" | tail -1)"
+native_static_libs="$(sed -n 's/.*native-static-libs: //p' "$build_log" | tail -1)"
 [ -n "$native_static_libs" ] || {
   echo "Rust did not report native static libraries" >&2
   exit 1

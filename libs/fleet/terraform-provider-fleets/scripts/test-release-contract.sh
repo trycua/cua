@@ -32,6 +32,7 @@ require 'gpg --batch --armor --detach-sign' "$workflow"
 require "terraform-provider-fleets_\${VERSION}_SHA256SUMS.sig" "$workflow"
 require "gh release create \"v\$VERSION\"" "$workflow"
 
+require 'CARGO_TERM_COLOR=never' "$builder"
 require 'cargo rustc' "$builder"
 require '--crate-type staticlib' "$builder"
 require '--print native-static-libs' "$builder"

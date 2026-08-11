@@ -427,6 +427,22 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
 /// worker, the foreground swap may silently fail and SendInput land on the
 /// wrong window. Callers should funnel hotkey calls through the uia worker.
 pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    send_key_synthesized_after_focus(hwnd, key, modifiers, || Ok(()))
+}
+
+/// Foreground key delivery with a target-specific focus step performed only
+/// after Windows has confirmed the exact top-level HWND as foreground.
+///
+/// Element-addressed callers use this to avoid the activation/focus race:
+/// UIA `SetFocus` before `SetForegroundWindow` can be overwritten by the
+/// ensuing activation. The callback may establish and verify child focus; no
+/// input is inserted when either foreground or child-focus confirmation fails.
+pub fn send_key_synthesized_after_focus(
+    hwnd: u64,
+    key: &str,
+    modifiers: &[&str],
+    focus: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     let target = HWND(hwnd as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -455,50 +471,9 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
         events.push(key_input(*mvk, true));
     }
 
-    unsafe {
-        // Save & set foreground so SendInput lands on `target`.
-        let prev_fg = GetForegroundWindow();
-        // Robust auto bring-to-front (AttachThreadInput, same engine as
-        // bring_to_front / macOS with_foreground_assist) — a bare
-        // SetForegroundWindow is denied by the foreground-lock without UIAccess.
-        // Restored to prev_fg below.
-        let _ = crate::input::force_foreground_assisted(target);
-        // Brief settle so the foreground swap is processed before we send.
-        sleep(Duration::from_millis(8));
-
-        // Verify the swap actually happened. `SetForegroundWindow` returns a
-        // BOOL but Windows treats foreground-lock violations as a silent
-        // no-op in most cases (the call returns success-ish, the foreground
-        // doesn't change). The reliable check is observing the foreground
-        // after the settle. If we didn't get it, abort BEFORE SendInput —
-        // otherwise the events land on whatever app actually held foreground
-        // (typically the terminal hosting this process), which causes spooky
-        // side effects like Alt+Enter toggling the terminal into fullscreen.
-        let actual_fg = GetForegroundWindow();
-        if actual_fg != target {
-            // Don't restore — prev_fg is presumably still foreground anyway.
-            bail!(
-                "foreground_unavailable: foreground swap to exact target HWND {:?} was rejected by Windows \
-                 (actual foreground is HWND {:?}). This daemon is not at \
-                 UIAccess integrity, so SetForegroundWindow is subject to the \
-                 foreground-lock and the swap silently fails. Without the \
-                 swap, SendInput would land on the wrong window. Fix: install \
-                 / spawn the cua-driver-uia worker (UIAccess-manifested PE) \
-                 and route hotkey calls through it. Until then, the calling \
-                 app must already be foreground for delivery_mode:\"foreground\" \
-                 to be safe.",
-                target.0,
-                actual_fg.0
-            );
-        }
-
+    with_confirmed_foreground(target, "key delivery", focus, || unsafe {
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != events.len() {
-            // SendInput returns the number of events successfully inserted.
-            // Anything less is a partial insertion (blocked by another input
-            // injector, foreground UIPI denial, etc.).
-            let restored = SetForegroundWindow(prev_fg);
-            let _ = restored;
             bail!(
                 "SendInput inserted only {sent} of {} events. Likely cause: \
                  the daemon is not at UIAccess integrity, so SetForegroundWindow \
@@ -507,16 +482,8 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
                 events.len()
             );
         }
-
-        // Brief settle to let the target process the keystrokes before we
-        // restore the previous foreground (otherwise the target might not
-        // get a chance to handle the accelerator before losing focus).
-        sleep(Duration::from_millis(40));
-        if !prev_fg.0.is_null() && prev_fg != target {
-            let _ = SetForegroundWindow(prev_fg);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Foreground-delivery text entry: the `delivery_mode:"foreground"` rung for
@@ -531,6 +498,16 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
 /// of a false success. Required for VCL/LibreOffice document grids and other
 /// targets where PostMessage WM_CHAR is silently dropped.
 pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
+    send_text_synthesized_after_focus(hwnd, text, || Ok(()))
+}
+
+/// Foreground Unicode delivery with child focus established after exact
+/// top-level activation and before `SendInput`.
+pub fn send_text_synthesized_after_focus(
+    hwnd: u64,
+    text: &str,
+    focus: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     let target = HWND(hwnd as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -571,37 +548,9 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
         return Ok(());
     }
 
-    unsafe {
-        // Save & set foreground so SendInput lands on `target`. Same verify-
-        // before-send guard as send_key_synthesized: a foreground-lock no-op
-        // would otherwise spray the text into whatever window actually held
-        // focus (typically the terminal hosting this daemon).
-        let prev_fg = GetForegroundWindow();
-        // Robust auto bring-to-front (AttachThreadInput, same engine as
-        // bring_to_front / macOS with_foreground_assist) — a bare
-        // SetForegroundWindow is denied by the foreground-lock without UIAccess.
-        // Restored to prev_fg below.
-        let _ = crate::input::force_foreground_assisted(target);
-        sleep(Duration::from_millis(8));
-        let actual_fg = GetForegroundWindow();
-        if actual_fg != target {
-            bail!(
-                "foreground_unavailable: foreground swap to exact target HWND {:?} was rejected by Windows \
-                 (actual foreground is HWND {:?}). This daemon is not at \
-                 UIAccess integrity, so SetForegroundWindow is subject to the \
-                 foreground-lock and the swap silently fails. Without the swap, \
-                 SendInput would land on the wrong window. Fix: install / spawn \
-                 the cua-driver-uia worker (UIAccess-manifested PE) and route \
-                 type_text through it. Until then, the calling app must already \
-                 be foreground for delivery_mode:\"foreground\" to be safe.",
-                target.0,
-                actual_fg.0
-            );
-        }
-
+    with_confirmed_foreground(target, "text delivery", focus, || unsafe {
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != events.len() {
-            let _ = SetForegroundWindow(prev_fg);
             bail!(
                 "SendInput inserted only {sent} of {} key events. Likely cause: \
                  the daemon is not at UIAccess integrity, so SetForegroundWindow \
@@ -609,14 +558,73 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
                 events.len()
             );
         }
+        Ok(())
+    })
+}
 
-        // Settle so the target processes the text before we yield focus back.
-        sleep(Duration::from_millis(40));
-        if !prev_fg.0.is_null() && prev_fg != target {
-            let _ = SetForegroundWindow(prev_fg);
+fn wait_for_exact_foreground(target: HWND, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if unsafe { GetForegroundWindow() } == target {
+            return true;
         }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(10));
     }
-    Ok(())
+}
+
+/// Run one system-queue input transaction while `target` is the observed
+/// foreground HWND. Foreground and optional child focus are checked against
+/// external Win32/UIA state instead of inferred from API return values or a
+/// fixed settle delay. The prior foreground is restored on every body/focus
+/// result after activation succeeds.
+fn with_confirmed_foreground<T>(
+    target: HWND,
+    operation: &str,
+    focus: impl FnOnce() -> Result<()>,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let previous = unsafe { GetForegroundWindow() };
+    let _ = unsafe { crate::input::force_foreground_assisted(target) };
+    if !wait_for_exact_foreground(target, Duration::from_millis(500)) {
+        let actual = unsafe { GetForegroundWindow() };
+        if !previous.0.is_null() && previous != target {
+            let _ = unsafe { SetForegroundWindow(previous) };
+        }
+        bail!(
+            "foreground_unavailable: Windows did not confirm exact target HWND {:?} for {operation} \
+             within 500 ms (actual foreground HWND {:?}). Route the request through the \
+             UIAccess-manifested cua-driver-uia worker; no input was sent.",
+            target.0,
+            actual.0
+        );
+    }
+
+    let result = (|| {
+        focus()?;
+        if !wait_for_exact_foreground(target, Duration::from_millis(250)) {
+            let actual = unsafe { GetForegroundWindow() };
+            bail!(
+                "foreground_unavailable: exact target HWND {:?} lost foreground while preparing \
+                 {operation} (actual foreground HWND {:?}); no input was sent",
+                target.0,
+                actual.0
+            );
+        }
+        body()
+    })();
+
+    // Give the target message loop a bounded opportunity to consume the
+    // inserted sequence before restoring the user's prior foreground.
+    if result.is_ok() {
+        sleep(Duration::from_millis(40));
+    }
+    if !previous.0.is_null() && previous != target {
+        let _ = unsafe { SetForegroundWindow(previous) };
+    }
+    result
 }
 
 /// Build a single Unicode keyboard INPUT struct for one UTF-16 code unit,

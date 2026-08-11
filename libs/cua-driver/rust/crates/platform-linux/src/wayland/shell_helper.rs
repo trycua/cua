@@ -417,8 +417,16 @@ pub fn activate_window(window_id: u64) -> bool {
     if !accepted {
         return false;
     }
-    std::thread::sleep(Duration::from_millis(60));
-    window_is_focused(window_id)
+    let deadline = std::time::Instant::now() + Duration::from_millis(500);
+    loop {
+        if window_is_focused(window_id) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn trusted_activate_window(window_id: u64) -> bool {
@@ -430,12 +438,20 @@ fn trusted_activate_window(window_id: u64) -> bool {
     if !accepted {
         return false;
     }
-    std::thread::sleep(Duration::from_millis(60));
-    trusted_shell_windows(None).is_some_and(|windows| {
-        windows
-            .into_iter()
-            .any(|window| window.info.xid == u64::from(window_id) && window.focused)
-    })
+    let deadline = std::time::Instant::now() + Duration::from_millis(500);
+    loop {
+        if trusted_shell_windows(None).is_some_and(|windows| {
+            windows
+                .into_iter()
+                .any(|window| window.info.xid == u64::from(window_id) && window.focused)
+        }) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn window_is_focused(window_id: u32) -> bool {

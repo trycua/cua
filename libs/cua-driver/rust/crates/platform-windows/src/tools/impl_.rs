@@ -3912,6 +3912,79 @@ pub struct TypeTextTool {
     state: Arc<ToolState>,
 }
 
+fn wait_for_cached_element_keyboard_focus(
+    state: &ToolState,
+    pid: u32,
+    hwnd: u64,
+    element_index: usize,
+    timeout: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if state
+            .element_cache
+            .element_has_keyboard_focus(pid, hwnd, element_index)
+            == Some(true)
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Establish exact UIA child focus after the owning top-level HWND is already
+/// confirmed foreground. Chromium providers sometimes reject UIA `SetFocus`;
+/// in that case a real click at the accessibility-derived center is the
+/// bounded fallback. Both routes require `CurrentHasKeyboardFocus` read-back
+/// before any keyboard input is allowed to leave the driver.
+fn focus_cached_element_for_foreground(
+    state: &ToolState,
+    pid: u32,
+    hwnd: u64,
+    element_index: usize,
+    click_point: Option<(i32, i32)>,
+) -> anyhow::Result<()> {
+    let set_focus = crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
+        state.element_cache.focus_element(pid, hwnd, element_index)
+    });
+    if set_focus.is_ok()
+        && wait_for_cached_element_keyboard_focus(
+            state,
+            pid,
+            hwnd,
+            element_index,
+            std::time::Duration::from_millis(350),
+        )
+    {
+        return Ok(());
+    }
+
+    if let Some((x, y)) = click_point {
+        crate::input::send_click_synthesized_active_mods(hwnd, x, y, 1, "left", &[])?;
+        if wait_for_cached_element_keyboard_focus(
+            state,
+            pid,
+            hwnd,
+            element_index,
+            std::time::Duration::from_millis(500),
+        ) {
+            return Ok(());
+        }
+    }
+
+    let detail = set_focus
+        .err()
+        .map(|error| format!("; UIA SetFocus failed: {error}"))
+        .unwrap_or_default();
+    anyhow::bail!(
+        "foreground_unavailable: Windows did not confirm keyboard focus on exact UIA element \
+         [{element_index}] in HWND 0x{hwnd:x}{detail}; no keyboard input was sent"
+    )
+}
+
 static TYPE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -4170,12 +4243,10 @@ impl Tool for TypeTextTool {
         // rejected (daemon not at UIAccess integrity), it returns an error
         // rather than a false success.
         if delivery == DeliveryMode::Foreground {
-            // An indexed foreground type targets that element, not whichever
-            // child happened to retain focus in the top-level window. UIA
-            // SetFocus is not sufficient for Chromium renderer controls, so
-            // establish real system focus with the same foreground coordinate
-            // actuator used by an indexed click before sending Unicode input.
-            if let Some(idx) = elem_idx {
+            // Resolve the optional click fallback before entering the atomic
+            // activation/focus/input transaction. The focus itself happens
+            // only after exact top-level foreground is confirmed.
+            let focus_target = if let Some(idx) = elem_idx {
                 let (cx, cy) =
                     match self
                         .state
@@ -4201,25 +4272,19 @@ impl Tool for TypeTextTool {
                     Ok(point) => point,
                     Err(result) => return result,
                 };
-                let focus_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized_active_mods(hwnd, cx, cy, 1, "left", &[])
-                })
-                .await;
-                match focus_result {
-                    Ok(Ok(())) => {
-                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-                    }
-                    Ok(Err(error)) => return ToolResult::error(error.to_string()),
-                    Err(error) => {
-                        return ToolResult::error(format!(
-                            "foreground element-focus task failed: {error}"
-                        ))
-                    }
-                }
-            }
+                Some((idx as usize, (cx, cy)))
+            } else {
+                None
+            };
             let text_fg = text.clone();
+            let state = self.state.clone();
             let r = tokio::task::spawn_blocking(move || {
-                crate::input::send_text_synthesized(hwnd, &text_fg)
+                crate::input::send_text_synthesized_after_focus(hwnd, &text_fg, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, Some(point))?;
+                    }
+                    Ok(())
+                })
             })
             .await;
             return match r {
@@ -4949,7 +5014,7 @@ impl Tool for PressKeyTool {
             {
                 return error;
             }
-        } else if let Some(idx) = elem_idx {
+        } else if let Some(idx) = elem_idx.filter(|_| delivery != DeliveryMode::Foreground) {
             let state = self.state.clone();
             let focused = tokio::task::spawn_blocking(move || {
                 crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
@@ -4975,9 +5040,22 @@ impl Tool for PressKeyTool {
         // Skipped when px-focus already fronted/clicked the target — the key then
         // goes via the plain background post path below.
         if !px_focus && delivery == DeliveryMode::Foreground {
+            let focus_target = elem_idx.map(|idx| {
+                let point = self
+                    .state
+                    .element_cache
+                    .get_element_center(pid, hwnd, idx as usize);
+                (idx as usize, point)
+            });
+            let state = self.state.clone();
             let send_result = tokio::task::spawn_blocking(move || {
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                crate::input::send_key_synthesized(hwnd, &key, &m)
+                crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, point)?;
+                    }
+                    Ok(())
+                })
             })
             .await;
             return match send_result {

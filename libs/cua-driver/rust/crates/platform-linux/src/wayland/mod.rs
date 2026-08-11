@@ -1217,6 +1217,33 @@ pub fn activate_window_for_input_target(
     )
 }
 
+/// Run a focus-bound keyboard transaction only after a compositor adapter has
+/// confirmed the exact PID/window pair, and restore the previously focused
+/// toplevel afterward. Global virtual-keyboard/libei input is refused when the
+/// compositor cannot provide this read-back contract.
+pub fn with_target_foreground<T>(
+    pid: u32,
+    window_id: u64,
+    body: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if let Some(window) = sway_ipc::window_for_id(window_id) {
+        if window.pid != pid {
+            anyhow::bail!(
+                "foreground_unavailable: Sway window {window_id} belongs to pid {}, not pid {pid}",
+                window.pid
+            );
+        }
+        return sway_ipc::with_focused_container(window_id, body);
+    }
+    if shell_helper::trusted_window_for_id(pid, window_id).is_some() {
+        return shell_helper::with_focused_window(pid, window_id, body);
+    }
+    anyhow::bail!(
+        "foreground_unavailable: no trusted Wayland compositor adapter can confirm exact \
+         target window {window_id} for pid {pid}; no global keyboard input was sent"
+    )
+}
+
 /// Query the first `wl_output`'s pixel dimensions via a short Wayland
 /// roundtrip, independent of the virtual-pointer protocol. Used by the libei
 /// fallback (which never opens a `VptrSession`) to reproduce the vptr path's

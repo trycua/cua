@@ -1,0 +1,28 @@
+{
+  "title": "Use Cua with",
+  "icon": "Cable",
+  "pages": [
+    "index",
+    "---Models & providers---",
+    "anthropic",
+    "openai",
+    "google",
+    "xai",
+    "meta",
+    "qwen",
+    "kimi",
+    "---Agent harnesses---",
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "grok-build",
+    "hermes",
+    "openclaw",
+    "t3-code",
+    "qwen-code",
+    "kimi-code",
+    "---Local runtimes---",
+    "ollama",
+    "llama-cpp"
+  ]
+}

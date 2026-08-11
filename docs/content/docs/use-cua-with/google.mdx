@@ -1,0 +1,17 @@
+---
+title: Google / Gemini
+description: Use Gemini models with Cua Driver through Gemini CLI.
+icon: gemini
+---
+
+Gemini CLI can run local stdio MCP servers, so it can use Cua Driver as its computer-use layer.
+
+| Start here when…            | Recommended path                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| You use Gemini CLI          | [Connect Gemini CLI to Cua Driver](/use-cua-with/gemini-cli)                                   |
+| You configure MCP with JSON | [Use the generic MCP configuration](/how-to-guides/driver/connect-your-agent#generic-mcp-json) |
+| You use Antigravity         | Generate its dedicated config with `cua-driver mcp-config --client antigravity`                |
+
+Gemini CLI and Antigravity use different configuration paths. The legacy `--client gemini` alias in Cua Driver refers to the Antigravity preset, not the current Gemini CLI command.
+
+See Google's [Gemini CLI MCP server documentation](https://google-gemini.github.io/gemini-cli/docs/tools/mcp-server.html) for the upstream client behavior.

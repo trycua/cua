@@ -1,0 +1,26 @@
+---
+title: Anthropic / Claude
+description: Use Claude models with Cua Driver through an agent harness.
+icon: anthropic
+---
+
+Anthropic provides the Claude model family. To give Claude access to a desktop, run it in an agent harness that can call Cua Driver. The most direct path is [Claude Code](/use-cua-with/claude-code), which supports local MCP servers.
+
+| Start here when…                       | Recommended path                                                                               |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| You use Claude Code                    | [Connect Claude Code to Cua Driver](/use-cua-with/claude-code)                                 |
+| You use another MCP client with Claude | [Use the generic MCP configuration](/how-to-guides/driver/connect-your-agent#generic-mcp-json) |
+| You want an isolated desktop           | [Start a local sandbox](/tutorials/your-first-local-sandbox)                                   |
+
+Claude Code can also act as the harness for a model served locally. That is a harness feature, not a direct connection between Cua Driver and Anthropic's API.
+
+See Anthropic's [MCP documentation](https://docs.anthropic.com/en/docs/mcp) and [Claude Code CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage) for the upstream client behavior.
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b"
+  poster="https://github.com/user-attachments/assets/54536146-328a-431c-95b4-14a799248026"
+  title="Claude Code builds and checks a Windows app"
+  sourceUrl="https://x.com/trycua/status/2059688966085853245"
+>
+  Claude Code uses Cua Driver to operate a WPF app without taking over the user's active window.
+</VideoDemo>

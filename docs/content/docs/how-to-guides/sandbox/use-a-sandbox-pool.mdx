@@ -1,0 +1,102 @@
+---
+title: How to use a sandbox pool
+description: Reconcile a warm run.cua.ai sandbox pool, claim a sandbox, and save a screenshot with Python.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A sandbox pool keeps reusable cloud sandboxes warm. Reconcile the pool once,
+then claim a sandbox whenever your program needs one. The claim is released
+automatically when its context manager exits.
+
+## Create OAuth credentials
+
+Open [User API keys](https://run.cua.ai/#/user-keys), select **Create key**, and
+copy the Client ID and Client Secret. The Client Secret is shown only once.
+
+Keep both values in a password manager or secret manager. Do not commit them,
+paste them into source code, or include them in logs. Export them in the shell
+where you will run the example:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+```
+
+<Callout type="warn">
+  Replace the placeholders locally. Never put real credentials in a script, `.env` file committed to
+  Git, issue, or support message.
+</Callout>
+
+## Install uv
+
+On macOS or Linux, use uv's official standalone installer:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+On Windows, run the official installer in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+See the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+for package-manager and version-pinning options.
+
+## Reconcile and claim a pool
+
+Save the following script as `sandbox_pool.py`. Change `CUA_POOL_NAME` if you
+need a different DNS-compatible namespace and pool name.
+
+```python title="sandbox_pool.py"
+import asyncio
+import os
+from pathlib import Path
+
+from cua_sandbox import Image, Sandbox
+
+POOL_NAME = os.environ.get("CUA_POOL_NAME", "my-sandbox-pool")
+IMAGE = (
+    "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo"
+    "@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
+)
+
+
+async def main() -> None:
+    output = Path("sandbox.png")
+    async with Sandbox.ephemeral(
+        Image.from_registry(IMAGE),
+        name=POOL_NAME,
+        cpu=4,
+        memory_mb=4096,
+        time_to_start=900,
+    ) as sandbox:
+        output.write_bytes(await sandbox.screenshot())
+
+    print(f"Saved screenshot to {output.resolve()}")
+
+
+asyncio.run(main())
+```
+
+Run it with Python 3.12, the published `cua-sandbox` package, and the Cua wheel
+index used for its Fleet dependency:
+
+```bash
+uv run --python 3.12 \
+  --extra-index-url https://wheels.cua.ai/simple \
+  --with cua-sandbox \
+  sandbox_pool.py
+```
+
+The high-level builder creates or updates the template and one-replica pool,
+then waits for its claim to bind. Provisioning can take several minutes. The
+context saves the PNG bytes returned by `screenshot()` to `sandbox.png` and
+releases the claim on exit.
+
+<Callout type="info">
+  Exiting the context releases the claim but leaves the reconciled pool and template in place.
+  Remove pools you no longer need from the [run.cua.ai pools page](https://run.cua.ai/#/pools).
+</Callout>

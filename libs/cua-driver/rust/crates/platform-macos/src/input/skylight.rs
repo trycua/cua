@@ -814,7 +814,14 @@ pub fn with_foreground_hid_activation(
         anyhow::bail!("WindowServer rejected foreground HID activation");
     }
 
-    std::thread::sleep(std::time::Duration::from_millis(40));
+    make_exact_window_key(target_pid, target_wid);
+    if !await_window_focused(target_pid, target_wid) {
+        if prev_ok {
+            unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+        }
+        anyhow::bail!("exact target window did not become focused for foreground HID delivery");
+    }
+
     let result = action();
     std::thread::sleep(std::time::Duration::from_millis(40));
 

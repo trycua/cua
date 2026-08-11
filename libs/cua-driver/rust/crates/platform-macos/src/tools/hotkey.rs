@@ -37,14 +37,15 @@ fn def() -> &'static ToolDef {
              window by default:\n\
              • `background` (default): post the combo to the target pid WITHOUT \
                fronting or raising it — uses the macOS 14+ auth-message envelope so \
-               Chromium/Electron accept it as trusted live input. No focus steal. \
+               Chromium/Electron accept it as trusted live input. With an AX target, \
+               focus that exact element first. No top-level focus steal. \
                `window_id` here only targets the combo; it does not raise.\n\
              • `foreground`: briefly front the window (NSMenu path, < 1 ms via \
                SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
                (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
                explicit escalation for menu-bar shortcuts on non-Chromium apps that \
-               ignore a background combo. With x,y, the focused field receives \
-               the chord through the foreground HID queue (needed by native \
+               ignore a background combo. With an AX target or x,y, the focused field \
+               receives the chord through the foreground HID queue (needed by native \
                Chromium fields such as the omnibox). Requires window_id.\n\n\
              A combo is never driver-verifiable (no read-back) → effect:\"unverifiable\"; \
              confirm via screenshot. NOTE: a keyboard combo does NOT focus a text \
@@ -75,6 +76,9 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "Target window. Required for delivery_mode:\"foreground\" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode."
                 },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the chord to the frontmost application." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
@@ -93,6 +97,23 @@ fn is_modifier(k: &str) -> bool {
         k.to_lowercase().as_str(),
         "cmd" | "command" | "shift" | "option" | "alt" | "ctrl" | "control" | "fn"
     )
+}
+
+const HOTKEY_FOCUS_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+const HOTKEY_FOCUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+fn focus_hotkey_element(pid: i32, element_ptr: usize) -> anyhow::Result<()> {
+    let deadline = std::time::Instant::now() + HOTKEY_FOCUS_TIMEOUT;
+    loop {
+        crate::input::ax_actions::focus_element(element_ptr)?;
+        if crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("requested hotkey element did not become focused");
+        }
+        std::thread::sleep(HOTKEY_FOCUS_POLL_INTERVAL);
+    }
 }
 
 fn screen_sharing_modifier_delivery_error(
@@ -130,8 +151,6 @@ impl Tool for HotkeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let _ = &self.state;
-
         if args.opt_str("scope").as_deref() == Some("desktop")
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
@@ -209,13 +228,60 @@ impl Tool for HotkeyTool {
         // Use the last non-modifier key; if there are multiple, treat earlier ones as extra keys.
         let key = non_modifiers.last().unwrap().clone();
         let key_display = raw_keys.join("+");
-        let window_id = args.opt_u64("window_id").map(|v| v as u32);
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
+            "hotkey",
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => return error,
+        };
+        let (element_index, window_id) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id,
+                element_index,
+                via_token: _,
+            } => (Some(element_index), window_id),
+        };
         // delivery_mode gates whether we raise: background (default) never fronts
         // the window — passing window_id only targets the combo. foreground is the
         // explicit NSMenu-activation rung for menu shortcuts that ignore a
         // background combo (matches click/type_text).
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let fg = delivery_mode.is_foreground();
+        let px = args.get("x").and_then(|value| value.as_f64());
+        let py = args.get("y").and_then(|value| value.as_f64());
+        if px.is_some() && py.is_some() && element_index.is_some() {
+            return ToolResult::error(
+                "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+            );
+        }
+
+        let element_guard = if let (Some(index), Some(window_id)) = (element_index, window_id) {
+            match self
+                .state
+                .element_cache
+                .get_element_retained(pid, window_id, index)
+            {
+                Some(guard) => Some(guard),
+                None => {
+                    return ToolResult::error(format!(
+                        "Element index {index} not found. Call get_window_state first."
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
+
         let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
         if let Some(error) = screen_sharing_modifier_delivery_error(
             screen_sharing_target,
@@ -238,7 +304,7 @@ impl Tool for HotkeyTool {
                 match super::gate_background_window_action(
                     pid,
                     wid,
-                    None,
+                    element_ptr,
                     cua_driver_core::background_input::BackgroundAction::GenericKey,
                 )
                 .await
@@ -257,8 +323,6 @@ impl Tool for HotkeyTool {
         // still needs to front the target for the chord itself: the focus helper
         // restores the previous app before returning.
         let px_focus = {
-            let px = args.get("x").and_then(|v| v.as_f64());
-            let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
                 let from_zoom = args
                     .get("from_zoom")
@@ -302,12 +366,12 @@ impl Tool for HotkeyTool {
             || async move {
                 tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    match (fg, px_focus, window_id) {
+                    match (fg, px_focus, window_id, element_ptr) {
                         // Chrome's native omnibox and Chromium/Electron inputs
                         // require a genuine foreground HID chord. Keep the exact
                         // target frontmost until both key events are consumed;
                         // otherwise Cmd+A/Cmd+V can be silently ignored.
-                        (true, true, Some(wid)) => {
+                        (true, true, Some(wid), _) => {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
@@ -321,11 +385,26 @@ impl Tool for HotkeyTool {
                             )?;
                             Ok(())
                         }
+                        // An AX-addressed chord has the same renderer-focus
+                        // requirement as the px form. Activate the exact window,
+                        // establish and confirm the requested child focus after
+                        // activation, then use the guarded global HID queue.
+                        (true, false, Some(wid), Some(ptr)) => {
+                            crate::input::skylight::with_foreground_hid_activation(
+                                pid as libc::pid_t,
+                                wid,
+                                || {
+                                    focus_hotkey_element(pid, ptr)?;
+                                    crate::input::keyboard::press_key_bare_global(&key, &m)
+                                },
+                            )?;
+                            Ok(())
+                        }
                         // Screen Sharing is an input forwarder: modifier flags
                         // on a PID-routed base-key event are not relayed to the
                         // guest. Emit the physical modifier down/base/up
                         // sequence through the guarded foreground HID path.
-                        (true, false, Some(wid))
+                        (true, false, Some(wid), None)
                             if crate::input::keyboard::is_screen_sharing_pid(pid) =>
                         {
                             crate::input::skylight::with_foreground_hid_activation(
@@ -337,7 +416,7 @@ impl Tool for HotkeyTool {
                         }
                         // foreground rung: briefly front the window so NSMenu key
                         // equivalents dispatch, then restore prior frontmost.
-                        (true, false, Some(wid)) => {
+                        (true, false, Some(wid), None) => {
                             crate::input::skylight::with_menu_shortcut_activation(
                                 pid as libc::pid_t,
                                 wid,
@@ -347,6 +426,10 @@ impl Tool for HotkeyTool {
                         }
                         // background (default): auth-envelope post to the pid, no
                         // raise — even when window_id was supplied for targeting.
+                        (false, false, _, Some(ptr)) => {
+                            focus_hotkey_element(pid, ptr)?;
+                            crate::input::keyboard::hotkey(pid, &key, &m)
+                        }
                         _ => crate::input::keyboard::hotkey(pid, &key, &m),
                     }
                 })
@@ -396,6 +479,16 @@ impl Tool for HotkeyTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hotkey_contract_accepts_snapshot_bound_ax_targets() {
+        let properties = def().input_schema["properties"]
+            .as_object()
+            .expect("hotkey properties");
+        for field in ["element_index", "element_token", "snapshot_id"] {
+            assert!(properties.contains_key(field), "missing {field} schema");
+        }
+    }
 
     #[test]
     fn screen_sharing_modifier_hotkeys_fail_closed_without_foreground_window() {

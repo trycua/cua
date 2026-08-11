@@ -3947,9 +3947,13 @@ fn focus_cached_element_for_foreground(
     element_index: usize,
     click_point: Option<(i32, i32)>,
 ) -> anyhow::Result<()> {
-    let set_focus = crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
-        state.element_cache.focus_element(pid, hwnd, element_index)
-    });
+    // `fg_bypass` is a background-only shield: for Chromium it disables the
+    // top-level HWND while UIA runs so the provider cannot self-activate. A
+    // disabled foreground window immediately loses foreground on Windows,
+    // which would make the enclosing verify-before-SendInput transaction
+    // fail closed. The foreground route has already activated the exact HWND,
+    // so focus the cached element directly and verify it below.
+    let set_focus = state.element_cache.focus_element(pid, hwnd, element_index);
     if set_focus.is_ok()
         && wait_for_cached_element_keyboard_focus(
             state,

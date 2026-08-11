@@ -34,7 +34,8 @@ fn def() -> &'static ToolDef {
                 "on_screen_only": {
                     "type": "boolean",
                     "description": "When true, drop windows not on the current Space. Default false."
-                }
+                },
+                "session": cua_driver_core::tool_schema::session_schema()
             },
             "additionalProperties": false
         }),
@@ -66,6 +67,11 @@ impl Tool for ListWindowsTool {
 
         if let Some(pid) = pid_filter {
             windows.retain(|w| w.pid == pid);
+        }
+        // A confined session sees only its own processes — applied before the
+        // records and counts below are built.
+        if let Some(scope) = cua_driver_core::visibility_scope::scope_for_args(&args) {
+            windows.retain(|w| u32::try_from(w.pid).is_ok_and(|pid| scope.allows(pid)));
         }
 
         let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();

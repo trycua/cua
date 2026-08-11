@@ -1374,6 +1374,24 @@ impl ToolRegistry {
                     }
                 }
             }
+            // What a session launches, it may see. A no-op unless this daemon
+            // opted into visibility-scope confinement (VISIBILITY_SCOPE_ENV)
+            // AND this exact session was bound at start_session — extend_session
+            // itself refuses to confine an otherwise-unconfined session.
+            if crate::visibility_scope::enabled() {
+                if let (Some(label), Some(pid)) = (
+                    crate::visibility_scope::public_session(&args),
+                    result
+                        .structured_content
+                        .as_ref()
+                        .and_then(|value| value.get("pid"))
+                        .and_then(Value::as_i64),
+                ) {
+                    if pid > 0 {
+                        crate::visibility_scope::extend_session(label, pid as u32);
+                    }
+                }
+            }
         }
         crate::cursor_events::end_tool(cursor_event);
         // Coordinate the physical action itself, not post-action evidence

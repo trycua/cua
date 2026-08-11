@@ -289,6 +289,22 @@ pub fn begin_tool_call_with_state(
             .or_else(|| crate::capture_scope::get_session(session_id).map(|state| state.policy))
             .unwrap_or_default()
     };
+    if is_start && revived {
+        // A revived session (start_session called again after the id was
+        // torn down) must not inherit a stale confinement from its previous
+        // life; clear_session on end already does this for the normal path,
+        // but re-arm it explicitly here in case fire_session_end was skipped.
+        crate::visibility_scope::clear_session(session_id);
+    }
+    if is_start && crate::visibility_scope::enabled() {
+        // Opt-in per-session confinement: gated behind the trusted daemon
+        // startup env var (CUA_DRIVER_VISIBILITY_SCOPE_ENABLED), never a tool
+        // argument. Bound to nothing at start; launch_app grows the scope to
+        // what this session actually launches. When the gate is off (the
+        // default) this call never runs and scope_for_args always resolves
+        // None, so enumeration behaves exactly as it always has.
+        crate::visibility_scope::bind_session(session_id, std::iter::empty());
+    }
     let escalation_reason = (tool_name == "escalate_session")
         .then(|| args.get("reason").cloned())
         .flatten()
@@ -445,6 +461,7 @@ pub fn fire_session_end(session_id: &str) -> bool {
         }
     }
     crate::capture_scope::clear_session(session_id);
+    crate::visibility_scope::clear_session(session_id);
     let registered = hooks()
         .lock()
         .unwrap()

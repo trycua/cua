@@ -331,6 +331,46 @@ truncates long labels.
 The cursor and badge are not authorization signals. Hiding the cursor also
 hides the badge. Headless sessions do not require either.
 
+## Per-session visibility scope
+
+Visibility scope is a separate, opt-in confinement layer: a session bound to a
+scope only *enumerates* the processes in that scope — its own launched apps —
+rather than the whole desktop. It is enforced at the source, before any
+summary line, count, or structured record is built, so a scoped session sees
+an internally consistent smaller desktop rather than stale totals.
+
+It is off by default. Set an environment variable before starting the daemon
+to opt in:
+
+```bash
+CUA_DRIVER_VISIBILITY_SCOPE_ENABLED=1 cua-driver serve
+```
+
+Resolved once at daemon startup, the same as `CUA_DRIVER_PERMISSION_MODE` and
+the rest of the [authorization stack](#authorization-stack). Existing callers
+that don't set this variable see byte-for-byte the same enumeration behavior
+as before — this module only ever removes things, and with the gate off it
+never runs.
+
+When enabled, a session is confined the moment it starts, and grows to include
+whatever it subsequently launches:
+
+| Event | Effect |
+| --- | --- |
+| `start_session` | Binds the session to an empty scope |
+| `launch_app` (success) | Adds the launched process to the session's scope |
+| `end_session` | Clears the session's scope |
+
+A confined session's `get_desktop_state` call is refused — a full-display
+capture would include every other app on the machine, and a cropped
+approximation would still be a guess. Use `get_window_state(pid, window_id)`
+for a specific process instead.
+
+Visibility scope governs enumeration only. It is not an authorization layer:
+a confined session still passes through the full [authorization
+stack](#authorization-stack) for every action, and an unconfined session (the
+default) is unaffected by this feature entirely.
+
 ## Security boundary
 
 The host owns the permission mode, manifest, launch grants, and any human

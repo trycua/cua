@@ -85,6 +85,7 @@ pub mod tool_args;
 pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
+pub mod visibility_scope;
 pub mod window_inspection;
 pub mod window_target;
 

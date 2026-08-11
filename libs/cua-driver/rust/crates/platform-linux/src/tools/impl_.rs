@@ -213,7 +213,9 @@ impl Tool for ListAppsTool {
                 Use this for \"is X installed?\" as well as \"is X running?\". For per-window \
                 state — visibility, geometry, titles — call list_windows instead."
                     .into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -221,10 +223,20 @@ impl Tool for ListAppsTool {
         })
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
-            let procs = crate::proc_fs::list_processes();
-            let installed = crate::installed_apps::list_installed_apps();
+    async fn invoke(&self, args: Value) -> ToolResult {
+        // A confined session sees only its own processes — applied at the
+        // source so every count below describes the same world.
+        let scope = cua_driver_core::visibility_scope::scope_for_args(&args);
+        let apps = tokio::task::spawn_blocking(move || -> Vec<serde_json::Value> {
+            let mut procs = crate::proc_fs::list_processes();
+            procs.retain(|p| cua_driver_core::visibility_scope::allows(scope.as_ref(), p.pid));
+            // A confined session gets no installed-app inventory: what the
+            // machine has installed is not part of the session's world.
+            let installed = if scope.is_some() {
+                Vec::new()
+            } else {
+                crate::installed_apps::list_installed_apps()
+            };
 
             // Match running processes to installed apps by executable
             // basename (Exec=firefox %u → "firefox"; cmdline /usr/bin/firefox
@@ -429,7 +441,8 @@ impl Tool for ListWindowsTool {
                 relying on array order.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer"},
-                "on_screen_only":{"type":"boolean","description":"When true, filter to visible windows only. Default false."}
+                "on_screen_only":{"type":"boolean","description":"When true, filter to visible windows only. Default false."},
+                "session": cua_driver_core::tool_schema::session_schema()
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -448,6 +461,11 @@ impl Tool for ListWindowsTool {
         windows.retain(|window| window.pid.map_or(true, crate::proc_fs::is_process_live));
         if on_screen_only {
             windows.retain(|window| window.is_on_screen);
+        }
+        // Under confinement a window whose owning pid X11 never reported is
+        // out of scope: unattributable is not the same as ours.
+        if let Some(scope) = cua_driver_core::visibility_scope::scope_for_args(&args) {
+            windows.retain(|window| window.pid.is_some_and(|pid| scope.allows(pid)));
         }
         if crate::wayland::is_wayland() {
             crate::wayland::remember_observed_window_origins(&windows);
@@ -6254,6 +6272,11 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // A full-display capture cannot be scoped: pixels of every other app on
+        // the machine come with it.
+        if cua_driver_core::visibility_scope::scope_for_args(&args).is_some() {
+            return ToolResult::error(cua_driver_core::visibility_scope::DESKTOP_CAPTURE_REFUSAL);
+        }
         let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
             Ok(input) => input,
             Err(result) => return result,

@@ -33,7 +33,9 @@ fn def() -> &'static ToolDef {
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "properties": {},
+            "properties": {
+                "session": cua_driver_core::tool_schema::session_schema()
+            },
             "additionalProperties": false
         }),
         read_only: true,
@@ -49,10 +51,18 @@ impl Tool for ListAppsTool {
         def()
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        let apps = tokio::task::spawn_blocking(crate::apps::list_all_apps)
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let mut apps = tokio::task::spawn_blocking(crate::apps::list_all_apps)
             .await
             .unwrap_or_default();
+        // A confined session sees only its own processes. Filtering before
+        // `format_app_list` is what keeps the summary counts and the listed
+        // entries describing the same world.
+        if let Some(scope) = cua_driver_core::visibility_scope::scope_for_args(&args) {
+            // Installed-but-not-running entries carry pid 0: the machine's
+            // software inventory is not part of a confined session's world.
+            apps.retain(|a| u32::try_from(a.pid).is_ok_and(|pid| scope.allows(pid)));
+        }
         let text = crate::apps::format_app_list(&apps);
         // Single flat array. Each entry is the unified shape — existing
         // fields (`pid`, `name`, `bundle_id`, `running`, `active`) are

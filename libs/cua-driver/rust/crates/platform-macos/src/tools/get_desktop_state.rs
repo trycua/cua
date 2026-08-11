@@ -57,6 +57,11 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // A full-display capture cannot be scoped: pixels of every other app on
+        // the machine come with it.
+        if cua_driver_core::visibility_scope::scope_for_args(&args).is_some() {
+            return ToolResult::error(cua_driver_core::visibility_scope::DESKTOP_CAPTURE_REFUSAL);
+        }
         let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
             Ok(input) => input,
             Err(result) => return result,

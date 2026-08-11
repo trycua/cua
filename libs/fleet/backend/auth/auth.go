@@ -1,13 +1,39 @@
-// Package auth — Keycloak JWT validation, adapted from r33drichards/grt.
+// Package auth — Keycloak JWT validation and route authorization, adapted from
+// r33drichards/grt.
 //
-// Differences from upstream:
-//   - Keycloak validation uses the configured issuer because service-account
-//     tokens do not carry a useful `aud`; GitHub OIDC validates signed
-//     audiences separately.
-//   - OPA (Rego) is used for all route-level authorization via
-//     OpaMiddleware; see auth/authz.rego.
-//   - Three token families: exact interactive clients, per-key clients, and
-//     user-key clients; route policy enforces each family and required claims.
+// Authentication. Keycloak validation uses the configured issuer because
+// service-account tokens do not carry a useful `aud`; GitHub OIDC validates
+// signed audiences separately. Three token families reach the policy — exact
+// interactive clients, per-key clients, and user-key clients — plus principals
+// whose azp cannot be enumerated (oauth2-proxy sessions, RFC 7591 dynamically
+// registered MCP clients). authz.rego names the three families; a surface that
+// accepts the fourth kind says so by not requiring a family.
+//
+// Authorization is OPA (Rego), composed rather than monolithic. Every
+// authenticated route runs
+//
+//	All(BasePolicy(), <its surface>)
+//
+// where the base is a non-empty subject — the one condition every rule of the
+// former single-module policy shared — and the surface is one module per group
+// of routes: authz_keys.rego, authz_k8s.rego, authz_svc.rego, and so on.
+// /api/k8s adds pool_admission.rego as a third conjunct over the request body.
+//
+// Two conjuncts read something beyond the token. pool_admission.rego reads the
+// request body; authz_ownership.rego — the namespace-tenancy boundary on
+// /api/svc, /api/orch and GET /api/namespaces/{name} — reads a Kubernetes RBAC
+// probe, delivered as input.facts by a FactProvider that handlers registers and
+// main.go binds. Both are separate leaves rather than rules folded into a
+// surface, so the expensive read only happens on the requests a cheap sibling
+// has not already decided.
+//
+// Which surface a route runs is decided in exactly one place, the routeSurfaces
+// table in policy_routes.go, which main.go reads through RouteMiddleware. That
+// is what keeps the routes and the policy from drifting apart: a registered
+// route the table does not name cannot start, and a surface naming routes that
+// no longer exist fails route_policy_correspondence_test.go rather than sitting
+// there looking like protection. Compiled plans are memoized per surface, so
+// routes sharing a surface share one plan.
 package auth
 
 import (

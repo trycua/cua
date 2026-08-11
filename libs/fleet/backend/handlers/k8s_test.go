@@ -113,10 +113,10 @@ func TestK8sProxy_ForwardsPath(t *testing.T) {
 		},
 		{
 			name:       "path with query params",
-			pathValue:  "api/v1/namespaces/foo/events",
-			queryParam: "fieldSelector=reason%3DPoolCreated",
-			wantPath:   "/api/v1/namespaces/foo/events",
-			wantQuery:  "fieldSelector=reason%3DPoolCreated",
+			pathValue:  "api/v1/namespaces/foo/pods",
+			queryParam: "fieldSelector=status.phase%3DRunning",
+			wantPath:   "/api/v1/namespaces/foo/pods",
+			wantQuery:  "fieldSelector=status.phase%3DRunning",
 		},
 	}
 
@@ -230,54 +230,6 @@ func TestK8sProxy_CreatesTracingSpan(t *testing.T) {
 	}
 }
 
-func TestK8sProxy_RejectsDisallowedPoolImagePullSecret(t *testing.T) {
-	auth.LoadOpa()
-	upstreamCalled := false
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamCalled = true
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer upstream.Close()
-	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
-
-	body := []byte(`{"spec":{"template":{"containerDiskImage":"evil.example/workspace:latest","imagePullSecret":"ecr-credentials"}}}`)
-	r := httptest.NewRequest(http.MethodPost, "/api/k8s/apis/cua.ai/v1/namespaces/foo/osgymworkspacepools", bytes.NewReader(body))
-	r.SetPathValue("path", "apis/cua.ai/v1/namespaces/foo/osgymworkspacepools")
-	w := httptest.NewRecorder()
-
-	(Handlers{}).K8s(w, r)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusForbidden, w.Body.String())
-	}
-	if upstreamCalled {
-		t.Fatal("disallowed pool request reached kubectl proxy")
-	}
-}
-
-func TestBodyRequestsMacOS(t *testing.T) {
-	cases := []struct {
-		name string
-		body string
-		want bool
-	}{
-		{"runtime macos", `{"spec":{"template":{"runtime":"macos","containerDiskImage":"img"}}}`, true},
-		{"runtime MacOS mixed-case", `{"spec":{"template":{"runtime":"MacOS"}}}`, true},
-		{"macos runtimeClass", `{"spec":{"template":{"runtimeClassName":"cua-macos-native"}}}`, true},
-		{"macos nodeSelector", `{"spec":{"template":{"nodeSelector":{"cua.ai/macos":"true"}}}}`, true},
-		{"kubevirt default", `{"spec":{"template":{"containerDiskImage":"img","cpuCores":4}}}`, false},
-		{"no template", `{"spec":{"replicas":1}}`, false},
-		{"garbage", `not json`, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := bodyRequestsMacOS([]byte(c.body)); got != c.want {
-				t.Fatalf("bodyRequestsMacOS(%s) = %v, want %v", c.body, got, c.want)
-			}
-		})
-	}
-}
-
 func TestK8sProxy_GitHubPrincipalAllowsNamespacedPoolCRUDPath(t *testing.T) {
 	var receivedPath string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -309,62 +261,27 @@ func TestK8sProxy_GitHubPrincipalAllowsNamespacedPoolCRUDPath(t *testing.T) {
 	}
 }
 
-func TestK8sProxy_GitHubPrincipalRejectsClusterWidePath(t *testing.T) {
-	h := Handlers{}
-	r := httptest.NewRequest(http.MethodGet, "/api/k8s/api/v1/nodes", nil)
-	r.SetPathValue("path", "api/v1/nodes")
-	r = withUser(r, &auth.User{
-		ID:                "user-123",
-		AZP:               "github-oidc",
-		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
-		AllowedNamespaces: []string{"ns-a"},
-	})
-	w := httptest.NewRecorder()
+func TestK8sProxy_DirectHandlerLeavesAdmissionToMiddleware(t *testing.T) {
+	auth.LoadOpa()
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer upstream.Close()
+	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
 
-	h.K8s(w, r)
+	body := []byte(`{"spec":{"template":{"containerDiskImage":"evil.example/workspace:latest","imagePullSecret":"ecr-credentials"}}}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/k8s/apis/cua.ai/v1/namespaces/foo/osgymworkspacepools", bytes.NewReader(body))
+	request.SetPathValue("path", "apis/cua.ai/v1/namespaces/foo/osgymworkspacepools")
+	response := httptest.NewRecorder()
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
+	(Handlers{}).K8s(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusCreated, response.Body.String())
 	}
-}
-
-func TestGitHubAllowedK8sPath_SandboxLifecycle(t *testing.T) {
-	const namespace = "cua-cli-wif-smoke"
-	cases := []struct {
-		name   string
-		method string
-		path   string
-		want   bool
-	}{
-		{"get warm pool", http.MethodGet, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxwarmpools/cua-cli-wif-smoke", true},
-		{"patch warm pool", http.MethodPatch, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxwarmpools/cua-cli-wif-smoke", true},
-		{"post warm pool item", http.MethodPost, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxwarmpools/cua-cli-wif-smoke", false},
-		{"patch warm pool collection", http.MethodPatch, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxwarmpools", false},
-		{"delete warm pool collection", http.MethodDelete, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxwarmpools", false},
-		{"patch trailing slash warm pool collection", http.MethodPatch, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxwarmpools/", false},
-		{"create claim", http.MethodPost, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims", true},
-		{"post claim item", http.MethodPost, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims/wif-smoke-123", false},
-		{"patch claim collection", http.MethodPatch, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims", false},
-		{"delete claim collection", http.MethodDelete, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims", false},
-		{"delete trailing slash claim collection", http.MethodDelete, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims/", false},
-		{"get claim", http.MethodGet, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims/wif-smoke-123", true},
-		{"renew claim", http.MethodPatch, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims/wif-smoke-123", true},
-		{"delete claim", http.MethodDelete, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims/wif-smoke-123", true},
-		{"get template", http.MethodGet, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxtemplates/cua-cli-wif-smoke-template", true},
-		{"write template", http.MethodPatch, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxtemplates/cua-cli-wif-smoke-template", false},
-		{"nested claim path", http.MethodGet, "apis/osgym.cua.ai/v1alpha1/namespaces/cua-cli-wif-smoke/osgymsandboxclaims/wif-smoke-123/status", false},
-		{"cluster-wide warm pools", http.MethodGet, "apis/osgym.cua.ai/v1alpha1/osgymsandboxwarmpools", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			gotNamespace, got := githubAllowedK8sPath(tc.method, tc.path)
-			if got != tc.want {
-				t.Fatalf("githubAllowedK8sPath(%q, %q) allowed = %v, want %v", tc.method, tc.path, got, tc.want)
-			}
-			if tc.want && gotNamespace != namespace {
-				t.Fatalf("githubAllowedK8sPath(%q, %q) namespace = %q, want %q", tc.method, tc.path, gotNamespace, namespace)
-			}
-		})
+	if !upstreamCalled {
+		t.Fatal("direct handler request did not reach kubectl proxy")
 	}
 }

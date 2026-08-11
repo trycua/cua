@@ -708,7 +708,7 @@ export class Api<
   };
   k8S = {
     /**
-     * @description Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the SPA can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. EventList responses are filtered by the caller's OPA visible_events policy via auth.K8sEventFilterMiddleware (mounted in main.go's route chain).
+     * @description Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the caller can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. The policy is an allowlist: only enumerated group/version/resource/method combinations are proxied (the osgym.cua.ai and cua.ai fleet CRDs, namespaced pod/service reads, pod logs and metrics, KubeVirt reads, and API discovery). Anything else, including Kubernetes events and any cluster-scoped path, is denied and never reaches the sidecar.
      *
      * @tags passthrough
      * @name GetK8S

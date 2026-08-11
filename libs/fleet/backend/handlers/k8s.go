@@ -1,10 +1,6 @@
 package handlers
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -13,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/identity"
 	"cyclops-cs-backend/metrics"
 	"go.opentelemetry.io/otel/attribute"
@@ -34,7 +29,7 @@ func kubectlProxyAddr() string {
 // K8s godoc
 //
 //	@Summary		Authenticated proxy to the in-pod kubectl-proxy sidecar
-//	@Description	Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the SPA can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. EventList responses are filtered by the caller's OPA visible_events policy via auth.K8sEventFilterMiddleware (mounted in main.go's route chain).
+//	@Description	Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the caller can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. The policy is an allowlist: only enumerated group/version/resource/method combinations are proxied (the osgym.cua.ai and cua.ai fleet CRDs, namespaced pod/service reads, pod logs and metrics, KubeVirt reads, and API discovery). Anything else, including Kubernetes events and any cluster-scoped path, is denied and never reaches the sidecar.
 //	@Tags			passthrough
 //	@Param			path	path		string	true	"K8s API path"
 //	@Success		200		{string}	string	"K8s API response"
@@ -60,38 +55,6 @@ func (h Handlers) K8s(w http.ResponseWriter, r *http.Request) {
 	// Extract the authenticated user for K8s impersonation — Capsule
 	// uses these headers to scope the request to the user's Tenant.
 	user := currentUser(r.WithContext(ctx))
-	if isGitHubPrincipal(user) {
-		namespace, ok := githubAllowedK8sPath(r.Method, strings.TrimPrefix(r.PathValue("path"), "/"))
-		if !ok {
-			writeErr(w, http.StatusForbidden, "k8s path is outside github trust policy scope")
-			return
-		}
-		if !namespaceAllowed(user, namespace) {
-			writeErr(w, http.StatusForbidden, "namespace is outside github trust policy scope")
-			return
-		}
-	}
-
-	if allowed, err := poolImagePullSecretAllowed(ctx, r); err != nil {
-		writeErr(w, http.StatusBadRequest, "could not inspect pool request")
-		return
-	} else if !allowed {
-		writeErr(w, http.StatusForbidden, "pool image pull secret or image is not allowed")
-		return
-	}
-
-	// macOS is an ADMIN-ONLY capability. The SPA hides the option for
-	// non-admins, but that is not a boundary — enforce it here so a customer
-	// cannot create a macOS pool by crafting the API call directly. Any
-	// osgymworkspacepools write whose body requests the macOS runtime requires
-	// admin membership; non-macOS pools and all reads are unaffected. CUA-macos.
-	if forbid, err := macosPoolNeedsAdmin(ctx, user, r); err != nil {
-		writeErr(w, http.StatusBadRequest, "could not inspect pool request")
-		return
-	} else if forbid {
-		writeErr(w, http.StatusForbidden, "macOS pools are restricted to administrators")
-		return
-	}
 
 	rp := httputil.NewSingleHostReverseProxy(target)
 	origDirector := rp.Director
@@ -133,138 +96,6 @@ func (h Handlers) K8s(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordUpstreamProxy("k8s", rw.statusCode, time.Since(start))
 }
 
-func poolImagePullSecretAllowed(ctx context.Context, r *http.Request) (bool, error) {
-	switch r.Method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-	default:
-		return true, nil
-	}
-	if !isPoolShapedWrite(r.PathValue("path")) || r.Body == nil {
-		return true, nil
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		return false, err
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	var object map[string]any
-	if err := json.Unmarshal(body, &object); err != nil {
-		return false, err
-	}
-	return auth.EvalPoolAdmission(ctx, r.Method, object)
-}
-
-// isPoolShapedWrite reports whether path targets a resource whose body can
-// carry a VM shape (image, runtime, node placement): the native
-// OSGymSandboxTemplate, or the retired legacy OSGymWorkspacePool (kept so a
-// stale client cannot slip past the gate while the CRD deletion propagates).
-func isPoolShapedWrite(path string) bool {
-	return strings.Contains(path, "osgymsandboxtemplates") ||
-		strings.Contains(path, "osgymworkspacepools")
-}
-
-// macosPoolNeedsAdmin returns true if r is a write to a pool-shaped
-// resource whose body opts into the macOS runtime AND the caller is not an
-// admin. It rebuffers r.Body so the downstream proxy can still read it. Reads
-// and non-macOS writes always return false (no restriction).
-func macosPoolNeedsAdmin(ctx context.Context, user *auth.User, r *http.Request) (bool, error) {
-	switch r.Method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-	default:
-		return false, nil
-	}
-	if !isPoolShapedWrite(r.PathValue("path")) || r.Body == nil {
-		return false, nil
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		return false, err
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body)) // rebuffer for the proxy
-	if !bodyRequestsMacOS(body) {
-		return false, nil
-	}
-	isAdmin, err := auth.EvalIsAdmin(ctx, user)
-	if err != nil {
-		return false, err
-	}
-	return !isAdmin, nil
-}
-
-// bodyRequestsMacOS reports whether a pool-shaped CR body opts into the
-// macOS runtime — via the VM template's runtime=macos, or (defence in depth)
-// the macOS-only runtimeClass / nodeSelector that a macOS pod carries. The VM
-// shape lives at spec.vmTemplate on the native OSGymSandboxTemplate and at
-// spec.template on the retired legacy OSGymWorkspacePool.
-func bodyRequestsMacOS(body []byte) bool {
-	var obj map[string]any
-	if json.Unmarshal(body, &obj) != nil {
-		return false
-	}
-	spec, _ := obj["spec"].(map[string]any)
-	tmpl, _ := spec["vmTemplate"].(map[string]any)
-	if tmpl == nil {
-		tmpl, _ = spec["template"].(map[string]any)
-	}
-	if tmpl == nil {
-		return false
-	}
-	if s, _ := tmpl["runtime"].(string); strings.EqualFold(s, "macos") {
-		return true
-	}
-	if s, _ := tmpl["runtimeClassName"].(string); s == "cua-macos-native" {
-		return true
-	}
-	if ns, _ := tmpl["nodeSelector"].(map[string]any); ns != nil {
-		if _, ok := ns["cua.ai/macos"]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func githubAllowedK8sPath(method, path string) (string, bool) {
-	parts := strings.Split(path, "/")
-	if len(parts) != 6 && len(parts) != 7 {
-		return "", false
-	}
-	if len(parts) == 7 && parts[6] == "" {
-		return "", false
-	}
-	if parts[0] != "apis" || parts[3] != "namespaces" {
-		return "", false
-	}
-
-	if parts[1] == "cua.ai" && parts[2] == "v1" && parts[5] == "osgymworkspacepools" {
-		switch method {
-		case http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete:
-			return parts[4], true
-		}
-	}
-	if parts[1] != "osgym.cua.ai" || parts[2] != "v1alpha1" {
-		return "", false
-	}
-
-	resource := parts[5]
-	isItem := len(parts) == 7
-	switch resource {
-	case "osgymsandboxwarmpools", "osgymsandboxclaims":
-		switch method {
-		case http.MethodGet:
-			return parts[4], true
-		case http.MethodPost:
-			return parts[4], !isItem
-		case http.MethodPatch, http.MethodDelete:
-			return parts[4], isItem
-		}
-	case "osgymsandboxtemplates":
-		if method == http.MethodGet {
-			return parts[4], true
-		}
-	}
-	return "", false
-}
-
 // Orch godoc
 //
 //	@Summary		SPA-authenticated proxy to a per-namespace orchestrator service
@@ -292,11 +123,10 @@ func (h Handlers) Orch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid namespace or service")
 		return
 	}
-	// Tenancy boundary: this proxy dials Service DNS directly (never the
-	// K8s API), so Capsule can't scope it — enforce ownership here.
-	if !h.requireNamespaceAccess(w, r, user, ns) {
-		return
-	}
+	// Tenancy boundary: this proxy dials Service DNS directly (never the K8s
+	// API), so Capsule can't scope it. The boundary is the ownership conjunct
+	// of OrchRoutePolicy, which has already run by the time this handler is
+	// reached — see auth/authz_ownership.rego.
 	upstreamPath := "/" + strings.TrimPrefix(r.PathValue("path"), "/")
 	host := svc + "." + ns + "." + h.GatewayCfg.ClusterDomain
 	target := &url.URL{Scheme: h.GatewayCfg.Scheme, Host: host + ":" + h.GatewayCfg.Port}

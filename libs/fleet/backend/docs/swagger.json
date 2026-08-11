@@ -1,260 +1,13 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), namespace management, and deprecated batch / label routes that now return 410 Gone. All pool operations use OSGymSandboxClaim CRs (Path B).",
+        "description": "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), and namespace management. All pool operations use OSGymSandboxClaim CRs (Path B).",
         "title": "Cyclops CS Backend API",
         "contact": {},
         "version": "0.1"
     },
     "basePath": "/",
     "paths": {
-        "/api/batch/{pool}/lanes": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "batch"
-                ],
-                "summary": "Deprecated batch lanes route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "batch"
-                ],
-                "summary": "Deprecated batch lanes route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/batch/{pool}/submit": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "batch"
-                ],
-                "summary": "Deprecated batch submission route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/batch/{pool}/{id}": {
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "batch"
-                ],
-                "summary": "Deprecated batch delete route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Batch ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/batch/{pool}/{id}/results": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "batch"
-                ],
-                "summary": "Deprecated batch results route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Batch ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/batch/{pool}/{id}/status": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "batch"
-                ],
-                "summary": "Deprecated batch status route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Batch ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/api/billing/portal-session": {
             "post": {
                 "security": [
@@ -529,7 +282,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the SPA can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. EventList responses are filtered by the caller's OPA visible_events policy via auth.K8sEventFilterMiddleware (mounted in main.go's route chain).",
+                "description": "Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the caller can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. The policy is an allowlist: only enumerated group/version/resource/method combinations are proxied (the osgym.cua.ai and cua.ai fleet CRDs, namespaced pod/service reads, pod logs and metrics, KubeVirt reads, and API discovery). Anything else, including Kubernetes events and any cluster-scoped path, is denied and never reaches the sidecar.",
                 "tags": [
                     "passthrough"
                 ],
@@ -698,186 +451,6 @@
                 }
             }
         },
-        "/api/label/{pool}/{label}": {
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label delete route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/batch": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label batch route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/results": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label results route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/status": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label status route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/api/namespaces": {
             "get": {
                 "security": [
@@ -980,6 +553,68 @@
             }
         },
         "/api/namespaces/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Gets a K8s namespace via impersonation. Capsule restricts access to the caller's Tenant.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "namespaces"
+                ],
+                "summary": "Get a namespace owned by the calling user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Namespace name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.NamespaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "delete": {
                 "security": [
                     {
@@ -1558,7 +1193,7 @@
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.",
+            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

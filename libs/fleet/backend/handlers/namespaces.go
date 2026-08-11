@@ -352,10 +352,6 @@ func (h Handlers) GetNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.requireNamespaceAccess(w, r, user, name) {
-		return
-	}
-
 	var namespace struct {
 		Metadata struct {
 			Name              string            `json:"name"`

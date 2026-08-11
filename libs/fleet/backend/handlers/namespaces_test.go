@@ -143,16 +143,14 @@ func TestGetNamespace_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
 	}
-	if len(fk.requests) != 2 {
-		t.Fatalf("request count = %d, want 2", len(fk.requests))
+	// One request, not two: the ownership probe this handler used to make after
+	// the read is the policy stage's now, and runs before the handler at all.
+	if len(fk.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(fk.requests))
 	}
 	namespaceGet := fk.requests[0]
 	if namespaceGet.method != http.MethodGet || namespaceGet.path != "/api/v1/namespaces/demo" {
 		t.Fatalf("namespace GET = %s %s", namespaceGet.method, namespaceGet.path)
-	}
-	probe := fk.requests[1]
-	if probe.method != http.MethodGet || probe.path != "/apis/rbac.authorization.k8s.io/v1/namespaces/demo/rolebindings" {
-		t.Fatalf("ownership probe = %s %s", probe.method, probe.path)
 	}
 	var got NamespaceResponse
 	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
@@ -220,12 +218,18 @@ func TestGetNamespace_PreservesForbiddenAndNotFound(t *testing.T) {
 	}
 }
 
-func TestGetNamespace_ExistingNamespaceWithoutOwnership_Forbidden(t *testing.T) {
+// A non-owner CAN read another tenant's namespace object through impersonation
+// — capsule-tenant-cluster-resources grants namespaces get cluster-wide to
+// system:authenticated, so the read succeeds and gates nothing. What stops the
+// request is the ownership conjunct of the namespaces policy, which runs before
+// this handler; TestNamespacesRoute_GetOtherTenant_Forbidden is that test.
+//
+// This one pins the half that is left here: the handler does not re-check, so
+// calling it directly serves the namespace it was given. Same shape as
+// TestK8sProxy_DirectHandlerLeavesAdmissionToMiddleware.
+func TestGetNamespace_DirectHandlerLeavesOwnershipToPolicy(t *testing.T) {
 	resetOwnershipCache()
-	fk := newFakeK8sSequence(
-		fakeK8sResponse{status: http.StatusOK, body: nsCreatedResponse("other-tenant")},
-		fakeK8sResponse{status: http.StatusForbidden, body: `{"kind":"Status"}`},
-	)
+	fk := newFakeK8s(http.StatusOK, nsCreatedResponse("other-tenant"))
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
 
@@ -236,17 +240,14 @@ func TestGetNamespace_ExistingNamespaceWithoutOwnership_Forbidden(t *testing.T) 
 
 	Handlers{}.GetNamespace(w, r)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusForbidden, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if len(fk.requests) != 2 {
-		t.Fatalf("request count = %d, want 2", len(fk.requests))
+	if len(fk.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(fk.requests))
 	}
 	if got := fk.requests[0].path; got != "/api/v1/namespaces/other-tenant" {
 		t.Fatalf("namespace GET path = %q", got)
-	}
-	if got := fk.requests[1].path; got != "/apis/rbac.authorization.k8s.io/v1/namespaces/other-tenant/rolebindings" {
-		t.Fatalf("ownership probe path = %q", got)
 	}
 }
 

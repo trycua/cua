@@ -717,7 +717,13 @@ pub fn with_foreground_assist(
     }
 
     unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
-    await_frontmost(target_pid);
+    // `set_front` moves WindowServer's front process but does not make the
+    // target's NSWindow key, and AppKit installs a first responder only for a
+    // key window. Without this the app is "frontmost" to WindowServer while
+    // remaining, from AppKit's point of view, unfocused — so the AXFocused
+    // write in the body has no responder chain to attach to.
+    make_exact_window_key(target_pid, target_wid);
+    await_window_focused(target_pid, target_wid);
 
     let result = body();
 
@@ -731,24 +737,33 @@ pub fn with_foreground_assist(
 
 /// Upper bound on how long [`with_foreground_assist`] waits for a requested
 /// activation to become observable. Chosen to cover a Catalyst app's activation
-/// plus first-responder install; past this the caller proceeds anyway so a
-/// stubborn target degrades to the old behavior instead of hanging.
+/// plus key-window install; past this the caller proceeds anyway so a stubborn
+/// target degrades to the old behavior instead of hanging.
 const ACTIVATION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
 
-/// Poll interval for [`await_frontmost`]. Short enough that a fast native app
-/// pays roughly one tick, long enough not to spin on the WindowServer.
+/// Poll interval for [`await_window_focused`]. Short enough that a fast native
+/// app pays roughly one tick, long enough not to spin on the WindowServer.
 const ACTIVATION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
-/// Block until `pid` is observably frontmost, or the timeout expires.
+/// Block until `target_wid` is the application's focused AX window, or the
+/// timeout expires. Returns whether that state was observed.
 ///
-/// Returns whether the activation was observed. A `false` return is not fatal:
-/// the caller proceeds with delivery regardless, because a target that never
-/// reports frontmost is exactly the case the pre-existing best-effort contract
-/// already covered.
-fn await_frontmost(pid: libc::pid_t) -> bool {
+/// The predicate is deliberately `AXFocusedWindow` and not
+/// `NSWorkspace.frontmostApplication`. The latter does not observe a
+/// SkyLight-level front-process change at all: polling it every 15ms across a
+/// full foreground `type_text` against WhatsApp showed zero transitions while
+/// the target was demonstrably being fronted, so a frontmost-based wait always
+/// burns its whole timeout and never actually gates on anything. `AXFocusedWindow`
+/// is the same proof [`preserves_exact_existing_focus`] already trusts to decide
+/// whether a window is focused.
+///
+/// A `false` return is not fatal: the caller proceeds with delivery regardless,
+/// because a target that never reports focus is exactly the case the pre-existing
+/// best-effort contract already covered.
+fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
     let deadline = std::time::Instant::now() + ACTIVATION_WAIT_TIMEOUT;
     loop {
-        if crate::apps::frontmost_pid() == Some(pid) {
+        if crate::ax::bindings::focused_window_id_of_pid(pid) == Some(window_id) {
             return true;
         }
         if std::time::Instant::now() >= deadline {

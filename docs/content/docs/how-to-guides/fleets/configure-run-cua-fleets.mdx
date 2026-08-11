@@ -1,6 +1,6 @@
 ---
 title: Configure Fleets with Terraform
-description: Create Linux and Windows run.cua.ai fleets with the temporary local Cua Fleets provider installation.
+description: Create Linux and Windows run.cua.ai fleets with Terraform and the public Cua Fleets provider.
 ---
 
 Use this guide to create a run.cua.ai fleet backed by the public Cua Fleets
@@ -11,24 +11,11 @@ provider. Terraform represents each fleet as a `fleets_pool` resource.
 - A run.cua.ai user key or access token with permission to manage Fleet pools.
   Keep credentials in environment variables or a secret manager, not in source
   control.
-- Terraform or OpenTofu and Go on the machine where you build the provider.
-- The temporary local provider installation from the public
-  [terraform-provider-fleets README](https://github.com/trycua/terraform-provider-fleets#temporary-local-installation-until-registry-publication).
+- Terraform or OpenTofu.
 
-The provider is not published to the Terraform Registry yet. Follow the public
-README to clone `https://github.com/trycua/terraform-provider-fleets.git`, build
-for your current OS and architecture, and configure its filesystem mirror. That
-flow installs a local binary; it is not Registry resolution. Replace this
-temporary setup with the normal Registry installation after `trycua/fleets` is
-published.
-
-The provider source address remains `trycua/fleets`; do not use a GitHub URL in
-`required_providers.source`. Set the CLI configuration file created by the
-public README before initializing either example:
-
-```bash
-export TF_CLI_CONFIG_FILE="$HOME/.terraformrc-fleets-local"
-```
+Terraform installs `trycua/fleets` from the public Terraform Registry during
+`terraform init`. The examples pin provider version `0.2.0` so initialization
+and plans use the same release across environments.
 
 For OpenTofu, run the same commands with `tofu` in place of `terraform`.
 
@@ -64,7 +51,7 @@ terraform {
   required_providers {
     fleets = {
       source  = "trycua/fleets"
-      version = "1.0.0"
+      version = "0.2.0"
     }
   }
 }
@@ -116,7 +103,7 @@ terraform {
   required_providers {
     fleets = {
       source  = "trycua/fleets"
-      version = "1.0.0"
+      version = "0.2.0"
     }
   }
 }
@@ -167,11 +154,9 @@ output "windows_fleet" {
 
 ## Apply, verify, and destroy
 
-With `TF_CLI_CONFIG_FILE` still set, initialize from the local mirror and run
-one example:
+Initialize from the public Registry and run one example:
 
 ```bash
-rm -rf .terraform .terraform.lock.hcl
 terraform init
 terraform fmt -check
 terraform validate
@@ -180,8 +165,12 @@ terraform apply
 terraform output
 ```
 
-`terraform init` uses the locally built provider and must not resolve
-`trycua/fleets` from the public Registry. The provider returns the backing `namespace` and template name, the live
+Commit `.terraform.lock.hcl` with your configuration so future runs select the
+same provider build. Run `terraform plan` against the existing state before
+applying changes; refresh keeps out-of-band changes to the pool target and
+status visible in the plan and outputs.
+
+The provider returns the backing `namespace` and template name, the live
 `replicas` target, and the `current_replicas` and `ready_replicas` status counts.
 A ready fleet has at least one ready sandbox after its warm pool provisions.
 

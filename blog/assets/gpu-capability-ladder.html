@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>The Apple GPU feature cap inside a macOS VM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Urbanist:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #000000;
+        --bg-card: #181818;
+        --bg-surface: #212121;
+        --ink-strong: #f6f8fb;
+        --ink-body: rgba(224, 230, 238, 0.84);
+        --ink-muted: rgba(164, 173, 187, 0.82);
+        --brand: #9fd7ff;
+        --brand-soft: #ecf6ff;
+        --brand-tint: rgba(159, 215, 255, 0.09);
+        --brand-tint2: rgba(159, 215, 255, 0.06);
+        --line-soft: rgba(255, 255, 255, 0.12);
+        --line-strong: rgba(255, 255, 255, 0.2);
+        --font-display: 'Instrument Serif', Georgia, serif;
+        --font-body: 'Urbanist', system-ui, sans-serif;
+        --font-docs: 'Inter', system-ui, sans-serif;
+        --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg-base);
+        font-family: var(--font-docs);
+        color: var(--ink-body);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap {
+        max-width: 1010px;
+        margin: 0 auto;
+        padding: 40px;
+      }
+      .panel {
+        background: var(--bg-card);
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        padding: 34px 38px 32px;
+      }
+
+      .eyebrow {
+        font-family: var(--font-mono);
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 3px;
+        color: var(--brand);
+        margin-bottom: 12px;
+      }
+      h1 {
+        font-family: var(--font-display);
+        font-weight: 400;
+        font-size: 32px;
+        line-height: 1.1;
+        margin: 0 0 10px;
+        color: var(--ink-strong);
+        letter-spacing: 0.01em;
+      }
+      h1 .muted {
+        color: var(--ink-muted);
+        font-style: italic;
+      }
+      .sub {
+        font-size: 14px;
+        color: var(--ink-muted);
+        margin: 0 0 28px;
+        max-width: 640px;
+        line-height: 1.7;
+      }
+
+      .fig {
+        display: flex;
+        gap: 22px;
+        align-items: stretch;
+      }
+      .rungs {
+        flex: 1 1 auto;
+      }
+      .rung {
+        display: flex;
+        align-items: center;
+        height: 44px;
+        padding: 0 15px;
+        border-radius: 8px;
+      }
+      .rung + .rung {
+        margin-top: 3px;
+      }
+      .fam {
+        width: 70px;
+        font-family: var(--font-body);
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--ink-strong);
+        flex-shrink: 0;
+      }
+      .era {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--ink-muted);
+        letter-spacing: 0.2px;
+        white-space: nowrap;
+      }
+      .tag {
+        margin-left: auto;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        padding: 4px 11px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+
+      .rung.host {
+        background: var(--brand-tint);
+        border: 1px solid rgba(159, 215, 255, 0.3);
+      }
+      .rung.host .era {
+        color: var(--brand-soft);
+      }
+      .rung.host .tag {
+        background: var(--brand);
+        color: var(--bg-base);
+      }
+      .rung.gap {
+        background: var(--brand-tint2);
+      }
+      .rung.capped {
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid var(--line-soft);
+      }
+      .rung.capped .fam {
+        color: var(--ink-body);
+      }
+      .rung.capped .tag {
+        border: 1px solid var(--line-strong);
+        color: var(--ink-muted);
+      }
+
+      .bracket {
+        flex: 0 0 214px;
+        display: flex;
+        align-items: stretch;
+        gap: 13px;
+        margin-top: 47px;
+        margin-bottom: 47px;
+      }
+      .bracket-rail {
+        width: 9px;
+        border: 1.5px solid var(--brand);
+        border-left: none;
+        border-radius: 0 7px 7px 0;
+        opacity: 0.7;
+      }
+      .bracket-body {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .bracket-title {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--brand);
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin-bottom: 10px;
+      }
+      .bracket-body ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .bracket-body li {
+        font-family: var(--font-docs);
+        font-size: 12.5px;
+        color: var(--ink-body);
+        padding: 3px 0 3px 16px;
+        position: relative;
+        line-height: 1.35;
+      }
+      .bracket-body li::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 8px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--brand);
+      }
+
+      .legend {
+        margin-top: 26px;
+        display: flex;
+        gap: 24px;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--ink-muted);
+      }
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .chip {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+      }
+      .chip.dim {
+        background: transparent;
+        border: 1px solid var(--line-strong);
+      }
+      .caption {
+        margin-top: 20px;
+        font-size: 12px;
+        color: var(--ink-muted);
+        max-width: 700px;
+        line-height: 1.6;
+        border-top: 1px solid var(--line-soft);
+        padding-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="panel">
+        <div class="eyebrow">GPU Feature Cap</div>
+        <h1>What a stock macOS VM <span class="muted">reports</span></h1>
+        <p class="sub">
+          The paravirtualized device runs work on the host GPU but can report a conservative feature
+          level. In our tested workload, selected newer paths stayed behind that reporting boundary.
+        </p>
+
+        <div class="fig">
+          <div class="rungs">
+            <div class="rung host">
+              <span class="fam">Apple 9</span>
+              <span class="era">SIMD-matrix · bfloat16 · 64 KB</span>
+              <span class="tag">Tested profile</span>
+            </div>
+            <div class="rung gap">
+              <span class="fam">Apple 8</span><span class="era">Metal 3 / 4</span>
+            </div>
+            <div class="rung gap">
+              <span class="fam">Apple 7</span
+              ><span class="era">Metal 3 / 4 · SIMD-group matrix</span>
+            </div>
+            <div class="rung gap">
+              <span class="fam">Apple 6</span><span class="era">Metal 3</span>
+            </div>
+            <div class="rung capped">
+              <span class="fam">Apple 5</span>
+              <span class="era">Metal 2 · no matrix path</span>
+              <span class="tag">Stock VM reports here</span>
+            </div>
+            <div class="rung"><span class="fam">Apple 4</span><span class="era">Metal 2</span></div>
+            <div class="rung"><span class="fam">Apple 3</span><span class="era">Metal 2</span></div>
+            <div class="rung"><span class="fam">Apple 2</span><span class="era">Metal 1</span></div>
+            <div class="rung"><span class="fam">Apple 1</span><span class="era">Metal 1</span></div>
+          </div>
+
+          <div class="bracket">
+            <div class="bracket-rail"></div>
+            <div class="bracket-body">
+              <div class="bracket-title">Paths behind the cap</div>
+              <ul>
+                <li>Metal 3 / Metal 4</li>
+                <li>SIMD-group matrix multiply</li>
+                <li>bfloat16</li>
+                <li>64 KB threadgroup memory<br />(up from 32 KB)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="legend">
+          <div class="legend-item">
+            <span class="chip" style="background: var(--brand)"></span>Tested capability profile
+          </div>
+          <div class="legend-item"><span class="chip dim"></span>Stock guest report</div>
+        </div>
+
+        <p class="caption">
+          Feature levels are illustrative. Apple groups GPU capability into numbered families with
+          Metal feature sets layered on top. This graphic ends at Apple 9, the ceiling used in our
+          test. The stock guest reported roughly Apple 5 with SIMD-group matrix support unavailable.
+          The configured profile changed selected answers so llama.cpp could choose newer paths.
+          Each additional feature requires its own virtualization test.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

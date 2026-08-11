@@ -1163,15 +1163,16 @@ impl ToolRegistry {
         // Resource adapters run at the same canonical boundary as policy and
         // manifest admission, after session capture-scope validation but
         // before recording or the platform tool can observe user state. This
-        // avoids prompting for a call the session policy will refuse, while
+        // avoids prompting for a call the capability manifest will refuse, while
         // preserving the public arguments in the grant scope and the private
         // runtime session key in its revocation lifecycle.
         if has_adapter("private_observation")
-            && !runtime_proves_driver_owned
-            && tool
-                .protected_resource_ownership("private_observation", &public_args)
-                .await
-                != ProtectedResourceOwnership::DriverOwned
+            && ((!runtime_proves_driver_owned
+                && tool
+                    .protected_resource_ownership("private_observation", &public_args)
+                    .await
+                    != ProtectedResourceOwnership::DriverOwned)
+                || context.capability_manifest().is_some())
         {
             if let Err(error) = self
                 .authorize_private_observation(
@@ -1218,7 +1219,9 @@ impl ToolRegistry {
             namespace_runtime_args(&mut args, context, evidence);
         }
         let recording_args = recording_args_for(resolved_name, &public_args);
-        if has_adapter("desktop_input") && !runtime_proves_driver_owned {
+        if has_adapter("desktop_input")
+            && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
+        {
             if let Err(error) = self
                 .authorize_desktop_input(
                     resolved_name,
@@ -1232,10 +1235,11 @@ impl ToolRegistry {
             }
         }
         if has_adapter("browser_consequential_action")
-            && tool
+            && (tool
                 .protected_resource_ownership("browser_consequential_action", &public_args)
                 .await
                 != ProtectedResourceOwnership::DriverOwned
+                || context.capability_manifest().is_some())
         {
             let approved_scope = match self
                 .authorize_attested_resource(
@@ -1269,10 +1273,11 @@ impl ToolRegistry {
             }
         }
         if has_adapter("browser_bound_input")
-            && tool
+            && (tool
                 .protected_resource_ownership("browser_bound_input", &public_args)
                 .await
                 != ProtectedResourceOwnership::DriverOwned
+                || context.capability_manifest().is_some())
         {
             let approved_scope = match self
                 .authorize_attested_resource(
@@ -1306,8 +1311,7 @@ impl ToolRegistry {
             }
         }
         if has_adapter("process_control")
-            && (!runtime_proves_driver_owned
-                || context.mode() == crate::authorization::PermissionMode::Bounded)
+            && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
         {
             let approved_scope = match self
                 .authorize_attested_resource(
@@ -1355,6 +1359,10 @@ impl ToolRegistry {
             {
                 return refusal;
             }
+        }
+
+        if let Err(error) = context.commit_authorized_dispatch() {
+            return permission_denied_result(error);
         }
 
         let lifecycle_dispatch =
@@ -1578,12 +1586,16 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), crate::consent::ConsentError> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let browser_target = args.get("target_id").and_then(Value::as_str);
         let browser_tab = args.get("tab_id").and_then(Value::as_str);
-        if context.mode() == crate::authorization::PermissionMode::Standard {
+        if context.mode() == crate::authorization::PermissionMode::Standard
+            && context.capability_manifest().is_none()
+        {
             // Standard observation is promptless, but browser observations
             // still have to attest their live target before dispatch.
             if browser_target.is_some()
@@ -1704,7 +1716,7 @@ impl ToolRegistry {
             )
         };
 
-        if context.mode() == crate::authorization::PermissionMode::Bounded {
+        if context.capability_manifest().is_some() {
             if let Some(pid) = resource.get("pid").and_then(Value::as_i64) {
                 self.enrich_application_resource(&mut resource, pid).await;
             }
@@ -1731,11 +1743,9 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), crate::consent::ConsentError> {
-        if matches!(
-            context.mode(),
-            crate::authorization::PermissionMode::Standard
-                | crate::authorization::PermissionMode::Unrestricted
-        ) {
+        if context.mode() != crate::authorization::PermissionMode::Bounded
+            && context.capability_manifest().is_none()
+        {
             // Standard and unrestricted input do not need a protected grant.
             // Bounded mode continues below so the exact resource can be
             // checked against its approved manifest.
@@ -1810,7 +1820,7 @@ impl ToolRegistry {
             )
         };
 
-        if context.mode() == crate::authorization::PermissionMode::Bounded {
+        if context.capability_manifest().is_some() {
             if let Some(pid) = resource.get("pid").and_then(Value::as_i64) {
                 self.enrich_application_resource(&mut resource, pid).await;
             }
@@ -1837,7 +1847,9 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), crate::consent::ConsentError> {
-        if context.mode() != crate::authorization::PermissionMode::Bounded {
+        if context.mode() != crate::authorization::PermissionMode::Bounded
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let (operation, content_kind, summary) = if tool_name == "clipboard_read" {
@@ -1890,7 +1902,9 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), ToolResult> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let (resource, summary) = match tool_name {
@@ -2050,7 +2064,9 @@ impl ToolRegistry {
         idle_ttl: Duration,
         absolute_ttl: Duration,
     ) -> Result<Value, ToolResult> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(Value::Null);
         }
         let mut resource = tool
@@ -2096,7 +2112,9 @@ impl ToolRegistry {
         lifecycle_session: Option<&str>,
         approved_scope: &Value,
     ) -> Result<(), ToolResult> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let mut validation_scope = approved_scope.clone();
@@ -2146,7 +2164,9 @@ impl ToolRegistry {
                 })),
             );
         }
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let properties = tool
@@ -2643,6 +2663,13 @@ mod runtime_isolation_tests {
     fn bounded_context(
         manifest_source: &str,
     ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
+        manifest_context(PermissionMode::Bounded, manifest_source)
+    }
+
+    fn manifest_context(
+        mode: PermissionMode,
+        manifest_source: &str,
+    ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         file.write_all(manifest_source.as_bytes()).unwrap();
         let manifest = Arc::new(
@@ -2650,14 +2677,14 @@ mod runtime_isolation_tests {
                 .expect("test bounded manifest loads"),
         );
         let ceiling = SessionModeCeiling::for_trusted_sessions(
-            [PermissionMode::Bounded],
-            false,
+            [mode],
+            mode == PermissionMode::Unrestricted,
             Duration::from_secs(60),
             Duration::from_secs(30),
         )
         .unwrap();
         SessionAuthorizationRegistry::with_ceiling(ceiling)
-            .compatibility_context(PermissionMode::Bounded, Some(manifest))
+            .compatibility_context(mode, Some(manifest))
             .unwrap()
     }
 
@@ -3036,6 +3063,155 @@ resources:
 
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_ne!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn capability_manifest_typed_resources_narrow_standard_and_unrestricted() {
+        for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
+            let allowed_hits = Arc::new(AtomicUsize::new(0));
+            let registry = attested_registry("get_window_state", None, allowed_hits.clone(), false);
+            let allowed = manifest_context(
+                mode,
+                r#"
+version: 3
+allow:
+  tools: [get_window_state]
+resources:
+  apps:
+    - executable: /synthetic/fixture
+      windows: all
+"#,
+            );
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({"pid": 424242, "window_id": 7, "session": "review"}),
+                    allowed,
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true), "{mode:?} in-scope call");
+            assert_eq!(allowed_hits.load(Ordering::SeqCst), 1);
+
+            let denied_hits = Arc::new(AtomicUsize::new(0));
+            let registry = attested_registry("get_window_state", None, denied_hits.clone(), false);
+            let denied = manifest_context(
+                mode,
+                r#"
+version: 3
+allow:
+  tools: [get_window_state]
+resources:
+  apps:
+    - executable: /another/application
+      windows: all
+"#,
+            );
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({"pid": 424242, "window_id": 7, "session": "review"}),
+                    denied,
+                )
+                .await;
+            assert_eq!(result.is_error, Some(true), "{mode:?} out-of-scope call");
+            assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_manifest_tools_narrow_standard_and_unrestricted() {
+        for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = attested_registry("get_window_state", None, hits.clone(), false);
+            let context = manifest_context(
+                mode,
+                r#"
+version: 3
+allow:
+  tools: [click]
+"#,
+            );
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({"pid": 424242, "window_id": 7, "session": "review"}),
+                    context,
+                )
+                .await;
+            assert_eq!(result.is_error, Some(true), "{mode:?} undeclared tool");
+            assert_eq!(hits.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_typed_resource_does_not_refresh_manifest_idle_lease() {
+        let denied_hits = Arc::new(AtomicUsize::new(0));
+        let allowed_hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new();
+        for (name, window_id, hits) in [
+            ("get_desktop_state", 8_u64, denied_hits.clone()),
+            ("get_window_state", 7_u64, allowed_hits.clone()),
+        ] {
+            registry.register(Box::new(AttestedProbe {
+                hits,
+                scope: serde_json::json!({
+                    "kind": "window",
+                    "pid": 42,
+                    "window_id": window_id,
+                }),
+                stale_before_dispatch: false,
+                def: super::ToolDef {
+                    name: name.to_owned(),
+                    description: "manifest idle lease probe".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: true,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }));
+        }
+        let context = manifest_context(
+            PermissionMode::Standard,
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 1s
+allow:
+  tools: [get_desktop_state, get_window_state]
+resources:
+  desktop:
+    windows:
+      - pid: 42
+        window_id: 7
+"#,
+        );
+
+        tokio::time::sleep(Duration::from_millis(650)).await;
+        let denied = registry
+            .invoke_with_context(
+                "get_desktop_state",
+                serde_json::json!({"session": "lease"}),
+                context.clone(),
+            )
+            .await;
+        assert_eq!(denied.is_error, Some(true));
+        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
+
+        tokio::time::sleep(Duration::from_millis(650)).await;
+        let expired = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"pid": 42, "window_id": 7, "session": "lease"}),
+                context,
+            )
+            .await;
+        assert_eq!(expired.is_error, Some(true));
+        assert_eq!(allowed_hits.load(Ordering::SeqCst), 0);
+        assert!(expired
+            .content
+            .iter()
+            .any(|content| matches!(content, crate::protocol::Content::Text { text, .. } if text.contains("idle timeout"))));
     }
 
     #[tokio::test]
@@ -3443,6 +3619,80 @@ resources:
                 .and_then(serde_json::Value::as_str),
             Some("foreign_process_termination_denied")
         );
+    }
+
+    #[tokio::test]
+    async fn manifest_cannot_widen_standard_foreign_process_termination() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = attested_registry("kill_app", Some(provider.clone()), hits.clone(), false);
+        let context = manifest_context(
+            PermissionMode::Standard,
+            r#"
+version: 3
+allow:
+  tools: [kill_app]
+resources:
+  processes:
+    terminate: [424242]
+"#,
+        );
+        let result = registry
+            .invoke_with_context(
+                "kill_app",
+                serde_json::json!({"pid": 424242, "session": "process"}),
+                context,
+            )
+            .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("foreign_process_termination_denied")
+        );
+    }
+
+    #[tokio::test]
+    async fn manifest_preserves_standard_owned_process_termination_inside_scope() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("kill_app", None, hits.clone(), false);
+        let context = manifest_context(
+            PermissionMode::Standard,
+            r#"
+version: 3
+allow:
+  tools: [kill_app]
+resources:
+  processes:
+    terminate: [424242]
+"#,
+        );
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(
+                &context.runtime_session_key("process"),
+                crate::browser::ProcessFingerprint {
+                    pid: 424242,
+                    start_time: Some(7),
+                    executable: Some("/synthetic/fixture".to_owned()),
+                },
+            );
+
+        let result = registry
+            .invoke_with_context(
+                "kill_app",
+                serde_json::json!({"pid": 424242, "session": "process"}),
+                context,
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

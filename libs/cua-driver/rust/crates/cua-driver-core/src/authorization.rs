@@ -116,8 +116,10 @@ pub struct EnforcementAdapterDescriptor {
     /// Mode-specific truth. `state` remains the standard-mode value for
     /// backward-compatible inventory consumers.
     pub enforcement_by_mode: AdapterEnforcement,
-    /// Runtime behavior selected after hard invariants and policy admission.
-    pub behavior_by_mode: AdapterModeBehavior,
+    /// Factored profile behavior selected after hard invariants, configured
+    /// policy, and optional capability-manifest scope admission.
+    #[serde(rename = "profile_behavior_class")]
+    pub profile_behavior: AdapterProfileBehavior,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -151,34 +153,41 @@ pub enum ModeBehavior {
     Allow,
     Deny,
     RequireGrant,
-    Manifest,
+    /// Bounded-profile compatibility spelling on the public inventory. The
+    /// factored profile class explains that the manifest is a separate scope
+    /// ceiling rather than the approval behavior itself.
+    #[serde(rename = "manifest")]
+    AllowWithoutGrant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct AdapterModeBehavior {
-    pub standard: ModeBehavior,
-    pub bounded: ModeBehavior,
-    pub unrestricted: ModeBehavior,
+#[serde(rename_all = "snake_case")]
+pub enum AdapterProfileBehavior {
+    Routine,
+    GrantInStandard,
+    BoundedOrUnrestricted,
+    UnrestrictedOnly,
+    Denied,
 }
 
-impl AdapterModeBehavior {
-    pub const fn new(
-        standard: ModeBehavior,
-        bounded: ModeBehavior,
-        unrestricted: ModeBehavior,
-    ) -> Self {
-        Self {
-            standard,
-            bounded,
-            unrestricted,
-        }
-    }
-
+impl AdapterProfileBehavior {
     pub const fn for_mode(self, mode: PermissionMode) -> ModeBehavior {
-        match mode {
-            PermissionMode::Standard => self.standard,
-            PermissionMode::Bounded => self.bounded,
-            PermissionMode::Unrestricted => self.unrestricted,
+        match (self, mode) {
+            (Self::Routine, PermissionMode::Standard | PermissionMode::Unrestricted) => {
+                ModeBehavior::Allow
+            }
+            (Self::Routine, PermissionMode::Bounded) => ModeBehavior::AllowWithoutGrant,
+            (Self::GrantInStandard, PermissionMode::Standard) => ModeBehavior::RequireGrant,
+            (Self::GrantInStandard, PermissionMode::Bounded) => ModeBehavior::AllowWithoutGrant,
+            (Self::GrantInStandard, PermissionMode::Unrestricted) => ModeBehavior::Allow,
+            (Self::BoundedOrUnrestricted, PermissionMode::Standard) => ModeBehavior::Deny,
+            (Self::BoundedOrUnrestricted, PermissionMode::Bounded) => {
+                ModeBehavior::AllowWithoutGrant
+            }
+            (Self::BoundedOrUnrestricted, PermissionMode::Unrestricted) => ModeBehavior::Allow,
+            (Self::UnrestrictedOnly, PermissionMode::Unrestricted) => ModeBehavior::Allow,
+            (Self::UnrestrictedOnly, PermissionMode::Standard | PermissionMode::Bounded)
+            | (Self::Denied, _) => ModeBehavior::Deny,
         }
     }
 }
@@ -367,17 +376,13 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("existing_profile_session_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        authorization_requirement: "launch_grant_or_host_in_standard; manifest_in_bounded",
+        authorization_requirement: "profile_approval_behavior_and_optional_capability_manifest",
         revocation_triggers: EXISTING_PROFILE_REVOCATION,
         refusal_code: Some("browser_consent_required"),
         authorization_source:
-            "launch_grant_or_authorization_host_in_standard; manifest_in_bounded; trusted_launch_acknowledgement_in_unrestricted",
+            "launch_grant_or_authorization_host_in_standard; unattended_in_bounded; trusted_launch_acknowledgement_in_unrestricted; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::RequireGrant,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::GrantInStandard,
     },
     EnforcementAdapterDescriptor {
         id: "private_observation",
@@ -389,16 +394,12 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        authorization_requirement: "manifest_only_in_bounded",
+        authorization_requirement: "profile_behavior_and_optional_capability_manifest",
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: Some("authorization_required"),
-        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+        authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Allow,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::Routine,
     },
     EnforcementAdapterDescriptor {
         id: "desktop_input",
@@ -410,16 +411,12 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        authorization_requirement: "manifest_only_in_bounded",
+        authorization_requirement: "profile_behavior_and_optional_capability_manifest",
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: Some("authorization_required"),
-        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+        authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Allow,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::Routine,
     },
     EnforcementAdapterDescriptor {
         id: "file_transfer_and_output",
@@ -431,16 +428,12 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        authorization_requirement: "manifest_only_in_bounded",
+        authorization_requirement: "profile_behavior_and_optional_capability_manifest",
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: Some("authorization_required"),
-        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+        authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Allow,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::Routine,
     },
     EnforcementAdapterDescriptor {
         id: "browser_consequential_action",
@@ -452,16 +445,12 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(5 * 60),
         absolute_ttl_seconds: Some(30 * 60),
-        authorization_requirement: "manifest_only_in_bounded",
+        authorization_requirement: "profile_behavior_and_optional_capability_manifest",
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: Some("authorization_required"),
-        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+        authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Allow,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::Routine,
     },
     EnforcementAdapterDescriptor {
         id: "browser_unbounded_script",
@@ -478,11 +467,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: Some("unbounded_operation_requires_unrestricted"),
         authorization_source: "unrestricted_mode_with_trusted_launch_time_risk_acknowledgement",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::UnrestrictedOnly,
     },
     EnforcementAdapterDescriptor {
         id: "browser_bound_input",
@@ -494,16 +479,12 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        authorization_requirement: "manifest_only_in_bounded",
+        authorization_requirement: "profile_behavior_and_optional_capability_manifest",
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: Some("authorization_required"),
-        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+        authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Allow,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::Routine,
     },
     EnforcementAdapterDescriptor {
         id: "process_control",
@@ -515,17 +496,13 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(2 * 60),
         absolute_ttl_seconds: Some(10 * 60),
-        authorization_requirement: "driver_ownership_in_standard; manifest_in_bounded",
+        authorization_requirement: "driver_ownership_in_standard; unattended_in_bounded; optional_capability_manifest",
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: Some("authorization_required"),
         authorization_source:
-            "driver_ownership_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+            "driver_ownership_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Deny,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::BoundedOrUnrestricted,
     },
     EnforcementAdapterDescriptor {
         id: "os_permission_prompt",
@@ -542,11 +519,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: Some("os_permission_prompt_requires_trusted_host"),
         authorization_source: "trusted_host_setup_outside_the_agent_tool_path",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
-        ),
+        profile_behavior: AdapterProfileBehavior::Denied,
     },
     EnforcementAdapterDescriptor {
         id: "driver_configuration",
@@ -563,16 +536,12 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(5 * 60),
         absolute_ttl_seconds: Some(30 * 60),
-        authorization_requirement: "manifest_only_in_bounded",
+        authorization_requirement: "profile_behavior_and_optional_capability_manifest",
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: Some("authorization_required"),
-        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+        authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Allow,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::Routine,
     },
     EnforcementAdapterDescriptor {
         id: "clipboard",
@@ -592,16 +561,12 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         grant_type: Some("protected_resource_grant"),
         idle_ttl_seconds: Some(30 * 60),
         absolute_ttl_seconds: Some(8 * 60 * 60),
-        authorization_requirement: "manifest_only_in_bounded",
+        authorization_requirement: "profile_behavior_and_optional_capability_manifest",
         revocation_triggers: SESSION_REVOCATION,
         refusal_code: Some("authorization_required"),
-        authorization_source: "built_in_standard; manifest_in_bounded; trusted_unrestricted_mode",
+        authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Allow,
-            ModeBehavior::Manifest,
-            ModeBehavior::Allow,
-        ),
+        profile_behavior: AdapterProfileBehavior::Routine,
     },
     EnforcementAdapterDescriptor {
         id: "devices",
@@ -618,11 +583,7 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: None,
         authorization_source: "capability_not_exposed",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
-        ),
+        profile_behavior: AdapterProfileBehavior::Denied,
     },
     EnforcementAdapterDescriptor {
         id: "shell_and_network",
@@ -639,16 +600,32 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         refusal_code: None,
         authorization_source: "capability_not_exposed",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::NotExposed),
-        behavior_by_mode: AdapterModeBehavior::new(
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
-            ModeBehavior::Deny,
-        ),
+        profile_behavior: AdapterProfileBehavior::Denied,
     },
 ];
 
 pub fn enforcement_adapter_inventory_json() -> Value {
-    serde_json::to_value(ENFORCEMENT_ADAPTERS).expect("static adapter inventory serializes")
+    Value::Array(
+        ENFORCEMENT_ADAPTERS
+            .iter()
+            .map(|adapter| {
+                let mut value =
+                    serde_json::to_value(adapter).expect("static adapter inventory serializes");
+                value
+                    .as_object_mut()
+                    .expect("adapter descriptor serializes as an object")
+                    .insert(
+                        "behavior_by_mode".to_owned(),
+                        serde_json::json!({
+                            "standard": adapter.profile_behavior.for_mode(PermissionMode::Standard),
+                            "bounded": adapter.profile_behavior.for_mode(PermissionMode::Bounded),
+                            "unrestricted": adapter.profile_behavior.for_mode(PermissionMode::Unrestricted),
+                        }),
+                    );
+                value
+            })
+            .collect(),
+    )
 }
 
 pub fn adapter_ids_with_state(state: RiskEnforcement) -> Vec<&'static str> {
@@ -1088,46 +1065,32 @@ pub fn authorize_tool_call_with_context(
         )));
     }
     let mode = context.mode();
-    if mode == PermissionMode::Bounded {
-        let manifest = context.bounded_manifest().ok_or_else(|| {
-            crate::policy::AuthorizationError::Loading(
-                "bounded session policy is unavailable".to_owned(),
-            )
-        })?;
-        if manifest.is_expired() {
-            return Err(crate::policy::AuthorizationError::Denied(
-                "bounded session policy expired".to_owned(),
-            ));
-        }
+    if mode == PermissionMode::Bounded && context.capability_manifest().is_none() {
+        return Err(crate::policy::AuthorizationError::Loading(
+            "bounded mode capability manifest is unavailable".to_owned(),
+        ));
+    }
+    if let Some(manifest) = context.capability_manifest() {
+        manifest
+            .validate_for_mode(mode)
+            .map_err(crate::policy::AuthorizationError::Denied)?;
         match manifest.decision(tool) {
-            crate::session_manifest::ManifestDecision::Allow => {
-                manifest
-                    .authorize_call(tool, args)
-                    .map_err(crate::policy::AuthorizationError::Denied)?;
-                manifest
-                    .authorize_dispatch()
-                    .map_err(crate::policy::AuthorizationError::Denied)?;
-            }
-            crate::session_manifest::ManifestDecision::Deny => {
+            crate::session_manifest::ManifestDecision::Allow => manifest
+                .authorize_call(tool, args)
+                .map_err(crate::policy::AuthorizationError::Denied)?,
+            crate::session_manifest::ManifestDecision::Deny
+            | crate::session_manifest::ManifestDecision::Ask => {
                 return Err(crate::policy::AuthorizationError::Denied(format!(
-                    "bounded session policy denies tool '{tool}'"
-                )))
-            }
-            crate::session_manifest::ManifestDecision::Ask => {
-                return Err(crate::policy::AuthorizationError::Denied(format!(
-                    "bounded session policy requires protected approval for tool '{tool}'; unattended dispatch cannot auto-accept"
+                    "capability manifest denies tool '{tool}'"
                 )))
             }
             crate::session_manifest::ManifestDecision::Undeclared => {
                 return Err(crate::policy::AuthorizationError::Denied(format!(
-                    "tool '{tool}' is outside the bounded session policy"
+                    "tool '{tool}' is outside the capability manifest"
                 )))
             }
         }
     }
-    context
-        .authorize_dispatch()
-        .map_err(crate::policy::AuthorizationError::Denied)?;
     Ok(risk)
 }
 
@@ -1199,13 +1162,13 @@ pub enum PermissionModeError {
     MissingDangerAcknowledgement,
     #[error("--dangerously-bypass-approvals cannot be combined with a non-unrestricted --permission-mode")]
     UnexpectedDangerAcknowledgement,
-    #[error("permission mode bounded requires --session-policy <path> at trusted daemon startup")]
-    MissingSessionPolicy,
-    #[error("permission mode bounded requires --approve-session-policy at trusted daemon startup")]
-    MissingSessionPolicyApproval,
     #[error(
-        "--session-policy/--approve-session-policy are valid only with --permission-mode bounded"
+        "permission mode bounded requires --capability-manifest <path> at trusted daemon startup"
     )]
+    MissingSessionPolicy,
+    #[error("a configured capability manifest requires --approve-capability-manifest at trusted daemon startup")]
+    MissingSessionPolicyApproval,
+    #[error("--approve-capability-manifest requires --capability-manifest <path>")]
     UnexpectedSessionPolicy,
     #[error("permission mode unrestricted is disabled by managed startup configuration")]
     UnrestrictedDisabled,
@@ -1285,29 +1248,23 @@ pub fn validate_startup_authorization() -> anyhow::Result<()> {
     if mode != PermissionMode::Standard && env_flag(LEGACY_EXISTING_PROFILE_APPROVAL_ENV) {
         return Err(PermissionModeError::UnexpectedLegacyApproval.into());
     }
-    let session_policy_configured =
-        std::env::var_os(crate::session_manifest::SESSION_POLICY_FILE_ENV).is_some();
-    let session_policy_approved = env_flag(crate::session_manifest::SESSION_POLICY_APPROVED_ENV);
-    match mode {
-        PermissionMode::Bounded => {
-            if !session_policy_configured {
-                return Err(PermissionModeError::MissingSessionPolicy.into());
-            }
-            if !session_policy_approved {
-                return Err(PermissionModeError::MissingSessionPolicyApproval.into());
-            }
-            let manifest = crate::session_manifest::configured_session_manifest()
-                .map_err(anyhow::Error::msg)?
-                .ok_or(PermissionModeError::MissingSessionPolicy)?;
-            if manifest.is_expired() {
-                anyhow::bail!("bounded session policy is already expired");
-            }
-        }
-        PermissionMode::Standard | PermissionMode::Unrestricted => {
-            if session_policy_configured || session_policy_approved {
-                return Err(PermissionModeError::UnexpectedSessionPolicy.into());
-            }
-        }
+    let manifest_configured = crate::session_manifest::capability_manifest_configured();
+    let manifest_approved = crate::session_manifest::capability_manifest_approved();
+    if mode == PermissionMode::Bounded && !manifest_configured {
+        return Err(PermissionModeError::MissingSessionPolicy.into());
+    }
+    if manifest_configured && !manifest_approved {
+        return Err(PermissionModeError::MissingSessionPolicyApproval.into());
+    }
+    if manifest_approved && !manifest_configured {
+        return Err(PermissionModeError::UnexpectedSessionPolicy.into());
+    }
+    if let Some(manifest) =
+        crate::session_manifest::configured_capability_manifest().map_err(anyhow::Error::msg)?
+    {
+        manifest
+            .validate_for_mode(mode)
+            .map_err(anyhow::Error::msg)?;
     }
     Ok(())
 }
@@ -1343,8 +1300,8 @@ pub fn status_json_with_provider(authorization_host: Option<&'static str>) -> se
         .as_ref()
         .map(|mode| adapter_ids_with_state_for_mode(*mode, RiskEnforcement::NotExposed))
         .unwrap_or_default();
-    let session_policy = crate::session_manifest::configured_session_manifest();
-    let session_policy_status = session_policy
+    let capability_manifest = crate::session_manifest::configured_capability_manifest();
+    let capability_manifest_status = capability_manifest
         .as_ref()
         .ok()
         .and_then(|manifest| *manifest)
@@ -1354,7 +1311,9 @@ pub fn status_json_with_provider(authorization_host: Option<&'static str>) -> se
                 "version": manifest.version(),
                 "sha256": manifest.sha256(),
                 "expires_unix_ms": manifest.expires_unix_ms(),
-                "idle_timeout_seconds": manifest.idle_timeout().as_secs(),
+                "idle_timeout_seconds": manifest.idle_timeout().map(|duration| duration.as_secs()),
+                "expired": manifest.is_expired(),
+                "idle_expired": manifest.is_idle_expired(),
                 "allow_count": allow,
                 "deny_count": deny,
                 "ask_count": ask,
@@ -1389,10 +1348,15 @@ pub fn status_json_with_provider(authorization_host: Option<&'static str>) -> se
         "enforcement_adapters": enforcement_adapter_inventory_json(),
         "authorization_host": authorization_host,
         "authorization_host_assurance": authorization_host_assurance,
-        "session_policy_configured": std::env::var_os(crate::session_manifest::SESSION_POLICY_FILE_ENV).is_some(),
-        "session_policy_approved_at_startup": env_flag(crate::session_manifest::SESSION_POLICY_APPROVED_ENV),
-        "session_policy_valid": session_policy.is_ok(),
-        "session_policy": session_policy_status,
+        "capability_manifest_configured": crate::session_manifest::capability_manifest_configured(),
+        "capability_manifest_approved_at_startup": crate::session_manifest::capability_manifest_approved(),
+        "capability_manifest_valid": capability_manifest.is_ok(),
+        "capability_manifest": capability_manifest_status,
+        // Deprecated status aliases retained for one compatibility window.
+        "session_policy_configured": crate::session_manifest::capability_manifest_configured(),
+        "session_policy_approved_at_startup": crate::session_manifest::capability_manifest_approved(),
+        "session_policy_valid": capability_manifest.is_ok(),
+        "session_policy": capability_manifest_status,
     });
     let session_status = crate::session_authorization::status_json();
     if let (Some(target), Some(session_status)) =
@@ -1673,7 +1637,7 @@ mod tests {
                 .iter()
                 .find(|adapter| adapter.id == id)
                 .unwrap()
-                .behavior_by_mode
+                .profile_behavior
                 .for_mode(mode)
         };
 
@@ -1689,7 +1653,7 @@ mod tests {
             assert_eq!(behavior(id, PermissionMode::Standard), ModeBehavior::Allow);
             assert_eq!(
                 behavior(id, PermissionMode::Bounded),
-                ModeBehavior::Manifest
+                ModeBehavior::AllowWithoutGrant
             );
             assert_eq!(
                 behavior(id, PermissionMode::Unrestricted),
@@ -1712,6 +1676,87 @@ mod tests {
             behavior("os_permission_prompt", PermissionMode::Unrestricted),
             ModeBehavior::Deny
         );
+    }
+
+    #[test]
+    fn adding_a_manifest_is_monotonic_for_standard_and_unrestricted_profile_behavior() {
+        let authority = |behavior| match behavior {
+            ModeBehavior::Deny => 0,
+            ModeBehavior::RequireGrant => 1,
+            ModeBehavior::Allow | ModeBehavior::AllowWithoutGrant => 2,
+        };
+
+        // Manifest admission is evaluated before the unchanged profile
+        // behavior. Exhaust every adapter and every manifest decision: an
+        // in-scope allow preserves the profile result, while deny, legacy ask,
+        // and undeclared scope all reduce it to deny.
+        for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
+            for adapter in ENFORCEMENT_ADAPTERS {
+                let baseline = adapter.profile_behavior.for_mode(mode);
+                for manifest_decision in [
+                    crate::session_manifest::ManifestDecision::Allow,
+                    crate::session_manifest::ManifestDecision::Deny,
+                    crate::session_manifest::ManifestDecision::Ask,
+                    crate::session_manifest::ManifestDecision::Undeclared,
+                ] {
+                    let with_manifest = match manifest_decision {
+                        crate::session_manifest::ManifestDecision::Allow => baseline,
+                        crate::session_manifest::ManifestDecision::Deny
+                        | crate::session_manifest::ManifestDecision::Ask
+                        | crate::session_manifest::ManifestDecision::Undeclared => {
+                            ModeBehavior::Deny
+                        }
+                    };
+                    assert!(
+                        authority(with_manifest) <= authority(baseline),
+                        "adding {manifest_decision:?} scope widened {} in {mode:?} from {baseline:?} to {with_manifest:?}",
+                        adapter.id,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn standard_manifest_scope_is_checked_before_existing_profile_approval() {
+        use std::io::Write as _;
+        use std::sync::Arc;
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "version: 3\nallow:\n  tools: [browser_prepare]\nresources:\n  browser:\n    existing_profiles:\n      - pid: 42\n        window_id: 7"
+        )
+        .unwrap();
+        let manifest = Arc::new(crate::session_manifest::load_manifest(file.path()).unwrap());
+        let ceiling = crate::session_authorization::SessionModeCeiling::for_trusted_sessions(
+            [PermissionMode::Standard],
+            false,
+            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+        let context =
+            crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
+                .compatibility_context(PermissionMode::Standard, Some(manifest))
+                .unwrap();
+
+        let call = |window_id| {
+            authorize_tool_call_with_context(
+                "browser_prepare",
+                &serde_json::json!({
+                    "pid": 42,
+                    "window_id": window_id,
+                    "strategy": {"kind": "existing_profile"},
+                }),
+                &context,
+            )
+        };
+        assert!(call(7).is_ok());
+        assert!(call(8)
+            .unwrap_err()
+            .to_string()
+            .contains("outside the capability manifest"));
     }
 
     #[test]
@@ -1865,6 +1910,24 @@ mod tests {
         assert_eq!(
             status["enforcement_adapters"],
             enforcement_adapter_inventory_json()
+        );
+        let existing_profile = status["enforcement_adapters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|adapter| adapter["id"] == "browser_prepare.existing_profile")
+            .unwrap();
+        assert_eq!(
+            existing_profile["profile_behavior_class"],
+            "grant_in_standard"
+        );
+        assert_eq!(
+            existing_profile["behavior_by_mode"],
+            serde_json::json!({
+                "standard": "require_grant",
+                "bounded": "manifest",
+                "unrestricted": "allow",
+            })
         );
         assert_eq!(status["authorization_host_assurance"], "unavailable");
         assert_eq!(

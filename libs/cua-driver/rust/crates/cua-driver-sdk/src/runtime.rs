@@ -815,7 +815,7 @@ mod tests {
                 mode: PermissionMode::Standard,
                 ttl: Duration::from_secs(60),
                 idle_ttl: Duration::from_secs(30),
-                bounded_manifest: None,
+                capability_manifest: None,
             })
             .unwrap();
 

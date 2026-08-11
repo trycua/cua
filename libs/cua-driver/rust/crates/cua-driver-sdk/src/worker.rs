@@ -554,7 +554,10 @@ mod tests {
         for name in [
             "CUA_DRIVER_DISABLE_UNRESTRICTED",
             "CUA_DRIVER_MANAGED_POLICY_FILE",
+            "CUA_DRIVER_CAPABILITY_MANIFEST_FILE",
+            "CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED",
             "CUA_DRIVER_SESSION_POLICY_FILE",
+            "CUA_DRIVER_SESSION_POLICY_APPROVED",
         ] {
             assert!(inherited_managed_environment_name(name));
             assert!(

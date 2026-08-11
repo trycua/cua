@@ -12,6 +12,7 @@ fn options(allowed_modes: Vec<SessionPermissionMode>) -> ConfiguredDriverOptions
         authorization: RuntimeAuthorizationOptions {
             allowed_modes,
             compatibility_mode: SessionPermissionMode::Standard,
+            compatibility_capability_manifest_path: None,
             compatibility_bounded_manifest_path: None,
             unrestricted_acknowledged: true,
             max_session_ttl_seconds: 60,
@@ -61,6 +62,8 @@ fn run_probe(case: &str, environment: &[(&str, &str)]) {
         .env_remove("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS")
         .env_remove("CUA_DRIVER_DISABLE_UNRESTRICTED")
         .env_remove("CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL")
+        .env_remove("CUA_DRIVER_CAPABILITY_MANIFEST_FILE")
+        .env_remove("CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED")
         .env_remove("CUA_DRIVER_SESSION_POLICY_FILE")
         .env_remove("CUA_DRIVER_SESSION_POLICY_APPROVED");
     for (name, value) in environment {

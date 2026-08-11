@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import importlib
 import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-from cua_sandbox import Image, Sandbox, _config
+from cua_sandbox import Image, Pool, Sandbox, _config
 from cua_sandbox.runtime.base import RuntimeInfo
 
 sandbox_module = importlib.import_module("cua_sandbox.sandbox")
@@ -40,19 +42,19 @@ async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(monkeypatch, 
     for variable, value in auth_environment.items():
         monkeypatch.setenv(variable, value)
 
-    class FleetTransport:
-        def __init__(self, **kwargs):
-            routes.append(("fleet", kwargs))
-            self.name = kwargs["name"]
-
-        async def connect(self):
-            return None
-
+    class ClaimedSandbox:
         async def disconnect(self):
             return None
 
-        async def delete_vm(self):
-            return None
+    class FleetPool:
+        name = "fleet-pool"
+
+        async def claim(self, **kwargs):
+            routes.append(("fleet", kwargs))
+            return ClaimedSandbox()
+
+    async def apply_pool(cls, image, **kwargs):
+        return FleetPool()
 
     class LegacyTransport:
         def __init__(self, **kwargs):
@@ -65,7 +67,7 @@ async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(monkeypatch, 
         async def disconnect(self):
             return None
 
-    monkeypatch.setattr(sandbox_module, "FleetCloudTransport", FleetTransport)
+    monkeypatch.setattr(Pool, "apply", classmethod(apply_pool))
     monkeypatch.setattr(
         sandbox_module, "_make_transport", lambda **kwargs: LegacyTransport(**kwargs)
     )
@@ -83,6 +85,76 @@ async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(monkeypatch, 
         ("fleet", "fleet-demo"),
         ("legacy", "legacy-demo"),
     ]
+
+
+@pytest.mark.parametrize("legacy_source", ["configured", "environment", "credentials"])
+async def test_registry_image_uses_legacy_auth_when_fleet_auth_is_unavailable(
+    monkeypatch, legacy_source
+):
+    routes = []
+    monkeypatch.setattr(_config, "_global_config", _config._Config())
+    for variable in (
+        "CUA_API_KEY",
+        "FLEETS_TOKEN",
+        "CUA_CLIENT_ID",
+        "CUA_CLIENT_SECRET",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+
+    if legacy_source == "configured":
+        _config.configure(api_key="sk-configured")
+    elif legacy_source == "environment":
+        monkeypatch.setenv("CUA_API_KEY", "sk-environment")
+    else:
+        monkeypatch.setattr(_config, "_read_credentials_key", lambda: "sk-credentials")
+
+    class LegacyTransport:
+        def __init__(self, **kwargs):
+            routes.append(kwargs)
+            self.name = kwargs["name"]
+
+        async def connect(self):
+            return None
+
+        async def disconnect(self):
+            return None
+
+    async def reject_fleet_apply(cls, image, **kwargs):
+        raise AssertionError("legacy authentication must not route registry images to Fleet")
+
+    monkeypatch.setattr(Pool, "apply", classmethod(reject_fleet_apply))
+    monkeypatch.setattr(
+        sandbox_module, "_make_transport", lambda **kwargs: LegacyTransport(**kwargs)
+    )
+
+    sandbox = await Sandbox.create(Image.from_registry("example:latest"), name="legacy-demo")
+    await sandbox.disconnect()
+
+    assert not Sandbox._uses_fleet(None)
+    assert [route["name"] for route in routes] == ["legacy-demo"]
+
+
+async def test_ephemeral_registry_image_uses_legacy_auth_selector(monkeypatch):
+    monkeypatch.setattr(_config, "_global_config", _config._Config(api_key="sk-configured"))
+    for variable in ("FLEETS_TOKEN", "CUA_CLIENT_ID", "CUA_CLIENT_SECRET"):
+        monkeypatch.delenv(variable, raising=False)
+
+    legacy_sandbox = SimpleNamespace(
+        _has_snapshots=False,
+        name="legacy-demo",
+        destroy=AsyncMock(),
+    )
+    create = AsyncMock()
+    create_legacy = AsyncMock(return_value=legacy_sandbox)
+    monkeypatch.setattr(Sandbox, "create", create)
+    monkeypatch.setattr(Sandbox, "_create", create_legacy)
+
+    async with Sandbox.ephemeral(Image.from_registry("example:latest"), name="legacy-demo"):
+        pass
+
+    create.assert_not_awaited()
+    create_legacy.assert_awaited_once()
+    legacy_sandbox.destroy.assert_awaited_once()
 
 
 async def test_cloud_local_creation_never_routes_to_fleet(monkeypatch):
@@ -212,36 +284,26 @@ async def test_cloud_invalid_api_key_errors():
 async def test_pool_backed_create_persists_claim_pool_mapping(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 
-    created = []
     monkeypatch.setattr(sandbox_state, "SANDBOX_STATE_DIR", tmp_path)
 
-    class FleetTransport:
-        def __init__(self, **kwargs):
-            created.append(kwargs)
-            self.name = kwargs["name"]
+    class ClaimedSandbox:
+        pass
 
-        async def connect(self):
-            return None
+    class FleetPool:
+        name = "cua-cli-wif-smoke"
 
-        async def disconnect(self):
-            return None
+        async def claim(self, **kwargs):
+            assert kwargs["name"] == "wif-smoke-123"
+            return ClaimedSandbox()
 
-    monkeypatch.setattr(sandbox_module, "FleetCloudTransport", FleetTransport)
+    async def get_pool(cls, name):
+        assert name == "cua-cli-wif-smoke"
+        return FleetPool()
+
+    monkeypatch.setattr(Pool, "get", classmethod(get_pool))
 
     await Sandbox.create(pool="cua-cli-wif-smoke", name="wif-smoke-123")
 
-    assert created == [
-        {
-            "image": None,
-            "name": "wif-smoke-123",
-            "pool_name": "cua-cli-wif-smoke",
-            "create_claim": True,
-            "region": "us-east-1",
-            "time_to_start": None,
-            "request_timeout": None,
-            "server_port": 8000,
-        }
-    ]
     assert sandbox_state.load("wif-smoke-123")["pool_name"] == "cua-cli-wif-smoke"
 
 

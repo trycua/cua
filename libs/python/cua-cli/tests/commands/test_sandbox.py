@@ -295,7 +295,8 @@ class TestCmdLaunch:
         )
         image = object()
         created = MagicMock(name="created")
-        created.name = "fleet-sandbox"
+        created.name = "bound-sandbox-resource"
+        created.claim_name = "fleet-sandbox"
         created.disconnect = AsyncMock()
         mock_create = AsyncMock(return_value=created)
         mock_sdk = MagicMock()
@@ -306,13 +307,14 @@ class TestCmdLaunch:
                 with patch.object(
                     sandbox, "get_access_token", new_callable=AsyncMock
                 ) as mock_token:
-                    with patch.object(sandbox, "print_success"):
+                    with patch.object(sandbox, "print_success") as mock_success:
                         result = sandbox.cmd_launch(args)
 
         assert result == 0
         mock_token.assert_not_awaited()
         mock_create.assert_awaited_once_with(image, name="fleet-sandbox")
         created.disconnect.assert_awaited_once_with()
+        mock_success.assert_called_once_with("Sandbox 'fleet-sandbox' is ready")
 
 
 class TestCmdInfo:

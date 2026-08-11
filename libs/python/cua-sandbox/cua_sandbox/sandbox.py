@@ -33,6 +33,7 @@ import time
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -80,11 +81,68 @@ from cua_sandbox.transport.http import HTTPTransport
 from cua_sandbox.transport.websocket import WebSocketTransport
 
 if TYPE_CHECKING:
+    from cua_sandbox.pool import Pool
     from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+
+async def _keep_alive_or_close(sandbox: Any, minutes: float | None) -> None:
+    if minutes is None:
+        return
+    try:
+        await sandbox.keep_alive(minutes=minutes)
+    except BaseException as keep_alive_error:
+        try:
+            await sandbox.close()
+        except BaseException as close_error:
+            logger.warning("Failed to close Fleet claim after keep-alive failure: %s", close_error)
+            raise keep_alive_error from close_error
+        raise
+
+
+async def _save_fleet_claim_or_close(
+    sandbox: Any,
+    claim_name: str,
+    pool_name: str,
+) -> None:
+    from cua_sandbox import sandbox_state
+
+    try:
+        sandbox_state.save_fleet_claim(claim_name, pool_name)
+    except BaseException as state_error:
+        try:
+            await sandbox.close()
+        except BaseException as close_error:
+            raise state_error from close_error
+        raise
+
+
+async def _cleanup_ephemeral_fleet(
+    sandbox: Any | None,
+    pool: Any | None,
+    *,
+    suppress_errors: bool,
+) -> None:
+    cleanup_error: BaseException | None = None
+    cleanup_operations = (
+        ("claim", sandbox.close if sandbox is not None else None),
+        ("pool", pool.delete if pool is not None else None),
+    )
+    for resource, cleanup in cleanup_operations:
+        if cleanup is None:
+            continue
+        try:
+            await cleanup()
+        except BaseException as error:
+            if suppress_errors or cleanup_error is not None:
+                logger.warning("Failed to clean up ephemeral Fleet %s: %s", resource, error)
+            else:
+                cleanup_error = error
+    if cleanup_error is not None:
+        raise cleanup_error
 
 
 @dataclass
@@ -259,6 +317,8 @@ class Sandbox:
         self._runtime_info = _runtime_info
         self._ephemeral = _ephemeral
         self._has_snapshots = False
+        self._claim_handle: Any = None
+        self._claim_released = False
         self.telemetry_enabled = _telemetry_enabled
         self.screen = Screen(transport)
         self.mouse = Mouse(transport)
@@ -283,6 +343,65 @@ class Sandbox:
     async def disconnect(self) -> None:
         """Drop the transport connection. The sandbox keeps running."""
         await self._transport.disconnect()
+
+    @property
+    def claim_name(self) -> str | None:
+        """Fleet claim name, distinct from the bound sandbox name."""
+        return self._claim_handle.name if self._claim_handle is not None else None
+
+    @property
+    def pool_name(self) -> str | None:
+        """Fleet pool that owns this claim."""
+        return self._claim_handle.pool_name if self._claim_handle is not None else None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize a durable Fleet sandbox reference."""
+        if self._claim_handle is None:
+            raise NotImplementedError("serialization is only supported for Fleet claims")
+        return self._claim_handle.to_dict()
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "_ConnectResult":
+        """Reconnect to a serialized Fleet claim reference."""
+
+        async def factory() -> "Sandbox":
+            from cua_sandbox.pool import _ClaimHandle
+
+            handle = _ClaimHandle.from_dict(data)
+            if handle.namespace != handle.pool_name:
+                raise ValueError("serialized claim does not belong to the requested pool")
+            return await handle.wait()
+
+        return _ConnectResult(factory)
+
+    async def keep_alive(self, *, minutes: float) -> None:
+        """Push a Fleet claim's controller-enforced shutdown time forward."""
+        if self._claim_handle is None:
+            raise NotImplementedError("keep_alive is only supported for Fleet claims")
+        if minutes <= 0:
+            raise ValueError("minutes must be positive")
+        shutdown_time = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+        await self._claim_handle.renew(shutdown_time.replace("+00:00", "Z"))
+
+    async def close(self) -> None:
+        """Release this Fleet claim; repeated calls are safe."""
+        if self._claim_released:
+            return
+        if self._claim_handle is None:
+            raise NotImplementedError("close is only supported for Fleet claims")
+        claim_name = self.claim_name
+        try:
+            await self._claim_handle.release()
+            self._claim_released = True
+            if claim_name is not None:
+                from cua_sandbox import sandbox_state
+
+                try:
+                    sandbox_state.delete(claim_name)
+                except OSError as error:
+                    logger.warning("Failed to remove Fleet claim state %r: %s", claim_name, error)
+        finally:
+            await self.disconnect()
 
     async def snapshot(self, name: str | None = None, stateful: bool = False) -> "Image":
         """Snapshot this sandbox's current state. Returns an Image.
@@ -402,10 +521,14 @@ class Sandbox:
     @classmethod
     async def create(
         cls,
-        image: Optional[Image] = None,
+        image: Image | None = None,
         *,
+        pool: "Pool | str | None" = None,
         name: Optional[str] = None,
-        pool: Optional[str] = None,
+        replicas: int = 1,
+        service: str = "server",
+        claim_spec: Any = None,
+        keep_alive_minutes: float | None = None,
         api_key: Optional[str] = None,
         local: bool = False,
         runtime: Optional["Runtime"] = None,
@@ -418,46 +541,102 @@ class Sandbox:
         server_port: int = 8000,
         telemetry_enabled: bool = True,
     ) -> "Sandbox":
-        """Provision a new persistent sandbox and return it connected.
+        """Provision or claim a persistent sandbox and return it connected.
 
-        The sandbox is kept alive after your script exits — call ``close()``
-        when you are done, or use :meth:`ephemeral` if you want it destroyed
-        automatically.
-
-        Args:
-            image: Image to run (e.g. ``Image.desktop("ubuntu")``).
-            name: Optional name to assign to the sandbox. Required with ``pool``.
-            pool: Pre-created Fleet pool to claim instead of creating from an image.
-            api_key: Legacy CUA API key. Providing one uses the legacy VM API;
-                Fleet cloud sandboxes use OAuth client credentials instead.
-            local: Use a local runtime instead of cloud.
-            runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
-            cpu: Number of CPUs for the cloud sandbox.
-            memory_mb: Memory in MB for the cloud sandbox.
-            disk_gb: Unsupported by Fleet; API-key legacy cloud only.
-            region: Fleet currently supports only ``"us-east-1"``.
-            time_to_start: Max seconds to wait for Fleet provisioning and
-                service readiness (default 600).
-            request_timeout: Default HTTP request timeout in seconds for
-                commands sent to the computer-server (default 30, cloud only).
-                Individual commands with a server-side timeout automatically
-                extend the client timeout to match.
-            server_port: Guest computer-server TCP port for Fleet cloud sandboxes.
-                Defaults to 8000. Set this when the guest image runs the CUA
-                computer-server ``/cmd`` API on a non-default port, for example
-                5000.
-            telemetry_enabled: Set to False to disable telemetry for this instance.
-
-        Example::
-
-            sb = await Sandbox.create(Image.desktop("ubuntu"))
-            await sb.shell.run("uname -a")
-            print(sb.name)  # save to reconnect later
-            await sb.disconnect()
+        Supplying ``pool`` claims from an existing Fleet pool without changing
+        its configuration. Otherwise, registry images are applied as a
+        deterministic reusable pool before a claim is acquired.
         """
-        if (image is None) == (pool is None):
-            raise ValueError("Specify exactly one of image or pool")
+        from cua_sandbox.pool import Pool
 
+        if (
+            isinstance(server_port, bool)
+            or not isinstance(server_port, int)
+            or server_port < 1
+            or server_port > 65535
+        ):
+            raise ValueError("server_port must be an integer between 1 and 65535")
+
+        if pool is not None:
+            if image is not None:
+                raise ValueError("image and pool are mutually exclusive")
+            if replicas != 1 or cpu is not None or memory_mb is not None or disk_gb is not None:
+                raise ValueError("configuration cannot be supplied for an existing pool")
+            if (
+                local
+                or runtime is not None
+                or api_key is not None
+                or region != "us-east-1"
+                or request_timeout is not None
+                or server_port != 8000
+            ):
+                raise NotImplementedError("the requested option is not supported with Fleet pools")
+            resolved_pool = await Pool.get(pool) if isinstance(pool, str) else pool
+            sandbox = await resolved_pool.claim(
+                name=name, spec=claim_spec, service=service, time_to_start=time_to_start
+            )
+            sandbox_claim_name = getattr(sandbox, "claim_name", None)
+            sandbox_pool_name = getattr(sandbox, "pool_name", None)
+            claim_name = (
+                sandbox_claim_name
+                if isinstance(sandbox_claim_name, str) and sandbox_claim_name
+                else name
+            )
+            pool_name = (
+                sandbox_pool_name
+                if isinstance(sandbox_pool_name, str) and sandbox_pool_name
+                else resolved_pool.name
+            )
+            await _keep_alive_or_close(sandbox, keep_alive_minutes)
+            if claim_name is not None:
+                await _save_fleet_claim_or_close(sandbox, claim_name, pool_name)
+            return sandbox
+
+        fleet_image = (
+            image is not None
+            and image._registry is not None
+            and cls._uses_fleet(api_key)
+            and not local
+            and runtime is None
+        )
+        if fleet_image:
+            if disk_gb is not None or region != "us-east-1" or request_timeout is not None:
+                raise NotImplementedError("the requested option is not supported by Fleet")
+            services = {
+                "server": server_port,
+                **{f"port-{port}": port for port in image._ports if port != server_port},
+            }
+            resolved_pool = await Pool.apply(
+                image,
+                replicas=replicas,
+                cpu=cpu,
+                memory_mb=memory_mb,
+                services=services,
+            )
+            sandbox = await resolved_pool.claim(
+                name=name, spec=claim_spec, service=service, time_to_start=time_to_start
+            )
+            sandbox_claim_name = getattr(sandbox, "claim_name", None)
+            sandbox_pool_name = getattr(sandbox, "pool_name", None)
+            claim_name = (
+                sandbox_claim_name
+                if isinstance(sandbox_claim_name, str) and sandbox_claim_name
+                else name
+            )
+            pool_name = (
+                sandbox_pool_name
+                if isinstance(sandbox_pool_name, str) and sandbox_pool_name
+                else resolved_pool.name
+            )
+            await _keep_alive_or_close(sandbox, keep_alive_minutes)
+            if claim_name is not None:
+                await _save_fleet_claim_or_close(sandbox, claim_name, pool_name)
+            return sandbox
+
+        if image is None:
+            raise ValueError("image is required when pool is omitted")
+        if replicas != 1 or service != "server" or claim_spec is not None:
+            raise NotImplementedError("claim options are only supported by Fleet")
         return await cls._create(
             image=image,
             name=name,
@@ -539,9 +718,15 @@ class Sandbox:
     @asynccontextmanager
     async def ephemeral(
         cls,
-        image: Image,
+        image: Image | None = None,
         *,
+        pool: "Pool | str | None" = None,
         name: Optional[str] = None,
+        replicas: int = 1,
+        service: str = "server",
+        claim_spec: Any = None,
+        keep_alive_minutes: float | None = None,
+        keep_pool: bool = False,
         api_key: Optional[str] = None,
         local: bool = False,
         runtime: Optional["Runtime"] = None,
@@ -554,37 +739,108 @@ class Sandbox:
         server_port: int = 8000,
         telemetry_enabled: bool = True,
     ) -> AsyncIterator["Sandbox"]:
-        """Create an ephemeral sandbox that is automatically destroyed on exit.
+        from cua_sandbox.pool import Pool
 
-        Args:
-            image: Image to run (e.g. ``Image.desktop("ubuntu")``).
-            name: Optional name to assign to the sandbox.
-            api_key: Legacy CUA API key. Providing one uses the legacy VM API;
-                Fleet cloud sandboxes use OAuth client credentials instead.
-            local: Use a local runtime instead of cloud.
-            runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
-            cpu: Number of CPUs for the cloud sandbox.
-            memory_mb: Memory in MB for the cloud sandbox.
-            disk_gb: Unsupported by Fleet; API-key legacy cloud only.
-            region: Fleet currently supports only ``"us-east-1"``.
-            time_to_start: Max seconds to wait for Fleet provisioning and
-                service readiness (default 600).
-            request_timeout: Default HTTP request timeout in seconds for
-                commands sent to the computer-server (default 30, cloud only).
-                Individual commands with a server-side timeout automatically
-                extend the client timeout to match.
-            server_port: Guest computer-server TCP port for Fleet cloud sandboxes.
-                Defaults to 8000. Set this when the guest image runs the CUA
-                computer-server ``/cmd`` API on a non-default port, for example
-                5000.
+        fleet_image = (
+            image is not None
+            and image._registry is not None
+            and cls._uses_fleet(api_key)
+            and not local
+            and runtime is None
+        )
+        if keep_pool and not fleet_image:
+            raise ValueError("keep_pool is only supported for Fleet registry images")
 
-        Example::
+        if pool is not None:
+            sandbox = await cls.create(
+                image,
+                pool=pool,
+                name=name,
+                replicas=replicas,
+                service=service,
+                claim_spec=claim_spec,
+                keep_alive_minutes=keep_alive_minutes,
+                api_key=api_key,
+                local=local,
+                runtime=runtime,
+                cpu=cpu,
+                memory_mb=memory_mb,
+                disk_gb=disk_gb,
+                region=region,
+                time_to_start=time_to_start,
+                request_timeout=request_timeout,
+                server_port=server_port,
+                telemetry_enabled=telemetry_enabled,
+            )
+            try:
+                yield sandbox
+            except BaseException:
+                await _cleanup_ephemeral_fleet(sandbox, None, suppress_errors=True)
+                raise
+            else:
+                await _cleanup_ephemeral_fleet(sandbox, None, suppress_errors=False)
+            return
 
-            async with Sandbox.ephemeral(Image.desktop("ubuntu")) as sb:
-                await sb.shell.run("whoami")
-            # sandbox is destroyed here
-        """
-        sb = await cls._create(
+        if fleet_image:
+            if disk_gb is not None or region != "us-east-1" or request_timeout is not None:
+                raise NotImplementedError("the requested option is not supported by Fleet")
+            if (
+                isinstance(server_port, bool)
+                or not isinstance(server_port, int)
+                or server_port < 1
+                or server_port > 65535
+            ):
+                raise ValueError("server_port must be an integer between 1 and 65535")
+            services = {
+                "server": server_port,
+                **{f"port-{port}": port for port in image._ports if port != server_port},
+            }
+            pool_options = {"name": name} if name is not None else {}
+            owned_pool = await Pool.apply(
+                image,
+                replicas=replicas,
+                cpu=cpu,
+                memory_mb=memory_mb,
+                services=services,
+                **pool_options,
+            )
+            sandbox = None
+            try:
+                sandbox = await owned_pool.claim(
+                    name=name,
+                    spec=claim_spec,
+                    service=service,
+                    time_to_start=time_to_start,
+                )
+                await _keep_alive_or_close(sandbox, keep_alive_minutes)
+            except BaseException:
+                await _cleanup_ephemeral_fleet(
+                    None,
+                    None if keep_pool else owned_pool,
+                    suppress_errors=True,
+                )
+                raise
+
+            try:
+                yield sandbox
+            except BaseException:
+                await _cleanup_ephemeral_fleet(
+                    sandbox,
+                    None if keep_pool else owned_pool,
+                    suppress_errors=True,
+                )
+                raise
+            else:
+                await _cleanup_ephemeral_fleet(
+                    sandbox,
+                    None if keep_pool else owned_pool,
+                    suppress_errors=False,
+                )
+            return
+
+        if image is None:
+            raise ValueError("image is required when pool is omitted")
+        sandbox = await cls._create(
             image=image,
             name=name,
             ephemeral=True,
@@ -601,13 +857,12 @@ class Sandbox:
             telemetry_enabled=telemetry_enabled,
         )
         try:
-            yield sb
+            yield sandbox
         finally:
-            if sb._has_snapshots and sb.name:
-                # Stop instead of delete so forks can reference the snapshots.
-                await cls.suspend(sb.name, local=local, api_key=api_key)
+            if sandbox._has_snapshots and sandbox.name:
+                await cls.suspend(sandbox.name, local=local, api_key=api_key)
             else:
-                await sb.destroy()
+                await sandbox.destroy()
 
     # ── Lifecycle management ─────────────────────────────────────────────
 

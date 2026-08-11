@@ -16,6 +16,8 @@ On an M1 Ultra, TinyLlama 1.1B running through llama.cpp processed prompts **11.
 
 We repeated the experiment with Google's [Gemma 4 12B QAT Q4_0](https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf), a 6.98 GB model released this year. The same layer improved prompt processing **7.20×** and token generation **14.54×**. The unlocked VM reached 99.59% of bare-metal prompt speed and 94.82% of bare-metal generation speed.
 
+We then tested [Meta's official Muse Glimmer 30B Q4_K-M GGUF](https://huggingface.co/meta-models/Muse-Glimmer-30B-GGUF/tree/a0532f7263ee67f1e0a5f5c5fdcd50dd62fc9aa4) in a 64 GiB guest. Through llama.cpp b10359, the unlocked VM processed a 512-token prompt **7.55× faster** and generated 128 tokens **8.87× faster** than the stock guest. This was a text-only llama.cpp test; it did not use Ollama, a multimodal projector, or a drafter.
+
 The same capability gap has surfaced in other `Virtualization.framework` frontends. Tart, another macOS virtualization CLI, has an open [“No GPU passthrough in macOS guest?”](https://github.com/openai/tart/issues/1032) issue covering graphics and LLM performance inside macOS guests.
 
 ## The cap inside a macOS VM
@@ -95,6 +97,21 @@ The host, VM, shim, benchmark shape, and ten-sample method stayed the same. We d
 
 The [Gemma 4 evidence](https://github.com/trycua/cua/tree/main/evidence/lume-metal-capability-shim/2026-08-10-m1-ultra-gemma4) pins Google's model revision and SHA-256 alongside the final raw samples. We discarded and reran a preliminary stock series after detecting another host compute workload. The retained stock, unlocked, and bare-metal files come from the same uncontended window and show tight sample ranges.
 
+### A 30B text model in a 64 GiB guest
+
+Muse Glimmer let us test the same capability path with a larger model. We used Meta's official 16.76 GB Q4_K-M GGUF, raised the Tahoe guest to 64 GiB, and updated llama.cpp to b10359. Prompt processing and generation ran as separate fresh processes with eight threads and full GPU offload:
+
+| Workload                      |   Stock guest | **Unlocked guest** | Guest speedup |     Stock range |  Unlocked range |
+| ----------------------------- | ------------: | -----------------: | ------------: | --------------: | --------------: |
+| Prompt processing, 512 tokens | 25.8328 tok/s |  **194.971 tok/s** |     **7.55×** | 25.7641-26.0987 | 194.565-195.331 |
+| Token generation, 128 tokens  | 2.37551 tok/s |  **21.0823 tok/s** |     **8.87×** | 2.14729-2.41391 | 21.0729-21.0954 |
+
+These values are medians of three llama-bench samples. The built-in same-process warmup ran before each row and is excluded from the samples. All four processes exited successfully. Before and after every arm, the guest reported 98% free memory, zero swap, and zero compressor use. Stock stderr reported Apple family 5 with the newer SIMD-group and bfloat paths disabled; unlocked stderr reported Apple family 9 with those paths enabled.
+
+The host was shared with another VM that showed intermittent CPU activity, so the [Muse Glimmer evidence](https://github.com/trycua/cua/tree/main/evidence/lume-metal-capability-shim/2026-08-11-m1-ultra-muse-glimmer-64g) preserves that boundary. The pp512 samples were tight, and the stock tg128 median agreed within 5.6% of an earlier independent run. The public evidence includes the official model revision and SHA-256, llama.cpp and shim hashes, path-sanitized raw JSON, capability logs, exact arguments, telemetry summaries, and checksums.
+
+This result applies to the text-only GGUF through llama.cpp. It should not be read as Ollama throughput or as a result for Muse Glimmer's multimodal and speculative-decoding components.
+
 We also tested [MLX-LM](https://github.com/ml-explore/mlx-lm) 0.31.3 with `mlx-community/Llama-3.2-3B-Instruct-4bit` on MLX 0.32.0. Performance stayed flat because MLX-LM was already fast in the stock VM:
 
 | Workload                      |    Stock guest | Unlocked guest |  Ratio |
@@ -149,12 +166,12 @@ Removing the environment variables and restarting the workload returns it to sto
 - **Experimental and version-sensitive.** The shim uses private guest Metal implementation details that can change in any macOS release.
 - **Per-process.** It affects only the injected workload and its children; hardened or platform-protected executables may reject library injection.
 - **Configured capability profile.** It reports the Apple-family values covered by our tests. Physical-GPU capability discovery remains outside its scope.
-- **Narrow validation.** The current evidence covers the capability probe, two llama.cpp workloads, and one MLX-LM compatibility run on the listed M1 Ultra host and Tahoe guest. Additional chips, guest releases, models, and Metal APIs need separate tests.
+- **Narrow validation.** The current evidence covers the capability probe, three llama.cpp models, and one MLX-LM compatibility run on the listed M1 Ultra host and Tahoe guest. Additional chips, guest releases, models, and Metal APIs need separate tests.
 - **Still a VM.** Existing `Virtualization.framework` rendering and virtualization limits remain.
 
 ## Wrapping up
 
-The guest's conservative answers hid a surprisingly capable GPU path. On our test machine, two narrowly scoped capability changes moved TinyLlama prompt processing from 432 to 4,787 tokens per second. With Gemma 4 12B, prompt processing moved from 71.66 to 515.76 tokens per second and generation from 3.41 to 49.67 while the workload stayed on Apple's existing GPU bridge.
+The guest's conservative answers hid a surprisingly capable GPU path. On our test machine, two narrowly scoped capability changes moved TinyLlama prompt processing from 432 to 4,787 tokens per second. With Gemma 4 12B, prompt processing moved from 71.66 to 515.76 tokens per second and generation from 3.41 to 49.67. Muse Glimmer 30B prompt processing moved from 25.83 to 194.97 tokens per second, while generation moved from 2.38 to 21.08. Each workload stayed on Apple's existing GPU bridge.
 
 Lume started as a way to make macOS VMs practical for developers. This result gives us a foundation to test across more Apple Silicon generations, guest releases, and Metal workloads.
 

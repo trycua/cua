@@ -23,6 +23,7 @@ bindings_root="$native_root/sdk-bindings/go-uniffi"
 target_dir="${CYCLOPS_SDK_TARGET_DIR:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/terraform-provider-fleets/cyclops-sdk}"
 goos="$(go env GOOS)"
 goarch="$(go env GOARCH)"
+go_build_cc="${GO_BUILD_CC:-$(go env CC)}"
 
 if [ "$goos" = windows ] && command -v cygpath >/dev/null 2>&1; then
   native_root_for_tools="$(cygpath -m "$native_root")"
@@ -113,6 +114,7 @@ trap 'rm -f "$build_log"; rm -rf "$build_dir"' EXIT
 (
   cd "$provider_root"
   CGO_ENABLED=1 \
+  CC="$go_build_cc" \
   CGO_CFLAGS="-I$bindings_root_for_tools/fleet_sdk -I$bindings_root_for_tools/cyclops_sdk_schema" \
   CGO_LDFLAGS="$static_library $native_static_libs" \
   go build \

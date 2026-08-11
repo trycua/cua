@@ -97,7 +97,7 @@ jobs:
       - name: Build provider archive
         shell: bash
         env:
-          CC: ${{ matrix.cc }}
+          GO_BUILD_CC: ${{ matrix.cc }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: ./scripts/build-release-archive.sh "$VERSION" dist
       - name: Upload provider archive

@@ -154,29 +154,27 @@ fn owner_chain_reaches_target(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PostActionForegroundTarget {
+pub(crate) struct ForegroundTarget {
     hwnd: u64,
     pid: u32,
     owner: Option<u64>,
 }
 
-/// Snapshot the exact target identity and owner before pointer input is sent.
-pub(crate) fn capture_post_action_foreground_target(
-    target: u64,
-) -> Option<PostActionForegroundTarget> {
+/// Snapshot the exact target identity and owner before global input is sent.
+pub(crate) fn capture_foreground_target(target: u64) -> Option<ForegroundTarget> {
     let pid = window_owner_pid(target)?;
     let owner = unsafe { GetWindow(HWND(target as *mut _), GW_OWNER) }
         .ok()
         .filter(|owner| !owner.0.is_null())
         .map(|owner| owner.0 as usize as u64);
-    Some(PostActionForegroundTarget {
+    Some(ForegroundTarget {
         hwnd: target,
         pid,
         owner,
     })
 }
 
-/// Verify the foreground after an exact-target pointer action.
+/// Verify the foreground before or after an exact-target global input action.
 ///
 /// The requested HWND must become foreground before input is sent. The action
 /// may then legitimately open a same-process owned popup or modal, so the
@@ -185,8 +183,8 @@ pub(crate) fn capture_post_action_foreground_target(
 /// A dismiss action may instead destroy the requested owned modal; that is
 /// accepted only when foreground returns to its snapshotted same-process owner.
 /// Unrelated same-process siblings and foreign foreground windows fail closed.
-pub(crate) fn post_action_foreground_matches(
-    target: PostActionForegroundTarget,
+pub(crate) fn foreground_matches_target_or_owned_window(
+    target: ForegroundTarget,
     actual: u64,
 ) -> bool {
     let current_target_pid = window_owner_pid(target.hwnd);

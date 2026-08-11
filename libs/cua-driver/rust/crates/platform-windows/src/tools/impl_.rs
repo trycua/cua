@@ -5151,6 +5151,9 @@ impl Tool for HotkeyTool {
                     "pid":{"type":"integer","description":"Target process ID."},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) and one non-modifier key, e.g. [\"ctrl\", \"c\"]."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y (see x)."},
                     "window_id":{"type":"integer","description":"Explicit HWND when the pid owns multiple windows."},
@@ -5250,12 +5253,41 @@ impl Tool for HotkeyTool {
         } else {
             return ToolResult::error("Missing required array field keys.");
         };
-        let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
             Err(e) => return e,
         };
         let pid = raw_pid as u32;
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|value| value as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id").map(|value| value as u32),
+            "hotkey",
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => return error,
+        };
+        let elem_idx = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => window_id
+                .map(|value| value as u64)
+                .or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
+        if elem_idx.is_some() && hwnd_opt.is_none() {
+            return ToolResult::error(
+                "window_id is required when element_index is used — the element_index cache \
+                 is scoped per (pid, window_id). Pass the same window_id you used in \
+                 `get_window_state`.",
+            );
+        }
         let delivery = DeliveryMode::from_args(&args);
 
         // Resolve HWND: use window_id if given, else pick first window for pid.
@@ -5291,6 +5323,11 @@ impl Tool for HotkeyTool {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
+                if elem_idx.is_some() {
+                    return ToolResult::error(
+                        "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+                    );
+                }
                 let from_zoom = args
                     .get("from_zoom")
                     .and_then(|v| v.as_bool())
@@ -5412,10 +5449,20 @@ impl Tool for HotkeyTool {
         // global modifier state, so Chromium never observes Ctrl+Shift+H as a
         // chord even though the renderer control is focused.
         let use_send_input = delivery == DeliveryMode::Foreground;
+        let focus_target = elem_idx.map(|idx| {
+            let point = self.state.element_cache.get_element_center(pid, hwnd, idx);
+            (idx, point)
+        });
+        let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             if use_send_input {
-                crate::input::send_key_synthesized(hwnd, &key, &m)
+                crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, point)?;
+                    }
+                    Ok(())
+                })
             } else {
                 crate::input::post_key(hwnd, &key, &m)
             }

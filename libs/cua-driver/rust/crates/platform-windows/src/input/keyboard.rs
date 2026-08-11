@@ -575,8 +575,9 @@ fn wait_for_exact_foreground(target: HWND, timeout: Duration) -> bool {
     }
 }
 
-/// Run one system-queue input transaction while `target` is the observed
-/// foreground HWND. Foreground and optional child focus are checked against
+/// Run one system-queue input transaction while `target`, or a live visible
+/// same-process window whose owner chain reaches `target`, is foreground.
+/// Foreground and optional child focus are checked against
 /// external Win32/UIA state instead of inferred from API return values or a
 /// fixed settle delay. The prior foreground is restored on every body/focus
 /// result after activation succeeds.
@@ -602,13 +603,42 @@ fn with_confirmed_foreground<T>(
         );
     }
 
+    let Some(foreground_target) = crate::win32::capture_foreground_target(target.0 as usize as u64)
+    else {
+        if !previous.0.is_null() && previous != target {
+            let _ = unsafe { SetForegroundWindow(previous) };
+        }
+        bail!(
+            "foreground_unavailable: exact target HWND {:?} disappeared before {operation}; \
+             no input was sent",
+            target.0
+        );
+    };
+
     let result = (|| {
         focus()?;
-        if !wait_for_exact_foreground(target, Duration::from_millis(250)) {
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let actual = loop {
             let actual = unsafe { GetForegroundWindow() };
+            if crate::win32::foreground_matches_target_or_owned_window(
+                foreground_target,
+                actual.0 as usize as u64,
+            ) {
+                break actual;
+            }
+            if Instant::now() >= deadline {
+                break actual;
+            }
+            sleep(Duration::from_millis(10));
+        };
+        if !crate::win32::foreground_matches_target_or_owned_window(
+            foreground_target,
+            actual.0 as usize as u64,
+        ) {
             bail!(
-                "foreground_unavailable: exact target HWND {:?} lost foreground while preparing \
-                 {operation} (actual foreground HWND {:?}); no input was sent",
+                "foreground_unavailable: exact target HWND {:?} or a verified same-process \
+                 owned window was not foreground while preparing {operation} \
+                 (actual foreground HWND {:?}); no input was sent",
                 target.0,
                 actual.0
             );

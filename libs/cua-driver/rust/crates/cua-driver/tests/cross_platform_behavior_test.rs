@@ -900,6 +900,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text()
     );
     assert_fixture_contains(fixture, "key_state=hotkey");
+    assert_fixture_value(fixture, "number-input", "42");
     #[cfg(target_os = "macos")]
     if fixture.name == "electron" && addressing == "px" && delivery == "foreground" {
         run_macos_selection_hotkeys(fixture);

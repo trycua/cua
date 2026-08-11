@@ -99,6 +99,22 @@ if [ "$goos" = windows ]; then
       /defaultlib:*)
         windows_linker_flags+=("-l${library#/defaultlib:}")
         ;;
+      -lwindows.*)
+        packaged_library=
+        packaged_archive="lib${library#-l}.a"
+        cargo_registry_src="${CARGO_HOME:-$HOME/.cargo}/registry/src"
+        if [ -d "$cargo_registry_src" ]; then
+          while IFS= read -r candidate; do
+            packaged_library="$candidate"
+            break
+          done < <(find "$cargo_registry_src" -type f -name "$packaged_archive" -print)
+        fi
+        if [ -n "$packaged_library" ]; then
+          windows_linker_flags+=("$(cygpath -m "$packaged_library")")
+        else
+          windows_linker_flags+=("$library")
+        fi
+        ;;
       *.lib)
         packaged_library=
         cargo_registry_src="${CARGO_HOME:-$HOME/.cargo}/registry/src"

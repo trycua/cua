@@ -1,6 +1,6 @@
 [project]
 name = "cua-sandbox"
-version = "0.1.28"
+version = "0.2.0"
 description = "CUA Sandbox — ephemeral and persistent sandboxed computer environments"
 readme = "README.md"
 license = "MIT"

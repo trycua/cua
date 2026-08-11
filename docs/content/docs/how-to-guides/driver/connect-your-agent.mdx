@@ -210,10 +210,6 @@ preset for them. Resolve the absolute executable path first with `command -v cua
 the client's native command:
 
 ```bash
-# Gemini CLI
-gemini mcp add --scope user cua-driver /absolute/path/to/cua-driver mcp
-gemini mcp list
-
 # Grok Build
 grok mcp add cua-driver -- /absolute/path/to/cua-driver mcp
 grok mcp doctor cua-driver
@@ -224,8 +220,8 @@ kimi mcp test cua-driver
 ```
 
 These commands use each client's documented stdio MCP interface and the standard `cua-driver mcp`
-entry point. See the focused guides for [Gemini CLI](/use-cua-with/gemini-cli), [Grok
-Build](/use-cua-with/grok-build), and [Kimi Code](/use-cua-with/kimi-code).
+entry point. See the focused guides for [Grok Build](/use-cua-with/grok-build) and [Kimi
+Code](/use-cua-with/kimi-code).
 
 T3 Code is a control plane for other coding agents rather than a separate MCP client. Configure Cua
 Driver in the underlying harness, then launch that harness from [T3 Code](/use-cua-with/t3-code).

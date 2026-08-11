@@ -18,6 +18,7 @@ import fg from 'fast-glob';
 
 const DOCS_DIR = path.resolve(__dirname, '..');
 const CONTENT_DIR = path.join(DOCS_DIR, 'content/docs');
+const BLOG_DIR = path.join(DOCS_DIR, '../blog');
 
 /**
  * Build the ScanResult (valid URL map) directly from content files.
@@ -30,6 +31,14 @@ function buildScannedUrls(): ScanResult {
   for (const file of mdxFiles) {
     const slug = file.replace(/\.mdx$/, '').replace(/\/index$/, '');
     urls.set(`/${slug}`, {});
+  }
+
+  // Blog posts share the cua.ai origin with the docs app, so root-relative
+  // links from docs pages should be checked against the repository's posts.
+  const blogFiles = fg.sync('**/*.md', { cwd: BLOG_DIR });
+  for (const file of blogFiles) {
+    const slug = file.replace(/\.md$/, '').replace(/\/index$/, '');
+    urls.set(`/blog/${slug}`, {});
   }
 
   // Also add the root

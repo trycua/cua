@@ -1,0 +1,17 @@
+---
+title: Qwen
+description: Use Qwen models with Cua Driver through Qwen Code or a local runtime.
+icon: BrainCircuit
+---
+
+Qwen models can reach Cua Driver through an MCP-capable harness or a local serving stack.
+
+| Start here when…               | Recommended path                                                                                                 |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| You use Qwen Code              | [Connect Qwen Code to Cua Driver](/use-cua-with/qwen-code)                                                       |
+| You serve a Qwen model locally | Choose [Ollama](/use-cua-with/ollama) or [llama.cpp](/use-cua-with/llama-cpp), then connect a compatible harness |
+| You use another MCP client     | [Use the generic MCP configuration](/how-to-guides/driver/connect-your-agent#generic-mcp-json)                   |
+
+The model and computer-use layer remain separate. Qwen Code or another harness selects tools; Cua Driver observes and acts on the desktop.
+
+See Qwen Code's [MCP documentation](https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/).

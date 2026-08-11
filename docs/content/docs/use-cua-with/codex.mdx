@@ -1,0 +1,29 @@
+---
+title: OpenAI Codex
+description: Connect Codex to Cua Driver over MCP.
+icon: openai
+---
+
+Codex supports local MCP servers in the CLI, IDE extension, and desktop app. Generate the command with the installed Cua Driver version:
+
+```bash
+cua-driver mcp-config --client codex
+```
+
+The generated command uses the absolute executable path. Its shape is:
+
+```bash
+codex mcp add cua-driver -- /absolute/path/to/cua-driver mcp
+codex mcp list
+```
+
+Open a fresh Codex session after registration. You can also install the Cua Driver agent skill for action-selection guidance:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent#codex) and [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill).
+
+Upstream: [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).

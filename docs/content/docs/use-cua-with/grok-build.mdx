@@ -1,0 +1,22 @@
+---
+title: Grok Build
+description: Connect xAI's Grok Build coding agent to Cua Driver over MCP.
+icon: TerminalSquare
+---
+
+Grok Build supports local stdio MCP servers. Find the installed Cua Driver path, then register it:
+
+```bash
+command -v cua-driver
+grok mcp add cua-driver -- /absolute/path/to/cua-driver mcp
+grok mcp list
+grok mcp doctor cua-driver
+```
+
+The `--` separates Grok Build's options from the Cua Driver server command. Grok Build stores user configuration in `~/.grok/config.toml`; add `--scope project` if the configuration belongs to one repository.
+
+Cua Driver currently has no dedicated Grok Build preset, so this page follows Grok Build's native MCP command and the standard `cua-driver mcp` entry point.
+
+Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent) for installation, permissions, and runtime modes.
+
+Upstream: [Grok Build MCP server documentation](https://docs.x.ai/build/features/mcp-servers).

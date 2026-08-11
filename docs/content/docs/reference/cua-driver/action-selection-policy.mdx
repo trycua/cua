@@ -5,7 +5,10 @@ description: "Behavior an agent should follow when choosing element, pixel, page
 
 This policy describes how an agent should choose Cua Driver action parameters. It is meant for agent prompts, wrappers, and evaluators. It is not a user walkthrough.
 
-Use it when the agent must decide what to pass to `click`, `type_text`, `get_window_state`, and related tools: `element_index` versus `x, y`, `delivery_mode: background` versus `foreground`, and window versus desktop scope.
+Use it when the agent must decide what to pass to `click`, `type_text`,
+`get_window_state`, and related tools: `element_index` versus `x, y`,
+`delivery_mode: background` versus `foreground`, and a window versus desktop
+target.
 
 ## Preconditions
 
@@ -92,17 +95,23 @@ click({ pid, window_id, element_index: 12 })
 
 **Wayland exception.** On a native Wayland session, raw keyboard input has no universal background path. When an AX keyboard action no-ops there, prefer an accessible field action or run the app under XWayland; otherwise escalate only that action to foreground. See [Known limits](/reference/cua-driver/limits#native-wayland-apps-cant-receive-synthetic-keystrokes).
 
-## Switch to desktop scope only for screen-absolute work
+## Use a desktop target only for screen-absolute work
 
-Reach for **desktop scope** only when the action has no single window, such as dragging between windows or clicking absolute screen coordinates. It foregrounds and works on pixels, so it cannot provide best-effort background behavior.
+Use a **desktop target** only when the action has no single window, such as
+dragging between windows or clicking absolute screen coordinates. It uses
+foreground pixel input, so it cannot provide best-effort background behavior.
 
 ```jsonc
-set_config({ capture_scope: "desktop" })
-get_desktop_state()                       // full-screen screenshot
-click({ x: 1280, y: 40 })                 // screen-absolute, no window_id
+get_desktop_state() // full-screen screenshot
+click({
+  x: 1280,
+  y: 40,
+  target: { kind: "desktop", display_id: "primary" },
+})
 ```
 
-A window-less click while scope is still `window` is rejected with `desktop_scope_disabled`. That error is the prompt to switch scope.
+Choose the target on each action. This does not change the session or disable
+window-targeted tools for later calls.
 
 ## Confirm the action landed
 
@@ -119,7 +128,9 @@ get_window_state({ pid, window_id })         // confirm the change against tree 
 Do not trust the status code on a `verified: false` action. Re-read the window. The snapshot carries both the tree and the screenshot. Confirm the effect; if it did not land, switch rung (element ax action -> element px action off the same screenshot) or escalate delivery (background -> foreground).
 
 **Problem: `desktop_scope_disabled` on a window-less click.**
-The agent is in `window` scope. Either pass a `window_id` (+ `element_index` or `x, y`), or `set_config({ capture_scope: "desktop" })` for genuinely screen-absolute work.
+This is a legacy flat call without an admitted desktop scope. Retry with an
+exact window target, or use
+`target: {kind: "desktop", display_id: "primary"}` for screen-absolute work.
 
 **Problem: keystrokes don't land on a Linux app.**
 On native Wayland, raw keys have no background path. Type into accessible fields with `type_text`, drive controls by `element_index`, or run the app under XWayland. See [Known limits](/reference/cua-driver/limits#native-wayland-apps-cant-receive-synthetic-keystrokes).

@@ -2141,7 +2141,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Screen-absolute click via the XTest extension — the `capture_scope="desktop"`
+/// Screen-absolute click via the XTest extension — the desktop-target
 /// foreground click. It warps the real pointer to `(x, y)` and injects a true
 /// button press/release there, so the event lands on whatever window owns that
 /// screen pixel (the Linux peer of the Windows `WindowFromPoint` + macOS

@@ -233,6 +233,10 @@ impl PrivateWorkerClient {
         self.request_async("list", None, None, None).await
     }
 
+    pub(crate) async fn list_host_sessions(self: &Arc<Self>) -> Result<Value, DriverError> {
+        self.request_async("sessions_list", None, None, None).await
+    }
+
     pub(crate) async fn invoke(
         self: &Arc<Self>,
         name: &str,

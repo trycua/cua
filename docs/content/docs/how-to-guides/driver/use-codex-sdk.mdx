@@ -74,5 +74,6 @@ Both scripts:
 5. end the session in `finally`.
 
 The filesystem sandbox does not sandbox the separate desktop MCP server.
-Restrict the task itself, choose an appropriate Cua capture scope and policy,
-and never blindly retry a mutation after a timeout or disconnect.
+Restrict the task itself, choose an exact window or desktop target for each Cua
+action, apply the appropriate authorization policy, and never blindly retry a
+mutation after a timeout or disconnect.

@@ -156,7 +156,8 @@ pub struct VerifyStateInput {
     /// One to eight predicates, combined with logical AND.
     #[schemars(length(min = 1, max = 8))]
     pub expect: Vec<StatePredicate>,
-    /// Optional session id for capture-scope and authorization continuity.
+    /// Optional public session label for lifecycle continuity. It never selects
+    /// capture modality or authorization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,

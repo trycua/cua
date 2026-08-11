@@ -822,6 +822,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         "get_screen_size"
         | "get_cursor_position"
         | "get_config"
+        | "get_session"
+        | "list_sessions"
         | "get_session_state"
         | "get_agent_cursor_state"
         | "get_recording_state"

@@ -87,6 +87,12 @@ pub enum Command {
     Status {
         socket: Option<String>,
     },
+    /// `cua-driver sessions list [--json]` — content-free operator view of
+    /// the live sessions owned by the selected daemon runtime.
+    Sessions {
+        json: bool,
+        socket: Option<String>,
+    },
     Recording {
         subcommand: String,
         args: Vec<String>,
@@ -269,6 +275,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("stop") => Some("stop"),
         Some("revoke") => Some("revoke"),
         Some("status") => Some("status"),
+        Some("sessions") => Some("sessions"),
         Some("recording") => Some("recording"),
         Some("dump-docs") => Some("dump_docs"),
         Some("update") => Some("update"),
@@ -344,6 +351,10 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "get" => "get",
             "set" => "set",
             "reset" => "reset",
+            _ => "other",
+        },
+        Some("sessions") => match subcommand.unwrap_or("list") {
+            "list" => "list",
             _ => "other",
         },
         Some("autostart") => match subcommand.unwrap_or("") {
@@ -432,7 +443,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, cursor-theme");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, cursor-theme, sessions");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -712,6 +723,17 @@ pub fn parse_command() -> Command {
             }
         }
         Some("status") => Command::Status { socket },
+        Some("sessions") => {
+            let subcommand = pos.next().unwrap_or("list");
+            if subcommand != "list" {
+                eprintln!("Unknown sessions subcommand '{subcommand}'. Valid: list");
+                process::exit(64);
+            }
+            Command::Sessions {
+                json: args.iter().any(|arg| arg == "--json"),
+                socket,
+            }
+        }
         Some("recording") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
             let rest: Vec<String> = pos.map(str::to_owned).collect();
@@ -1496,6 +1518,13 @@ pub fn build_manifest() -> serde_json::Value {
             { "name": "status",
               "description": "Report daemon status (running / not / unhealthy).",
               "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
+            { "name": "sessions",
+              "description": "List content-free lifecycle summaries for sessions owned by the daemon runtime.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "Only: list. Default: list." },
+                  { "name": "--json", "type": "flag", "description": "Emit the machine-readable session summary." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
+              ] },
             { "name": "list-tools",
               "description": "Print the canonical tool name + one-line summary for every registered MCP tool.",
               "args": [] },
@@ -1907,16 +1936,32 @@ pub fn run_call(
             .clone()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
         cua_driver_core::tool_args::sanitize_reserved_args(&mut args_for_daemon);
+        let transport_session = format!("cli-{}", uuid::Uuid::new_v4());
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some(tool.to_owned()),
             args: Some(args_for_daemon),
-            // CLI one-shot is its own ephemeral, anonymous/global session.
-            session_id: None,
+            // Every one-shot call owns one disposable implicit transport
+            // session. The daemon closes all lifecycle state attached to it
+            // synchronously after the response is received.
+            session_id: Some(transport_session.clone()),
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
-        match crate::serve::send_request(&socket_path, &req) {
+        let response = crate::serve::send_request(&socket_path, &req);
+        let cleanup = crate::serve::DaemonRequest {
+            method: "session_end".into(),
+            name: None,
+            args: None,
+            session_id: Some(transport_session),
+            observation_origin: None,
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
+        };
+        let cleanup_result = crate::serve::send_request(&socket_path, &cleanup);
+        if let Err(error) = cleanup_result {
+            eprintln!("warning: disposable session cleanup failed: {error}");
+        }
+        match response {
             Ok(resp) => {
                 if resp.ok {
                     if let Some(result) = resp.result {
@@ -3677,7 +3722,7 @@ pub fn run_config_cmd(
             };
             if key == "capture_scope" {
                 eprintln!(
-                    "config key 'capture_scope' is retired; use start_session(capture_scope=auto|window|desktop)"
+                    "config key 'capture_scope' is retired; select a window or desktop target on each action"
                 );
                 process::exit(64);
             }
@@ -3718,7 +3763,7 @@ pub fn run_config_cmd(
             };
             if key == "capture_scope" {
                 eprintln!(
-                    "config key 'capture_scope' is retired; use start_session(capture_scope=auto|window|desktop)"
+                    "config key 'capture_scope' is retired; select a window or desktop target on each action"
                 );
                 process::exit(64);
             }
@@ -3936,6 +3981,11 @@ mod tests {
             "set"
         );
         assert_eq!(finite_operation_from_args(&args(&["skills"])), "status");
+        assert_eq!(finite_operation_from_args(&args(&["sessions"])), "list");
+        assert_eq!(
+            finite_operation_from_args(&args(&["sessions", "private-value"])),
+            "other"
+        );
         assert_eq!(
             finite_operation_from_args(&args(&["update", "--apply"])),
             "apply"

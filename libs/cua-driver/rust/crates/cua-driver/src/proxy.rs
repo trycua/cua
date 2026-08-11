@@ -48,7 +48,20 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
     let mut writer = tokio::io::BufWriter::new(stdout);
     let mut line = String::new();
     let mut session_observed = false;
-    let mut public_sessions = std::collections::HashSet::new();
+    let transport_session = format!("mcp-{}", uuid::Uuid::new_v4());
+    struct DirectTransportCleanup {
+        sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+        transport_session: String,
+    }
+    impl Drop for DirectTransportCleanup {
+        fn drop(&mut self) {
+            self.sdk.end_transport_sessions(&self.transport_session);
+        }
+    }
+    let _cleanup = DirectTransportCleanup {
+        sdk: sdk.clone(),
+        transport_session: transport_session.clone(),
+    };
 
     loop {
         line.clear();
@@ -65,32 +78,19 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
                 Response::parse_error()
             }
             Ok(request) if request.is_notification() => continue,
-            Ok(request) => {
+            Ok(mut request) => {
+                apply_direct_session_identity(&mut request, &transport_session);
                 let initialize_metadata = (!session_observed)
                     .then(|| request.initialize_metadata())
                     .flatten();
-                let session_context = request
-                    .tool_call()
-                    .ok()
-                    .and_then(|call| {
-                        call.args
-                            .get("session")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|session| !session.is_empty())
-                            .map(str::to_owned)
-                    })
-                    .map(|session| {
-                        public_sessions.insert(session);
-                        request.tool_call().ok().and_then(|call| {
-                            sdk.begin_tool_call(
-                                &call.name,
-                                &call.args,
-                                cua_driver_core::session::SessionTransport::McpStdio,
-                                cua_driver_core::session::SessionClientKind::Mcp,
-                            )
-                        })
-                    })
-                    .flatten();
+                let session_context = request.tool_call().ok().and_then(|call| {
+                    sdk.begin_tool_call(
+                        &call.name,
+                        &call.args,
+                        cua_driver_core::session::SessionTransport::McpStdio,
+                        cua_driver_core::session::SessionClientKind::Mcp,
+                    )
+                });
                 let timer = tool_observation_timer(
                     &request,
                     |name| sdk.is_known_tool(name),
@@ -122,10 +122,29 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
         writer.flush().await?;
     }
 
-    for session in public_sessions {
-        let _ = sdk.end_session(&session).await;
-    }
     sdk.shutdown().await.map_err(anyhow::Error::msg)
+}
+
+fn apply_direct_session_identity(request: &mut Request, transport_session: &str) {
+    let Some(arguments) = request
+        .params
+        .as_mut()
+        .and_then(|params| params.get_mut("arguments"))
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let effective = arguments
+        .get("session")
+        .and_then(serde_json::Value::as_str)
+        .filter(|session| !session.is_empty())
+        .unwrap_or(transport_session)
+        .to_owned();
+    arguments.insert("_session_id".into(), serde_json::Value::String(effective));
+    arguments.insert(
+        "_transport_session_id".into(),
+        serde_json::Value::String(transport_session.to_owned()),
+    );
 }
 
 /// Run the MCP stdio proxy. Reads JSON-RPC lines from stdin, forwards

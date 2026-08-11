@@ -11,8 +11,8 @@ use async_trait::async_trait;
 /// the host appears in the z-order. `GA_ROOT` normalises both inputs to the
 /// host so the overlay sits at z+1 of whatever is actually painted on screen.
 ///
-/// No-op when the overlay is disabled or `key` is empty (anonymous, cursor-less
-/// run); the command is just dropped by the render thread in that case.
+/// No-op when the overlay is disabled or `key` is empty (a direct platform
+/// call without lifecycle metadata); the render thread drops the command.
 fn pin_overlay_above(key: &str, hwnd: u64) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
@@ -242,8 +242,8 @@ fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
 /// `tokio::sleep(80..600 ms)` was racing the spring-physics glide).
 ///
 /// `key` is the session's cursor key (see [`resolve_cursor_key`]). An empty key
-/// (anonymous, no declared session) is cursor-less: every overlay op
-/// short-circuits, so the action runs with no visible cursor.
+/// is possible only for a direct platform call without lifecycle metadata; in
+/// that case every overlay operation short-circuits.
 async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
     if key.is_empty() {
         return;
@@ -465,23 +465,19 @@ fn pid_window_guarded<T: Tool + 'static>(
     })
 }
 
-/// The cursor key for an anonymous (cursor-less) call. A run opts into a cursor
-/// by declaring a `session`; without one, every cursor op short-circuits on
-/// this empty key (see `overlay::send_command` / `overlay_glide_to`).
+/// Cursor sentinel for a direct platform call without lifecycle metadata.
+/// Normal runtime dispatch supplies either a named or implicit session key.
 pub(crate) const NO_CURSOR: &str = "";
 
 /// Resolve the cursor key for a tool invocation, or [`NO_CURSOR`] (`""`) for an
 /// anonymous call.
 ///
-/// A cursor is tied to a **caller-declared session**, never to the MCP
-/// connection. Precedence: an explicit `session` arg, then its legacy alias
-/// `cursor_id`. We deliberately do NOT fall back to the connection-injected
-/// `_session_id` or to a seeded `"default"` cursor — `""` means "no session
-/// declared → no cursor", while the underlying action (click/type/…) still
-/// executes. Mirrors `platform_macos::tools::cursor_tools::resolve_cursor_key`
-/// so the two platforms key cursors identically.
+/// A cursor is tied to the lifecycle session selected at the trusted dispatch
+/// boundary. Precedence: explicit `session`, trusted implicit `_session_id`,
+/// then the legacy `cursor_id` alias. A direct platform invocation that has no
+/// lifecycle metadata remains cursor-less.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
-    for key in ["session", "cursor_id"] {
+    for key in ["session", "_session_id", "cursor_id"] {
         if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
             if !v.is_empty() {
                 return v.to_owned();
@@ -2905,7 +2901,7 @@ impl Tool for ClickTool {
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
 
-        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // ── Window-less screen-absolute branch (desktop target) ───────────────
         // When the caller gives x,y with NO pid/window_id, treat x,y as TRUE
         // SCREEN pixels. The core registry has already enforced the session's
         // effective capture scope; this local check validates the action form.
@@ -5609,7 +5605,7 @@ impl Tool for ScrollTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
-        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // ── Window-less screen-absolute branch (desktop target) ───────────────
         // No pid/window_id + numeric x,y + desktop scope → synthesize a wheel
         // event at the screen point via SendInput. The wheel routes to whatever
         // window is under (x,y). up/down map to a vertical wheel (sign), and
@@ -7251,9 +7247,8 @@ impl Tool for GetScreenSizeTool {
 /// Vision-only desktop capture: grabs the ENTIRE primary display at native
 /// physical-pixel size (no downscale) so screen-absolute pixel picks land
 /// exactly, then reports the true screen size. No UIA walk, no pid/window_id —
-/// this is the capture surface for `capture_scope="desktop"` GUI loops where
-/// the agent drives `click(x,y)` / `scroll(x,y)` against screen-absolute
-/// coordinates.
+/// this is the capture surface for actions with a primary-display desktop
+/// target and screen-absolute coordinates.
 ///
 /// Mirrors the `get_window_state` vision branch's ToolResult shape: an
 /// `image_png` content part (or a written-out file path), a text summary line,
@@ -7266,15 +7261,14 @@ impl Tool for GetDesktopStateTool {
     fn def(&self) -> &ToolDef {
         GDS_DEF.get_or_init(|| ToolDef {
             name: "get_desktop_state".into(),
-            description: "Capture a full-display vision screenshot in true screen pixels \
-                (no downscale), for capture_scope=\"desktop\" GUI loops where the agent then \
-                drives click(x,y)/scroll(x,y) with no pid/window_id. Returns the PNG at native \
-                display resolution plus the true screen size so screen-absolute pixel picks \
-                land exactly. Vision-only: no UIA tree walk.".into(),
+            description: "Capture the full display in true screen pixels with no downscale. \
+                Use its native-size PNG as the coordinate source for actions whose target is \
+                {kind:\"desktop\",display_id:\"primary\"}. Returns the true screen size. \
+                Vision-only: no UIA tree walk.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "description": "Optional session id." },
+                    "session": { "type": "string", "description": "Optional public session label. Omit it to use the authenticated transport's implicit lifecycle session." },
                     "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." }
                 },
                 "additionalProperties": false
@@ -7441,8 +7435,8 @@ impl Tool for MoveCursorTool {
         }
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
-        // Cursor key precedence: caller-declared `session` > legacy `cursor_id`
-        // > NO_CURSOR. An anonymous run (no session) has no cursor to move.
+        // The trusted dispatch boundary always supplies a lifecycle key,
+        // including for an unnamed implicit session.
         let cursor_key = resolve_cursor_key(&args);
         if !cursor_key.is_empty() {
             self.state
@@ -7452,14 +7446,9 @@ impl Tool for MoveCursorTool {
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so
         // the cursor settles to the natural macOS-style pose.
-        crate::overlay::send_command(
-            cursor_key.clone(),
-            cursor_overlay::OverlayCommand::MoveTo {
-                x,
-                y,
-                end_heading_radians: std::f64::consts::FRAC_PI_4,
-            },
-        );
+        // Use the acknowledged animation path so a first-ever move seeds and
+        // displays the session cursor just as reliably as a coordinate click.
+        crate::overlay::animate_cursor_to(cursor_key.clone(), x, y).await;
         let shown = if cursor_key.is_empty() {
             "default"
         } else {
@@ -7977,12 +7966,12 @@ impl Tool for SetConfigTool {
             || args.get("key").and_then(Value::as_str) == Some("capture_scope")
         {
             return ToolResult::error(
-                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
             .with_structured(json!({
                 "code": "config_key_retired",
                 "key": "capture_scope",
-                "replacement": "start_session.capture_scope",
+                "replacement": "action.target",
             }));
         }
         let mut cfg = self.state.config.write().unwrap();
@@ -9362,11 +9351,13 @@ pub fn build_registry_with_provider(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
+                        crate::overlay::is_visible_for_session(session_id),
                         Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
                         false,
                         false,
                         None,
@@ -9395,10 +9386,15 @@ pub fn build_registry_with_provider(
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
         });
+    let session_revive_hook =
+        cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
+            crate::overlay::revive_cursor(session_id.to_owned());
+        });
 
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     r.retain_cursor_outcome_reader(cursor_outcome_reader);
     r.retain_session_end_hook(session_end_hook);
+    r.retain_session_revive_hook(session_revive_hook);
     if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
         let prefix = format!("__cua_runtime_{runtime_scope}:");
         let cursor_registry = state.cursor_registry.clone();
@@ -9576,15 +9572,15 @@ mod cursor_key_resolution_tests {
     use serde_json::json;
 
     #[test]
-    fn anonymous_resolves_to_no_cursor() {
+    fn direct_platform_call_without_lifecycle_resolves_to_no_cursor() {
         // No session/cursor_id → NO_CURSOR (""): the action still runs but no
-        // cursor is shown. The connection-injected `_session_id` is NOT a cursor
-        // source — it stays the recording/config lifecycle key.
+        // cursor is shown. Canonical core dispatch injects `_session_id` before
+        // real platform calls.
         assert_eq!(resolve_cursor_key(&json!({})), NO_CURSOR);
         assert_eq!(resolve_cursor_key(&json!({ "pid": 1 })), NO_CURSOR);
         assert_eq!(
             resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })),
-            NO_CURSOR
+            "mcp-1-2"
         );
     }
 
@@ -9605,6 +9601,10 @@ mod cursor_key_resolution_tests {
         assert_eq!(
             resolve_cursor_key(&json!({ "session": "s1", "cursor_id": "c1" })),
             "s1"
+        );
+        assert_eq!(
+            resolve_cursor_key(&json!({ "_session_id": "implicit", "cursor_id": "c1" })),
+            "implicit"
         );
     }
 

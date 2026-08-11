@@ -43,6 +43,14 @@ pub fn schema_subset_violations(portable: &Value, live: &Value) -> Vec<String> {
 }
 
 fn compare_schema(path: &str, portable: &Value, live: &Value, violations: &mut Vec<String>) {
+    // Exact schema equality is itself a proof of subset compatibility, even
+    // when the shared schema contains a construct (for example a generated
+    // tagged-union `anyOf`) that this intentionally small implication engine
+    // does not otherwise interpret.
+    if portable == live {
+        return;
+    }
+
     let Some(portable_object) = portable.as_object() else {
         violations.push(format!("{path}: portable schema must be an object"));
         return;
@@ -368,6 +376,17 @@ mod tests {
         let violations = schema_subset_violations(&portable, &live);
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("unsupported portable schema keyword `pattern`"));
+    }
+
+    #[test]
+    fn identical_unknown_schema_is_a_proven_subset() {
+        let schema = json!({
+            "anyOf": [
+                { "type": "string" },
+                { "type": "null" }
+            ]
+        });
+        assert!(schema_subset_violations(&schema, &schema).is_empty());
     }
 
     #[test]

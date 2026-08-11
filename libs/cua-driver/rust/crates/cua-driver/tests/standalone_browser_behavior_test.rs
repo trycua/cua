@@ -3664,34 +3664,22 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 before.raw
             );
             assert_eq!(
-                before.structured()["capture_coverage"]["recovery"]["escalate"],
+                before.structured()["capture_coverage"]["recovery"]["act_target"],
                 serde_json::json!({
-                    "tool": "escalate_session",
-                    "reason": "foreground_ineffective",
+                    "kind": "desktop",
+                    "display_id": "primary",
                 }),
                 "{}",
                 before.raw
             );
+            assert!(
+                before.structured()["capture_coverage"]["recovery"]
+                    .get("escalate")
+                    .is_none(),
+                "{}",
+                before.raw
+            );
         }
-        let escalated = fixture.driver.call(
-            "escalate_session",
-            serde_json::json!({
-                "session": window_session,
-                "reason": "foreground_ineffective",
-                "detail": "browser chrome may be outside window capture",
-            }),
-        );
-        assert!(
-            !escalated.is_error(),
-            "desktop inspection escalation failed: {}",
-            escalated.raw
-        );
-        assert_eq!(
-            escalated.structured()["effective_scope"],
-            "desktop",
-            "{}",
-            escalated.raw
-        );
         let desktop_before = fixture.driver.call(
             "get_desktop_state",
             serde_json::json!({
@@ -3828,7 +3816,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "click",
                 serde_json::json!({
                     "session": window_session,
-                    "scope": "desktop",
+                    "target": {"kind": "desktop", "display_id": "primary"},
                     "x": x,
                     "y": y,
                 }),

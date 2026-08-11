@@ -621,10 +621,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 54)
+        self.assertEqual(len(expected["baseTools"]), 56)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 30, "linux": 34, "win32": 30},
+            {"darwin": 32, "linux": 36, "win32": 32},
         )
         self.assertEqual(
             expected["platformTools"],

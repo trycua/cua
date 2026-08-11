@@ -128,9 +128,10 @@ Destroy the SDK client and call `await embedded.stop()` from every orderly shutd
 - The host holds a parent-liveness pipe. EOF shuts down the daemon if the host
   exits; Rust destruction also requests a kill as a fallback. This is crash
   containment, not a substitute for orderly shutdown.
-- Capture scope is session state, not host state. Concurrent sessions sharing
-  one daemon may independently select `auto`, strict `window`, or strict
-  `desktop`; always end each session you start.
+- Capture modality is selected by each observation or action target, not by the
+  host or lifecycle session. Concurrent sessions sharing one daemon may issue
+  exact window and desktop calls independently; always close host leases and
+  explicitly end named sessions when deterministic cleanup matters.
 - macOS grant changes require a daemon restart. Never start the daemon before
   the permission-owning host process is ready.
 - Custom endpoints are accepted only when they are absent or a stale socket.

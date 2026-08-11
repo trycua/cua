@@ -38,7 +38,6 @@ in the importing process and does not require the executable or daemon.
 import asyncio
 
 from cua_driver import (
-    CaptureScope,
     CuaDriver,
     CursorReducedMotion,
     EndSessionInput,
@@ -50,7 +49,7 @@ from cua_driver import (
 async def main() -> None:
     driver = CuaDriver.create()
     await driver.start_session(
-        StartSessionInput(session="demo", capture_scope=CaptureScope.DESKTOP)
+        StartSessionInput(session="demo", capture_scope=None, cursor_theme=None)
     )
     try:
         await driver.set_agent_cursor_theme(
@@ -77,7 +76,13 @@ text, images, verification/error metadata, and `structured_json` / `raw_json`
 for platform-extensible results. Session lifecycle calls return dedicated
 generated records.
 
-The agent cursor is session-owned. Its default theme and custom dotLottie
+`start_session` is optional for ordinary calls. The runtime creates one
+implicit session for this SDK transport and reuses it until shutdown, explicit
+end, or five minutes of inactivity. Use a named session when application code
+needs to configure or inspect that run explicitly.
+
+The agent cursor is session-owned and initializes on the first cursor-bearing
+action, including `move_cursor`. Its default theme and custom dotLottie
 authoring workflow are documented in
 [`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
 and installed with the local CLI; SDK and MCP tools select only an installed

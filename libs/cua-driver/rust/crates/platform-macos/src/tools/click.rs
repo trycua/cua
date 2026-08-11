@@ -159,14 +159,14 @@ fn def() -> &'static ToolDef {
             // cua_driver_core::tool_schema.)
             "required": [],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
+                "session": { "type": "string", "description": "Optional public session label. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                "x":             { "type": "number",  "description": "X in screenshot pixels, read straight off the image you were handed — no scaling math needed. With pid+window_id (capture_scope=window): window-local pixels from the get_window_state PNG (top-left origin). Windowless (no pid/window_id, capture_scope=desktop): pixels from the get_desktop_state PNG (the native full-display image). Either way, the pixel you read IS the pixel that gets clicked; the driver undoes the Retina backing scale + any downscale internally." },
-                "y":             { "type": "number",  "description": "Y in screenshot pixels (see x). Window-local from get_window_state, or full-display from get_desktop_state under capture_scope=desktop." },
+                "x":             { "type": "number",  "description": "X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale." },
+                "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
                 "button":        {
                     "type": "string",

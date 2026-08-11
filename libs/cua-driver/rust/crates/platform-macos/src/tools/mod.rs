@@ -773,11 +773,13 @@ pub fn register_all(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
+                        crate::cursor::overlay::is_visible_for_session(session_id),
                         Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
                         false,
                         false,
                         None,
@@ -826,6 +828,11 @@ pub fn register_all(
                 crate::cursor::overlay::remove_cursor(session_id.to_owned());
             });
         registry.retain_session_end_hook(registration);
+        let revive_registration =
+            cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
+                crate::cursor::overlay::revive_cursor(session_id.to_owned());
+            });
+        registry.retain_session_revive_hook(revive_registration);
     }
 
     registry.register(Box::new(list_apps::ListAppsTool));

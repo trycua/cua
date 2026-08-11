@@ -417,15 +417,13 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   is unresponsive. `list_windows` falls back to Win32-only output instead
   of hanging; run `cua-driver doctor` and retry after the provider
   recovers.
-- **`get_desktop_state` returns `desktop_scope_disabled`?** That's
-  intended: full-display capture is a **desktop-scope** operation, gated
-  by the caller-declared session policy. To verify a specific window use
-  `get_window_state(pid, window_id)` (works backgrounded). Use
-  `get_desktop_state` only in a strict desktop session or after explicitly
-  escalating an `auto` session once the window ladder is exhausted. Desktop
-  actions pass `scope:"desktop"` with no pid/window_id. Don't reach for
-  `get_desktop_state` as a casual screenshot — it's the capture surface for
-  desktop-scope coordinate loops, not window inspection.
+- **Need full-display capture?** Use `get_desktop_state` only for a desktop
+  coordinate loop. To verify a specific window, use
+  `get_window_state(pid, window_id)` instead; it works while backgrounded.
+  Desktop actions use
+  `target:{"kind":"desktop","display_id":"primary"}`. Don't reach for
+  `get_desktop_state` as a casual screenshot—it is the desktop capture
+  surface, not window inspection.
 - **`Calc display stuck at 0 after my clicks`?** Almost always
   means UWP and you're on the PostMessage path. UWP processes
   pointer input via `Windows.UI.Input`, NOT through HWND message

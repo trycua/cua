@@ -329,6 +329,11 @@ struct AbiTrustedSessionOptions {
     ttl_seconds: u64,
     idle_ttl_seconds: u64,
     bounded_manifest_path: Option<String>,
+    /// Host-generated lifecycle lease identity. This field is accepted only
+    /// by the in-process Rust bridge; it is not part of the generated public
+    /// TrustedSessionOptions record or any agent-visible tool schema.
+    #[serde(default)]
+    transport_session: Option<String>,
 }
 
 fn with_ffi_guard(
@@ -774,7 +779,10 @@ pub unsafe extern "C" fn cua_driver_session_create_v1(
             .transpose()?;
         let request = DelegatedSessionRequest {
             public_session: options.public_session,
-            transport_session: format!("direct-{}", uuid::Uuid::new_v4()),
+            transport_session: options
+                .transport_session
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| format!("direct-{}", uuid::Uuid::new_v4())),
             mode: options.mode,
             ttl: Duration::from_secs(options.ttl_seconds),
             idle_ttl: Duration::from_secs(options.idle_ttl_seconds),

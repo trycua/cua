@@ -319,11 +319,49 @@ impl Tool for HotkeyTool {
             None
         };
 
-        // px form: focus the field before sending the combo. Foreground delivery
-        // still needs to front the target for the chord itself: the focus helper
-        // restores the previous app before returning.
-        let px_focus = {
-            if let (Some(cx), Some(cy)) = (px, py) {
+        // Web-content AX nodes can acknowledge AXFocused without moving the
+        // renderer's real first responder. That makes a direct focus write an
+        // unsafe oracle for Chromium/WebKit hotkeys: the following PID/HID
+        // chord can still land on the renderer's remembered control. Resolve
+        // the requested AX node's exact center and reuse the proven PX focus
+        // ladder for web areas. The request remains snapshot-bound AX
+        // targeting; only the focus transport falls back through a hit-test
+        // and, on the explicit foreground rung, a real click when required.
+        let web_ax_focus_xy =
+            if let (Some(ptr), Some(wid), Some(index)) = (element_ptr, window_id, element_index) {
+                let is_web = tokio::task::spawn_blocking(move || {
+                    super::type_text::target_in_web_area(pid, Some((ptr, Some(index))), Some(wid))
+                })
+                .await
+                .unwrap_or(true);
+                if is_web {
+                    tokio::task::spawn_blocking(move || {
+                        crate::recording_hooks::element_window_local_xy(
+                            wid as u64,
+                            pid as i64,
+                            index as u32,
+                        )
+                    })
+                    .await
+                    .unwrap_or(None)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        // PX form, plus the web-content AX fallback above: focus the field
+        // before sending the combo. Foreground delivery still needs to front
+        // the target for the chord itself because the focus helper restores
+        // the previous app before returning.
+        let coordinate_focus = {
+            let focus_xy = match ((px, py), web_ax_focus_xy) {
+                ((Some(cx), Some(cy)), _) => Some((cx, cy)),
+                ((None, None), Some(center)) => Some(center),
+                _ => None,
+            };
+            if let Some((cx, cy)) = focus_xy {
                 let from_zoom = args
                     .get("from_zoom")
                     .and_then(|v| v.as_bool())
@@ -366,7 +404,7 @@ impl Tool for HotkeyTool {
             || async move {
                 tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    match (fg, px_focus, window_id, element_ptr) {
+                    match (fg, coordinate_focus, window_id, element_ptr) {
                         // Chrome's native omnibox and Chromium/Electron inputs
                         // require a genuine foreground HID chord. Keep the exact
                         // target frontmost until both key events are consumed;

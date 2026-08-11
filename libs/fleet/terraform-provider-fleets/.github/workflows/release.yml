@@ -66,7 +66,7 @@ jobs:
             runner: windows-2022
             cc: x86_64-w64-mingw32-clang
             llvm_mingw_host: x86_64
-            rust_target: x86_64-pc-windows-gnu
+            rust_target: x86_64-pc-windows-gnullvm
           - goos: windows
             goarch: arm64
             runner: windows-11-arm

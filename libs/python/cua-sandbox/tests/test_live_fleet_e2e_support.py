@@ -258,9 +258,7 @@ def test_selected_namespace_rejects_unsafe_override(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_existing_safe_namespace_is_reused_without_explicit_deletion(
-    monkeypatch, tmp_path
-) -> None:
+async def test_owned_ephemeral_namespace_is_empty_after_cleanup(monkeypatch, tmp_path) -> None:
     from tests.live import test_fleet_ephemeral as live_test
 
     calls: list[str] = []
@@ -306,7 +304,7 @@ async def test_existing_safe_namespace_is_reused_without_explicit_deletion(
         return True
 
     async def collect_resource_inventory(fleet, namespace: str):
-        return {"templates": [namespace], "pools": [namespace], "claims": []}
+        return {"templates": [], "pools": [], "claims": []}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-existing")
     monkeypatch.setenv("CUA_LIVE_E2E_ARTIFACT_DIR", str(tmp_path))
@@ -321,8 +319,8 @@ async def test_existing_safe_namespace_is_reused_without_explicit_deletion(
 
     assert calls == ["provision", "close"]
     assert summaries[-1]["persistent_resources"] == {
-        "templates": ["cua-live-existing"],
-        "pools": ["cua-live-existing"],
+        "templates": [],
+        "pools": [],
         "claims": [],
     }
 
@@ -567,7 +565,7 @@ async def test_provisioning_failure_before_yield_never_deletes_namespace(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_pre_yield_claim_leak_is_recorded_without_masking_provisioning_error(
+async def test_pre_yield_failure_records_no_inventory_without_pool_identity(
     monkeypatch, tmp_path
 ) -> None:
     from tests.live import test_fleet_ephemeral as live_test
@@ -605,13 +603,13 @@ async def test_pre_yield_claim_leak_is_recorded_without_masking_provisioning_err
     with pytest.raises(ProvisioningFailure, match="provisioning failed"):
         await live_test.run_fleet_ephemeral_live()
 
-    assert summaries[-1]["claim_leak"] is True
-    assert summaries[-1]["persistent_resources"]["claims"] == ["claim-a"]
-    assert summaries[-1]["cleanup_error"] == {"type": "Failed"}
+    assert summaries[-1]["provisioning"] == {"attempted": True, "sandbox_yielded": False}
+    assert "persistent_resources" not in summaries[-1]
+    assert "cleanup_error" not in summaries[-1]
 
 
 @pytest.mark.asyncio
-async def test_pre_yield_missing_namespace_records_empty_inventory_without_cleanup_failure(
+async def test_pre_yield_missing_namespace_skips_inventory_without_pool_identity(
     monkeypatch, tmp_path
 ) -> None:
     from tests.live import test_fleet_ephemeral as live_test
@@ -650,7 +648,7 @@ async def test_pre_yield_missing_namespace_records_empty_inventory_without_clean
         await live_test.run_fleet_ephemeral_live()
 
     assert summaries[-1]["provisioning"] == {"attempted": True, "sandbox_yielded": False}
-    assert summaries[-1]["persistent_resources"] == {"templates": [], "pools": [], "claims": []}
+    assert "persistent_resources" not in summaries[-1]
     assert "cleanup_error" not in summaries[-1]
 
 
@@ -694,18 +692,21 @@ async def test_live_runner_uses_pinned_ephemeral_configuration(monkeypatch) -> N
         "memory_mb": 4096,
         "server_port": 8000,
         "time_to_start": 900,
-        "request_timeout": 60,
         "telemetry_enabled": False,
     }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("sandbox_name", "message"),
-    [("", "non-empty string"), ("cua-live-unexpected", "must equal namespace")],
+    ("sandbox_name", "sandbox_pool_name", "message"),
+    [
+        ("", "cua-live-identity", "non-empty string"),
+        ("cua-live-unexpected", "cua-live-identity", "claim name"),
+        ("cua-live-identity", "cua-live-unexpected", "pool name"),
+    ],
 )
 async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup(
-    monkeypatch, tmp_path, sandbox_name: str, message: str
+    monkeypatch, tmp_path, sandbox_name: str, sandbox_pool_name: str, message: str
 ) -> None:
     from tests.live import test_fleet_ephemeral as live_test
 
@@ -713,6 +714,8 @@ async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup
 
     class FakeSandbox:
         name = sandbox_name
+        claim_name = sandbox_name
+        pool_name = sandbox_pool_name
 
     class FakeEphemeral:
         async def __aenter__(self):

@@ -470,7 +470,8 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 create_kwargs.update(await _cloud_auth_kwargs())
                 sb = await Sandbox.create(image, **create_kwargs)
 
-            name = sb.name
+            claim_name = getattr(sb, "claim_name", None)
+            name = claim_name if isinstance(claim_name, str) and claim_name else sb.name
             await sb.disconnect()
         except Exception as e:
             import traceback

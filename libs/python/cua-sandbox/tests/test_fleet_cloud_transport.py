@@ -136,7 +136,7 @@ async def test_fleet_client_lookup_uses_bounded_deterministic_claim_name():
     "image", [Image.linux(), Image.from_registry("example:latest").apt_install("curl")]
 )
 def test_rejects_unsupported_images(image):
-    with pytest.raises(ValueError):
+    with pytest.raises(NotImplementedError):
         FleetCloudTransport._validate_image(image)
 
 

@@ -92,21 +92,31 @@ async def run_fleet_ephemeral_live() -> None:
             memory_mb=4096,
             server_port=8000,
             time_to_start=900,
-            request_timeout=60,
             telemetry_enabled=False,
         ) as sandbox:
             sandbox_yielded = True
             summary["provision_seconds"] = time.monotonic() - started
             summary["sandbox_name"] = sandbox.name
+            sandbox_claim_name = getattr(sandbox, "claim_name", None)
+            sandbox_pool_name = getattr(sandbox, "pool_name", None)
+            claim_name = sandbox_claim_name or sandbox.name
+            pool_name = sandbox_pool_name or namespace
+            summary["claim_name"] = claim_name
+            summary["pool_name"] = pool_name
             try:
                 assert (
                     isinstance(sandbox.name, str) and sandbox.name
                 ), "sandbox name must be a non-empty string"
-                assert (
-                    sandbox.name == namespace
-                ), f"sandbox name {sandbox.name!r} must equal namespace {namespace!r}"
+                if sandbox_claim_name is not None:
+                    assert (
+                        claim_name == namespace
+                    ), f"claim name {claim_name!r} must equal requested name {namespace!r}"
+                if sandbox_pool_name is not None:
+                    assert (
+                        pool_name == namespace
+                    ), f"pool name {pool_name!r} must equal requested name {namespace!r}"
 
-                template = await fleet.get_template(namespace, namespace)
+                template = await fleet.get_template(pool_name, pool_name)
                 assert_template_contract(template, expected_port=8000)
 
                 width, height = await sandbox.screen.size()
@@ -144,16 +154,18 @@ async def run_fleet_ephemeral_live() -> None:
             cleanup_started = time.monotonic()
             claims_absent: bool | None = None
             inventory: dict[str, list[str]] | None = None
-            try:
-                claims_absent = await wait_claims_absent(fleet, namespace)
-                summary["claims_absent"] = claims_absent
-            except BaseException as error:
-                record_cleanup_error(error)
-            try:
-                inventory = await collect_resource_inventory(fleet, namespace)
-                summary["persistent_resources"] = inventory
-            except BaseException as error:
-                record_cleanup_error(error)
+            resource_namespace = summary.get("pool_name")
+            if resource_namespace is not None:
+                try:
+                    claims_absent = await wait_claims_absent(fleet, resource_namespace)
+                    summary["claims_absent"] = claims_absent
+                except BaseException as error:
+                    record_cleanup_error(error)
+                try:
+                    inventory = await collect_resource_inventory(fleet, resource_namespace)
+                    summary["persistent_resources"] = inventory
+                except BaseException as error:
+                    record_cleanup_error(error)
 
             if claims_absent is False:
                 try:
@@ -162,7 +174,7 @@ async def run_fleet_ephemeral_live() -> None:
                 except BaseException as error:
                     record_cleanup_error(error)
             if sandbox_yielded and inventory is not None:
-                expected_inventory = {"templates": [namespace], "pools": [namespace], "claims": []}
+                expected_inventory = {"templates": [], "pools": [], "claims": []}
                 if inventory != expected_inventory:
                     try:
                         summary["unexpected_inventory"] = True

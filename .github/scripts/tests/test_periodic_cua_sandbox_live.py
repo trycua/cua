@@ -2,15 +2,14 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import yaml
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github/workflows/periodic-cua-sandbox-live.yml"
@@ -218,7 +217,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         )
         self.assertEqual(
             checkout["with"]["ref"],
-            "${{ github.event_name == 'push' && github.sha || 'main' }}",
+            "${{ github.event_name == 'push' && github.sha || github.ref }}",
         )
         self.assertEqual(
             steps["Set up Python"]["uses"],

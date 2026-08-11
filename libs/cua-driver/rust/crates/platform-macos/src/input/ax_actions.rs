@@ -284,6 +284,29 @@ pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
     }
 }
 
+/// Report whether `element_ptr` is the application's currently focused element.
+///
+/// This is a read-only confirmation for the foreground typing rung: an
+/// `AXFocused` write can be accepted by the element and then immediately
+/// clobbered when AppKit installs the window's remembered first responder, so
+/// "the write returned success" is not evidence that focus stuck. Identity is
+/// compared with `CFEqual` because the app hands back a fresh `AXUIElementRef`
+/// for the same underlying element.
+///
+/// A `false` return is deliberately conservative: an app whose
+/// `AXFocusedUIElement` is unreadable reports not-focused, which at worst costs
+/// one extra re-apply.
+pub fn is_element_focused(pid: i32, element_ptr: usize) -> bool {
+    unsafe {
+        let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
+            return false;
+        };
+        let same = CFEqual(focused as CFTypeRef, element_ptr as CFTypeRef) != 0;
+        CFRelease(focused as CFTypeRef);
+        same
+    }
+}
+
 /// Set the AXValue of an element (for dropdowns, text fields, etc.).
 pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
     let err = unsafe { set_string_attr(element_ptr as AXUIElementRef, "AXValue", value) };

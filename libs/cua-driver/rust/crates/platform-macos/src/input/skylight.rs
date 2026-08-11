@@ -660,15 +660,34 @@ pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
     true
 }
 
-/// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
-/// posts the synthetic input), then restore the prior frontmost process.
+/// Tool-agnostic foreground-assist: briefly front `window_id`, wait for the
+/// activation to actually land, run `body` (which posts the synthetic input),
+/// then restore the prior frontmost process.
 ///
 /// This is the `delivery_mode:"foreground"` rung of the best-effort-background
-/// ladder, shared by `type_text` and `click`. It is the same brief front →
-/// act → restore primitive `press_key`/`hotkey` use for NSMenu key dispatch —
-/// see [`with_menu_shortcut_activation`], which this delegates to. Reached only
-/// when the agent has seen the background rungs fail (clicks) or the field is
-/// unverifiable + focus-sensitive (Catalyst typing).
+/// ladder, shared by `type_text` and `click`. Reached only when the agent has
+/// seen the background rungs fail (clicks) or the field is unverifiable +
+/// focus-sensitive (Catalyst typing).
+///
+/// ## Why this does not delegate to [`with_menu_shortcut_activation`]
+///
+/// It used to. That helper posts `set_front` and calls `action` immediately,
+/// which is correct for its own purpose: NSMenu key dispatch only needs the key
+/// event *enqueued* in the target's run-loop queue, so first-responder identity
+/// is irrelevant and the sub-millisecond front → act → restore is a feature.
+///
+/// Input delivery has the opposite requirement. `set_front` is asynchronous, so
+/// running the body straight away means the body's `AXFocused` write races
+/// AppKit's own activation. AppKit wins: when activation completes it installs
+/// the window's remembered first responder and clobbers the write. The
+/// keystrokes then land wherever the app chose — for a Catalyst app such as
+/// WhatsApp, the message list rather than the composer, which silently scrolls
+/// the transcript instead of typing.
+///
+/// So this waits for the activation to be observable before running `body`, the
+/// same ordering [`with_foreground_hid_activation`] already relies on. The wait
+/// is a bounded poll rather than a fixed sleep: an app that activates in 10 ms
+/// pays 10 ms, and a slow Catalyst/RDP surface still gets its full budget.
 ///
 /// Returns `Ok(true)` when the brief activation happened, `Ok(false)` when the
 /// fronting SPIs are unavailable (the body still ran, just without a front).
@@ -677,7 +696,66 @@ pub fn with_foreground_assist(
     target_wid: u32,
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
-    with_menu_shortcut_activation(target_pid, target_wid, body)
+    let set_front = match set_front_process_fn() {
+        Some(f) => f,
+        None => {
+            // SPIs unavailable — run body anyway without activation.
+            body()?;
+            return Ok(false);
+        }
+    };
+
+    let mut prev_psn = [0u8; 8];
+    let prev_ok = get_front_process_fn()
+        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
+        .unwrap_or(false);
+
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        body()?;
+        return Ok(false);
+    }
+
+    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+    await_frontmost(target_pid);
+
+    let result = body();
+
+    if prev_ok {
+        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    }
+
+    result?;
+    Ok(true)
+}
+
+/// Upper bound on how long [`with_foreground_assist`] waits for a requested
+/// activation to become observable. Chosen to cover a Catalyst app's activation
+/// plus first-responder install; past this the caller proceeds anyway so a
+/// stubborn target degrades to the old behavior instead of hanging.
+const ACTIVATION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Poll interval for [`await_frontmost`]. Short enough that a fast native app
+/// pays roughly one tick, long enough not to spin on the WindowServer.
+const ACTIVATION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Block until `pid` is observably frontmost, or the timeout expires.
+///
+/// Returns whether the activation was observed. A `false` return is not fatal:
+/// the caller proceeds with delivery regardless, because a target that never
+/// reports frontmost is exactly the case the pre-existing best-effort contract
+/// already covered.
+fn await_frontmost(pid: libc::pid_t) -> bool {
+    let deadline = std::time::Instant::now() + ACTIVATION_WAIT_TIMEOUT;
+    loop {
+        if crate::apps::frontmost_pid() == Some(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(ACTIVATION_POLL_INTERVAL);
+    }
 }
 
 /// Activate an exact target window for a global HID keyboard action.

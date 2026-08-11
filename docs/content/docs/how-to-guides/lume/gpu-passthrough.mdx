@@ -149,11 +149,11 @@ the injected process crashes, reports Metal errors, or behaves incorrectly.
 
 The tested command uses these values:
 
-| Variable | Default when active | Behavior |
-|---|---:|---|
-| `LUME_METAL_APPLE_FAMILY_MAX` | required | Answer `supportsFamily:` through this Apple-family ceiling. The tested value is Apple 9 (`1009`). |
-| `LUME_METAL_MAX_THREADGROUP_MEMORY` | `65536` | Raise maximum threadgroup memory to at least this many bytes. |
-| `LUME_METAL_RECOMMENDED_WORKING_SET_SIZE` | unchanged | Raise the reported working-set size only when explicitly set. |
+| Variable                                  | Default when active | Behavior                                                                                          |
+| ----------------------------------------- | ------------------: | ------------------------------------------------------------------------------------------------- |
+| `LUME_METAL_APPLE_FAMILY_MAX`             |            required | Answer `supportsFamily:` through this Apple-family ceiling. The tested value is Apple 9 (`1009`). |
+| `LUME_METAL_MAX_THREADGROUP_MEMORY`       |             `65536` | Raise maximum threadgroup memory to at least this many bytes.                                     |
+| `LUME_METAL_RECOMMENDED_WORKING_SET_SIZE` |           unchanged | Raise the reported working-set size only when explicitly set.                                     |
 
 Keep the defaults unless you have isolated evidence for another profile. Do not substitute a Common,
 Mac, or Metal-family enum: the shim intentionally accepts only Apple-family values from `1001` to

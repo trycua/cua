@@ -4,17 +4,19 @@ _Published on August 11, 2026 by Francesco Bonacci and Johnny Franks_
 
 If you've been following Cua from the start, you may remember that it began with a [Show HN](https://news.ycombinator.com/item?id=42908061) launch for Lume, our macOS virtualization stack.
 
-Today, we're sharing the first result from a broader effort to connect that `Virtualization.framework` foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/tutorials/drive-your-first-app) and the infrastructure behind [Cua Cloud and Fleets](https://cua.ai/signup?redirect_url=%2Fwaitlist): a small, process-scoped compatibility layer that unlocks newer Metal fast paths inside a macOS guest.
+A macOS guest running through Apple's `Virtualization.framework` uses a virtual GPU backed by the host's Apple GPU. In our stock Tahoe VM, that device reported a conservative Metal capability profile. Applications use those answers to select kernels and rendering paths, which left llama.cpp running much slower GPU code.
+
+We built a small, process-scoped compatibility layer that changes selected capability answers for one guest process, allowing llama.cpp to select newer Metal kernels. This is the first result from our broader effort to connect Lume's virtualization foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/tutorials/drive-your-first-app) and the infrastructure behind [Cua Cloud and Fleets](https://cua.ai/signup?redirect_url=%2Fwaitlist).
 
 We're releasing this work today as a research release under the same permissive license as Lume and Cua, so others can reproduce the results and help map which Apple Silicon chips, macOS releases, and Metal workloads benefit.
 
 ![Apple Silicon macOS VM LLM inference benchmark showing 7.2× faster prompt processing and 14.5× faster token generation.](https://github.com/user-attachments/assets/6e3aa770-d274-4c77-b99b-ae74668b5f5e)
 
-Apple Vz users have been running into these limitations elsewhere too. Tart, another notable CLI built on Apple's `Virtualization.framework`, has an open [“No GPU passthrough in macOS guest?”](https://github.com/openai/tart/issues/1032) issue asking whether the framework can provide usable graphics and decent LLM performance in a macOS VM guest. The VM continues to use the virtual GPU that Apple provides. Our work exposes newer Metal paths on that device and closes part of the practical gap.
-
 On an M1 Ultra, TinyLlama 1.1B running through llama.cpp processed prompts **11.08× faster** and generated tokens **16.36× faster** than the same workload in the same stock VM. Prompt processing reached 98% of our bare-metal result. The source, build scripts, capability probe, and raw benchmark logs are included so you can inspect and reproduce the result.
 
 We repeated the experiment with Google's [Gemma 4 12B QAT Q4_0](https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf), a 6.98 GB model released this year. The same layer improved prompt processing **7.20×** and token generation **14.54×**. The unlocked VM reached 99.59% of bare-metal prompt speed and 94.82% of bare-metal generation speed.
+
+The same capability gap has surfaced in other `Virtualization.framework` frontends. Tart, another macOS virtualization CLI, has an open [“No GPU passthrough in macOS guest?”](https://github.com/openai/tart/issues/1032) issue covering graphics and LLM performance inside macOS guests.
 
 ## The cap inside a macOS VM
 

@@ -11,6 +11,26 @@ from keyring.errors import KeyringError, PasswordDeleteError
 KEYRING_SERVICE = "run.cua.ai"
 KEYRING_ACCOUNT = "cua-cli"
 
+# Headless Linux (servers, CI, containers) usually has no D-Bus Secret Service, so
+# `keyring` resolves to its no-op fail backend and every command dead-ends here.
+# We deliberately do not fall back to on-disk storage on the user's behalf: that
+# would silently downgrade an OAuth refresh token to cleartext. Instead, say what
+# to run to opt in to it.
+_NO_STORE_MESSAGE = (
+    "No secure credential store is available.\n"
+    "On a desktop, install/unlock an OS keyring (GNOME Keyring, KWallet, macOS "
+    "Keychain, Windows Credential Manager).\n"
+    "On a headless host (server, CI, container) either:\n"
+    "  - forward an existing keyring, or\n"
+    "  - opt in to encrypted file storage:\n"
+    "      pip install keyrings.alt\n"
+    "      export PYTHON_KEYRING_BACKEND=keyrings.alt.file.EncryptedKeyring\n"
+    "    (keyrings.alt.file.PlaintextKeyring stores the token unencrypted — use it "
+    "only on a host where that is acceptable), or\n"
+    "  - skip the credential store entirely and pass a token per run:\n"
+    "      export FLEETS_TOKEN=<token>"
+)
+
 
 class CredentialStorageError(RuntimeError):
     """Raised when the operating system credential vault is unavailable."""
@@ -54,9 +74,7 @@ def _read() -> str | None:
     try:
         return keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
     except KeyringError as error:
-        raise CredentialStorageError(
-            "No secure credential store is available. Configure an OS keyring before logging in."
-        ) from error
+        raise CredentialStorageError(_NO_STORE_MESSAGE) from error
 
 
 def load_credentials() -> OAuthCredentials | None:
@@ -78,9 +96,7 @@ def save_credentials(credentials: OAuthCredentials) -> None:
     try:
         keyring.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, json.dumps(credentials.to_dict()))
     except KeyringError as error:
-        raise CredentialStorageError(
-            "No secure credential store is available. Configure an OS keyring before logging in."
-        ) from error
+        raise CredentialStorageError(_NO_STORE_MESSAGE) from error
 
 
 def clear_credentials() -> bool:

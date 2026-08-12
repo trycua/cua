@@ -15,8 +15,11 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import re
+import shlex
 from pathlib import Path
 from typing import Optional
 
@@ -241,6 +244,79 @@ async def _build_linux_base(version: str, base_path: Path) -> Path:
     raise NotImplementedError("Linux base image building not yet implemented")
 
 
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def has_build_work(image: Image) -> bool:
+    """Whether anything on this image has to be baked into a user disk.
+
+    ``.env()`` and ``.copy()`` count: they are as much a part of the built image
+    as ``.apt_install()`` is, and a layers-only check silently drops them.
+    """
+    return bool(image._layers or image._env or image._files)
+
+
+def build_hash(image: Image) -> str:
+    """Stable cache key for the user image built from this spec.
+
+    Everything baked in has to participate, or two images differing only by an
+    env var or a copied file would share one cached disk. File *contents* are
+    hashed, not just paths, so editing a copied file rebuilds the image.
+
+    Layers-only images keep their historical :func:`layers_hash` key so existing
+    caches stay valid.
+    """
+    layers = list(image._layers)
+    if not image._env and not image._files:
+        return layers_hash(layers)
+
+    files: list[list[str]] = []
+    for src, dst in image._files:
+        digest = ""
+        try:
+            digest = hashlib.sha256(Path(src).read_bytes()).hexdigest()
+        except OSError:
+            # Unreadable now — let the copy layer raise the real error at build time.
+            digest = f"<unreadable:{src}>"
+        files.append([dst, digest])
+
+    raw = json.dumps(
+        {"layers": layers, "env": [list(e) for e in image._env], "files": files},
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+async def _apply_env(executor, image: Image) -> None:
+    """Bake ``.env()`` variables into the image being built.
+
+    Linux/macOS get a sourceable ``/etc/profile.d/cua-env.sh`` (the same file the
+    Docker and Lume runtimes write, and the one ``LayerExecutor`` sources before
+    each ``run`` layer). Windows gets machine-scoped ``setx`` variables.
+    """
+    if not image._env:
+        return
+
+    for key, _ in image._env:
+        if not _ENV_NAME_RE.fullmatch(key):
+            raise ValueError(f"Unsafe env var name: {key!r}")
+
+    if image.os_type == "windows":
+        for key, value in image._env:
+            await executor.run_command(f'setx {key} "{value}" /M')
+        return
+
+    sudo = "echo lume | sudo -S" if image.os_type == "macos" else "sudo"
+    await executor.run_command(
+        f"printf '#!/bin/sh\\n' | {sudo} tee /etc/profile.d/cua-env.sh > /dev/null"
+    )
+    for key, value in image._env:
+        await executor.run_command(
+            f"printf 'export {key}=%s\\n' {shlex.quote(value)} "
+            f"| {sudo} tee -a /etc/profile.d/cua-env.sh > /dev/null"
+        )
+
+
 async def build_user_image(
     image: Image,
     base_path: Path,
@@ -254,11 +330,11 @@ async def build_user_image(
 
     Returns the path to the user image qcow2.
     """
-    if not image._layers:
-        # No user layers — just use the base
+    if not has_build_work(image):
+        # Nothing to bake in — just use the base
         return base_path
 
-    lhash = layers_hash(list(image._layers))
+    lhash = build_hash(image)
     user_path = user_image_path(image.os_type, image.version, lhash)
 
     if user_path.exists() and not force:
@@ -279,11 +355,21 @@ async def build_user_image(
     try:
         info = await runtime.start(build_image, f"cua-build-{lhash}")
 
-        # Execute layers via computer-server
+        # Execute layers via computer-server. os_type matters: the executor wraps
+        # `run` commands per-OS (sudo bash on Linux, plain cmd on Windows).
         from cua_sandbox.builder.executor import LayerExecutor
 
-        executor = LayerExecutor(f"http://{info.host}:{info.api_port}")
-        await executor.execute_layers(list(image._layers))
+        executor = LayerExecutor(
+            f"http://{info.host}:{info.api_port}", os_type=image.os_type
+        )
+
+        # Env first, so copied files and run layers can reference the variables.
+        await _apply_env(executor, image)
+        # Files before layers, so later run layers can reference copied files.
+        for src, dst in image._files:
+            await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
+        if image._layers:
+            await executor.execute_layers(list(image._layers))
 
         # Shut down cleanly
         logger.info("Layers applied, shutting down build VM...")
@@ -307,6 +393,8 @@ async def build_user_image(
                 "os_type": image.os_type,
                 "version": image.version,
                 "layers": list(image._layers),
+                "env": [list(e) for e in image._env],
+                "files": [list(f) for f in image._files],
                 "base": str(base_path),
                 "hash": lhash,
             },
@@ -357,8 +445,8 @@ async def create_session_disk(
 
     Returns the disk path to boot.
     """
-    # If image has a direct disk path and no layers, use it directly
-    if image._disk_path and not image._layers:
+    # If image has a direct disk path and nothing to bake in, use it directly
+    if image._disk_path and not has_build_work(image):
         return Path(image._disk_path)
 
     # Determine the backing disk
@@ -369,9 +457,9 @@ async def create_session_disk(
     else:
         backing = await resolve_backing_disk(image)
 
-    # If there are user layers, check for cached user image
-    if image._layers:
-        lhash = layers_hash(list(image._layers))
+    # If anything has to be baked in, check for a cached user image
+    if has_build_work(image):
+        lhash = build_hash(image)
         user_disk = user_image_path(image.os_type, image.version, lhash)
         if user_disk.exists():
             backing = user_disk

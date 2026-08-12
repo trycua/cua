@@ -1452,6 +1452,7 @@ class Sandbox:
             if not any([ws_url, http_url]):
                 transport = _make_transport(
                     api_key=api_key,
+                    image=image,
                     name=name,
                     cpu=cpu,
                     memory_mb=memory_mb,
@@ -1837,6 +1838,7 @@ def _make_transport(
     http_url: Optional[str] = None,
     api_key: Optional[str] = None,
     container_name: Optional[str] = None,
+    image: Optional[Image] = None,
     name: Optional[str] = None,
     cpu: Optional[int] = None,
     memory_mb: Optional[int] = None,
@@ -1850,6 +1852,7 @@ def _make_transport(
     return CloudTransport(
         name=name,
         api_key=api_key,
+        image=image,
         cpu=cpu,
         memory_mb=memory_mb,
         disk_gb=disk_gb,

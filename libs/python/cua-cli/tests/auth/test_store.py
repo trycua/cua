@@ -55,3 +55,19 @@ def test_store_errors_explain_secure_storage_requirement() -> None:
     with patch("cua_cli.auth.store.keyring.get_password", side_effect=NoKeyringError):
         with pytest.raises(CredentialStorageError, match="secure credential store"):
             load_credentials()
+
+
+def test_store_errors_name_a_headless_workaround() -> None:
+    """A headless host has no OS keyring, so "configure an OS keyring" is a dead
+    end. The error has to name something the user can actually run."""
+    for target in ("get_password", "set_password"):
+        with patch(f"cua_cli.auth.store.keyring.{target}", side_effect=NoKeyringError):
+            with pytest.raises(CredentialStorageError) as excinfo:
+                if target == "get_password":
+                    load_credentials()
+                else:
+                    save_credentials(credentials())
+            message = str(excinfo.value)
+            assert "PYTHON_KEYRING_BACKEND" in message
+            assert "keyrings.alt" in message
+            assert "FLEETS_TOKEN" in message

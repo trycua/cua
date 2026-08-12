@@ -166,6 +166,26 @@ _UEFI_FIRMWARE_CANDIDATES: list[tuple[str, str]] = [
 ]
 
 
+def _find_free_vnc_display(start: int = 0, span: int = 64) -> int:
+    """Return a VNC display number whose TCP port (5900+N) is free.
+
+    QEMU exits with "Failed to find an available port" when the display is taken,
+    so a fixed default makes the second concurrent local sandbox on a host die.
+    """
+    import socket
+
+    for display in range(start, start + span):
+        # No SO_REUSEADDR here on purpose: it would let this probe bind a port a
+        # running VM already listens on, which is exactly what we are testing for.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("", 5900 + display))
+            except OSError:
+                continue
+            return display
+    return start
+
+
 def _locate_uefi_firmware(qemu_dir: Path) -> tuple[Optional[Path], Optional[Path]]:
     """Return the first (OVMF code, matching vars template) pair present on this host."""
     for code_name, vars_name in _UEFI_FIRMWARE_CANDIDATES:
@@ -248,15 +268,13 @@ class QEMUBaremetalRuntime(Runtime):
     async def start(self, image: Image, name: str, **opts) -> RuntimeInfo:
         ephemeral = opts.pop("ephemeral", True)
 
-        # If image has layers or no direct disk path, use the builder to resolve
+        from cua_sandbox.builder.build import create_session_disk, has_build_work
+
+        # If image has build work or no direct disk path, use the builder to resolve
         if not opts.get("disk_path") and not image._disk_path and image.kind == "vm":
-            from cua_sandbox.builder.build import create_session_disk
-
             disk_path = str(await create_session_disk(image, name))
-        elif image._layers and (image._disk_path or opts.get("disk_path")):
-            # Has a base disk AND user layers — build user image + session overlay
-            from cua_sandbox.builder.build import create_session_disk
-
+        elif has_build_work(image) and (image._disk_path or opts.get("disk_path")):
+            # Has a base disk AND user layers/env/files — build user image + session overlay
             base = Path(opts.get("disk_path") or image._disk_path)
             disk_path = str(await create_session_disk(image, name, base_disk=base))
         else:
@@ -281,8 +299,12 @@ class QEMUBaremetalRuntime(Runtime):
 
         memory = opts.get("memory_mb", self.memory_mb)
         cpus = opts.get("cpu_count", self.cpu_count)
-        vnc_display = opts.get("vnc_display", self.vnc_display)
+        # VNC and QMP need a free port each, the same way the API port does —
+        # the class defaults are only a starting point. Two concurrent local
+        # sandboxes would otherwise both claim :0 and 4444 and the second dies.
+        vnc_display = _find_free_vnc_display(opts.get("vnc_display", self.vnc_display))
         hostfwd_port = opts.get("api_port") or _find_free_port(self.api_port)
+        qmp_port = opts.get("qmp_port") or _find_free_port(self.qmp_port)
         enable_kvm = opts.get("enable_kvm", True)
 
         # Detect guest server port from transport hint
@@ -300,8 +322,10 @@ class QEMUBaremetalRuntime(Runtime):
             _locate_uefi_firmware(qemu_dir) if image.os_type == "windows" else (None, None)
         )
 
-        # EFI vars — look next to disk or copy the template that matches the firmware
-        efivars = Path(disk_path).parent / "efivars.fd"
+        # EFI vars — one pflash file per VM, named after its disk. A single shared
+        # sessions/efivars.fd would be mapped writable into every concurrent UEFI
+        # guest at once, so they would clobber each other's boot variables.
+        efivars = Path(disk_path).with_suffix(".efivars.fd")
         if ovmf_code and not efivars.exists():
             import shutil as _shutil
 
@@ -323,6 +347,7 @@ class QEMUBaremetalRuntime(Runtime):
                 hostfwd_port,
                 vnc_display,
                 enable_kvm,
+                qmp_port,
             )
         else:
             cmd = [
@@ -381,7 +406,7 @@ class QEMUBaremetalRuntime(Runtime):
                     cmd += ["-accel", "whpx"]
 
             # QMP socket — always enabled for VM management (suspend/resume)
-            cmd += ["-qmp", f"tcp:127.0.0.1:{self.qmp_port},server,nowait"]
+            cmd += ["-qmp", f"tcp:127.0.0.1:{qmp_port},server,nowait"]
 
         # Attach ISO as CD-ROM if booting from an ISO file
         if self._iso_path:
@@ -412,7 +437,7 @@ class QEMUBaremetalRuntime(Runtime):
             api_port=hostfwd_port,
             vnc_port=5900 + vnc_display,
             name=name,
-            qmp_port=self.qmp_port if use_qmp else None,
+            qmp_port=qmp_port if use_qmp else None,
             environment=image.os_type if use_qmp else None,
             agent_type=image._agent_type,
             guest_server_port=guest_port if not is_android else 8000,
@@ -436,7 +461,7 @@ class QEMUBaremetalRuntime(Runtime):
                 host="localhost",
                 api_port=hostfwd_port,
                 vnc_port=5900 + vnc_display,
-                qmp_port=self.qmp_port,
+                qmp_port=qmp_port,
                 disk_path=str(disk_path) if disk_path else None,
                 os_type=image.os_type,
                 vnc_display=vnc_display,
@@ -488,6 +513,7 @@ class QEMUBaremetalRuntime(Runtime):
         hostfwd_port: int,
         vnc_display: int,
         enable_kvm: bool,
+        qmp_port: Optional[int] = None,
     ) -> list[str]:
         """Build QEMU command for Android x86_64 VM.
 
@@ -553,7 +579,7 @@ class QEMUBaremetalRuntime(Runtime):
         cmd += ["-usb", "-device", "usb-tablet"]
 
         # QMP socket for direct VM control (mouse/keyboard/screenshot without guest agent)
-        cmd += ["-qmp", f"tcp:127.0.0.1:{self.qmp_port},server,nowait"]
+        cmd += ["-qmp", f"tcp:127.0.0.1:{qmp_port or self.qmp_port},server,nowait"]
 
         # Daemonize on Unix
         if _plat.system() != "Windows":
@@ -905,14 +931,12 @@ class QEMUWSL2Runtime(Runtime):
     async def start(self, image: Image, name: str, **opts) -> RuntimeInfo:
         ephemeral = opts.pop("ephemeral", True)
 
+        from cua_sandbox.builder.build import create_session_disk, has_build_work
+
         # Resolve disk path
         if not opts.get("disk_path") and not image._disk_path and image.kind == "vm":
-            from cua_sandbox.builder.build import create_session_disk
-
             disk_path = str(await create_session_disk(image, name))
-        elif image._layers and (image._disk_path or opts.get("disk_path")):
-            from cua_sandbox.builder.build import create_session_disk
-
+        elif has_build_work(image) and (image._disk_path or opts.get("disk_path")):
             base = Path(opts.get("disk_path") or image._disk_path)
             disk_path = str(await create_session_disk(image, name, base_disk=base))
         else:

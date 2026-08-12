@@ -16,19 +16,36 @@ KEYRING_ACCOUNT = "cua-cli"
 # We deliberately do not fall back to on-disk storage on the user's behalf: that
 # would silently downgrade an OAuth refresh token to cleartext. Instead, say what
 # to run to opt in to it.
+#
+# Every command below was run end to end in a clean venv before being suggested.
+# keyrings.cryptfile rather than keyrings.alt's EncryptedKeyring because the
+# latter imports Crypto at construction and keyrings.alt does not depend on a
+# crypto library, so recommending it lands the reader on a second dead end
+# (ModuleNotFoundError: No module named 'Crypto'); keyrings.cryptfile pulls in
+# pycryptodome itself and works from a single install.
 _NO_STORE_MESSAGE = (
     "No secure credential store is available.\n"
-    "On a desktop, install/unlock an OS keyring (GNOME Keyring, KWallet, macOS "
+    "\n"
+    "On a desktop, install and unlock an OS keyring (GNOME Keyring, KWallet, macOS "
     "Keychain, Windows Credential Manager).\n"
-    "On a headless host (server, CI, container) either:\n"
-    "  - forward an existing keyring, or\n"
-    "  - opt in to encrypted file storage:\n"
-    "      pip install keyrings.alt\n"
-    "      export PYTHON_KEYRING_BACKEND=keyrings.alt.file.EncryptedKeyring\n"
-    "    (keyrings.alt.file.PlaintextKeyring stores the token unencrypted — use it "
-    "only on a host where that is acceptable), or\n"
-    "  - skip the credential store entirely and pass a token per run:\n"
-    "      export FLEETS_TOKEN=<token>"
+    "\n"
+    "On a headless host, pick one:\n"
+    "\n"
+    "  1. Unattended (CI, containers, scripts) — skip the credential store and\n"
+    "     supply a token per run. An encrypted store cannot be unlocked without a\n"
+    "     prompt, so this is the only option that works without a terminal:\n"
+    "       export FLEETS_TOKEN=<token>\n"
+    "\n"
+    "  2. Interactive headless (a server you log into) — encrypted file store.\n"
+    "     Asks for a passphrase on every command:\n"
+    "       pip install keyrings.cryptfile\n"
+    "       export PYTHON_KEYRING_BACKEND=keyrings.cryptfile.cryptfile.CryptFileKeyring\n"
+    "\n"
+    "  3. Unencrypted file store — only where a recoverable token on disk is\n"
+    "     acceptable. The file is mode 600, but the token is plainly readable by\n"
+    "     anyone who can read it, including backups and snapshots:\n"
+    "       pip install keyrings.alt\n"
+    "       export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring"
 )
 
 

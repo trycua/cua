@@ -69,5 +69,30 @@ def test_store_errors_name_a_headless_workaround() -> None:
                     save_credentials(credentials())
             message = str(excinfo.value)
             assert "PYTHON_KEYRING_BACKEND" in message
-            assert "keyrings.alt" in message
             assert "FLEETS_TOKEN" in message
+            # The encrypted option must be the one that works from a single
+            # install. keyrings.alt's EncryptedKeyring needs pycryptodome on top
+            # and dies with "No module named 'Crypto'" without it, which would
+            # send the reader to a second dead end.
+            assert "keyrings.cryptfile" in message
+            assert "keyrings.alt.file.EncryptedKeyring" not in message
+
+
+def _no_store_message() -> str:
+    with patch("cua_cli.auth.store.keyring.get_password", side_effect=NoKeyringError):
+        with pytest.raises(CredentialStorageError) as excinfo:
+            load_credentials()
+    return str(excinfo.value)
+
+
+def test_unattended_hosts_are_told_to_use_a_token() -> None:
+    """An encrypted keyring prompts for a passphrase on every command, so CI and
+    containers cannot use one. The token path has to be named first."""
+    message = _no_store_message()
+    assert message.index("FLEETS_TOKEN") < message.index("keyrings.cryptfile")
+
+
+def test_plaintext_option_is_marked_as_recoverable() -> None:
+    message = _no_store_message()
+    assert "PlaintextKeyring" in message
+    assert "readable" in message

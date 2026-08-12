@@ -13,6 +13,7 @@
     "how-cua-driver-is-validated",
     "---Cua Sandbox---",
     "how-sandboxes-work",
+    "how-pool-autoscaling-works",
     "---Lume---",
     "how-lume-unattended-setup-works",
     "how-sip-works-in-lume-vms",

@@ -885,7 +885,7 @@ Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoi
 
 - `allow_launch` (boolean, optional): Allow a separate driver-owned isolated Chromium process to be launched (default false).
 - `approval_token` (string, optional): Legacy single-use setup token. Existing-profile use is disabled unless a trusted launcher explicitly enables the same-user-writable compatibility path.
-- `pid` (integer, required): Browser process id to prepare.
+- `pid` (integer, required): Browser process id to prepare. range: 1–unbounded
 - `profile` (object, optional)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.
 - `strategy` (object, optional)

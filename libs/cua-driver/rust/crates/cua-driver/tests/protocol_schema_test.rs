@@ -110,6 +110,47 @@ fn tools_list_schema_shape() {
         }
     }
 
+    let browser_prepare = tools
+        .iter()
+        .find(|tool| tool["name"] == "browser_prepare")
+        .expect("browser_prepare not found in tools/list");
+    assert_eq!(
+        browser_prepare["inputSchema"]["properties"]["pid"]["type"], "integer",
+        "browser_prepare.pid must be advertised as an integer"
+    );
+    assert_eq!(
+        browser_prepare["inputSchema"]["properties"]["pid"]["minimum"], 1,
+        "browser_prepare.pid must exclude the non-process pid 0"
+    );
+    for (id, arguments, expected_error) in [
+        (
+            3,
+            serde_json::json!({}),
+            "Missing required integer field: pid",
+        ),
+        (
+            4,
+            serde_json::json!({"pid": 0}),
+            "Field pid is out of range for a process id: 0",
+        ),
+    ] {
+        d.send(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": "browser_prepare", "arguments": arguments}
+        }));
+        let response = d.recv();
+        assert_eq!(
+            response["result"]["isError"], true,
+            "browser_prepare must reject a missing or invalid pid: {response:?}"
+        );
+        assert_eq!(
+            response["result"]["content"][0]["text"], expected_error,
+            "browser_prepare must reject pid before platform dispatch"
+        );
+    }
+
     const DELIVERY_MODE_TOOLS: &[&str] = &[
         "click",
         "double_click",

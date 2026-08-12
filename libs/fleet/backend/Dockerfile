@@ -1,6 +1,6 @@
 # Cyclops-CS backend and Kubernetes state projector.
 # Build context is the repository root.
-FROM --platform=linux/amd64 golang:1.24-bookworm AS go-builder
+FROM --platform=linux/amd64 golang:1.25.12-bookworm AS go-builder
 WORKDIR /src
 COPY pkg/featureflags ./pkg/featureflags
 COPY cyclops-cs/backend ./cyclops-cs/backend

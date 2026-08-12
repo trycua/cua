@@ -26,7 +26,7 @@
     "keycloak-js": "^25.0.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0"
+    "react-router-dom": "^7.18.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
@@ -35,6 +35,12 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
-    "vite": "^5.4.11"
+    "vite": "^6.4.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@babel/core": "7.29.6",
+      "postcss": "8.5.23"
+    }
   }
 }

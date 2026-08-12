@@ -46,7 +46,7 @@ docs-scripts = [
     "markdown-it-py>=3.0.0",
     "markitdown>=0.0.1",
     "modal>=0.63.0",
-    "gitpython>=3.1.43",
+    "gitpython>=3.1.58",
     "griffe>=2.0.0",
 ]
 test = [
@@ -61,7 +61,9 @@ test = [
 package = false
 constraint-dependencies = [
     "fastmcp>=3.2.0,<3.3.0",
+    "jaraco-context>=6.1.0",
     "pytest>=9.0.3",
+    "setuptools>=83.0.0",
     "transformers>=5.0.0rc3",
 ]
 

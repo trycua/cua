@@ -427,3 +427,34 @@ func TestK8sRouteRejectsDisallowedPoolBeforeProxy(t *testing.T) {
 		t.Fatal("disallowed pool request reached kubectl proxy")
 	}
 }
+
+func TestSwaggerIncludesChatRoutes(t *testing.T) {
+	data, err := os.ReadFile("docs/swagger.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec struct {
+		Paths map[string]map[string]struct{} `json:"paths"`
+	}
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatalf("unmarshal swagger.json: %v", err)
+	}
+	for _, tc := range []struct{ path, method string }{
+		{"/api/chat/conversations", "post"}, {"/api/chat/conversations", "get"},
+		{"/api/chat/conversations/{id}", "get"}, {"/api/chat/conversations/{id}/turns", "post"},
+	} {
+		if _, ok := spec.Paths[tc.path][tc.method]; !ok {
+			t.Fatalf("swagger.json missing %s %s", strings.ToUpper(tc.method), tc.path)
+		}
+	}
+}
+
+func TestNginxRoutesChatToBackend(t *testing.T) {
+	data, err := os.ReadFile("../nginx.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "|chat|") && !strings.Contains(string(data), "|chat)") {
+		t.Fatal("nginx.conf backend matcher does not include chat")
+	}
+}

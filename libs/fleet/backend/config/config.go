@@ -27,6 +27,7 @@ type Configuration struct {
 	Gateway   GatewayConfiguration
 	Database  DatabaseConfiguration
 	Stripe    StripeConfiguration
+	Chat      ChatConfiguration
 	Metrics   MetricsConfiguration
 	Telemetry TelemetryConfiguration
 }
@@ -97,6 +98,13 @@ type DatabaseConfiguration struct {
 	StateQueryTenantPassword string // STATE_QUERY_TENANT_PASSWORD — shared tenant query login password
 }
 
+type ChatConfiguration struct {
+	Enabled bool
+	BaseURL string
+	APIKey  string
+	Model   string
+}
+
 type MetricsConfiguration struct {
 	Addr string // METRICS_ADDR — Prometheus listen addr
 }
@@ -146,6 +154,10 @@ var specs = []flagSpec{
 	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
 	{"stripe.checkout-cancel-url", "stripe-checkout-cancel-url", "STRIPE_CHECKOUT_CANCEL_URL", "", "Stripe Checkout cancel redirect URL"},
 	{"stripe.portal-return-url", "stripe-portal-return-url", "STRIPE_PORTAL_RETURN_URL", "", "Stripe Billing Portal return URL"},
+	{"chat.enabled", "chat-enabled", "CYCLOPS_CS_CHAT_ENABLED", "false", "enable browser bash chat"},
+	{"chat.base-url", "litellm-base-url", "LITELLM_BASE_URL", "", "LiteLLM OpenAI-compatible base URL"},
+	{"chat.api-key", "litellm-api-key", "LITELLM_API_KEY", "", "LiteLLM virtual key"},
+	{"chat.model", "litellm-model", "LITELLM_MODEL", "large", "LiteLLM model alias"},
 	{"metrics.addr", "metrics-addr", "METRICS_ADDR", ":9091", "Prometheus metrics listen address"},
 	{"telemetry.endpoint", "otel-endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.cua.ai", "OTLP HTTP traces endpoint"},
 	{"telemetry.protocol", "otel-protocol", "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf", "OTLP exporter protocol"},
@@ -238,6 +250,12 @@ func LoadConfig() (*Configuration, error) {
 			CheckoutCancelURL:  viper.GetString("stripe.checkout-cancel-url"),
 			PortalReturnURL:    viper.GetString("stripe.portal-return-url"),
 		},
+		Chat: ChatConfiguration{
+			Enabled: viper.GetBool("chat.enabled"),
+			BaseURL: viper.GetString("chat.base-url"),
+			APIKey:  viper.GetString("chat.api-key"),
+			Model:   viper.GetString("chat.model"),
+		},
 		Metrics: MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
 		Telemetry: TelemetryConfiguration{
 			Endpoint:         viper.GetString("telemetry.endpoint"),
@@ -250,6 +268,9 @@ func LoadConfig() (*Configuration, error) {
 	}
 	if cfg.Keycloak.AdminClientSecret == "" {
 		return nil, fmt.Errorf("KC_ADMIN_CLIENT_SECRET is required")
+	}
+	if cfg.Chat.Enabled && (cfg.Chat.BaseURL == "" || cfg.Chat.APIKey == "") {
+		return nil, fmt.Errorf("chat.enabled requires LITELLM_BASE_URL and LITELLM_API_KEY")
 	}
 	return cfg, nil
 }

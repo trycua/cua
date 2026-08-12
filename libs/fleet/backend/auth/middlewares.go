@@ -56,6 +56,7 @@ var surfacePolicySources = map[string]struct {
 	"authz-base":         {"authz_base.rego", authzBasePolicy},
 	"authz-keys":         {"authz_keys.rego", authzKeysPolicy},
 	"authz-config":       {"authz_config.rego", authzConfigPolicy},
+	"authz-chat":         {"authz_chat.rego", authzChatPolicy},
 	"authz-billing":      {"authz_billing.rego", authzBillingPolicy},
 	"authz-namespaces":   {"authz_namespaces.rego", authzNamespacesPolicy},
 	"authz-github-trust": {"authz_github_trust.rego", authzGitHubTrustPolicy},
@@ -74,6 +75,9 @@ var authzKeysPolicy string
 
 //go:embed authz_config.rego
 var authzConfigPolicy string
+
+//go:embed authz_chat.rego
+var authzChatPolicy string
 
 //go:embed authz_billing.rego
 var authzBillingPolicy string

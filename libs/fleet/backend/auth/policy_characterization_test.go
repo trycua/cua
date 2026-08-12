@@ -159,6 +159,7 @@ func characterizationCases() map[string][]routeCase {
 	}
 	simple("/api/config", "/api/config")
 	simple("/api/state/query", "/api/state/query")
+	simple("/api/chat/conversations", "/api/chat/conversations")
 	simple("/api/billing/summary", "/api/billing/summary")
 	simple("/api/billing/setup-session", "/api/billing/setup-session")
 	simple("/api/billing/portal-session", "/api/billing/portal-session")
@@ -175,8 +176,14 @@ func characterizationCases() map[string][]routeCase {
 		}}
 	}
 	withID("/api/keys/{id}", "/api/keys")
+	withID("/api/chat/conversations/{id}", "/api/chat/conversations")
 	withID("/api/user-keys/{id}", "/api/user-keys")
 	withID("/api/github-trust-policies/{id}", "/api/github-trust-policies")
+	cases["/api/chat/conversations/{id}/turns"] = []routeCase{{
+		name:   "id",
+		params: map[string]string{"id": "id-1"},
+		path:   "/api/chat/conversations/id-1/turns",
+	}}
 
 	// /api/namespaces/{name} needs all three fact answers, and only on GET: the
 	// ownership conjunct binds to that one method, and DELETE sharing the route

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -179,5 +180,56 @@ func TestLoadConfig_StateDatabaseURLs(t *testing.T) {
 	}
 	if got, want := cfg.Database.StateQueryTenantPassword, "tenant-password"; got != want {
 		t.Fatalf("Database.StateQueryTenantPassword = %q, want %q", got, want)
+	}
+}
+
+
+func loadChatTestConfig(t *testing.T) (*Configuration, error) {
+	t.Helper()
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+	RegisterFlags(pflag.NewFlagSet("chat-test", pflag.ContinueOnError))
+	return LoadConfig()
+}
+
+func TestLoadConfig_ChatDisabledDefaults(t *testing.T) {
+	cfg, err := loadChatTestConfig(t)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Chat.Enabled || cfg.Chat.BaseURL != "" || cfg.Chat.APIKey != "" || cfg.Chat.Model != "large" {
+		t.Fatalf("Chat = %#v, want disabled defaults", cfg.Chat)
+	}
+}
+
+func TestLoadConfig_ChatEnabledWithCredentials(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_CHAT_ENABLED", "true")
+	t.Setenv("LITELLM_BASE_URL", "https://litellm.example/v1")
+	t.Setenv("LITELLM_API_KEY", "secret")
+	t.Setenv("LITELLM_MODEL", "browser-bash")
+	cfg, err := loadChatTestConfig(t)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if !cfg.Chat.Enabled || cfg.Chat.BaseURL != "https://litellm.example/v1" || cfg.Chat.APIKey != "secret" || cfg.Chat.Model != "browser-bash" {
+		t.Fatalf("Chat = %#v, want enabled configuration", cfg.Chat)
+	}
+}
+
+func TestLoadConfig_ChatEnabledRequiresCredentials(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"missing base URL": {"CYCLOPS_CS_CHAT_ENABLED": "true", "LITELLM_API_KEY": "secret"},
+		"missing API key":  {"CYCLOPS_CS_CHAT_ENABLED": "true", "LITELLM_BASE_URL": "https://litellm.example/v1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for key, value := range env {
+				t.Setenv(key, value)
+			}
+			_, err := loadChatTestConfig(t)
+			if err == nil || !strings.Contains(err.Error(), "chat") {
+				t.Fatalf("LoadConfig() error = %v, want chat credential error", err)
+			}
+		})
 	}
 }

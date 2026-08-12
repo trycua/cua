@@ -16,6 +16,7 @@ type ConfigResponse struct {
 	// server-side by authz.rego.
 	Admin   bool `json:"admin"`
 	Billing bool `json:"billing"`
+	Chat    bool `json:"chat"`
 }
 
 // GetConfig returns per-user feature flags evaluated by OPA.
@@ -46,5 +47,5 @@ func (h Handlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 		billingEnabled = false
 	}
 
-	writeJSON(w, http.StatusOK, ConfigResponse{Admin: isAdmin, Billing: billingEnabled})
+	writeJSON(w, http.StatusOK, ConfigResponse{Admin: isAdmin, Billing: billingEnabled, Chat: h.ChatEnabled})
 }

@@ -68,6 +68,11 @@ func ConfigRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-config", "data.authz_config.allow"))
 }
 
+// ChatRoutePolicy guards browser-local Bash conversation routes.
+func ChatRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-chat", "data.authz_chat.allow"))
+}
+
 // BillingRoutePolicy guards the Stripe-hosted billing browser routes. Its module
 // matches a prefix rather than three literals, so a billing route added to
 // main.go and bound here is covered without a policy change.
@@ -224,6 +229,7 @@ type surfacePolicy struct {
 var surfacePolicies = map[string]surfacePolicy{
 	"keys":         {tree: KeysRoutePolicy},
 	"config":       {tree: ConfigRoutePolicy},
+	"chat":         {tree: ChatRoutePolicy},
 	"billing":      {tree: BillingRoutePolicy},
 	"namespaces":   {tree: NamespacesRoutePolicy},
 	"github-trust": {tree: GitHubTrustRoutePolicy},
@@ -247,6 +253,10 @@ var surfacePolicies = map[string]surfacePolicy{
 var routeSurfaces = map[string]string{
 	"/api/config":      "config",
 	"/api/state/query": "state-query",
+
+	"/api/chat/conversations":            "chat",
+	"/api/chat/conversations/{id}":       "chat",
+	"/api/chat/conversations/{id}/turns": "chat",
 
 	"/api/billing/summary":        "billing",
 	"/api/billing/setup-session":  "billing",

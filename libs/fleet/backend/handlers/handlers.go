@@ -11,6 +11,7 @@ import (
 	"regexp"
 
 	"cyclops-cs-backend/auth"
+	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/keycloak"
@@ -33,6 +34,11 @@ type Handlers struct {
 
 	Readiness *Readiness
 
+	ChatEnabled   bool
+	Conversations chat.ConversationStore
+	Model         chat.ModelClient
+	chatLocks     *conversationLockRegistry
+
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
 	// the feature (CreateNamespace then skips OIDC credential provisioning).
@@ -50,6 +56,8 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		AuthCfg:    cfg.Auth,
 		KC:         cfg.Keycloak,
 		Stripe:     cfg.Stripe,
+		ChatEnabled: cfg.Chat.Enabled,
+		chatLocks:   newConversationLockRegistry(),
 	}
 }
 

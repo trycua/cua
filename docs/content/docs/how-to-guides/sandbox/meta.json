@@ -1,1 +1,13 @@
-{ "title": "Sandbox", "pages": ["lifecycle", "secrets", "scale-out", "tunneling", "images", "interactive-shell"] }
+{
+  "title": "Sandbox",
+  "pages": [
+    "lifecycle",
+    "configure-pool-with-terraform",
+    "create-pool-with-python",
+    "secrets",
+    "scale-out",
+    "tunneling",
+    "images",
+    "interactive-shell"
+  ]
+}

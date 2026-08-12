@@ -66,6 +66,16 @@ const config = {
         permanent: true,
       },
       {
+        source: '/how-to-guides/fleets/configure-run-cua-fleets',
+        destination: '/how-to-guides/sandbox/configure-pool-with-terraform',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/(fleets)/configure-run-cua-fleets',
+        destination: '/how-to-guides/sandbox/configure-pool-with-terraform',
+        permanent: true,
+      },
+      {
         source: '/how-to-guides/skills/record-a-demonstration',
         destination: '/how-to-guides',
         permanent: true,

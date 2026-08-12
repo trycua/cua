@@ -190,6 +190,29 @@ class _ConnectResult:
             await self._instance.disconnect()
 
 
+def _remove_orphan_container(name: str) -> bool:
+    """Remove a container left behind by a launch that never wrote state.
+
+    A local launch that times out during the readiness probe leaves a running
+    container and no state file, which put it beyond the reach of
+    ``Sandbox.delete``. Returns whether a container was actually removed.
+    """
+    import subprocess
+
+    try:
+        exists = subprocess.run(
+            ["docker", "inspect", "--type", "container", name],
+            capture_output=True,
+        )
+        if exists.returncode != 0:
+            return False
+        removed = subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        return removed.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        # Docker missing or unusable — no orphan we can claim to have removed.
+        return False
+
+
 def _auto_runtime(image: Image) -> "Runtime":
     """Pick a runtime automatically based on image.os_type and image.kind."""
     import platform as _plat
@@ -1298,6 +1321,10 @@ class Sandbox:
 
             subprocess.run(["docker", "stop", name], capture_output=True)
             subprocess.run(["docker", "rm", name], capture_output=True)
+        elif not _remove_orphan_container(name):
+            # No state file and no container by that name — deleting nothing at
+            # all used to report success, so a typo looked like a deletion.
+            raise ValueError(f"No local sandbox named {name!r}")
         sandbox_state.delete(name)
 
     # ── Internal factory ─────────────────────────────────────────────────

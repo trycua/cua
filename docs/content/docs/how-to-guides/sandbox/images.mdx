@@ -36,7 +36,7 @@ Image.android()                      # Android 14
 
 | Image | Kind | Runs in cloud | Notes |
 |-------|------|---------------|-------|
-| Image.linux() | VM | yes | Default (QEMU), supports /dev/kvm |
+| Image.linux() | VM | yes | Ubuntu 24.04; a real VM only with the bare-metal runtime (see below) |
 | Image.linux(kind='container') | container | no | Lighter, Docker/XFCE |
 | Image.linux('ubuntu', '22.04') | VM | no | Built locally, no pinned disk |
 | Image.macos() | VM | no | Apple Virtualization / Lume |
@@ -50,6 +50,28 @@ Image.android()                      # Android 14
   cloud they raise `NotImplementedError: Fleet cloud sandboxes require a supported
   built-in image or Image.from_registry(...)`.
 </Callout>
+
+### Getting a real Linux VM locally
+
+`kind='vm'` describes the image, not the runtime that ends up booting it. Started
+locally with no explicit runtime, `Image.linux()` auto-selects Docker-wrapped QEMU,
+which resolves to the same `trycua/cua-xfce` **container** that `kind='container'`
+uses — no QEMU, no KVM, and none of the pinned containerDisk.
+
+To boot the same disk Cua cloud boots, ask for the bare-metal runtime:
+
+```python
+from cua import Image, QEMURuntime, Sandbox
+
+async with Sandbox.ephemeral(
+    Image.linux(), local=True, runtime=QEMURuntime(mode='bare-metal'),
+) as sb:
+    print((await sb.shell.run('uname -a')).stdout)
+```
+
+Plain `QEMURuntime()` defaults to `mode='docker'` and does **not** take the
+containerDisk path. Bare-metal needs `qemu-system-x86_64` on the host, and uses
+`/dev/kvm` when it is available.
 
 ## Install packages
 
@@ -142,11 +164,16 @@ prod = base.pip_install('gunicorn').run('useradd -m appuser')
 
 Use `Image.from_registry()` when your base image already exists in a registry.
 
+The reference must be a **KubeVirt containerDisk** — an image carrying a bootable
+disk at `/disk/disk.img`. An ordinary OCI application image such as `ubuntu:22.04`
+is not one, and fails with
+`FileNotFoundError: OCI image 'ubuntu:22.04' does not contain /disk/disk.img`.
+
 ```python
 Image.from_registry('ghcr.io/trycua/macos-tahoe-cua:latest')
-Image.from_registry('ubuntu:22.04')
+Image.from_registry('public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34')
 # chain builder on top
-img = Image.from_registry('ubuntu:22.04').apt_install('curl')
+img = Image.from_registry('ghcr.io/trycua/macos-tahoe-cua:latest').run('echo hi')
 ```
 
 A registry image has no resolved `kind`, so the SDK cannot pick a runtime for it.
@@ -160,11 +187,11 @@ async with Sandbox.ephemeral(img, local=True, runtime=QEMURuntime(mode='bare-met
 ```
 
 <Callout type="warn">
-  `Image.from_registry()` records the reference but does not set `os_type` — every
-  registry image reports `os_type='linux'`, including the macOS one above. Pass a
-  runtime that matches the actual guest rather than relying on auto-selection.
-  Arbitrary public references are also not pullable on Cua cloud, which accepts only
-  Cua-published images.
+  Two more limits worth knowing. `Image.from_registry()` records the reference but
+  does not set `os_type` — every registry image reports `os_type='linux'`, including
+  the macOS one above, so pass a runtime matching the real guest. And the puller
+  authenticates anonymously, which works for `public.ecr.aws` and `ghcr.io` but not
+  for Docker Hub. On Cua cloud, only Cua-published images are pullable.
 </Callout>
 
 ## Use a local disk image
@@ -177,7 +204,11 @@ Image.from_file('/path/to/windows.vhdx', os_type='windows')
 Image.from_file('https://example.com/disk.qcow2', os_type='linux')
 ```
 
-Images are cached in `~/.cua/cua-sandbox/image-cache/`.
+Disk images downloaded from a URL are cached in `~/.cua/cua-sandbox/image-cache/`,
+keyed by a hash of the URL. This is a different cache from the one used for
+registry containerDisks, which land in
+`~/.cua/cua-sandbox/images/container-disks/<sha256-of-ref>/disk.qcow2`. Delete
+either directory to force a re-download.
 
 ## Inspect an image
 

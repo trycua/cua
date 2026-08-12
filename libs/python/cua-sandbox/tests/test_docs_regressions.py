@@ -154,3 +154,85 @@ class TestLayerExecutorKnowsTheGuestOS:
 def test_to_dict_reports_the_real_kind(image, expected_kind):
     """The guide printed 'kind': 'container' for Image.linux(), which is a VM."""
     assert image.to_dict()["kind"] == expected_kind
+
+
+class TestDeletingNothingIsNotSuccess:
+    """`Sandbox.delete(local=True)` dispatched on runtime_type from a state file
+    and took no branch when there was none, so deleting a name that never
+    existed reported success — and a container from a launch that timed out
+    before writing state could not be deleted at all."""
+
+    def test_unknown_name_raises(self, monkeypatch):
+        import asyncio
+
+        import importlib
+
+        # cua_sandbox exports a `sandbox()` function that shadows the submodule.
+        sandbox_mod = importlib.import_module("cua_sandbox.sandbox")
+        state_mod = importlib.import_module("cua_sandbox.sandbox_state")
+
+        monkeypatch.setattr(state_mod, "load", lambda name: None)
+        monkeypatch.setattr(sandbox_mod, "_remove_orphan_container", lambda name: False)
+
+        with pytest.raises(ValueError, match="No local sandbox named"):
+            asyncio.run(sandbox_mod.Sandbox._delete_local("never-existed"))
+
+    def test_orphan_container_is_removed(self, monkeypatch):
+        import asyncio
+
+        import importlib
+
+        # cua_sandbox exports a `sandbox()` function that shadows the submodule.
+        sandbox_mod = importlib.import_module("cua_sandbox.sandbox")
+        state_mod = importlib.import_module("cua_sandbox.sandbox_state")
+
+        deleted_state = []
+        monkeypatch.setattr(state_mod, "load", lambda name: None)
+        monkeypatch.setattr(state_mod, "delete", lambda name: deleted_state.append(name))
+        monkeypatch.setattr(sandbox_mod, "_remove_orphan_container", lambda name: True)
+
+        asyncio.run(sandbox_mod.Sandbox._delete_local("timed-out-launch"))
+        assert deleted_state == ["timed-out-launch"]
+
+    def test_orphan_probe_reports_missing_container(self, monkeypatch):
+        import subprocess
+
+        from cua_sandbox.sandbox import _remove_orphan_container
+
+        def fake_run(cmd, **kwargs):
+            assert cmd[:2] == ["docker", "inspect"]
+            return subprocess.CompletedProcess(cmd, 1)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert _remove_orphan_container("nope") is False
+
+    def test_orphan_probe_survives_missing_docker(self, monkeypatch):
+        import subprocess
+
+        from cua_sandbox.sandbox import _remove_orphan_container
+
+        def fake_run(cmd, **kwargs):
+            raise FileNotFoundError("docker")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert _remove_orphan_container("nope") is False
+
+
+class TestLocalRuntimeSelection:
+    """`Image.linux()` says kind='vm', but started locally with no explicit
+    runtime it lands on the same XFCE container as kind='container'."""
+
+    def test_linux_vm_and_container_resolve_to_the_same_docker_image(self):
+        from cua_sandbox.runtime.images import UBUNTU_XFCE, resolve_image
+
+        assert resolve_image("linux") == UBUNTU_XFCE
+
+    def test_only_a_disk_path_reaches_bare_metal_qemu(self):
+        from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
+        from cua_sandbox.sandbox import _auto_runtime
+
+        with_disk = Image.from_file("/tmp/does-not-need-to-exist.qcow2", os_type="linux")
+        assert isinstance(_auto_runtime(with_disk), QEMUBaremetalRuntime)
+
+        # Documented as a QEMU VM, but auto-selection gives Docker-wrapped QEMU.
+        assert not isinstance(_auto_runtime(Image.linux()), QEMUBaremetalRuntime)

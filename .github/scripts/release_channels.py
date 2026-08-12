@@ -33,8 +33,8 @@ class ChannelError(RuntimeError):
 
 def read_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ChannelError(f"cannot read JSON from {path}: {error}") from error
 
 
@@ -122,7 +122,11 @@ def load_registry(path: Path = DEFAULT_REGISTRY, *, root: Path = ROOT) -> dict[s
             raise ChannelError(
                 f"component {name} stable prefix must match Release Please: {expected_prefix}"
             )
-        authority = repository_path(root, component["versionAuthorityFile"]).read_text().strip()
+        authority = (
+            repository_path(root, component["versionAuthorityFile"])
+            .read_text(encoding="utf-8")
+            .strip()
+        )
         if not SEMVER_RE.fullmatch(authority):
             raise ChannelError(f"component {name} authority is not a stable version: {authority!r}")
         if release_manifest.get(package_path) != authority:
@@ -195,7 +199,7 @@ def parse_tag(component: Mapping[str, Any], channel: str, tag: str) -> str:
 
 
 def _workspace_package_names(manifest_path: Path) -> set[str]:
-    manifest = manifest_path.read_text()
+    manifest = manifest_path.read_text(encoding="utf-8")
     members_match = re.search(r"(?ms)^members\s*=\s*\[(.*?)\]", manifest)
     if not members_match:
         raise ChannelError(f"Cargo workspace members are missing from {manifest_path}")
@@ -205,7 +209,7 @@ def _workspace_package_names(manifest_path: Path) -> set[str]:
         for member in manifest_path.parent.glob(str(pattern)):
             package_manifest = member / "Cargo.toml"
             if package_manifest.is_file():
-                package_text = package_manifest.read_text()
+                package_text = package_manifest.read_text(encoding="utf-8")
                 package_block = re.search(r"(?ms)^\[package\]\s*(.*?)(?=^\[|\Z)", package_text)
                 if not package_block or not re.search(
                     r"(?m)^version\.workspace\s*=\s*true\s*$", package_block.group(1)
@@ -226,7 +230,7 @@ def _rewrite_cargo_lock(
     lock_path: Path, manifest_path: Path, old_version: str, new_version: str
 ) -> int:
     names = _workspace_package_names(manifest_path)
-    original = lock_path.read_text()
+    original = lock_path.read_text(encoding="utf-8")
     seen: set[str] = set()
 
     def replace_block(match: re.Match[str]) -> str:
@@ -254,7 +258,7 @@ def _rewrite_cargo_lock(
         raise ChannelError(
             f"Cargo.lock is missing workspace packages: {', '.join(sorted(missing))}"
         )
-    lock_path.write_text(rewritten)
+    lock_path.write_text(rewritten, encoding="utf-8")
     return len(seen)
 
 
@@ -268,18 +272,18 @@ def apply_version(
     nightly_version(version)
     component = component_descriptor(name, registry_path, root=root)
     authority = repository_path(root, component["versionAuthorityFile"])
-    old_version = authority.read_text().strip()
+    old_version = authority.read_text(encoding="utf-8").strip()
     stable_version(old_version)
     changed: list[str] = []
     for site in component["buildVersionSites"]:
         path = repository_path(root, site["path"])
         kind = site["kind"]
         if kind == "plain":
-            if path.read_text().strip() != old_version:
+            if path.read_text(encoding="utf-8").strip() != old_version:
                 raise ChannelError(f"plain version site {site['path']} differs from {old_version}")
-            path.write_text(f"{version}\n")
+            path.write_text(f"{version}\n", encoding="utf-8")
         elif kind == "regex":
-            original = path.read_text()
+            original = path.read_text(encoding="utf-8")
             replacement = str(site["replacement"]).replace("{version}", version)
             rewritten, count = re.subn(str(site["pattern"]), replacement, original)
             if count != int(site["expectedMatches"]):
@@ -287,7 +291,7 @@ def apply_version(
                     f"version site {site['path']} matched {count} times, "
                     f"expected {site['expectedMatches']}"
                 )
-            path.write_text(rewritten)
+            path.write_text(rewritten, encoding="utf-8")
         elif kind == "cargo-workspace-lock":
             manifest = repository_path(root, site["manifestPath"])
             _rewrite_cargo_lock(path, manifest, old_version, version)
@@ -318,7 +322,9 @@ def plan_nightly(
     if not SHA_RE.fullmatch(source_sha):
         raise ChannelError(f"source SHA must be 40 lowercase hex characters: {source_sha!r}")
     component = component_descriptor(name, registry_path, root=root)
-    base = repository_path(root, component["versionAuthorityFile"]).read_text().strip()
+    base = (
+        repository_path(root, component["versionAuthorityFile"]).read_text(encoding="utf-8").strip()
+    )
     version = derive_nightly_version(base, date, run)
     tag = format_tag(component, "nightly", version)
     candidates: list[Mapping[str, Any]] = []
@@ -521,7 +527,7 @@ def write_github_outputs(values: Mapping[str, Any], path: Path) -> None:
         if value is None:
             rendered = ""
         lines.append(f"{key}={rendered}")
-    with path.open("a") as handle:
+    with path.open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
 
 
@@ -579,7 +585,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"validated {len(registry['components'])} release-channel components")
         elif args.command == "derive":
             component = component_descriptor(args.component, args.registry, root=root)
-            base = repository_path(root, component["versionAuthorityFile"]).read_text().strip()
+            base = (
+                repository_path(root, component["versionAuthorityFile"])
+                .read_text(encoding="utf-8")
+                .strip()
+            )
             version = derive_nightly_version(base, args.date, args.run)
             print(
                 json.dumps({"version": version, "tag": format_tag(component, "nightly", version)})
@@ -608,7 +618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             rendered = json.dumps(result, indent=2) + "\n"
             if args.output:
-                args.output.write_text(rendered)
+                args.output.write_text(rendered, encoding="utf-8")
             else:
                 print(rendered, end="")
             if args.github_output:
@@ -625,10 +635,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 registry_path=args.registry,
                 root=root,
             )
-            args.output.write_text(json.dumps(manifest, indent=2) + "\n")
+            args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         elif args.command == "render-nightly":
             manifest = read_json(args.manifest)
-            args.body.write_text(render_nightly_body(manifest))
+            args.body.write_text(render_nightly_body(manifest), encoding="utf-8")
     except (ChannelError, OSError, ValueError) as error:
         print(f"release channel error: {error}", file=sys.stderr)
         return 1

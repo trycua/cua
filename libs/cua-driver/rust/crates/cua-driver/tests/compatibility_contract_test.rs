@@ -102,6 +102,29 @@ fn prime_agent_connection_guidance_uses_the_skill_and_cli_path() {
 }
 
 #[test]
+fn minimax_code_connection_guidance_uses_its_native_config_shape() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["mcp-config", "--client", "minimax"])
+        .output()
+        .expect("run MiniMax Code connection guidance");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 guidance");
+    assert!(stdout.contains("~/.minimax/mcp.json"), "{stdout}");
+    let json_start = stdout.find('{').expect("guidance includes JSON");
+    let config: Value = serde_json::from_str(&stdout[json_start..]).expect("valid config JSON");
+    let server = &config["mcpServers"]["cua-driver"];
+    assert_eq!(server["args"], json!(["mcp"]));
+    assert_eq!(server["type"], "stdio");
+    assert!(
+        server["command"]
+            .as_str()
+            .is_some_and(|command| !command.is_empty()),
+        "command remains a non-empty executable path"
+    );
+}
+
+#[test]
 fn released_mcp_initialize_tools_list_and_error_fields_remain_compatible() {
     let fixture: Value = serde_json::from_str(MCP_FIXTURE).expect("valid MCP fixture");
     let Some(mut driver) = RawDriver::spawn() else {

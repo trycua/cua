@@ -1,0 +1,52 @@
+name: "CD: Docs Pin Dispatch"
+
+# When docs content lands on main, immediately notify trycua/cloud so its
+# update-cua-docs-pin.yml workflow advances the website docs pin, instead of
+# waiting for that repository's scheduled catch-all run. Delivery is
+# best-effort: repository_dispatch events can be dropped, so the cloud cron
+# still converges the pin if a notification is lost.
+#
+# The App token mirrors the identity cd-cua-driver-docs.yml already uses for
+# release-time repo writes; the same App installation covers trycua/cloud, and
+# the dispatch endpoint needs contents write on that repository.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/content/docs/**"
+      - "docs/public/**"
+  workflow_dispatch:
+
+permissions: {}
+
+# Collapse bursts of docs merges into the newest dispatch; the cloud updater
+# always resolves the latest docs commit itself, so older events are redundant.
+concurrency:
+  group: cd-docs-pin-dispatch
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    name: Notify trycua/cloud
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: cloud
+          permission-contents: write
+
+      - name: Send repository_dispatch to cloud
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api "repos/${{ github.repository_owner }}/cloud/dispatches" \
+            -f event_type=cua-docs-updated \
+            -f "client_payload[source_repo]=${{ github.repository }}" \
+            -f "client_payload[source_sha]=${{ github.sha }}"

@@ -14,7 +14,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Optional
 
-import oras.container
 import oras.provider
 import requests
 from cua_sandbox.registry.cache import CACHE_ROOT
@@ -25,15 +24,15 @@ logger = logging.getLogger(__name__)
 _CONTAINER_DISK_PATHS = {"disk/disk.img", "./disk/disk.img"}
 _LOCK_POLL_INTERVAL_SECONDS = 0.1
 
-# oras fixes its auth backend at construction time and cannot negotiate one, but
-# registries disagree about the scheme. Private ECR challenges with Basic — the token
-# backend fails there with "Cannot respond to request for authentication" — while
-# public.ecr.aws, ghcr.io and Docker Hub challenge with Bearer, where basic auth has
-# no credential to send. Asking the registry which it wants beats maintaining a
-# host list.
-_BASIC_AUTH_BACKEND = "basic"
+# Registries disagree about how to authenticate, and oras cannot negotiate on its own:
+#   public.ecr.aws  -> WWW-Authenticate: Bearer ... ; "token" works, "basic" raises
+#                      AttributeError: 'BasicAuth' object has no attribute '_basic_auth'
+#   private ECR     -> WWW-Authenticate: Basic ...  ; "basic" works, "token" raises
+#                      ValueError: Cannot respond to request for authentication
+# So read the challenge off the registry's /v2/ endpoint and pick the matching backend.
 _TOKEN_AUTH_BACKEND = "token"
-_CHALLENGE_TIMEOUT_SECONDS = 30
+_BASIC_AUTH_BACKEND = "basic"
+_PING_TIMEOUT_SECONDS = 10
 
 _INDEX_MEDIA_TYPES = frozenset(
     {
@@ -74,7 +73,7 @@ def pull_container_disk(
         if destination.exists():
             return destination
 
-        registry = registry_factory(auth_backend=auth_backend or _auth_backend_for(ref))
+        registry = registry_factory(auth_backend=auth_backend or _detect_auth_backend(ref))
         container = registry.get_container(ref)
         registry.auth.load_configs(container)
         manifest = _resolve_platform_manifest(registry, ref, architecture or _host_architecture())
@@ -121,17 +120,38 @@ def pull_container_disk(
     raise FileNotFoundError(f"OCI image {ref!r} does not contain /disk/disk.img")
 
 
-def _auth_backend_for(ref: str) -> str:
-    """Name the oras auth backend that matches the registry's authentication challenge."""
-    url = f"https://{oras.container.Container(ref).manifest_url()}"
-    try:
-        response = requests.get(url, timeout=_CHALLENGE_TIMEOUT_SECONDS)
-    except requests.RequestException:
+def _registry_host(ref: str) -> Optional[str]:
+    """Return the registry host of a reference, or None when it is implicit."""
+    head = _repository(ref).split("/", 1)[0]
+    if head == "localhost" or "." in head or ":" in head:
+        return head
+    return None
+
+
+def _detect_auth_backend(ref: str) -> str:
+    """Pick the oras auth backend from the registry's /v2/ WWW-Authenticate challenge.
+
+    Bearer-token registries (public.ecr.aws, ghcr.io, Docker Hub) need the "token"
+    backend; registries that answer with Basic (private ECR) need "basic". Defaults to
+    "token", the OCI-standard flow, when the challenge is missing or unreachable.
+    """
+    host = _registry_host(ref)
+    if host is None:
         return _TOKEN_AUTH_BACKEND
 
-    challenge = response.headers.get("Www-Authenticate", "").strip().lower()
-    backend = _BASIC_AUTH_BACKEND if challenge.startswith("basic") else _TOKEN_AUTH_BACKEND
-    logger.debug("Registry challenged %s with %r; using %s auth", ref, challenge, backend)
+    try:
+        response = requests.get(f"https://{host}/v2/", timeout=_PING_TIMEOUT_SECONDS)
+        challenge = response.headers.get("WWW-Authenticate", "")
+    except requests.RequestException as exc:
+        logger.debug("Could not probe %s for an auth challenge (%s); assuming bearer", host, exc)
+        return _TOKEN_AUTH_BACKEND
+
+    backend = (
+        _BASIC_AUTH_BACKEND
+        if challenge.strip().lower().startswith("basic")
+        else _TOKEN_AUTH_BACKEND
+    )
+    logger.debug("%s answered %r; using the %s auth backend", host, challenge, backend)
     return backend
 
 

@@ -76,7 +76,7 @@ def test_default_linux_image_becomes_typed_template_request():
     request = FleetCloudTransport(image=Image.linux(), name="demo")._template_request()
 
     assert request.spec.vm_template.container_disk_image == (
-        "public.ecr.aws/k5j5w0x5/" "cua-ubuntu-24.04:main-38352d34"
+        "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34"
     )
 
 

@@ -11,9 +11,10 @@ from cua_sandbox.image import DEFAULT_LINUX_REGISTRY_IMAGE, Image
 from cua_sandbox.registry import container_disk
 from cua_sandbox.registry.container_disk import (
     _LOCK_POLL_INTERVAL_SECONDS,
-    _auth_backend_for,
+    _detect_auth_backend,
     pull_container_disk,
 )
+from requests.structures import CaseInsensitiveDict
 
 # The pinned image really is served as a two-child OCI index: the linux/amd64 disk and a
 # buildx provenance manifest that reports platform unknown/unknown. Taking "the first"
@@ -58,16 +59,25 @@ class TestAuthBackendSelection:
     """Registries disagree about the challenge scheme; oras cannot negotiate one."""
 
     def _challenge(self, monkeypatch, header):
+        probed = []
+
         def get(url, **kwargs):
-            return SimpleNamespace(headers={"Www-Authenticate": header} if header else {})
+            probed.append(url)
+            return SimpleNamespace(headers=CaseInsensitiveDict({"WWW-Authenticate": header}))
 
         monkeypatch.setattr(container_disk.requests, "get", get)
+        return probed
 
     def test_a_basic_challenge_selects_basic_auth(self, monkeypatch):
         """Private ECR answers with Basic; oras' token backend cannot respond to it."""
-        self._challenge(monkeypatch, 'Basic realm="https://12345.dkr.ecr.us-west-2.amazonaws.com/"')
+        probed = self._challenge(
+            monkeypatch, 'Basic realm="https://12345.dkr.ecr.us-west-2.amazonaws.com/"'
+        )
 
-        assert _auth_backend_for("12345.dkr.ecr.us-west-2.amazonaws.com/workspace:tag") == "basic"
+        backend = _detect_auth_backend("12345.dkr.ecr.us-west-2.amazonaws.com/workspace:tag")
+
+        assert backend == "basic"
+        assert probed == ["https://12345.dkr.ecr.us-west-2.amazonaws.com/v2/"]
 
     @pytest.mark.parametrize(
         "header",
@@ -80,7 +90,23 @@ class TestAuthBackendSelection:
     def test_a_bearer_or_absent_challenge_selects_token_auth(self, monkeypatch, header):
         self._challenge(monkeypatch, header)
 
-        assert _auth_backend_for("public.ecr.aws/example/workspace:tag") == "token"
+        assert _detect_auth_backend("public.ecr.aws/example/workspace:tag") == "token"
+
+    def test_the_pinned_linux_ref_selects_token_auth(self, monkeypatch):
+        """public.ecr.aws is anonymous-but-bearer, so basic auth has nothing to send."""
+        self._challenge(monkeypatch, 'Bearer realm="https://public.ecr.aws/token/"')
+
+        assert _detect_auth_backend(DEFAULT_LINUX_REGISTRY_IMAGE) == "token"
+
+    def test_an_implicit_registry_host_skips_the_probe(self, monkeypatch):
+        """A short ref names no registry, so there is no host to read a challenge from."""
+
+        def get(url, **kwargs):
+            raise AssertionError("a ref without a registry host must not be probed")
+
+        monkeypatch.setattr(container_disk.requests, "get", get)
+
+        assert _detect_auth_backend("ubuntu:24.04") == "token"
 
     def test_an_unreachable_registry_falls_back_to_token_auth(self, monkeypatch):
         def get(url, **kwargs):
@@ -88,7 +114,7 @@ class TestAuthBackendSelection:
 
         monkeypatch.setattr(container_disk.requests, "get", get)
 
-        assert _auth_backend_for("registry.example/workspace:tag") == "token"
+        assert _detect_auth_backend("registry.example/workspace:tag") == "token"
 
 
 def test_explicit_auth_backend_skips_the_challenge_probe(tmp_path, monkeypatch):
@@ -187,7 +213,7 @@ def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path):
 def test_pull_probes_for_an_auth_backend_when_none_is_given(tmp_path, monkeypatch):
     """Production omits auth_backend, so the challenge probe decides."""
     calls = []
-    monkeypatch.setattr(container_disk, "_auth_backend_for", lambda ref: "basic")
+    monkeypatch.setattr(container_disk, "_detect_auth_backend", lambda ref: "basic")
 
     class Registry:
         def __init__(self, *, auth_backend):

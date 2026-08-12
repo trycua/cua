@@ -73,16 +73,19 @@ async def test_cloud_routes_fleet_auth_without_explicit_legacy_key(monkeypatch, 
     )
 
     fleet_sandbox = await Sandbox.create(Image.from_registry("example:latest"), name="fleet-demo")
+    default_linux_sandbox = await Sandbox.create(Image.linux(), name="linux-demo")
     legacy_sandbox = await Sandbox.create(
         Image.from_registry("example:latest"), name="legacy-demo", api_key="sk-explicit"
     )
     await fleet_sandbox.disconnect()
+    await default_linux_sandbox.disconnect()
     await legacy_sandbox.disconnect()
 
     assert Sandbox._uses_fleet(None)
     assert not Sandbox._uses_fleet("sk-explicit")
     assert [(route, values["name"]) for route, values in routes] == [
         ("fleet", "fleet-demo"),
+        ("fleet", "linux-demo"),
         ("legacy", "legacy-demo"),
     ]
 

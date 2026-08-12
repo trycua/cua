@@ -28,6 +28,11 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_LINUX_REGISTRY_IMAGE = (
+    "296062593712.dkr.ecr.us-west-2.amazonaws.com/"
+    "desktop-workspace-duo:main-38352d34"
+)
+
 _IMAGE_CACHE = Path.home() / ".cua" / "cua-sandbox" / "image-cache"
 
 
@@ -477,3 +482,22 @@ class Image:
             f"Image({self.os_type}/{self.distro}:{self.version}, "
             f"kind={self.kind}, {len(self._layers)} layers{reg})"
         )
+
+
+def default_registry_image(image: Image) -> Optional[str]:
+    """Return the registry image backing a built-in image descriptor."""
+    if image._registry is not None:
+        return None
+    if (
+        image.os_type == "linux"
+        and image.distro == "ubuntu"
+        and image.version == "24.04"
+        and image.kind == "vm"
+    ):
+        return DEFAULT_LINUX_REGISTRY_IMAGE
+    return None
+
+
+def cloud_registry_image(image: Image) -> Optional[str]:
+    """Return the explicit or built-in registry image used by Fleet cloud."""
+    return image._registry or default_registry_image(image)

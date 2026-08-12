@@ -11,51 +11,34 @@ from cua_sandbox.image import DEFAULT_LINUX_REGISTRY_IMAGE, Image
 from cua_sandbox.registry import container_disk
 from cua_sandbox.registry.container_disk import (
     _LOCK_POLL_INTERVAL_SECONDS,
-    _detect_auth_backend,
+    _auth_backend_for,
     pull_container_disk,
 )
 
-BEARER_CHALLENGE = 'Bearer realm="https://public.ecr.aws/token/",service="public.ecr.aws"'
-BASIC_CHALLENGE = 'Basic realm="https://296062593712.dkr.ecr.us-west-2.amazonaws.com/"'
+# The pinned image really is served as a two-child OCI index: the linux/amd64 disk and a
+# buildx provenance manifest that reports platform unknown/unknown. Taking "the first"
+# or "any" child would grab the attestation and fail confusingly.
+AMD64_CHILD = "sha256:85b3f5022bf9ecc864472f5fade5e2f1f54ab88ce429af7873a1415d668dc2ea"
+ATTESTATION_CHILD = "sha256:a961974dc086404082c2299cfbdb6bac77dbf930da9846f6a05437f60592e426"
 
-
-def _fake_ping(monkeypatch, challenge, *, probes=None):
-    """Stub the /v2/ auth-challenge probe."""
-
-    def fake_get(url, timeout=None):
-        if probes is not None:
-            probes.append(url)
-        return SimpleNamespace(headers={"WWW-Authenticate": challenge} if challenge else {})
-
-    monkeypatch.setattr(container_disk.requests, "get", fake_get)
-
-
-@pytest.fixture(autouse=True)
-def _never_probe_a_real_registry(monkeypatch):
-    """Keep the auth-challenge probe off the network unless a test opts in."""
-    _fake_ping(monkeypatch, BEARER_CHALLENGE)
-
-
-# The real ECR image is a multi-arch index whose children are the per-platform manifests
-# plus a buildx attestation manifest.
 INDEX_MANIFEST = {
     "schemaVersion": 2,
     "mediaType": "application/vnd.oci.image.index.v1+json",
     "manifests": [
         {
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "digest": "sha256:arm64child",
-            "platform": {"architecture": "arm64", "os": "linux"},
-        },
-        {
-            "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "digest": "sha256:amd64child",
+            "digest": AMD64_CHILD,
+            "size": 483,
             "platform": {"architecture": "amd64", "os": "linux"},
         },
         {
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "digest": "sha256:attestation",
-            "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
+            "digest": ATTESTATION_CHILD,
+            "size": 563,
+            "annotations": {
+                "vnd.docker.reference.digest": AMD64_CHILD,
+                "vnd.docker.reference.type": "attestation-manifest",
+            },
             "platform": {"architecture": "unknown", "os": "unknown"},
         },
     ],
@@ -71,48 +54,47 @@ def _layer_with_disk(contents: bytes, *, path: str = "disk/disk.img") -> bytes:
     return gzip.compress(raw.getvalue())
 
 
-@pytest.mark.parametrize(
-    ("ref", "challenge", "expected"),
-    [
-        # public.ecr.aws is anonymously readable but still uses the Bearer token flow.
-        ("public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-e5d853a9", BEARER_CHALLENGE, "token"),
-        # Private ECR answers with Basic and rejects oras' token backend.
-        ("296062593712.dkr.ecr.us-west-2.amazonaws.com/duo:main", BASIC_CHALLENGE, "basic"),
-        ("ghcr.io/trycua/workspace:latest", BEARER_CHALLENGE, "token"),
-        # No challenge at all (open registry) — assume the OCI-standard bearer flow.
-        ("registry.example/workspace:latest", "", "token"),
-    ],
-)
-def test_auth_backend_follows_the_registry_challenge(monkeypatch, ref, challenge, expected):
-    probes = []
-    _fake_ping(monkeypatch, challenge, probes=probes)
+class TestAuthBackendSelection:
+    """Registries disagree about the challenge scheme; oras cannot negotiate one."""
 
-    assert _detect_auth_backend(ref) == expected
-    assert probes == [f"https://{ref.split('/', 1)[0]}/v2/"]
+    def _challenge(self, monkeypatch, header):
+        def get(url, **kwargs):
+            return SimpleNamespace(headers={"Www-Authenticate": header} if header else {})
+
+        monkeypatch.setattr(container_disk.requests, "get", get)
+
+    def test_a_basic_challenge_selects_basic_auth(self, monkeypatch):
+        """Private ECR answers with Basic; oras' token backend cannot respond to it."""
+        self._challenge(monkeypatch, 'Basic realm="https://12345.dkr.ecr.us-west-2.amazonaws.com/"')
+
+        assert _auth_backend_for("12345.dkr.ecr.us-west-2.amazonaws.com/workspace:tag") == "basic"
+
+    @pytest.mark.parametrize(
+        "header",
+        [
+            'Bearer realm="https://public.ecr.aws/token/",service="public.ecr.aws"',
+            'Bearer realm="https://ghcr.io/token",service="ghcr.io"',
+            "",
+        ],
+    )
+    def test_a_bearer_or_absent_challenge_selects_token_auth(self, monkeypatch, header):
+        self._challenge(monkeypatch, header)
+
+        assert _auth_backend_for("public.ecr.aws/example/workspace:tag") == "token"
+
+    def test_an_unreachable_registry_falls_back_to_token_auth(self, monkeypatch):
+        def get(url, **kwargs):
+            raise requests.ConnectionError("no route to host")
+
+        monkeypatch.setattr(container_disk.requests, "get", get)
+
+        assert _auth_backend_for("registry.example/workspace:tag") == "token"
 
 
-def test_auth_backend_defaults_to_token_when_the_probe_fails(monkeypatch):
-    def boom(url, timeout=None):
-        raise requests.ConnectionError("no route to host")
-
-    monkeypatch.setattr(container_disk.requests, "get", boom)
-
-    assert _detect_auth_backend("registry.example/workspace:latest") == "token"
-
-
-def test_auth_backend_skips_the_probe_for_a_hostless_ref(monkeypatch):
-    def boom(url, timeout=None):
-        raise AssertionError("a ref without a registry host must not be probed")
-
-    monkeypatch.setattr(container_disk.requests, "get", boom)
-
-    assert _detect_auth_backend("workspace:latest") == "token"
-
-
-def test_explicit_auth_backend_overrides_detection(tmp_path, monkeypatch):
+def test_explicit_auth_backend_skips_the_challenge_probe(tmp_path, monkeypatch):
     calls = []
 
-    def boom(url, timeout=None):
+    def boom(url, **kwargs):
         raise AssertionError("an explicit auth_backend must not trigger a probe")
 
     monkeypatch.setattr(container_disk.requests, "get", boom)
@@ -142,8 +124,7 @@ def test_explicit_auth_backend_overrides_detection(tmp_path, monkeypatch):
     assert calls == [("init", "basic")]
 
 
-def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path, monkeypatch):
-    _fake_ping(monkeypatch, BEARER_CHALLENGE)
+def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path):
     calls = []
     manifest = {
         "layers": [
@@ -176,13 +157,12 @@ def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path, mo
     disk = pull_container_disk(
         DEFAULT_LINUX_REGISTRY_IMAGE,
         cache_root=tmp_path,
+        auth_backend="token",
         registry_factory=Registry,
     )
 
     assert disk.name == "disk.qcow2"
     assert disk.read_bytes() == b"qcow2"
-    # The backend comes from the registry's challenge — hardcoding either one breaks
-    # half the registries (see test_auth_backend_follows_the_registry_challenge).
     assert calls == [
         ("init", "token"),
         ("container", DEFAULT_LINUX_REGISTRY_IMAGE),
@@ -196,11 +176,38 @@ def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path, mo
         pull_container_disk(
             DEFAULT_LINUX_REGISTRY_IMAGE,
             cache_root=tmp_path,
+            auth_backend="token",
             registry_factory=Registry,
         )
         == disk
     )
     assert calls == []
+
+
+def test_pull_probes_for_an_auth_backend_when_none_is_given(tmp_path, monkeypatch):
+    """Production omits auth_backend, so the challenge probe decides."""
+    calls = []
+    monkeypatch.setattr(container_disk, "_auth_backend_for", lambda ref: "basic")
+
+    class Registry:
+        def __init__(self, *, auth_backend):
+            calls.append(("init", auth_backend))
+            self.auth = SimpleNamespace(load_configs=lambda container: None)
+
+        def get_container(self, ref):
+            return "container"
+
+        def get_manifest(self, ref):
+            return {"layers": [{"digest": "sha256:layer"}]}
+
+        def get_blob(self, container, digest, *, stream):
+            return SimpleNamespace(raw=io.BytesIO(_layer_with_disk(b"qcow2")))
+
+    pull_container_disk(
+        "registry.example/workspace:latest", cache_root=tmp_path, registry_factory=Registry
+    )
+
+    assert calls == [("init", "basic")]
 
 
 def test_pull_container_disk_resolves_platform_manifest_from_index(tmp_path):
@@ -235,12 +242,57 @@ def test_pull_container_disk_resolves_platform_manifest_from_index(tmp_path):
         DEFAULT_LINUX_REGISTRY_IMAGE,
         cache_root=tmp_path,
         architecture="amd64",
+        auth_backend="token",
         registry_factory=Registry,
     )
 
     assert disk.read_bytes() == b"qcow2"
     repository = DEFAULT_LINUX_REGISTRY_IMAGE.rsplit(":", 1)[0]
-    assert requested == [DEFAULT_LINUX_REGISTRY_IMAGE, f"{repository}@sha256:amd64child"]
+    # The linux/amd64 child, never the unknown/unknown attestation sibling.
+    assert requested == [DEFAULT_LINUX_REGISTRY_IMAGE, f"{repository}@{AMD64_CHILD}"]
+
+
+def test_index_descent_never_selects_the_attestation_child(tmp_path):
+    """Even listed first, the buildx provenance manifest must not be mistaken for a disk."""
+    requested = []
+    attestation_first = {
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [
+            INDEX_MANIFEST["manifests"][1],  # unknown/unknown attestation
+            INDEX_MANIFEST["manifests"][0],  # linux/amd64 disk
+        ],
+    }
+
+    class Registry:
+        def __init__(self, *, auth_backend):
+            self.auth = SimpleNamespace(load_configs=lambda container: None)
+
+        def get_container(self, ref):
+            return "container"
+
+        def get_manifest(self, ref):
+            requested.append(ref)
+            if not ref.endswith(AMD64_CHILD):
+                return attestation_first
+            return {"layers": [{"digest": "sha256:amd64layer"}]}
+
+        def get_blob(self, container, digest, *, stream):
+            return SimpleNamespace(raw=io.BytesIO(_layer_with_disk(b"qcow2")))
+
+    disk = pull_container_disk(
+        "registry.example/workspace:latest",
+        cache_root=tmp_path,
+        architecture="amd64",
+        auth_backend="token",
+        registry_factory=Registry,
+    )
+
+    assert disk.read_bytes() == b"qcow2"
+    assert requested == [
+        "registry.example/workspace:latest",
+        f"registry.example/workspace@{AMD64_CHILD}",
+    ]
+    assert ATTESTATION_CHILD not in " ".join(requested)
 
 
 def test_pull_container_disk_rejects_index_without_matching_platform(tmp_path):
@@ -270,6 +322,7 @@ def test_pull_container_disk_rejects_index_without_matching_platform(tmp_path):
             DEFAULT_LINUX_REGISTRY_IMAGE,
             cache_root=tmp_path,
             architecture="arm64",
+            auth_backend="token",
             registry_factory=Registry,
         )
 
@@ -301,6 +354,7 @@ def test_pull_container_disk_skips_vm_disk_layers(tmp_path):
         pull_container_disk(
             "registry.example/lume-vm:latest",
             cache_root=tmp_path,
+            auth_backend="token",
             registry_factory=Registry,
         )
 
@@ -329,7 +383,10 @@ def test_pull_container_disk_searches_all_layers(tmp_path):
             return SimpleNamespace(raw=io.BytesIO(payload))
 
     disk = pull_container_disk(
-        "registry.example/workspace:latest", cache_root=tmp_path, registry_factory=Registry
+        "registry.example/workspace:latest",
+        cache_root=tmp_path,
+        auth_backend="token",
+        registry_factory=Registry,
     )
 
     assert disk.read_bytes() == b"qcow2"
@@ -359,6 +416,7 @@ def test_pull_container_disk_waits_for_existing_lock(tmp_path, monkeypatch):
     disk = pull_container_disk(
         DEFAULT_LINUX_REGISTRY_IMAGE,
         cache_root=tmp_path,
+        auth_backend="token",
         registry_factory=Registry,
     )
 

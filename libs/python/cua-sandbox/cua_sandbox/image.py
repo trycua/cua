@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LINUX_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/" "cua-ubuntu-24.04:main-e5d853a9"
+DEFAULT_LINUX_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/" "cua-ubuntu-24.04:main-38352d34"
 
 _IMAGE_CACHE = Path.home() / ".cua" / "cua-sandbox" / "image-cache"
 

@@ -497,11 +497,13 @@ Check for a Lume update and optionally apply it
 
 ### lume channel
 
-Inspect or change the persistent release channel. Missing state means `stable`;
-selection does not install by itself.
+Inspect or change the stable/nightly update channel; selection does not install
 
-- `lume channel status [--json]`
-- `lume channel set <stable|nightly> [--json]`
+**Subcommands:**
+
+- `lume channel status` - Show selected and current release channels
+- `lume channel set` - Save stable or nightly as the update channel
+  - `<channel>` - Release channel: stable or nightly
 
 ## Developer Tools
 

@@ -710,7 +710,7 @@ enum CommandDocExtractor {
     private static var channelDoc: CommandDoc {
         CommandDoc(
             name: "channel",
-            abstract: "Inspect or change the stable/nightly update channel",
+            abstract: "Inspect or change the stable/nightly update channel; selection does not install",
             discussion: "Selection is persistent but never installs by itself; use lume update --apply after changing it.",
             arguments: [],
             options: [],

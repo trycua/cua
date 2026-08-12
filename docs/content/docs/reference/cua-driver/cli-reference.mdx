@@ -275,14 +275,6 @@ The apply path delegates to the canonical platform installer scripts.
 | `--apply` | Download and install the latest release when one is available. |
 | `--json` | Emit the structured update-state payload. |
 
-### `cua-driver channel`
-
-Inspect or change the persistent release channel. Missing state means `stable`.
-Changing it does not install; run `cua-driver update --apply` afterward.
-
-- `cua-driver channel status [--json]`
-- `cua-driver channel set <stable|nightly> [--json]`
-
 ### `cua-driver doctor`
 
 Run platform-aware diagnostic probes.
@@ -369,6 +361,38 @@ The distinct ID is replaced with a redacted placeholder.
 | Name | Description |
 | ---- | ----------- |
 | `--json` | Emit JSON. |
+
+### `cua-driver channel`
+
+Inspect or change the stable/nightly update channel.
+
+Selection is persistent but never installs by itself; use cua-driver update --apply after changing it.
+
+#### `cua-driver channel status`
+
+Show selected and current release channels.
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable channel state. |
+
+#### `cua-driver channel set`
+
+Save stable or nightly as the update channel.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<channel>` | String | Yes | stable or nightly |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable channel state. |
 
 ### `cua-driver autostart`
 

@@ -4,7 +4,7 @@ import Foundation
 struct ReleaseChannelCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "channel",
-        abstract: "Inspect or change the stable/nightly update channel",
+        abstract: "Inspect or change the stable/nightly update channel; selection does not install",
         subcommands: [ChannelStatus.self, ChannelSet.self],
         defaultSubcommand: ChannelStatus.self
     )

@@ -18,3 +18,7 @@ python3 -m pytest .github/scripts/tests/test_release_channels.py
 
 Nightly versions are staged only in an ephemeral CI checkout. The script must
 never rewrite stable baked installer defaults or published-version pointers.
+Nightly release notes reuse the repository's PR-first attribution collector.
+The first nightly is bounded by the component's current stable tag; later
+nightlies are bounded by the previous published nightly. A component therefore
+needs a reachable stable tag before its nightly channel is enabled.

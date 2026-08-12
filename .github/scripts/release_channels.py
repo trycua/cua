@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
-import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
 from typing import Any, Mapping, Sequence
+
+import release_attribution
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -204,21 +206,19 @@ def _workspace_package_names(manifest_path: Path) -> set[str]:
             package_manifest = member / "Cargo.toml"
             if package_manifest.is_file():
                 package_text = package_manifest.read_text()
-                package_block = re.search(
-                    r"(?ms)^\[package\]\s*(.*?)(?=^\[|\Z)", package_text
-                )
+                package_block = re.search(r"(?ms)^\[package\]\s*(.*?)(?=^\[|\Z)", package_text)
                 if not package_block or not re.search(
                     r"(?m)^version\.workspace\s*=\s*true\s*$", package_block.group(1)
                 ):
                     continue
-                name_match = re.search(
-                    r'(?m)^name\s*=\s*"([^"]+)"\s*$', package_block.group(1)
-                )
+                name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', package_block.group(1))
                 if not name_match:
                     raise ChannelError(f"Cargo package name is missing from {package_manifest}")
                 names.add(name_match.group(1))
     if not names:
-        raise ChannelError(f"no version-inheriting Cargo workspace packages found in {manifest_path}")
+        raise ChannelError(
+            f"no version-inheriting Cargo workspace packages found in {manifest_path}"
+        )
     return names
 
 
@@ -246,10 +246,14 @@ def _rewrite_cargo_lock(
         start, end = version_match.span(1)
         return f"{block[:start]}{new_version}{block[end:]}"
 
-    rewritten = re.sub(r"(?ms)^\[\[package\]\]\n.*?(?=^\[\[package\]\]\n|\Z)", replace_block, original)
+    rewritten = re.sub(
+        r"(?ms)^\[\[package\]\]\n.*?(?=^\[\[package\]\]\n|\Z)", replace_block, original
+    )
     missing = names - seen
     if missing:
-        raise ChannelError(f"Cargo.lock is missing workspace packages: {', '.join(sorted(missing))}")
+        raise ChannelError(
+            f"Cargo.lock is missing workspace packages: {', '.join(sorted(missing))}"
+        )
     lock_path.write_text(rewritten)
     return len(seen)
 
@@ -294,9 +298,7 @@ def apply_version(
 
 
 def _git(root: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args], cwd=root, check=False, text=True, capture_output=True
-    )
+    result = subprocess.run(["git", *args], cwd=root, check=False, text=True, capture_output=True)
     if result.returncode != 0:
         raise ChannelError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout.strip()
@@ -329,9 +331,16 @@ def plan_nightly(
         except ChannelError:
             continue
         candidates.append(release)
-    candidates.sort(key=lambda value: str(value.get("published_at") or value.get("created_at") or ""))
+    candidates.sort(
+        key=lambda value: str(value.get("published_at") or value.get("created_at") or "")
+    )
     previous_tag = str(candidates[-1]["tag_name"]) if candidates else None
     previous_sha = _git(root, "rev-list", "-n", "1", previous_tag) if previous_tag else None
+    attribution_base_tag = previous_tag or format_tag(component, "stable", base)
+    attribution_base_sha = previous_sha or _git(root, "rev-list", "-n", "1", attribution_base_tag)
+    if not attribution_base_sha:
+        raise ChannelError(f"attribution base tag has no commit: {attribution_base_tag}")
+    _git(root, "merge-base", "--is-ancestor", attribution_base_sha, source_sha)
     paths = list(component["changeDetectionPaths"])
     paths.extend(load_registry(registry_path, root=root)["sharedChangePaths"])
     paths = sorted(set(str(path) for path in paths))
@@ -353,7 +362,10 @@ def plan_nightly(
         "tag": tag,
         "sourceSha": source_sha,
         "previousTag": previous_tag,
+        "previousNightlyTag": previous_tag,
         "previousSha": previous_sha,
+        "attributionBaseTag": attribution_base_tag,
+        "attributionBaseSha": attribution_base_sha,
         "shouldBuild": should_build,
         "reason": reason,
     }
@@ -370,6 +382,8 @@ def build_manifest(
     repository: str,
     registry_path: Path = DEFAULT_REGISTRY,
     root: Path = ROOT,
+    attribution_config_path: Path | None = None,
+    github: release_attribution.GitHubClient | None = None,
 ) -> dict[str, Any]:
     component = component_descriptor(name, registry_path, root=root)
     parsed = parse_tag(component, "nightly", tag)
@@ -377,43 +391,46 @@ def build_manifest(
         raise ChannelError(f"tag version {parsed} differs from requested version {version}")
     if not SHA_RE.fullmatch(source_sha):
         raise ChannelError(f"invalid source SHA: {source_sha!r}")
-    changelog = repository_path(root, component["changelog"])
-    assets = []
-    for path in sorted(asset_dir.iterdir()):
-        if path.is_file():
-            content = path.read_bytes()
-            assets.append(
-                {"name": path.name, "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()}
-            )
-    if not assets:
+    if not previous_tag:
+        raise ChannelError("nightly attribution requires a bounded previous tag")
+    if not asset_dir.is_dir() or not any(path.is_file() for path in asset_dir.rglob("*")):
         raise ChannelError(f"asset directory {asset_dir} is empty")
-    compare = (
-        f"https://github.com/{repository}/compare/{previous_tag}...{source_sha}"
-        if previous_tag
-        else f"https://github.com/{repository}/commit/{source_sha}"
+    base_sha = _git(root, "rev-list", "-n", "1", previous_tag)
+    if not base_sha:
+        raise ChannelError(f"nightly attribution base has no commit: {previous_tag}")
+    _git(root, "merge-base", "--is-ancestor", base_sha, source_sha)
+    registry = load_registry(registry_path, root=root)
+    paths = sorted(
+        {
+            *(str(path) for path in component["changeDetectionPaths"]),
+            *(str(path) for path in registry["sharedChangePaths"]),
+        }
     )
-    return {
-        "schema": "https://github.com/trycua/cua/.github/release-manifest.schema.json",
-        "schemaVersion": 1,
-        "repository": repository,
-        "product": name,
-        "displayName": component["displayName"],
-        "channel": "nightly",
-        "version": version,
-        "bump": "patch",
-        "tag": tag,
-        "sha": source_sha,
-        "previousTag": previous_tag,
-        "compareUrl": compare,
-        "changelog": {
-            "path": component["changelog"],
-            "sha256": hashlib.sha256(changelog.read_bytes()).hexdigest(),
-        },
-        "visualRequested": False,
-        "changes": [],
-        "contributors": [],
-        "assets": assets,
-    }
+    config_path = attribution_config_path or root / ".github/release-attribution-config.json"
+    client = github or release_attribution.GitHubClient(
+        os.environ.get("GH_TOKEN", ""),
+        os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+    )
+    try:
+        return release_attribution.build_manifest(
+            repo_root=root,
+            repository=repository,
+            product=name,
+            display_name=str(component["displayName"]),
+            version=version,
+            tag=tag,
+            previous_tag=previous_tag,
+            expected_sha=source_sha,
+            paths=paths,
+            changelog_path=repository_path(root, component["changelog"]),
+            attribution_config=read_json(config_path),
+            github=client,
+            release_ref=source_sha,
+            asset_dir=asset_dir,
+            channel="nightly",
+        )
+    except release_attribution.ReleaseError as error:
+        raise ChannelError(str(error)) from error
 
 
 def render_nightly_body(manifest: Mapping[str, Any]) -> str:
@@ -444,17 +461,48 @@ def render_nightly_body(manifest: Mapping[str, Any]) -> str:
         "",
         f"- Commit: [`{source_sha}`](https://github.com/{repository}/commit/{source_sha})",
         f"- Changes: [{manifest['previousTag'] or 'first nightly'}…`{source_sha[:12]}`]({manifest['compareUrl']})",
-        "",
-        "## Exact installation",
-        "",
-        "```bash",
-        install,
-        "```",
-        "",
-        "## SHA256 checksums",
-        "",
-        "```text",
     ]
+    changes = list(manifest["changes"])
+    lines.extend(["", "## Changes", ""])
+    if changes:
+        for change in changes:
+            label = str(change["type"]).replace("-", " ").title()
+            suffix = release_attribution.format_change_thanks(change)
+            bullet = (
+                f"- **{label}:** {change['summary']}. "
+                f"([#{change['pr']}](https://github.com/{repository}/pull/{change['pr']}))"
+            )
+            if suffix:
+                bullet += f" {suffix}."
+            lines.append(bullet)
+    else:
+        lines.append("No conventional pull-request changes matched this component's paths.")
+
+    external = [item for item in manifest["contributors"] if item.get("external")]
+    lines.extend(["", "## Contributors", ""])
+    if external:
+        lines.append(
+            "Thanks to "
+            + ", ".join(f"@{item['login']}" for item in external)
+            + " for contributing to or reporting changes in this nightly."
+        )
+    else:
+        lines.append("This nightly contains maintainer changes only.")
+
+    lines.extend(
+        [
+            "",
+            "## Exact installation",
+            "",
+            "```bash",
+            install,
+            "```",
+            "",
+            "## SHA256 checksums",
+            "",
+            "```text",
+        ]
+    )
     lines.extend(f"{asset['sha256']}  {asset['name']}" for asset in manifest["assets"])
     lines.extend(["```", ""])
     return "\n".join(lines)
@@ -463,7 +511,11 @@ def render_nightly_body(manifest: Mapping[str, Any]) -> str:
 def write_github_outputs(values: Mapping[str, Any], path: Path) -> None:
     lines = []
     for key, value in values.items():
-        rendered = json.dumps(value, separators=(",", ":")) if isinstance(value, (list, dict)) else str(value)
+        rendered = (
+            json.dumps(value, separators=(",", ":"))
+            if isinstance(value, (list, dict))
+            else str(value)
+        )
         if isinstance(value, bool):
             rendered = str(value).lower()
         if value is None:
@@ -529,7 +581,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             component = component_descriptor(args.component, args.registry, root=root)
             base = repository_path(root, component["versionAuthorityFile"]).read_text().strip()
             version = derive_nightly_version(base, args.date, args.run)
-            print(json.dumps({"version": version, "tag": format_tag(component, "nightly", version)}))
+            print(
+                json.dumps({"version": version, "tag": format_tag(component, "nightly", version)})
+            )
         elif args.command == "parse-tag":
             component = component_descriptor(args.component, args.registry, root=root)
             print(parse_tag(component, args.channel, args.tag))

@@ -27,6 +27,8 @@ on:
         value: ${{ jobs.plan.outputs.tag }}
       previous_tag:
         value: ${{ jobs.plan.outputs.previous_tag }}
+      attribution_base_tag:
+        value: ${{ jobs.plan.outputs.attribution_base_tag }}
       reason:
         value: ${{ jobs.plan.outputs.reason }}
 
@@ -42,6 +44,7 @@ jobs:
       bundle_version: ${{ steps.plan.outputs.bundleVersion }}
       tag: ${{ steps.plan.outputs.tag }}
       previous_tag: ${{ steps.plan.outputs.previousTag }}
+      attribution_base_tag: ${{ steps.plan.outputs.attributionBaseTag }}
       reason: ${{ steps.plan.outputs.reason }}
     steps:
       - uses: actions/checkout@v4

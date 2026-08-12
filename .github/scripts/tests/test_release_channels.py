@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import subprocess
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -24,6 +25,12 @@ from release_channels import (
 
 ROOT = Path(__file__).resolve().parents[3]
 REGISTRY = ROOT / ".github/releases/components.json"
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
 
 
 def test_registry_matches_release_please_and_channel_prefixes_are_disjoint():
@@ -76,9 +83,7 @@ def test_nightly_grammar_rejects_noncanonical_versions(value):
 
 
 def test_derivation_increments_patch_and_is_deterministic():
-    assert derive_nightly_version("0.19.3", "20260812", "3097") == (
-        "0.19.4-nightly.20260812.3097"
-    )
+    assert derive_nightly_version("0.19.3", "20260812", "3097") == ("0.19.4-nightly.20260812.3097")
 
 
 def copy_version_fixture(tmp_path: Path, component_name: str) -> tuple[Path, Path]:
@@ -151,8 +156,20 @@ def test_lume_version_staging_preserves_stable_installer_default(tmp_path: Path)
     assert destination.read_text() == before
 
 
-def test_first_nightly_plan_is_reproducible_and_requires_build():
+def test_first_nightly_plan_is_reproducible_and_uses_stable_attribution_base(
+    monkeypatch: pytest.MonkeyPatch,
+):
     source_sha = "a" * 40
+
+    def fake_git(_root, command, *args):
+        if command == "rev-list":
+            assert args == ("-n", "1", "lume-v0.5.3")
+            return "d" * 40
+        assert command == "merge-base"
+        assert args == ("--is-ancestor", "d" * 40, source_sha)
+        return ""
+
+    monkeypatch.setattr(release_channels, "_git", fake_git)
     plan = plan_nightly(
         "lume",
         source_sha,
@@ -166,6 +183,8 @@ def test_first_nightly_plan_is_reproducible_and_requires_build():
     assert plan["reason"] == "first-nightly"
     assert plan["tag"] == "nightly-lume-v0.5.4-nightly.20260812.42"
     assert plan["bundleVersion"] == "0.5.4"
+    assert plan["previousNightlyTag"] is None
+    assert plan["attributionBaseTag"] == "lume-v0.5.3"
 
 
 def test_plan_skips_an_identical_published_source(monkeypatch: pytest.MonkeyPatch):
@@ -197,6 +216,9 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
     def fake_git(_root, command, *args):
         if command == "rev-list":
             return previous_sha
+        if command == "merge-base":
+            assert args == ("--is-ancestor", previous_sha, source_sha)
+            return ""
         assert command == "diff"
         assert "libs/cua-driver" in args
         return "libs/cua-driver/rust/crates/cua-driver/src/main.rs"
@@ -219,30 +241,78 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
     )
     assert plan["shouldBuild"] is True
     assert plan["reason"] == "relevant-changes"
+    assert plan["previousNightlyTag"] == ("nightly-cua-driver-rs-v0.19.4-nightly.20260811.41")
+    assert plan["attributionBaseTag"] == plan["previousNightlyTag"]
 
 
-def test_nightly_manifest_allows_empty_stable_change_attribution(tmp_path: Path):
-    (tmp_path / "artifact.tar.gz").write_bytes(b"nightly")
+def test_nightly_manifest_reuses_pr_attribution_and_renders_contributors(tmp_path: Path):
+    registry, root = copy_version_fixture(tmp_path, "lume")
+    git(root, "init")
+    git(root, "config", "user.name", "Release Test")
+    git(root, "config", "user.email", "release@example.com")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "chore: seed fixture")
+    git(root, "tag", "lume-v0.5.3")
+    main = root / "libs/lume/src/Main.swift"
+    main.write_text(main.read_text() + "\n// Nightly install notes\n")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "docs(lume): explain nightly installation")
+    source_sha = git(root, "rev-parse", "HEAD")
+
+    class NightlyGitHub:
+        def pulls_for_commit(self, repository: str, commit_sha: str):
+            assert repository == "trycua/cua"
+            assert commit_sha == source_sha
+            return [{"number": 42, "merge_commit_sha": commit_sha, "merged_at": "now"}]
+
+        def pull(self, repository: str, number: int):
+            assert repository == "trycua/cua"
+            assert number == 42
+            return {
+                "number": 42,
+                "user": {"login": "nightly-contributor"},
+                "author_association": "NONE",
+                "body": "",
+                "labels": [],
+            }
+
+        def issue(self, repository: str, number: int):
+            raise AssertionError("the nightly fixture does not reference issues")
+
+    assets = root / "artifacts"
+    assets.mkdir()
+    (assets / "artifact.tar.gz").write_bytes(b"nightly")
     version = "0.5.4-nightly.20260812.42"
-    component = component_descriptor("lume", REGISTRY, root=ROOT)
+    component = component_descriptor("lume", registry, root=root)
     manifest = build_manifest(
         "lume",
         version,
         format_tag(component, "nightly", version),
-        "a" * 40,
-        None,
-        tmp_path,
+        source_sha,
+        "lume-v0.5.3",
+        assets,
         repository="trycua/cua",
-        registry_path=REGISTRY,
-        root=ROOT,
+        registry_path=registry,
+        root=root,
+        attribution_config_path=ROOT / ".github/release-attribution-config.json",
+        github=NightlyGitHub(),
     )
     assert manifest["channel"] == "nightly"
     schema = json.loads((ROOT / ".github/release-manifest.schema.json").read_text())
     Draft202012Validator(schema, format_checker=None).validate(manifest)
-    assert manifest["changes"] == []
+    assert manifest["changes"][0]["type"] == "docs"
+    assert manifest["contributors"] == [
+        {
+            "login": "nightly-contributor",
+            "roles": ["author"],
+            "external": True,
+        }
+    ]
     assert manifest["assets"][0]["sha256"] == (
         "2a3b62b53ddb9f167b63d22202a360811ba78df015021f704d01ee9abad4169c"
     )
     body = render_nightly_body(manifest)
     assert "LUME_VERSION=nightly-lume-v0.5.4-nightly.20260812.42" in body
     assert "never replace stable" in body
+    assert "[#42](https://github.com/trycua/cua/pull/42)" in body
+    assert body.count("@nightly-contributor") == 2

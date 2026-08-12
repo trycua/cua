@@ -52,7 +52,21 @@
         "additionalProperties": false,
         "required": ["type", "scope", "summary", "breaking", "pr", "issues", "contributors"],
         "properties": {
-          "type": { "enum": ["feat", "fix", "perf", "revert"] },
+          "type": {
+            "enum": [
+              "build",
+              "chore",
+              "ci",
+              "docs",
+              "feat",
+              "fix",
+              "perf",
+              "refactor",
+              "revert",
+              "style",
+              "test"
+            ]
+          },
           "scope": { "type": ["string", "null"] },
           "summary": { "type": "string", "minLength": 1 },
           "breaking": { "type": "boolean" },
@@ -87,7 +101,16 @@
         "properties": { "channel": { "const": "nightly" } }
       },
       "else": {
-        "properties": { "changes": { "minItems": 1 } }
+        "properties": {
+          "changes": {
+            "minItems": 1,
+            "items": {
+              "properties": {
+                "type": { "enum": ["feat", "fix", "perf", "revert"] }
+              }
+            }
+          }
+        }
       }
     }
   ],

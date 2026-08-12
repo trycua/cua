@@ -47,6 +47,8 @@ work and preserve the same security invariant by convention.
   infrastructure changes.
 - Make retries idempotent and keep failed publication attempts private as
   drafts.
+- Publish PR-level changes and contributor/reporting credit from the exact
+  nightly range by reusing the stable attribution engine.
 - Give future components a small documented onboarding contract.
 
 ## Non-goals
@@ -118,6 +120,7 @@ The shared release layer owns:
 - tag parsing, formatting, and version derivation;
 - component change detection;
 - release channel and source-SHA manifest fields;
+- PR-first change and contributor attribution;
 - nightly-only GitHub draft creation;
 - asset upload, verification, and final publication;
 - common wiring tests and onboarding documentation.
@@ -166,6 +169,14 @@ documentation release automation, or SDK registry publication. A distinct
 workflow name and stable-grammar checks keep existing `workflow_run` registry
 publishing isolated.
 
+Each nightly manifest and release body journals the conventional pull requests
+that touched the component or shared release paths. The shared stable-release
+collector resolves commit-to-PR provenance, authors, coauthors, and linked issue
+reporters. Nightlies include maintenance types such as `docs`, `test`, and `ci`;
+stable manifests retain their existing release-type and versioned-changelog
+requirements. The first nightly compares against the current stable component
+tag, and each later nightly compares against the previous published nightly.
+
 ### Installation
 
 The first public contract supports exact nightly versions. Stable installation
@@ -179,7 +190,8 @@ Each component can run daily and by manual dispatch. A scheduled run compares
 the newest published nightly's source SHA with `main` over the descriptor's
 change paths. Component source, its builder, shared channel scripts, and
 declared cross-component inputs participate in the comparison. The first run
-and a forced manual run always build.
+and a forced manual run always build. Attribution is bounded by the newest
+published nightly tag, or by the current stable tag when no nightly exists.
 
 ## Alternatives considered
 
@@ -235,15 +247,18 @@ GitHub prerelease metadata. Workflows use least-privilege permissions,
 protected signing environments, pinned actions, and existing identities.
 
 Release metadata contains public component identity, channel, version, source
-SHA, asset names, sizes, and digests. It must not contain credentials, runner
+SHA, pull requests, public contributor handles, linked public issue reporters,
+asset names, sizes, and digests. It must not contain credentials, runner
 identities, private infrastructure, user data, session data, or private test
-evidence. The component descriptor contains no secrets.
+evidence. Existing attribution opt-outs and identity policy remain binding. The
+component descriptor contains no secrets.
 
 ## Implementation plan
 
 1. Harden stable resolvers and add a cross-component visibility matrix.
 2. Add the minimal descriptor schema and strict channel grammar.
-3. Add nightly version staging and manifest channel metadata.
+3. Add nightly version staging, manifest channel metadata, and bounded
+   PR-first attribution through the shared release collector.
 4. Extend GitHub release publication with nightly-only draft creation.
 5. Extract Driver build and verification jobs behind a reusable boundary while
    leaving its stable publish job unchanged.
@@ -265,6 +280,9 @@ evidence. The component descriptor contains no secrets.
   identity.
 - Nightly publication never updates baked stable versions or triggers stable
   SDK or documentation publication.
+- First-nightly attribution starts at the current stable tag; later attribution
+  starts at the previous nightly and includes maintenance PRs and contributor
+  credit without weakening stable release-note validation.
 - The first public nightly, when separately authorized, is certified at its
   exact SHA and states the automated evidence that actually ran.
 

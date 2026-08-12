@@ -17,6 +17,8 @@ on:
 
 permissions:
   contents: write
+  issues: read
+  pull-requests: read
 
 concurrency:
   group: nightly-lume
@@ -67,24 +69,21 @@ jobs:
             shasum -a 256 * | sort > checksums.txt
           )
 
-      - name: Generate channel manifest and release body
+      - name: Collect PR-first attribution and render nightly body
         env:
+          GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
           set -euo pipefail
-          PREVIOUS=()
-          if [[ -n "${{ needs.plan.outputs.previous_tag }}" ]]; then
-            PREVIOUS+=(--previous-tag "${{ needs.plan.outputs.previous_tag }}")
-          fi
           python3 .github/scripts/release_channels.py manifest \
             --component lume \
             --version "${{ needs.plan.outputs.version }}" \
             --tag "${{ needs.plan.outputs.tag }}" \
             --source-sha "$SOURCE_SHA" \
+            --previous-tag "${{ needs.plan.outputs.attribution_base_tag }}" \
             --asset-dir release-upload \
             --repository "${{ github.repository }}" \
-            --output release-metadata/release-manifest.json \
-            "${PREVIOUS[@]}"
+            --output release-metadata/release-manifest.json
           python3 .github/scripts/release_channels.py render-nightly \
             --manifest release-metadata/release-manifest.json \
             --body release-metadata/release-body.md

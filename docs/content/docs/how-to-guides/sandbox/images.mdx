@@ -49,6 +49,20 @@ Image.android()                      # Android 14
   only those two run on Cua cloud. Every other constructor is local-only — in the
   cloud they raise `NotImplementedError: Fleet cloud sandboxes require a supported
   built-in image or Image.from_registry(...)`.
+
+  `Image.windows()` in the cloud is additionally blocked today: its containerDisk is
+  UEFI/GPT, while cloud templates default to BIOS firmware, so the guest never boots
+  and the claim ends in `BindDeadlineExceeded`. A firmware fix is in flight.
+</Callout>
+
+<Callout type="error">
+  **`kind='container'` cannot start right now.** The published
+  `trycua/cua-xfce:latest` runs computer-server bound to `127.0.0.1:8000` inside the
+  container (`computer_server/cli.py:34` defaults `--host` to `127.0.0.1`, and the
+  image's start script does not override it), so Docker's published port mapping
+  forwards to nothing and every launch ends in `TimeoutError: Container <name> not
+  ready after 120s`. This needs a rebuild of the image; until then use the
+  bare-metal VM path below.
 </Callout>
 
 ### Getting a real Linux VM locally
@@ -136,6 +150,12 @@ Expose every port the sandbox workload must listen on.
 ```python
 Image.linux().expose(8080).expose(5432)
 ```
+
+<Callout type="warn">
+  `expose()` currently affects the cloud path only, where each port becomes a Fleet
+  service. The bare-metal QEMU runtime never reads the exposed ports, so on a local
+  VM they are not forwarded and no error is raised.
+</Callout>
 
 ## Chain builder calls
 

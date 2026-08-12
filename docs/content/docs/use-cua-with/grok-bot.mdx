@@ -1,0 +1,93 @@
+---
+title: Grok Bot
+description: Let Grok Bot operate desktop apps through Cua Driver on your local computer.
+icon: Bot
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[Grok Bot](https://docs.x.ai/grok-bot/overview) runs on a persistent cloud computer. Cua Driver can give it a separate path to native apps on your Mac or Windows computer.
+
+Use Grok Bot's local-command execution for the first setup. This keeps Cua Driver on the computer it controls and leaves each command behind Grok Bot's local-computer approval policy.
+
+## Before you start
+
+Install Cua Driver on the computer with the apps you want to control, grant the required operating-system permissions, and start its daemon. Verify the local CLI before involving Grok Bot:
+
+```bash
+cua-driver --version
+cua-driver doctor
+cua-driver call list_apps '{}'
+```
+
+See [Install Cua Driver](/how-to-guides/driver/install) and [Keep Cua Driver running](/how-to-guides/driver/keep-running) if these commands do not succeed.
+
+## Allow local commands
+
+In Grok Bot, open **Settings → General → Agent → Execution on Local Computer** and choose **Ask every time**. This is xAI's default and lets you review each local command before it runs.
+
+The Bot's cloud computer and your local computer are separate. Make this boundary explicit in the task:
+
+```text
+Use command execution on my local computer for every cua-driver command.
+Do not install software, change Cua Driver permissions, or start an unrestricted
+daemon. Before each UI action, get fresh window state and use an element token
+from that response. Get fresh state after the action and verify the result.
+Stop for approval before sending, publishing, purchasing, deleting, changing
+permissions, or modifying a production system.
+```
+
+Start with a read-only request:
+
+```text
+Run `cua-driver call list_apps '{}'` on my local computer and tell me which apps
+have visible windows. Do not interact with them yet.
+```
+
+After that succeeds, give the Bot a narrow UI task. Cua Driver actions should follow this loop:
+
+1. Find the target app and window.
+2. Call `get_window_state` for that exact window.
+3. Act through an `element_token` from the latest state when one is available.
+4. Call `get_window_state` again and verify the expected result.
+
+Read [Agent action policy](/reference/cua-driver/action-selection-policy) for the full selection and escalation rules.
+
+<Callout type="warn">
+  Grok Bot's local-command approval controls whether a command may run. Cua Driver's permission mode controls what that command may do. Keep both boundaries enabled. Do not set Grok Bot to **Always allowed** or run Cua Driver in unrestricted mode for routine use.
+</Callout>
+
+## Save the workflow as a Grok Bot skill
+
+Once a safe task succeeds, ask Grok Bot to save the method as a private skill:
+
+```text
+Save the Cua Driver process we just used as a skill. Preserve the fresh-state,
+snapshot-bound element-token, and post-action verification rules. Require my
+approval for consequential actions. Keep Cua Driver commands on my local
+computer and report any refusal instead of bypassing it.
+```
+
+Test the saved skill on a disposable example before attaching it to a routine. Grok Bot routines can run while your laptop is closed, but a routine that depends on local commands also depends on your computer being reachable and Cua Driver running.
+
+## Custom MCP is an advanced route
+
+Grok Bot can use connectors and MCP servers. Cua Driver exposes MCP over local stdio and can also enable an authenticated Streamable HTTP endpoint. xAI requires a custom MCP server to be reachable from the public internet, so connecting the two requires an authenticated TLS tunnel or gateway.
+
+This route adds a public network boundary to desktop control. Use it only when you can provide all of the following:
+
+- A host-generated bearer token of at least 32 characters
+- A Cua Driver bounded capability manifest for the required tools and apps
+- A TLS endpoint that forwards only to Cua Driver's loopback MCP listener
+- A separate MCP connection for each Bot that needs an independent session
+- A way to revoke the endpoint and token when the task ends
+
+Cua Driver does not provide a managed public gateway or a Grok Bot connector preset. Review [SDK, MCP, and hosting](/concepts/sdk-mcp-and-hosting#service-transport-hardening) and [Restrict tool access](/how-to-guides/driver/restrict-tool-access) before building this route. xAI documents the other side in [Connectors](https://docs.x.ai/grok/connectors) and [Custom MCP Server Tunneling](https://docs.x.ai/grok/connectors/custom-mcp-tunneling).
+
+## Shared-state boundaries
+
+All Bots on one Grok Bot account share its cloud computer, browser sessions, files, and command-line credentials. The screens are separate work surfaces, not security boundaries. Grok Bot also installs connectors account-wide.
+
+Cua Driver sessions isolate transient state such as element cursors. They do not isolate the underlying desktop account or the apps running in it. Use separate operating-system accounts or machines when tasks require separate trust boundaries.
+
+Upstream: [Grok Bot overview](https://docs.x.ai/grok-bot/overview), [computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), and [approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy).

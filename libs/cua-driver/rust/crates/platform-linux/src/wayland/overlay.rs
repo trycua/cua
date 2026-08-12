@@ -161,6 +161,12 @@ struct OverlayState {
     /// Usually this contains exactly one output; keeping a set makes hide,
     /// removal, and topology changes clear every previously painted surface.
     painted_outputs: HashSet<u32>,
+    /// Configured layer surfaces that have received at least one wl_buffer.
+    /// This is intentionally separate from `painted_outputs`: every new or
+    /// reconfigured surface needs a one-shot transparent commit to complete
+    /// its layer-shell handshake, but stable empty surfaces must not trigger
+    /// recurring full-output SHM redraws.
+    initialized_outputs: HashSet<u32>,
     topology_dirty: bool,
     /// Keyed render cores mirror the X11 native overlay contract. Removing a
     /// named key records it in `ended`, so already-queued late commands cannot
@@ -307,6 +313,7 @@ impl OverlayState {
             xdg_output_manager: None,
             outputs: HashMap::new(),
             painted_outputs: HashSet::new(),
+            initialized_outputs: HashSet::new(),
             topology_dirty: false,
             cores,
             template,
@@ -409,6 +416,7 @@ fn output_contains(layout: &OutputLayout, x: f64, y: f64) -> bool {
 fn frame_plan(
     layouts: &[OutputLayout],
     painted_outputs: &HashSet<u32>,
+    initialized_outputs: &HashSet<u32>,
     cursor_positions: impl IntoIterator<Item = (f64, f64)>,
 ) -> (HashSet<u32>, Vec<FrameTarget>) {
     let selected: HashSet<u32> = cursor_positions
@@ -416,6 +424,12 @@ fn frame_plan(
         .filter_map(|(x, y)| select_output(layouts, x, y).map(|output| output.id))
         .collect();
     let mut ids: Vec<u32> = painted_outputs.iter().copied().collect();
+    ids.extend(
+        layouts
+            .iter()
+            .map(|layout| layout.id)
+            .filter(|id| !initialized_outputs.contains(id)),
+    );
     for id in &selected {
         if !ids.contains(id) {
             ids.push(*id);
@@ -556,6 +570,13 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     }
     dbg(&format!("configured outputs: {configured_outputs}"));
     state.topology_dirty = false;
+
+    // A layer-shell surface is not fully initialized until the first buffer is
+    // attached after configure. Commit one transparent buffer to every empty
+    // output now, before entering the demand-driven loop; a cursor already
+    // selected on an output can share this same first frame.
+    redraw(&mut state, &shm, &qh)?;
+    queue.roundtrip(&mut state)?;
 
     // Demand-driven main loop. Stable cursors perform only a cheap Wayland
     // maintenance roundtrip once per second so output topology changes are
@@ -788,7 +809,12 @@ fn redraw(
         .values()
         .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
         .map(|core| core.pos);
-    let (selected, targets) = frame_plan(&layouts, &state.painted_outputs, cursor_positions);
+    let (selected, targets) = frame_plan(
+        &layouts,
+        &state.painted_outputs,
+        &state.initialized_outputs,
+        cursor_positions,
+    );
 
     for target in targets {
         redraw_output(state, shm, qh, target, &layouts)?;
@@ -823,14 +849,6 @@ fn redraw_output(
         .and_then(|stride| stride.checked_mul(h as usize))
         .ok_or_else(|| anyhow::anyhow!("overlay output {w}x{h} buffer size overflow"))?;
 
-    // Reuses the same anon_shm pattern as the screencopy path in mod.rs.
-    let (fd, ptr) =
-        super::anon_shm(size).map_err(|e| anyhow::anyhow!("overlay shm allocation failed: {e}"))?;
-
-    // SAFETY: ptr came from mmap of `size` bytes, lifetime bounded to this
-    // function.
-    let pixels: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) };
-
     // A clearing target intentionally stays transparent. Each cursor selected
     // for this output subtracts its logical compositor origin from the global
     // position; this is the same origin contract used by the Windows virtual
@@ -847,6 +865,15 @@ fn redraw_output(
             "tiny_skia::Pixmap::new({w}, {h}) failed — out of memory for the overlay buffer"
         ),
     };
+
+    // Reuses the same anon_shm pattern as the screencopy path in mod.rs. The
+    // pixmap is allocated first so a tiny-skia OOM cannot strand this mmap/fd.
+    let (fd, ptr) =
+        super::anon_shm(size).map_err(|e| anyhow::anyhow!("overlay shm allocation failed: {e}"))?;
+
+    // SAFETY: ptr came from mmap of `size` bytes and is transferred to
+    // `pending_buffers` before this function returns successfully.
+    let pixels: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) };
     let mut painted_positions = Vec::new();
     {
         // HashMap iteration is intentionally normalized by key so overlapping
@@ -932,6 +959,9 @@ fn redraw_output(
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
+    // Mark initialized only after the buffer attach + surface commit succeed.
+    // An early return above leaves the output pending for the next plan.
+    state.initialized_outputs.insert(target.id);
     pool.destroy();
     Ok(())
 }
@@ -1003,6 +1033,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for OverlayState {
             }
             wl_registry::Event::GlobalRemove { name } => {
                 state.painted_outputs.remove(&name);
+                state.initialized_outputs.remove(&name);
                 if let Some(mut output) = state.outputs.remove(&name) {
                     output.destroy_surfaces();
                     // wl_output.release was added in v3. On an older generic
@@ -1154,12 +1185,17 @@ impl Dispatch<ZwlrLayerSurfaceV1, LayerData> for OverlayState {
                         if width > 0 { width } else { fallback.0 },
                         if height > 0 { height } else { fallback.1 },
                     );
-                    state.topology_dirty |= output.configured_size != Some(configured_size);
+                    // Each configure starts a new layer-surface buffer cycle.
+                    // Queue exactly one matching clear/paint frame even when
+                    // the compositor repeats the same logical size.
+                    state.initialized_outputs.remove(&data.id);
+                    state.topology_dirty = true;
                     output.configured_size = Some(configured_size);
                 }
             }
             zwlr_layer_surface_v1::Event::Closed => {
                 state.painted_outputs.remove(&data.id);
+                state.initialized_outputs.remove(&data.id);
                 if let Some(output) = state.outputs.get_mut(&data.id) {
                     output.closed = true;
                     output.close_layer();
@@ -1277,6 +1313,10 @@ mod tests {
         ]
     }
 
+    fn initialized(layouts: &[OutputLayout]) -> HashSet<u32> {
+        layouts.iter().map(|layout| layout.id).collect()
+    }
+
     #[test]
     fn selects_output_and_converts_global_to_output_local_coordinates() {
         let layouts = three_monitor_layout();
@@ -1335,10 +1375,76 @@ mod tests {
     }
 
     #[test]
+    fn initial_configured_outputs_each_plan_one_transparent_frame() {
+        let layouts = three_monitor_layout();
+        let (selected, targets) = frame_plan(
+            &layouts,
+            &HashSet::new(),
+            &HashSet::new(),
+            std::iter::empty::<(f64, f64)>(),
+        );
+
+        assert!(selected.is_empty());
+        assert_eq!(
+            targets.iter().map(|target| target.id).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn initialized_stable_outputs_plan_no_idle_frame() {
+        let layouts = three_monitor_layout();
+        let (selected, targets) = frame_plan(
+            &layouts,
+            &HashSet::new(),
+            &initialized(&layouts),
+            std::iter::empty::<(f64, f64)>(),
+        );
+
+        assert!(selected.is_empty());
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn hotplugged_output_plans_one_initial_transparent_frame() {
+        let layouts = three_monitor_layout();
+        let already_initialized = HashSet::from([1, 2]);
+        let (selected, targets) = frame_plan(
+            &layouts,
+            &HashSet::new(),
+            &already_initialized,
+            std::iter::empty::<(f64, f64)>(),
+        );
+
+        assert!(selected.is_empty());
+        assert_eq!(targets, vec![FrameTarget { id: 3 }]);
+    }
+
+    #[test]
+    fn selected_output_combines_initialization_and_cursor_paint_in_one_frame() {
+        let layouts = three_monitor_layout();
+        let already_initialized = HashSet::from([1, 3]);
+        let (selected, targets) = frame_plan(
+            &layouts,
+            &HashSet::new(),
+            &already_initialized,
+            Some((2500.0, 100.0)),
+        );
+
+        assert_eq!(selected, HashSet::from([2]));
+        assert_eq!(targets, vec![FrameTarget { id: 2 }]);
+    }
+
+    #[test]
     fn crossing_outputs_clears_the_old_surface_and_paints_the_new_one() {
+        let layouts = three_monitor_layout();
         let painted = HashSet::from([1]);
-        let (selected, targets) =
-            frame_plan(&three_monitor_layout(), &painted, Some((2500.0, 100.0)));
+        let (selected, targets) = frame_plan(
+            &layouts,
+            &painted,
+            &initialized(&layouts),
+            Some((2500.0, 100.0)),
+        );
 
         assert_eq!(selected, HashSet::from([2]));
         assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
@@ -1346,10 +1452,12 @@ mod tests {
 
     #[test]
     fn hide_or_session_removal_clears_every_previously_painted_output() {
+        let layouts = three_monitor_layout();
         let painted = HashSet::from([1, 2, 3]);
         let (selected, targets) = frame_plan(
-            &three_monitor_layout(),
+            &layouts,
             &painted,
+            &initialized(&layouts),
             std::iter::empty::<(f64, f64)>(),
         );
 
@@ -1363,6 +1471,7 @@ mod tests {
 
     #[test]
     fn fresh_sentinel_overlay_uses_only_topology_maintenance() {
+        let layouts = three_monitor_layout();
         let core = RenderStateCore::new(CursorConfig::default());
         let cores = HashMap::from([("default".to_owned(), core)]);
         assert_eq!(
@@ -1375,8 +1484,9 @@ mod tests {
             WlWait::Maintenance(Duration::ZERO)
         );
         assert!(frame_plan(
-            &three_monitor_layout(),
+            &layouts,
             &HashSet::new(),
+            &initialized(&layouts),
             std::iter::empty::<(f64, f64)>()
         )
         .1
@@ -1492,6 +1602,7 @@ mod tests {
         let (painted, targets) = frame_plan(
             &layouts,
             &HashSet::new(),
+            &initialized(&layouts),
             cores.values().map(|core| core.pos),
         );
         assert_eq!(painted, HashSet::from([1, 2]));
@@ -1512,8 +1623,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["session-b"]
         );
-        let (selected, targets) =
-            frame_plan(&layouts, &painted, cores.values().map(|core| core.pos));
+        let (selected, targets) = frame_plan(
+            &layouts,
+            &painted,
+            &initialized(&layouts),
+            cores.values().map(|core| core.pos),
+        );
         assert_eq!(selected, HashSet::from([2]));
         assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
 

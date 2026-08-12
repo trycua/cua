@@ -341,15 +341,7 @@ async def create_session_disk(
     elif image._disk_path:
         backing = Path(image._disk_path)
     else:
-        from cua_sandbox.image import default_registry_image
-
-        registry_image = default_registry_image(image)
-        if registry_image:
-            from cua_sandbox.registry.container_disk import pull_container_disk
-
-            backing = await asyncio.to_thread(pull_container_disk, registry_image)
-        else:
-            backing = await ensure_base_image(image.os_type, image.version)
+        backing = await ensure_base_image(image.os_type, image.version)
 
     # If there are user layers, check for cached user image
     if image._layers:

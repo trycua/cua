@@ -1,10 +1,11 @@
 import gzip
+import hashlib
 import io
 import tarfile
 from types import SimpleNamespace
 
-from cua_sandbox.image import DEFAULT_LINUX_REGISTRY_IMAGE
-from cua_sandbox.registry.container_disk import pull_container_disk
+from cua_sandbox.image import DEFAULT_LINUX_REGISTRY_IMAGE, Image
+from cua_sandbox.registry.container_disk import _LOCK_POLL_INTERVAL_SECONDS, pull_container_disk
 
 
 def _layer_with_disk(contents: bytes, *, path: str = "disk/disk.img") -> bytes:
@@ -104,18 +105,56 @@ def test_pull_container_disk_searches_all_layers(tmp_path):
     assert disk.read_bytes() == b"qcow2"
 
 
-async def test_default_linux_session_uses_container_disk_as_qemu_backing(tmp_path, monkeypatch):
+def test_pull_container_disk_waits_for_existing_lock(tmp_path, monkeypatch):
+    destination = (
+        tmp_path
+        / hashlib.sha256(DEFAULT_LINUX_REGISTRY_IMAGE.encode()).hexdigest()
+        / "disk.qcow2"
+    )
+    lock_path = destination.with_suffix(".lock")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text("locked")
+    destination_bytes = b"cached"
+    sleeps = []
+
+    class Registry:
+        def __init__(self, *, auth_backend):
+            raise AssertionError("registry should not be used when another process fills the cache")
+
+    def fake_sleep(interval):
+        sleeps.append(interval)
+        destination.write_bytes(destination_bytes)
+        lock_path.unlink()
+
+    monkeypatch.setattr("cua_sandbox.registry.container_disk.time.sleep", fake_sleep)
+
+    disk = pull_container_disk(
+        DEFAULT_LINUX_REGISTRY_IMAGE,
+        cache_root=tmp_path,
+        registry_factory=Registry,
+    )
+
+    assert disk == destination
+    assert disk.read_bytes() == destination_bytes
+    assert sleeps == [_LOCK_POLL_INTERVAL_SECONDS]
+
+
+async def test_default_linux_session_uses_standard_base_image_backing(tmp_path, monkeypatch):
     from cua_sandbox.builder import build
-    from cua_sandbox.image import Image
 
     base_disk = tmp_path / "base.qcow2"
     base_disk.write_bytes(b"base")
     session_disk = tmp_path / "session.qcow2"
     calls = []
 
+    async def ensure_base_image(os_type, version):
+        calls.append(("base", os_type, version))
+        return base_disk
+
     monkeypatch.setattr(
-        "cua_sandbox.registry.container_disk.pull_container_disk",
-        lambda ref: calls.append(("pull", ref)) or base_disk,
+        build,
+        "ensure_base_image",
+        ensure_base_image,
     )
     monkeypatch.setattr(build, "session_overlay_path", lambda name: session_disk)
     monkeypatch.setattr(
@@ -128,6 +167,6 @@ async def test_default_linux_session_uses_container_disk_as_qemu_backing(tmp_pat
 
     assert result == session_disk
     assert calls == [
-        ("pull", DEFAULT_LINUX_REGISTRY_IMAGE),
+        ("base", "linux", "24.04"),
         ("overlay", base_disk, session_disk),
     ]

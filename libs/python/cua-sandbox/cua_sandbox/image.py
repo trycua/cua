@@ -483,10 +483,10 @@ class Image:
         )
 
 
-def default_registry_image(image: Image) -> Optional[str]:
-    """Return the registry image backing a built-in image descriptor."""
+def cloud_registry_image(image: Image) -> Optional[str]:
+    """Return the explicit or built-in registry image used by Fleet cloud."""
     if image._registry is not None:
-        return None
+        return image._registry
     if (
         image.os_type == "linux"
         and image.distro == "ubuntu"
@@ -495,8 +495,3 @@ def default_registry_image(image: Image) -> Optional[str]:
     ):
         return DEFAULT_LINUX_REGISTRY_IMAGE
     return None
-
-
-def cloud_registry_image(image: Image) -> Optional[str]:
-    """Return the explicit or built-in registry image used by Fleet cloud."""
-    return image._registry or default_registry_image(image)

@@ -16,7 +16,7 @@ resource "fleets_pool" "linux_static" {
   replicas             = 3
   cpu_cores            = 4
   memory               = "8Gi"
-  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace:latest"
+  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:main-38352d34"
 }
 ```
 
@@ -27,7 +27,7 @@ resource "fleets_pool" "linux_autoscaled" {
   name                 = "training-linux-autoscaled"
   cpu_cores            = 4
   memory               = "8Gi"
-  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace:latest"
+  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:main-38352d34"
 
   autoscaling {
     min_pool_size     = 0

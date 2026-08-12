@@ -1,0 +1,184 @@
+---
+title: How to use a sandbox pool
+description: Reconcile a warm Cua sandbox pool, claim a sandbox, and save a screenshot with the Python SDK.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A sandbox pool keeps one or more sandboxes warm so a job can claim an existing
+sandbox instead of waiting for a new one to boot. This guide reconciles a pool,
+claims one sandbox, saves a screenshot, and releases the claim automatically.
+
+## Create client credentials
+
+1. Sign in to [run.cua.ai](https://run.cua.ai).
+2. Open [User API keys](https://run.cua.ai/user-keys).
+3. Create a key, then copy the client ID and client secret while the credentials
+   dialog is open. The client secret is shown only once.
+
+Keep both values in environment variables or a secret manager. Never commit
+them to source control or include them in logs.
+
+## Install uv
+
+Install the `uv` CLI with its supported standalone installer. See the
+[uv installation documentation](https://docs.astral.sh/uv/getting-started/installation/)
+for package-manager and version-pinned alternatives.
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+  </Tab>
+</Tabs>
+
+Open a new terminal if the installer updates your `PATH`, then verify the
+installation:
+
+```bash
+uv --version
+```
+
+## Configure the pool
+
+Export your client credentials and choose a unique lowercase DNS-label name for
+the pool. Set `CUA_POOL_IMAGE` to a containerDisk image that runs the Cua
+computer server on port `8000`. If the registry is private, also set the name of
+the image pull secret that exists in your run.cua.ai environment.
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+export CUA_POOL_NAME="my-screenshot-pool"
+export CUA_POOL_IMAGE="<your-compatible-container-disk-image>"
+
+# Optional for a private registry:
+export CUA_IMAGE_PULL_SECRET="<your-image-pull-secret-name>"
+```
+
+The SDK reads `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET` automatically. It uses
+`https://run.cua.ai` and Cua's OAuth token endpoint by default.
+
+<Callout type="info">
+  The image is part of the sandbox template, not the pool. The example
+  reconciles the template first, then reconciles a one-replica pool that refers
+  to it. Reconciliation creates either resource when absent and updates it when
+  it already exists.
+</Callout>
+
+## Claim a sandbox and take a screenshot
+
+Save the following file as `sandbox_pool.py`:
+
+```python title="sandbox_pool.py"
+import os
+from pathlib import Path
+
+from cua_sandbox import (
+    CreatePoolRequest,
+    CreateTemplateRequest,
+    OsGymSandboxTemplateSpec,
+    OsGymSandboxWarmPoolSpec,
+    SandboxService,
+    SandboxTemplateRef,
+    ServiceProtocol,
+    VmTemplate,
+)
+from cua_sandbox.sync import Pool, Template
+
+
+pool_name = os.environ["CUA_POOL_NAME"]
+template_name = f"{pool_name}-template"
+
+Template.reconcile(
+    CreateTemplateRequest(
+        namespace=pool_name,
+        name=template_name,
+        spec=OsGymSandboxTemplateSpec(
+            vm_template=VmTemplate(
+                container_disk_image=os.environ["CUA_POOL_IMAGE"],
+                command=None,
+                runtime=None,
+                runtime_class_name=None,
+                node_selector=None,
+                tolerations=None,
+                image_pull_policy=None,
+                image_pull_secret=os.environ.get("CUA_IMAGE_PULL_SECRET"),
+                cpu_cores=4,
+                memory="8Gi",
+                firmware=None,
+                probes=None,
+                services=[
+                    SandboxService(
+                        name="server",
+                        target_port=8000,
+                        protocol=ServiceProtocol.TCP,
+                    )
+                ],
+                oidc=None,
+            )
+        ),
+    )
+)
+
+pool = Pool.reconcile(
+    CreatePoolRequest(
+        namespace=pool_name,
+        spec=OsGymSandboxWarmPoolSpec(
+            replicas=1,
+            sandbox_template_ref=SandboxTemplateRef(name=template_name),
+            autoscaling=None,
+        ),
+    )
+)
+
+screenshot_path = Path("sandbox-pool.png")
+with pool.claim() as sandbox:
+    screenshot: bytes = sandbox.screenshot(format="png")
+    screenshot_path.write_bytes(screenshot)
+
+print(f"Saved screenshot to {screenshot_path}")
+```
+
+`sandbox.screenshot()` returns raw image `bytes`. `Path.write_bytes()` writes
+those bytes directly to a PNG file. The `with pool.claim()` block releases the
+claim on both successful and exceptional exits; the reconciled pool remains
+available for later claims.
+
+Run the script directly with the published SDK package:
+
+```bash
+uv run --no-project --with cua-sandbox==0.1.27 sandbox_pool.py
+```
+
+After the pool has a ready replica, the command prints:
+
+```text
+Saved screenshot to sandbox-pool.png
+```
+
+The current directory will contain `sandbox-pool.png`. The first run can take
+longer while run.cua.ai pulls the image and starts the warm replica; later
+claims can reuse the pool.
+
+## Troubleshooting
+
+- A missing `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, `CUA_POOL_NAME`, or
+  `CUA_POOL_IMAGE` raises an environment-variable error before reconciliation.
+- An image-pull error means the image reference or `CUA_IMAGE_PULL_SECRET` is
+  incorrect or unavailable to the pool.
+- A claim that cannot connect to the `server` service usually means the image
+  does not run the Cua computer server on port `8000`.
+- Reuse the same pool name to update the template and desired replica count
+  without creating a second pool.

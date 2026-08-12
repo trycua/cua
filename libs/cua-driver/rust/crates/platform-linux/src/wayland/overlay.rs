@@ -2,7 +2,7 @@
 //!
 //! Replaces the X11-only `overlay.rs` render loop on wlroots compositors
 //! (sway, labwc, kwin 5.27+, hyprland) by creating a full-screen,
-//! click-through, always-on-top `wl_surface` anchored to the first output
+//! click-through, always-on-top `wl_surface` on every enabled output
 //! via `zwlr_layer_shell_v1`. The surface renders the same gradient-arrow
 //! cursor as the X11 path by sharing `cursor_overlay::RenderStateCore` —
 //! bloom, click-pulse, idle-fade, and motion all work identically.
@@ -15,9 +15,9 @@
 //! owner thread (`cua-overlay-wl`) holds the wayland Connection +
 //! EventQueue + layer surface; commands flow in over a `crossbeam-channel`.
 //! The render core wakes at frame cadence only while pixels can change;
-//! stable or hidden state blocks on the command channel without polling.
+//! stable or hidden state performs only a cheap, one-second topology check.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     OnceLock,
@@ -39,6 +39,10 @@ use wayland_client::{
         wl_surface::WlSurface,
     },
     Connection, Dispatch, Proxy, QueueHandle,
+};
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::ZxdgOutputManagerV1,
+    zxdg_output_v1::{self, ZxdgOutputV1},
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
@@ -154,12 +158,13 @@ struct OverlayState {
     compositor: Option<WlCompositor>,
     shm: Option<WlShm>,
     layer_shell: Option<ZwlrLayerShellV1>,
-    output: Option<WlOutput>,
-    output_w: u32,
-    output_h: u32,
-    surface: Option<WlSurface>,
-    layer_surface: Option<ZwlrLayerSurfaceV1>,
-    configured: bool,
+    xdg_output_manager: Option<ZxdgOutputManagerV1>,
+    outputs: HashMap<u32, NativeOutput>,
+    /// Outputs whose most recently committed buffer contains cursor pixels.
+    /// Usually this contains exactly one output; keeping a set makes hide,
+    /// removal, and topology changes clear every previously painted surface.
+    painted_outputs: HashSet<u32>,
+    topology_dirty: bool,
     /// Cross-platform render core: position, animation, gradient arrow,
     /// bloom, click pulse, idle-fade. Shared verbatim with the X11 path.
     core: RenderStateCore,
@@ -170,6 +175,108 @@ struct OverlayState {
     /// Replaces the per-redraw `mem::forget` leak: the previous frame's
     /// memory is reclaimed as soon as the compositor releases it.
     pending_buffers: HashMap<u32, (*mut libc::c_void, usize, i32)>,
+}
+
+struct NativeOutput {
+    output: WlOutput,
+    xdg_output: Option<ZxdgOutputV1>,
+    surface: Option<WlSurface>,
+    layer_surface: Option<ZwlrLayerSurfaceV1>,
+    wl_origin: Option<(i32, i32)>,
+    logical_origin: Option<(i32, i32)>,
+    logical_size: Option<(u32, u32)>,
+    configured_size: Option<(u32, u32)>,
+    mode_size: Option<(u32, u32)>,
+    scale: i32,
+    name: Option<String>,
+    closed: bool,
+}
+
+impl NativeOutput {
+    fn new(output: WlOutput) -> Self {
+        Self {
+            output,
+            xdg_output: None,
+            surface: None,
+            layer_surface: None,
+            wl_origin: None,
+            logical_origin: None,
+            logical_size: None,
+            configured_size: None,
+            mode_size: None,
+            scale: 1,
+            name: None,
+            closed: false,
+        }
+    }
+
+    fn layout(&self, id: u32) -> Option<OutputLayout> {
+        if self.layer_surface.is_none() || self.configured_size.is_none() {
+            return None;
+        }
+        let (origin_x, origin_y) = self.logical_origin.or(self.wl_origin).unwrap_or((0, 0));
+        let (width, height) = self.logical_size.or(self.configured_size).or_else(|| {
+            let scale = self.scale.max(1) as u32;
+            self.mode_size
+                .map(|(width, height)| ((width / scale).max(1), (height / scale).max(1)))
+        })?;
+        (width > 0 && height > 0).then_some(OutputLayout {
+            id,
+            origin_x,
+            origin_y,
+            width,
+            height,
+        })
+    }
+
+    fn destroy_surfaces(&mut self) {
+        self.close_layer();
+        if let Some(xdg_output) = self.xdg_output.take() {
+            xdg_output.destroy();
+        }
+    }
+
+    fn close_layer(&mut self) {
+        if let Some(layer_surface) = self.layer_surface.take() {
+            layer_surface.destroy();
+        }
+        if let Some(surface) = self.surface.take() {
+            surface.destroy();
+        }
+        self.configured_size = None;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OutputLayout {
+    id: u32,
+    origin_x: i32,
+    origin_y: i32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SelectedOutput {
+    id: u32,
+    local_x: f64,
+    local_y: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameTarget {
+    id: u32,
+    paint_cursor: bool,
+}
+
+#[derive(Clone, Copy)]
+struct OutputData {
+    id: u32,
+}
+
+#[derive(Clone, Copy)]
+struct LayerData {
+    id: u32,
 }
 
 // SAFETY: the raw pointers in pending_buffers point at mmap regions owned
@@ -186,12 +293,10 @@ impl Default for OverlayState {
             compositor: None,
             shm: None,
             layer_shell: None,
-            output: None,
-            output_w: 0,
-            output_h: 0,
-            surface: None,
-            layer_surface: None,
-            configured: false,
+            xdg_output_manager: None,
+            outputs: HashMap::new(),
+            painted_outputs: HashSet::new(),
+            topology_dirty: false,
             core: RenderStateCore::new(CursorConfig::default()),
             pending_buffers: HashMap::new(),
         }
@@ -204,6 +309,106 @@ fn dbg(msg: &str) {
     }
 }
 
+fn select_output(layouts: &[OutputLayout], x: f64, y: f64) -> Option<SelectedOutput> {
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+    layouts
+        .iter()
+        .filter(|layout| {
+            x >= f64::from(layout.origin_x)
+                && y >= f64::from(layout.origin_y)
+                && x < f64::from(layout.origin_x) + f64::from(layout.width)
+                && y < f64::from(layout.origin_y) + f64::from(layout.height)
+        })
+        .min_by_key(|layout| layout.id)
+        .map(|layout| SelectedOutput {
+            id: layout.id,
+            local_x: x - f64::from(layout.origin_x),
+            local_y: y - f64::from(layout.origin_y),
+        })
+}
+
+fn frame_plan(
+    layouts: &[OutputLayout],
+    painted_outputs: &HashSet<u32>,
+    cursor_position: Option<(f64, f64)>,
+) -> (Option<SelectedOutput>, Vec<FrameTarget>) {
+    let selected = cursor_position.and_then(|(x, y)| select_output(layouts, x, y));
+    let mut ids: Vec<u32> = painted_outputs.iter().copied().collect();
+    if let Some(selected) = selected {
+        if !ids.contains(&selected.id) {
+            ids.push(selected.id);
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    let targets = ids
+        .into_iter()
+        .map(|id| FrameTarget {
+            id,
+            paint_cursor: selected.is_some_and(|selected| selected.id == id),
+        })
+        .collect();
+    (selected, targets)
+}
+
+fn ensure_output_resources(state: &mut OverlayState, qh: &QueueHandle<OverlayState>) {
+    let ids: Vec<u32> = state.outputs.keys().copied().collect();
+    for id in ids {
+        ensure_xdg_output(state, id, qh);
+        ensure_layer_surface(state, id, qh);
+    }
+}
+
+fn ensure_xdg_output(state: &mut OverlayState, id: u32, qh: &QueueHandle<OverlayState>) {
+    let Some(manager) = state.xdg_output_manager.clone() else {
+        return;
+    };
+    let Some(output) = state.outputs.get_mut(&id) else {
+        return;
+    };
+    if output.xdg_output.is_none() {
+        output.xdg_output = Some(manager.get_xdg_output(&output.output, qh, OutputData { id }));
+    }
+}
+
+fn ensure_layer_surface(state: &mut OverlayState, id: u32, qh: &QueueHandle<OverlayState>) {
+    let (Some(compositor), Some(layer_shell)) =
+        (state.compositor.clone(), state.layer_shell.clone())
+    else {
+        return;
+    };
+    let Some(output) = state.outputs.get_mut(&id) else {
+        return;
+    };
+    if output.layer_surface.is_some() || output.closed {
+        return;
+    }
+
+    let surface = compositor.create_surface(qh, ());
+    let layer_surface = layer_shell.get_layer_surface(
+        &surface,
+        Some(&output.output),
+        Layer::Overlay,
+        "cua-agent-cursor".to_string(),
+        qh,
+        LayerData { id },
+    );
+    layer_surface.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
+    layer_surface.set_size(0, 0);
+    layer_surface.set_exclusive_zone(-1);
+    layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+
+    let region: WlRegion = compositor.create_region(qh, ());
+    surface.set_input_region(Some(&region));
+    region.destroy();
+
+    surface.commit();
+    output.surface = Some(surface);
+    output.layer_surface = Some(layer_surface);
+}
+
 fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<OverlayState>();
@@ -212,11 +417,8 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
 
     let mut state = OverlayState::default();
     queue.roundtrip(&mut state)?;
-    for _ in 0..3 {
-        queue.roundtrip(&mut state)?;
-    }
 
-    let compositor = state
+    state
         .compositor
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor does not expose wl_compositor"))?;
@@ -224,75 +426,50 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         .shm
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor does not expose wl_shm"))?;
-    let layer_shell = state
+    state
         .layer_shell
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor does not expose zwlr_layer_shell_v1"))?;
-    let output = state
-        .output
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_output"))?;
-
-    // Build the layer surface: fullscreen, overlay layer, click-through.
-    let surface = compositor.create_surface(&qh, ());
-    let layer_surface = layer_shell.get_layer_surface(
-        &surface,
-        Some(&output),
-        Layer::Overlay,
-        "cua-agent-cursor".to_string(),
-        &qh,
-        (),
-    );
-    // Anchor to all four edges = full screen.
-    layer_surface.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
-    layer_surface.set_size(0, 0);
-    layer_surface.set_exclusive_zone(-1);
-    layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
-
-    // Click-through: empty input region. Standard Wayland intentionally does
-    // not expose another client's global pointer position, so this surface
-    // cannot implement the macOS/Windows/X11 badge-hover reveal without a
-    // compositor-owned adapter. Giving it an input region would steal the
-    // user's pointer events instead of observing them.
-    let region: WlRegion = compositor.create_region(&qh, ());
-    surface.set_input_region(Some(&region));
-    region.destroy();
-
-    state.surface = Some(surface);
-    state.layer_surface = Some(layer_surface);
-
-    // First commit kicks off the configure handshake.
-    if let Some(s) = state.surface.as_ref() {
-        s.commit();
+    if state.outputs.is_empty() {
+        anyhow::bail!("compositor exposed no wl_output");
     }
 
-    // Wait for the first configure event so we know the output dimensions
-    // before drawing.
+    // Build one fullscreen, click-through layer surface per advertised output.
+    ensure_output_resources(&mut state, &qh);
+
+    // Give every enabled output a chance to configure. Disabled outputs may
+    // stay advertised without configuring and are excluded from selection.
     for _ in 0..10 {
         queue.roundtrip(&mut state)?;
-        if state.configured && state.output_w > 0 && state.output_h > 0 {
+        ensure_output_resources(&mut state, &qh);
+        if state
+            .outputs
+            .values()
+            .filter(|output| output.layer_surface.is_some())
+            .all(|output| output.configured_size.is_some())
+        {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    if !state.configured {
-        anyhow::bail!("layer surface never received configure event");
+    let configured_outputs = state
+        .outputs
+        .values()
+        .filter(|output| output.configured_size.is_some())
+        .count();
+    if configured_outputs == 0 {
+        anyhow::bail!("no layer surface received a configure event");
     }
-    dbg(&format!(
-        "configured: w={} h={}",
-        state.output_w, state.output_h
-    ));
+    dbg(&format!("configured outputs: {configured_outputs}"));
+    state.topology_dirty = false;
 
-    // Demand-driven main loop. A stable cursor blocks on the command channel;
-    // only active motion, click/fade animation, or the exact idle-fade
-    // deadline schedules a wake. This avoids display-sized SHM allocation and
-    // conversion at 60Hz when no pixel can change while preserving immediate
-    // command wakeups.
+    // Demand-driven main loop. Stable cursors perform only a cheap Wayland
+    // maintenance roundtrip once per second so output topology changes are
+    // observed; full-display SHM work remains limited to visual changes.
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
     loop {
-        let wait = next_wait(&state.core, frame_tick_needed);
+        let wait = next_wait(&state.core, frame_tick_needed, state.topology_dirty);
         let (first_cmd, timed_out) = match wait_for_work(&rx, wait) {
             WlWake::Command(cmd) => (Some(cmd), None),
             WlWake::Timeout => (None, Some(wait)),
@@ -367,16 +544,31 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         // applies the new state at dt=0, avoiding a jump proportional to how
         // long the loop was parked.
         if let Some(timeout_kind) = timed_out {
-            let dt = match timeout_kind {
-                WlWait::Frame => elapsed.min(0.05),
-                WlWait::Deadline(_) => elapsed,
-                WlWait::Block => unreachable!("a blocking receive cannot time out"),
-            };
-            state.core.tick_motion(dt);
-            dirty = true;
+            match timeout_kind {
+                WlWait::Frame => {
+                    state.core.tick_motion(elapsed.min(0.05));
+                    dirty = true;
+                }
+                WlWait::Deadline(_) => {
+                    state.core.tick_motion(elapsed);
+                    dirty = true;
+                }
+                WlWait::Maintenance(_) => {
+                    let idle_alpha = state.core.idle_alpha;
+                    state.core.tick_motion(elapsed);
+                    dirty |= state.core.idle_alpha != idle_alpha || needs_frame_tick(&state.core);
+
+                    let topology_was_dirty = state.topology_dirty;
+                    state.topology_dirty = false;
+                    queue.roundtrip(&mut state)?;
+                    ensure_output_resources(&mut state, &qh);
+                    dirty |= topology_was_dirty || state.topology_dirty;
+                    state.topology_dirty = false;
+                }
+            }
         }
         let next_frame_tick_needed = needs_frame_tick(&state.core);
-        if state.configured && (dirty || frame_tick_needed || next_frame_tick_needed) {
+        if dirty || frame_tick_needed || next_frame_tick_needed {
             redraw(&mut state, &shm, &qh)?;
             // Flush the committed frame and dispatch wl_buffer.release before
             // parking. The buffer map remains authoritative until release, so
@@ -386,11 +578,8 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         frame_tick_needed = next_frame_tick_needed;
     }
 
-    if let Some(ls) = state.layer_surface.take() {
-        ls.destroy();
-    }
-    if let Some(s) = state.surface.take() {
-        s.destroy();
+    for output in state.outputs.values_mut() {
+        output.destroy_surfaces();
     }
     queue.roundtrip(&mut state)?;
     Ok(())
@@ -398,9 +587,9 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WlWait {
-    Block,
     Frame,
     Deadline(Duration),
+    Maintenance(Duration),
 }
 
 enum WlWake {
@@ -411,30 +600,34 @@ enum WlWake {
 
 fn wait_for_work(rx: &Receiver<WlOverlayCmd>, wait: WlWait) -> WlWake {
     match wait {
-        WlWait::Block => match rx.recv() {
-            Ok(cmd) => WlWake::Command(cmd),
-            Err(_) => WlWake::Disconnected,
-        },
         WlWait::Frame => match rx.recv_timeout(Duration::from_millis(16)) {
             Ok(cmd) => WlWake::Command(cmd),
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => WlWake::Timeout,
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => WlWake::Disconnected,
         },
-        WlWait::Deadline(timeout) => match rx.recv_timeout(timeout) {
-            Ok(cmd) => WlWake::Command(cmd),
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => WlWake::Timeout,
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => WlWake::Disconnected,
-        },
+        WlWait::Deadline(timeout) | WlWait::Maintenance(timeout) => {
+            match rx.recv_timeout(timeout) {
+                Ok(cmd) => WlWake::Command(cmd),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => WlWake::Timeout,
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => WlWake::Disconnected,
+            }
+        }
     }
 }
 
-fn next_wait(core: &RenderStateCore, frame_tick_needed: bool) -> WlWait {
+const TOPOLOGY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
+
+fn next_wait(core: &RenderStateCore, frame_tick_needed: bool, topology_dirty: bool) -> WlWait {
+    if topology_dirty {
+        return WlWait::Maintenance(Duration::ZERO);
+    }
     if frame_tick_needed || needs_frame_tick(core) {
         return WlWait::Frame;
     }
-    idle_fade_wait(core)
-        .map(WlWait::Deadline)
-        .unwrap_or(WlWait::Block)
+    match idle_fade_wait(core) {
+        Some(wait) if wait <= TOPOLOGY_MAINTENANCE_INTERVAL => WlWait::Deadline(wait),
+        _ => WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL),
+    }
 }
 
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
@@ -472,8 +665,8 @@ fn quiesce_hidden(core: &mut RenderStateCore) {
     core.click_t = None;
 }
 
-/// Render one cursor frame into a fresh wl_shm ARGB8888 buffer and attach
-/// it to the layer surface.
+/// Render the selected output plus a transparent clearing frame on every
+/// previously painted output the cursor has left.
 ///
 /// Pipeline:
 /// 1. Allocate a memfd-backed wl_shm pool sized at output_w × output_h.
@@ -493,13 +686,50 @@ fn redraw(
     shm: &WlShm,
     qh: &QueueHandle<OverlayState>,
 ) -> anyhow::Result<()> {
-    let Some(surface) = state.surface.as_ref() else {
+    let layouts: Vec<OutputLayout> = state
+        .outputs
+        .iter()
+        .filter_map(|(&id, output)| output.layout(id))
+        .collect();
+    let cursor_position =
+        (state.core.visible && state.core.pos.0 >= -100.0 && state.core.idle_alpha >= 0.004)
+            .then_some(state.core.pos);
+    let (selected, targets) = frame_plan(&layouts, &state.painted_outputs, cursor_position);
+
+    for target in targets {
+        redraw_output(state, shm, qh, target)?;
+    }
+
+    state.painted_outputs.clear();
+    if let Some(selected) = selected {
+        state.painted_outputs.insert(selected.id);
+    }
+    Ok(())
+}
+
+fn redraw_output(
+    state: &mut OverlayState,
+    shm: &WlShm,
+    qh: &QueueHandle<OverlayState>,
+    target: FrameTarget,
+) -> anyhow::Result<()> {
+    let Some((surface, layout)) = state
+        .outputs
+        .get(&target.id)
+        .and_then(|output| Some((output.surface.clone()?, output.layout(target.id)?)))
+    else {
         return Ok(());
     };
-    let w = state.output_w.max(1);
-    let h = state.output_h.max(1);
-    let stride = w as i32 * 4;
-    let size = (stride as usize) * (h as usize);
+    let w = layout.width.max(1);
+    let h = layout.height.max(1);
+    let stride = w
+        .checked_mul(4)
+        .and_then(|stride| i32::try_from(stride).ok())
+        .ok_or_else(|| anyhow::anyhow!("overlay output {w}x{h} has an invalid stride"))?;
+    let size = usize::try_from(stride)
+        .ok()
+        .and_then(|stride| stride.checked_mul(h as usize))
+        .ok_or_else(|| anyhow::anyhow!("overlay output {w}x{h} buffer size overflow"))?;
 
     // Reuses the same anon_shm pattern as the screencopy path in mod.rs.
     let (fd, ptr) =
@@ -509,10 +739,9 @@ fn redraw(
     // function.
     let pixels: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) };
 
-    // Paint the cursor into a tiny_skia pixmap. paint_cursor early-returns
-    // when the cursor is hidden / off-screen / idle-faded, so the pixmap
-    // is left fully transparent in those cases (which is also what we want
-    // for the click-through layer surface).
+    // A clearing target intentionally stays transparent. The selected target
+    // subtracts its logical compositor origin from the global cursor position;
+    // this is the same origin contract used by the Windows virtual desktop.
     let pm_result = tiny_skia::Pixmap::new(w, h);
     let mut pm = match pm_result {
         Some(p) => p,
@@ -525,20 +754,26 @@ fn redraw(
             "tiny_skia::Pixmap::new({w}, {h}) failed — out of memory for the overlay buffer"
         ),
     };
-    // backing_scale=1.0 matches the X11 path; per-output Wayland scale is
-    // a follow-up (would consume `wl_output.scale` and `preferred_buffer
-    // _scale` from wl_surface v6).
-    cursor_overlay::paint_cursor(&mut pm, &state.core, 0.0, 0.0, None, 1.0);
+    if target.paint_cursor {
+        cursor_overlay::paint_cursor(
+            &mut pm,
+            &state.core,
+            f64::from(layout.origin_x),
+            f64::from(layout.origin_y),
+            None,
+            1.0,
+        );
+    }
 
     // CUA_OVERLAY_DEBUG=1 paints a 60x60 magenta square at the cursor's
     // current pos on top of the gradient arrow. Useful when validating
     // layer-shell visibility on a new compositor — the gradient arrow is
     // small at native scale and easy to miss in a screenshot, while the
     // magenta block is impossible to miss.
-    if std::env::var_os("CUA_OVERLAY_DEBUG").is_some() {
+    if target.paint_cursor && std::env::var_os("CUA_OVERLAY_DEBUG").is_some() {
         let (cx, cy) = state.core.pos;
-        let cx = cx as i32;
-        let cy = cy as i32;
+        let cx = (cx - f64::from(layout.origin_x)) as i32;
+        let cy = (cy - f64::from(layout.origin_y)) as i32;
         let half = 30i32;
         for dy in -half..half {
             for dx in -half..half {
@@ -588,14 +823,27 @@ fn redraw(
     state.pending_buffers.insert(buffer_id, (ptr, size, fd));
 
     dbg(&format!(
-        "redraw w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) visible={}",
-        state.core.pos.0, state.core.pos.1, state.core.visible
+        "redraw output={} origin=({}, {}) w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) paint={}",
+        output_label(state, target.id),
+        layout.origin_x,
+        layout.origin_y,
+        state.core.pos.0,
+        state.core.pos.1,
+        target.paint_cursor,
     ));
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
     pool.destroy();
     Ok(())
+}
+
+fn output_label(state: &OverlayState, id: u32) -> String {
+    state
+        .outputs
+        .get(&id)
+        .and_then(|output| output.name.clone())
+        .unwrap_or_else(|| format!("wl_output#{id}"))
 }
 
 // ── Wayland Dispatch impls ───────────────────────────────────────────────
@@ -609,32 +857,67 @@ impl Dispatch<wl_registry::WlRegistry, ()> for OverlayState {
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            match interface.as_str() {
-                "wl_compositor" => {
-                    state.compositor =
-                        Some(registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ()));
-                }
-                "wl_shm" => {
-                    state.shm = Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()));
-                }
-                "wl_output" => {
-                    if state.output.is_none() {
-                        state.output =
-                            Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ()));
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => {
+                match interface.as_str() {
+                    "wl_compositor" => {
+                        state.compositor =
+                            Some(registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ()));
                     }
+                    "wl_shm" => {
+                        state.shm =
+                            Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()));
+                    }
+                    "wl_output" => {
+                        let output = registry.bind::<WlOutput, _, _>(
+                            name,
+                            version.min(4),
+                            qh,
+                            OutputData { id: name },
+                        );
+                        state.outputs.insert(name, NativeOutput::new(output));
+                        state.topology_dirty = true;
+                    }
+                    "zwlr_layer_shell_v1" => {
+                        state.layer_shell = Some(registry.bind::<ZwlrLayerShellV1, _, _>(
+                            name,
+                            version.min(4),
+                            qh,
+                            (),
+                        ));
+                    }
+                    "zxdg_output_manager_v1" => {
+                        state.xdg_output_manager =
+                            Some(registry.bind::<ZxdgOutputManagerV1, _, _>(
+                                name,
+                                version.min(3),
+                                qh,
+                                (),
+                            ));
+                    }
+                    _ => {}
                 }
-                "zwlr_layer_shell_v1" => {
-                    state.layer_shell =
-                        Some(registry.bind::<ZwlrLayerShellV1, _, _>(name, version.min(4), qh, ()));
-                }
-                _ => {}
+                ensure_output_resources(state, qh);
             }
+            wl_registry::Event::GlobalRemove { name } => {
+                state.painted_outputs.remove(&name);
+                if let Some(mut output) = state.outputs.remove(&name) {
+                    output.destroy_surfaces();
+                    // wl_output.release was added in v3. On an older generic
+                    // wlroots compositor, dropping the client proxy is the only
+                    // valid cleanup; issuing the newer request would be a
+                    // protocol error.
+                    if output.output.version() >= 3 {
+                        output.output.release();
+                    }
+                    state.topology_dirty = true;
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -663,21 +946,77 @@ impl Dispatch<WlShm, ()> for OverlayState {
     }
 }
 
-impl Dispatch<WlOutput, ()> for OverlayState {
+impl Dispatch<WlOutput, OutputData> for OverlayState {
     fn event(
         state: &mut Self,
         _: &WlOutput,
         event: <WlOutput as wayland_client::Proxy>::Event,
-        _: &(),
+        data: &OutputData,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         use wayland_client::protocol::wl_output;
-        if let wl_output::Event::Mode { width, height, .. } = event {
-            if width > 0 && height > 0 {
-                state.output_w = width as u32;
-                state.output_h = height as u32;
+        let Some(output) = state.outputs.get_mut(&data.id) else {
+            return;
+        };
+        match event {
+            wl_output::Event::Geometry { x, y, .. } => {
+                state.topology_dirty |= output.wl_origin != Some((x, y));
+                output.wl_origin = Some((x, y));
             }
+            wl_output::Event::Mode { width, height, .. } if width > 0 && height > 0 => {
+                state.topology_dirty |= output.mode_size != Some((width as u32, height as u32));
+                output.mode_size = Some((width as u32, height as u32));
+            }
+            wl_output::Event::Scale { factor } => {
+                state.topology_dirty |= output.scale != factor.max(1);
+                output.scale = factor.max(1);
+            }
+            wl_output::Event::Name { name } => {
+                output.name = Some(name);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZxdgOutputManagerV1, ()> for OverlayState {
+    fn event(
+        _: &mut Self,
+        _: &ZxdgOutputManagerV1,
+        _: <ZxdgOutputManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZxdgOutputV1, OutputData> for OverlayState {
+    fn event(
+        state: &mut Self,
+        _: &ZxdgOutputV1,
+        event: <ZxdgOutputV1 as Proxy>::Event,
+        data: &OutputData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(output) = state.outputs.get_mut(&data.id) else {
+            return;
+        };
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                state.topology_dirty |= output.logical_origin != Some((x, y));
+                output.logical_origin = Some((x, y));
+            }
+            zxdg_output_v1::Event::LogicalSize { width, height } if width > 0 && height > 0 => {
+                state.topology_dirty |= output.logical_size != Some((width as u32, height as u32));
+                output.logical_size = Some((width as u32, height as u32));
+            }
+            zxdg_output_v1::Event::Name { name } => {
+                output.name = Some(name);
+            }
+            _ => {}
         }
     }
 }
@@ -694,29 +1033,42 @@ impl Dispatch<ZwlrLayerShellV1, ()> for OverlayState {
     }
 }
 
-impl Dispatch<ZwlrLayerSurfaceV1, ()> for OverlayState {
+impl Dispatch<ZwlrLayerSurfaceV1, LayerData> for OverlayState {
     fn event(
         state: &mut Self,
         layer: &ZwlrLayerSurfaceV1,
         event: <ZwlrLayerSurfaceV1 as wayland_client::Proxy>::Event,
-        _: &(),
+        data: &LayerData,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let zwlr_layer_surface_v1::Event::Configure {
-            serial,
-            width,
-            height,
-        } = event
-        {
-            layer.ack_configure(serial);
-            if width > 0 {
-                state.output_w = width;
+        match event {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
+                layer.ack_configure(serial);
+                if let Some(output) = state.outputs.get_mut(&data.id) {
+                    output.closed = false;
+                    let fallback = output.logical_size.or(output.mode_size).unwrap_or((1, 1));
+                    let configured_size = (
+                        if width > 0 { width } else { fallback.0 },
+                        if height > 0 { height } else { fallback.1 },
+                    );
+                    state.topology_dirty |= output.configured_size != Some(configured_size);
+                    output.configured_size = Some(configured_size);
+                }
             }
-            if height > 0 {
-                state.output_h = height;
+            zwlr_layer_surface_v1::Event::Closed => {
+                state.painted_outputs.remove(&data.id);
+                if let Some(output) = state.outputs.get_mut(&data.id) {
+                    output.closed = true;
+                    output.close_layer();
+                    state.topology_dirty = true;
+                }
             }
-            state.configured = true;
+            _ => {}
         }
     }
 }
@@ -798,11 +1150,116 @@ mod tests {
         core
     }
 
+    fn three_monitor_layout() -> Vec<OutputLayout> {
+        vec![
+            // 1920x1080 logical laptop panel at 2x backing scale.
+            OutputLayout {
+                id: 1,
+                origin_x: 0,
+                origin_y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            // 2560x1440 logical external display, raised above the laptop.
+            OutputLayout {
+                id: 2,
+                origin_x: 1920,
+                origin_y: -200,
+                width: 2560,
+                height: 1440,
+            },
+            // Fractionally scaled portrait display left of the laptop.
+            OutputLayout {
+                id: 3,
+                origin_x: -1280,
+                origin_y: 56,
+                width: 1280,
+                height: 1024,
+            },
+        ]
+    }
+
     #[test]
-    fn fresh_sentinel_overlay_blocks_without_frame_polling() {
+    fn selects_output_and_converts_global_to_output_local_coordinates() {
+        let layouts = three_monitor_layout();
+        assert_eq!(
+            select_output(&layouts, 2500.0, 100.0),
+            Some(SelectedOutput {
+                id: 2,
+                local_x: 580.0,
+                local_y: 300.0,
+            })
+        );
+        assert_eq!(
+            select_output(&layouts, -1000.0, 256.0),
+            Some(SelectedOutput {
+                id: 3,
+                local_x: 280.0,
+                local_y: 200.0,
+            })
+        );
+        assert_eq!(
+            select_output(&layouts, 1919.0, 500.0).map(|output| output.id),
+            Some(1)
+        );
+        assert_eq!(
+            select_output(&layouts, 1920.0, 500.0).map(|output| output.id),
+            Some(2)
+        );
+        assert_eq!(select_output(&layouts, 5000.0, 5000.0), None);
+    }
+
+    #[test]
+    fn crossing_outputs_clears_the_old_surface_and_paints_the_new_one() {
+        let painted = HashSet::from([1]);
+        let (selected, targets) =
+            frame_plan(&three_monitor_layout(), &painted, Some((2500.0, 100.0)));
+
+        assert_eq!(selected.map(|output| output.id), Some(2));
+        assert_eq!(
+            targets,
+            vec![
+                FrameTarget {
+                    id: 1,
+                    paint_cursor: false,
+                },
+                FrameTarget {
+                    id: 2,
+                    paint_cursor: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn hide_or_session_removal_clears_every_previously_painted_output() {
+        let painted = HashSet::from([1, 2, 3]);
+        let (selected, targets) = frame_plan(&three_monitor_layout(), &painted, None);
+
+        assert!(selected.is_none());
+        assert_eq!(targets.len(), 3);
+        assert!(targets.iter().all(|target| !target.paint_cursor));
+        assert_eq!(
+            targets.iter().map(|target| target.id).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn fresh_sentinel_overlay_uses_only_topology_maintenance() {
         let core = RenderStateCore::new(CursorConfig::default());
-        assert_eq!(next_wait(&core, false), WlWait::Block);
+        assert_eq!(
+            next_wait(&core, false, false),
+            WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL)
+        );
         assert!(!needs_frame_tick(&core));
+        assert_eq!(
+            next_wait(&core, false, true),
+            WlWait::Maintenance(Duration::ZERO)
+        );
+        assert!(frame_plan(&three_monitor_layout(), &HashSet::new(), None)
+            .1
+            .is_empty());
     }
 
     #[test]
@@ -810,7 +1267,7 @@ mod tests {
         let mut core = positioned_core();
         core.idle_secs = 0.25;
         assert_eq!(
-            next_wait(&core, false),
+            next_wait(&core, false, false),
             WlWait::Deadline(Duration::from_millis(750))
         );
         assert!(!needs_frame_tick(&core));
@@ -821,13 +1278,13 @@ mod tests {
         let mut core = positioned_core();
         core.click_t = Some(0.0);
         assert!(needs_frame_tick(&core));
-        assert_eq!(next_wait(&core, false), WlWait::Frame);
+        assert_eq!(next_wait(&core, false, false), WlWait::Frame);
 
         core.click_t = None;
         core.idle_secs = 1.0;
         core.idle_alpha = 1.0;
         assert!(needs_frame_tick(&core));
-        assert_eq!(next_wait(&core, false), WlWait::Frame);
+        assert_eq!(next_wait(&core, false, false), WlWait::Frame);
     }
 
     #[test]
@@ -839,15 +1296,18 @@ mod tests {
         assert!(core.click_t.is_none());
         assert!(core.path.is_none());
         assert!(core.spring.is_none());
-        assert_eq!(next_wait(&core, false), WlWait::Block);
+        assert_eq!(
+            next_wait(&core, false, false),
+            WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL)
+        );
     }
 
     #[test]
-    fn blocked_scheduler_wakes_on_command_arrival() {
+    fn maintenance_scheduler_wakes_immediately_on_command_arrival() {
         let (tx, rx) = bounded(1);
         tx.send(WlOverlayCmd::Remove).unwrap();
         assert!(matches!(
-            wait_for_work(&rx, WlWait::Block),
+            wait_for_work(&rx, WlWait::Maintenance(Duration::from_secs(1))),
             WlWake::Command(WlOverlayCmd::Remove)
         ));
     }

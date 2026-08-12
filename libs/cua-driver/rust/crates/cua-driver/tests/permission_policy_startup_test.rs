@@ -1,7 +1,7 @@
 //! Explicit permission-policy configuration must fail before a daemon exposes
 //! an action endpoint.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn test_socket(directory: &tempfile::TempDir, suffix: &str) -> String {
     #[cfg(unix)]
@@ -33,6 +33,74 @@ fn rejected_serve(socket: &str, extra_args: &[&str]) -> std::process::Output {
         .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
         .output()
         .expect("run rejected cua-driver serve configuration")
+}
+
+#[test]
+fn mcp_rejects_serve_only_authorization_flags() {
+    let cases: &[(&[&str], &str)] = &[
+        (
+            &["mcp", "--direct", "--permission-mode", "bounded"],
+            "--permission-mode",
+        ),
+        (
+            &["mcp", "--capability-manifest", "unused.yaml"],
+            "--capability-manifest",
+        ),
+        (
+            &["mcp", "--approve-capability-manifest"],
+            "--approve-capability-manifest",
+        ),
+        (
+            &["mcp", "--dangerously-bypass-approvals"],
+            "--dangerously-bypass-approvals",
+        ),
+        (
+            &["mcp", "--session-policy", "unused.yaml"],
+            "--session-policy",
+        ),
+        (
+            &["mcp", "--approve-session-policy"],
+            "--approve-session-policy",
+        ),
+        (&["--permission-mode=bounded"], "--permission-mode"),
+    ];
+
+    for (args, rejected_flag) in cases {
+        let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+            .args(*args)
+            .stdin(Stdio::null())
+            .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+            .output()
+            .expect("run cua-driver mcp with a serve-only authorization flag");
+        assert_eq!(output.status.code(), Some(64), "args={args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("does not accept {rejected_flag}")),
+            "args={args:?}, stderr={stderr}"
+        );
+        assert!(
+            stderr.contains("CUA_DRIVER_PERMISSION_MODE"),
+            "args={args:?}, stderr={stderr}"
+        );
+        assert!(
+            stderr.contains("mcp --socket"),
+            "args={args:?}, stderr={stderr}"
+        );
+    }
+}
+
+#[test]
+fn direct_mcp_still_reads_permission_profile_from_environment() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["mcp", "--direct"])
+        .stdin(Stdio::null())
+        .env("CUA_DRIVER_PERMISSION_MODE", "bounded")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .output()
+        .expect("run direct MCP with bounded profile from the environment");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires --capability-manifest"));
 }
 
 #[test]

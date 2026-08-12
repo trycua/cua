@@ -233,6 +233,33 @@ const VALUE_FLAGS: &[&str] = &[
     "--experimental-pip-geometry",
 ];
 
+/// Authorization selectors are trusted-daemon startup inputs. Direct MCP
+/// accepts their environment-variable equivalents, while a daemon-backed MCP
+/// client inherits the already-fixed profile through `--socket`. Silently
+/// consuming these flags on `mcp` would leave the default profile active while
+/// telling the operator nothing.
+const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
+    "--permission-mode",
+    "--capability-manifest",
+    "--approve-capability-manifest",
+    "--session-policy",
+    "--approve-session-policy",
+    "--dangerously-bypass-approvals",
+    "--allow-legacy-existing-profile-approval",
+    "--no-permissions-gate",
+];
+
+fn serve_only_authorization_flag(args: &[String]) -> Option<&'static str> {
+    SERVE_ONLY_AUTHORIZATION_FLAGS.iter().copied().find(|flag| {
+        args.iter().any(|arg| {
+            arg == flag
+                || arg
+                    .strip_prefix(flag)
+                    .is_some_and(|remainder| remainder.starts_with('='))
+        })
+    })
+}
+
 /// Classify the requested finite command without parsing its arguments. The
 /// parent process uses this before `parse_command` so invalid JSON and other
 /// parser exits are still observed as completed failures.
@@ -652,6 +679,15 @@ pub fn parse_command() -> Command {
         } else {
             positionals.push(a);
             i += 1;
+        }
+    }
+
+    if matches!(positionals.first().copied(), None | Some("mcp")) {
+        if let Some(flag) = serve_only_authorization_flag(&args) {
+            eprintln!("cua-driver mcp does not accept {flag}; authorization flags belong to `cua-driver serve`.");
+            eprintln!("For direct MCP, use CUA_DRIVER_PERMISSION_MODE and the related CUA_DRIVER_* environment variables.");
+            eprintln!("Otherwise start a configured daemon and connect with `cua-driver mcp --socket <path>`." );
+            process::exit(64);
         }
     }
 

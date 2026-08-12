@@ -26,7 +26,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use cursor_overlay::{CursorConfig, OverlayCommand, OverlayMsg, RenderStateCore};
+use cursor_overlay::{CursorConfig, CursorKey, OverlayCommand, OverlayMsg, RenderStateCore};
 use wayland_client::{
     protocol::{
         wl_buffer::WlBuffer,
@@ -54,8 +54,8 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 /// SetPressed) are forwarded as-is so the layer-shell overlay matches the
 /// X11 visual: bloom + animated arrow + click pulse + press ring.
 enum WlOverlayCmd {
-    Cmd { cmd: OverlayCommand },
-    Remove,
+    Cmd { key: CursorKey, cmd: OverlayCommand },
+    Remove(CursorKey),
     Shutdown,
 }
 
@@ -64,9 +64,11 @@ static TX: OnceLock<Sender<WlOverlayCmd>> = OnceLock::new();
 // opt the native Wayland overlay in with the daemon's CursorConfig. This keeps
 // lazy forwarding from bypassing --no-overlay before any window exists.
 static CONFIG_ENABLED: AtomicBool = AtomicBool::new(false);
+static CONFIG_TEMPLATE: OnceLock<CursorConfig> = OnceLock::new();
 
-pub fn set_config_enabled(enabled: bool) {
-    CONFIG_ENABLED.store(enabled, Ordering::Release);
+pub fn set_config(config: CursorConfig) {
+    CONFIG_ENABLED.store(config.enabled, Ordering::Release);
+    let _ = CONFIG_TEMPLATE.set(config);
 }
 
 fn tx() -> Option<&'static Sender<WlOverlayCmd>> {
@@ -117,22 +119,17 @@ pub fn forward(msg: &OverlayMsg) -> bool {
         return false;
     }
     let Some(tx) = tx() else { return false };
+    map_overlay_msg(msg).is_some_and(|cmd| tx.try_send(cmd).is_ok())
+}
+
+fn map_overlay_msg(msg: &OverlayMsg) -> Option<WlOverlayCmd> {
     match msg {
-        OverlayMsg::Remove(k) => {
-            let _ = k;
-            let _ = tx.try_send(WlOverlayCmd::Remove);
-            true
-        }
-        OverlayMsg::Cmd(kc) => {
-            if matches!(&kc.cmd, OverlayCommand::ShowFocusRect(_)) {
-                return false;
-            }
-            let _ = tx.try_send(WlOverlayCmd::Cmd {
-                cmd: kc.cmd.clone(),
-            });
-            true
-        }
-        OverlayMsg::Revive(_) => true,
+        OverlayMsg::Remove(key) => Some(WlOverlayCmd::Remove(key.clone())),
+        OverlayMsg::Cmd(kc) if matches!(&kc.cmd, OverlayCommand::ShowFocusRect(_)) => None,
+        OverlayMsg::Cmd(kc) => Some(WlOverlayCmd::Cmd {
+            key: kc.key.clone(),
+            cmd: kc.cmd.clone(),
+        }),
     }
 }
 
@@ -165,9 +162,12 @@ struct OverlayState {
     /// removal, and topology changes clear every previously painted surface.
     painted_outputs: HashSet<u32>,
     topology_dirty: bool,
-    /// Cross-platform render core: position, animation, gradient arrow,
-    /// bloom, click pulse, idle-fade. Shared verbatim with the X11 path.
-    core: RenderStateCore,
+    /// Keyed render cores mirror the X11 native overlay contract. Removing a
+    /// named key records it in `ended`, so already-queued late commands cannot
+    /// recreate a cursor after end_session.
+    cores: HashMap<CursorKey, RenderStateCore>,
+    template: CursorConfig,
+    ended: HashSet<CursorKey>,
     /// In-flight wl_shm buffers awaiting `wl_buffer.release` from the
     /// compositor. Keyed by `WlBuffer` object id; value is the
     /// `(mmap ptr, mmap size, memfd fd)` triple that must be unmapped +
@@ -266,7 +266,6 @@ struct SelectedOutput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FrameTarget {
     id: u32,
-    paint_cursor: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -287,8 +286,20 @@ struct LayerData {
 // explicit assertion.
 unsafe impl Send for OverlayState {}
 
-impl Default for OverlayState {
-    fn default() -> Self {
+impl Drop for OverlayState {
+    fn drop(&mut self) {
+        for (_, (ptr, size, fd)) in std::mem::take(&mut self.pending_buffers) {
+            super::cleanup_mmap(ptr, size, fd);
+        }
+    }
+}
+
+impl OverlayState {
+    fn new(template: CursorConfig) -> Self {
+        let mut cores = HashMap::new();
+        // Match the X11 contract: the compatibility/default slot preserves the
+        // launch-time cursor id, while lazily-created named slots override it.
+        cores.insert("default".to_owned(), RenderStateCore::new(template.clone()));
         Self {
             compositor: None,
             shm: None,
@@ -297,10 +308,72 @@ impl Default for OverlayState {
             outputs: HashMap::new(),
             painted_outputs: HashSet::new(),
             topology_dirty: false,
-            core: RenderStateCore::new(CursorConfig::default()),
+            cores,
+            template,
+            ended: HashSet::new(),
             pending_buffers: HashMap::new(),
         }
     }
+}
+
+fn render_core_for_key(template: &CursorConfig, key: &str) -> RenderStateCore {
+    let mut config = template.clone();
+    config.cursor_id = key.to_owned();
+    RenderStateCore::new(config)
+}
+
+fn apply_keyed_command(
+    cores: &mut HashMap<CursorKey, RenderStateCore>,
+    template: &CursorConfig,
+    ended: &HashSet<CursorKey>,
+    key: CursorKey,
+    cmd: OverlayCommand,
+) -> bool {
+    if ended.contains(&key) {
+        tracing::debug!(key = %key, cmd = ?cmd, "wayland overlay: command dropped — key was ended");
+        return false;
+    }
+
+    let core = cores
+        .entry(key.clone())
+        .or_insert_with(|| render_core_for_key(template, &key));
+    // Seed from the off-screen sentinel near the first targeted action so a
+    // spring animation begins on-screen. This mirrors the X11 renderer.
+    let seed_target = match &cmd {
+        OverlayCommand::MoveTo { x, y, .. }
+        | OverlayCommand::SnapTo { x, y, .. }
+        | OverlayCommand::ClickPulse { x, y } => Some((*x, *y)),
+        _ => None,
+    };
+    if let Some((target_x, target_y)) = seed_target {
+        if core.pos.0 < -50.0 {
+            const SEED_OFFSET: f64 = 16.0;
+            core.pos = (
+                (target_x - SEED_OFFSET).max(2.0),
+                (target_y - SEED_OFFSET).max(2.0),
+            );
+        }
+    }
+
+    let disabling = matches!(&cmd, OverlayCommand::SetEnabled(false));
+    let dirty = core.apply_command_base(cmd, false, false);
+    if disabling {
+        quiesce_hidden(core);
+    }
+    dirty
+}
+
+fn remove_keyed_core(
+    cores: &mut HashMap<CursorKey, RenderStateCore>,
+    ended: &mut HashSet<CursorKey>,
+    key: CursorKey,
+) -> bool {
+    if key == "default" {
+        return false;
+    }
+    let removed = cores.remove(&key).is_some();
+    ended.insert(key);
+    removed
 }
 
 fn dbg(msg: &str) {
@@ -315,12 +388,7 @@ fn select_output(layouts: &[OutputLayout], x: f64, y: f64) -> Option<SelectedOut
     }
     layouts
         .iter()
-        .filter(|layout| {
-            x >= f64::from(layout.origin_x)
-                && y >= f64::from(layout.origin_y)
-                && x < f64::from(layout.origin_x) + f64::from(layout.width)
-                && y < f64::from(layout.origin_y) + f64::from(layout.height)
-        })
+        .filter(|layout| output_contains(layout, x, y))
         .min_by_key(|layout| layout.id)
         .map(|layout| SelectedOutput {
             id: layout.id,
@@ -329,28 +397,53 @@ fn select_output(layouts: &[OutputLayout], x: f64, y: f64) -> Option<SelectedOut
         })
 }
 
+fn output_contains(layout: &OutputLayout, x: f64, y: f64) -> bool {
+    x.is_finite()
+        && y.is_finite()
+        && x >= f64::from(layout.origin_x)
+        && y >= f64::from(layout.origin_y)
+        && x < f64::from(layout.origin_x) + f64::from(layout.width)
+        && y < f64::from(layout.origin_y) + f64::from(layout.height)
+}
+
 fn frame_plan(
     layouts: &[OutputLayout],
     painted_outputs: &HashSet<u32>,
-    cursor_position: Option<(f64, f64)>,
-) -> (Option<SelectedOutput>, Vec<FrameTarget>) {
-    let selected = cursor_position.and_then(|(x, y)| select_output(layouts, x, y));
+    cursor_positions: impl IntoIterator<Item = (f64, f64)>,
+) -> (HashSet<u32>, Vec<FrameTarget>) {
+    let selected: HashSet<u32> = cursor_positions
+        .into_iter()
+        .filter_map(|(x, y)| select_output(layouts, x, y).map(|output| output.id))
+        .collect();
     let mut ids: Vec<u32> = painted_outputs.iter().copied().collect();
-    if let Some(selected) = selected {
-        if !ids.contains(&selected.id) {
-            ids.push(selected.id);
+    for id in &selected {
+        if !ids.contains(id) {
+            ids.push(*id);
         }
     }
     ids.sort_unstable();
     ids.dedup();
-    let targets = ids
-        .into_iter()
-        .map(|id| FrameTarget {
-            id,
-            paint_cursor: selected.is_some_and(|selected| selected.id == id),
+    let targets = ids.into_iter().map(|id| FrameTarget { id }).collect();
+    (selected, targets)
+}
+
+fn visible_cores_for_output<'a>(
+    cores: &'a HashMap<CursorKey, RenderStateCore>,
+    layouts: &[OutputLayout],
+    output_id: u32,
+) -> Vec<(&'a CursorKey, &'a RenderStateCore)> {
+    let mut visible_cores: Vec<_> = cores
+        .iter()
+        .filter(|(_, core)| {
+            core.visible
+                && core.pos.0 >= -100.0
+                && core.idle_alpha >= 0.004
+                && select_output(layouts, core.pos.0, core.pos.1)
+                    .is_some_and(|selected| selected.id == output_id)
         })
         .collect();
-    (selected, targets)
+    visible_cores.sort_by(|(left, _), (right, _)| left.cmp(right));
+    visible_cores
 }
 
 fn ensure_output_resources(state: &mut OverlayState, qh: &QueueHandle<OverlayState>) {
@@ -415,7 +508,8 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     let qh = queue.handle();
     let _registry = conn.display().get_registry(&qh, ());
 
-    let mut state = OverlayState::default();
+    let template = CONFIG_TEMPLATE.get().cloned().unwrap_or_default();
+    let mut state = OverlayState::new(template);
     queue.roundtrip(&mut state)?;
 
     state
@@ -469,7 +563,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
     loop {
-        let wait = next_wait(&state.core, frame_tick_needed, state.topology_dirty);
+        let wait = next_wait(&state.cores, frame_tick_needed, state.topology_dirty);
         let (first_cmd, timed_out) = match wait_for_work(&rx, wait) {
             WlWake::Command(cmd) => (Some(cmd), None),
             WlWake::Timeout => (None, Some(wait)),
@@ -490,44 +584,17 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     shutdown = true;
                     break;
                 }
-                Ok(WlOverlayCmd::Cmd { cmd }) => {
-                    // Seed: if the cursor is still at the off-screen sentinel
-                    // `(-200, -200)` from `RenderStateCore::new`, snap to a
-                    // point near the MoveTo / SnapTo target so the spring
-                    // animation starts on-screen. Mirrors X11 overlay.rs's
-                    // `seed_start_if_sentinel` helper — without it, the
-                    // spring oscillates around the sentinel and the cursor
-                    // never reaches the screen.
-                    let seed_target = match &cmd {
-                        OverlayCommand::MoveTo { x, y, .. }
-                        | OverlayCommand::SnapTo { x, y, .. }
-                        | OverlayCommand::ClickPulse { x, y } => Some((*x, *y)),
-                        _ => None,
-                    };
-                    if let Some((tx, ty)) = seed_target {
-                        if state.core.pos.0 < -50.0 {
-                            const SEED_OFFSET: f64 = 16.0;
-                            let sx = (tx - SEED_OFFSET).max(2.0);
-                            let sy = (ty - SEED_OFFSET).max(2.0);
-                            state.core.pos = (sx, sy);
-                        }
-                    }
-                    // apply_command_base consumes every variant the X11
-                    // path handles. `move_to_snap_sentinel` / `click_pulse
-                    // _sentinel_only` are both `false` here — same as X11.
-                    let disabling = matches!(&cmd, OverlayCommand::SetEnabled(false));
-                    dirty |= state.core.apply_command_base(cmd, false, false);
-                    if disabling {
-                        quiesce_hidden(&mut state.core);
-                    }
+                Ok(WlOverlayCmd::Cmd { key, cmd }) => {
+                    dirty |= apply_keyed_command(
+                        &mut state.cores,
+                        &state.template,
+                        &state.ended,
+                        key,
+                        cmd,
+                    );
                 }
-                Ok(WlOverlayCmd::Remove) => {
-                    // Single-cursor overlay: removing the active cursor
-                    // hides it. Multi-cursor wlroots support can layer on
-                    // top of this in a follow-up if needed.
-                    dirty |= state.core.visible || state.core.pos.0 >= -100.0;
-                    state.core.visible = false;
-                    quiesce_hidden(&mut state.core);
+                Ok(WlOverlayCmd::Remove(key)) => {
+                    dirty |= remove_keyed_core(&mut state.cores, &mut state.ended, key);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -546,17 +613,26 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         if let Some(timeout_kind) = timed_out {
             match timeout_kind {
                 WlWait::Frame => {
-                    state.core.tick_motion(elapsed.min(0.05));
+                    tick_all_cores(&mut state.cores, elapsed.min(0.05));
                     dirty = true;
                 }
                 WlWait::Deadline(_) => {
-                    state.core.tick_motion(elapsed);
+                    tick_all_cores(&mut state.cores, elapsed);
                     dirty = true;
                 }
                 WlWait::Maintenance(_) => {
-                    let idle_alpha = state.core.idle_alpha;
-                    state.core.tick_motion(elapsed);
-                    dirty |= state.core.idle_alpha != idle_alpha || needs_frame_tick(&state.core);
+                    let before: HashMap<CursorKey, f64> = state
+                        .cores
+                        .iter()
+                        .map(|(key, core)| (key.clone(), core.idle_alpha))
+                        .collect();
+                    tick_all_cores(&mut state.cores, elapsed);
+                    dirty |= state.cores.iter().any(|(key, core)| {
+                        before
+                            .get(key)
+                            .is_none_or(|alpha| *alpha != core.idle_alpha)
+                            || needs_frame_tick(core)
+                    });
 
                     let topology_was_dirty = state.topology_dirty;
                     state.topology_dirty = false;
@@ -567,7 +643,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                 }
             }
         }
-        let next_frame_tick_needed = needs_frame_tick(&state.core);
+        let next_frame_tick_needed = any_core_needs_frame_tick(&state.cores);
         if dirty || frame_tick_needed || next_frame_tick_needed {
             redraw(&mut state, &shm, &qh)?;
             // Flush the committed frame and dispatch wl_buffer.release before
@@ -617,16 +693,34 @@ fn wait_for_work(rx: &Receiver<WlOverlayCmd>, wait: WlWait) -> WlWake {
 
 const TOPOLOGY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 
-fn next_wait(core: &RenderStateCore, frame_tick_needed: bool, topology_dirty: bool) -> WlWait {
+fn next_wait(
+    cores: &HashMap<CursorKey, RenderStateCore>,
+    frame_tick_needed: bool,
+    topology_dirty: bool,
+) -> WlWait {
     if topology_dirty {
         return WlWait::Maintenance(Duration::ZERO);
     }
-    if frame_tick_needed || needs_frame_tick(core) {
+    if frame_tick_needed || any_core_needs_frame_tick(cores) {
         return WlWait::Frame;
     }
-    match idle_fade_wait(core) {
+    match earliest_idle_fade_wait(cores) {
         Some(wait) if wait <= TOPOLOGY_MAINTENANCE_INTERVAL => WlWait::Deadline(wait),
         _ => WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL),
+    }
+}
+
+fn any_core_needs_frame_tick(cores: &HashMap<CursorKey, RenderStateCore>) -> bool {
+    cores.values().any(needs_frame_tick)
+}
+
+fn earliest_idle_fade_wait(cores: &HashMap<CursorKey, RenderStateCore>) -> Option<Duration> {
+    cores.values().filter_map(idle_fade_wait).min()
+}
+
+fn tick_all_cores(cores: &mut HashMap<CursorKey, RenderStateCore>, dt: f64) {
+    for core in cores.values_mut() {
+        core.tick_motion(dt);
     }
 }
 
@@ -665,8 +759,8 @@ fn quiesce_hidden(core: &mut RenderStateCore) {
     core.click_t = None;
 }
 
-/// Render the selected output plus a transparent clearing frame on every
-/// previously painted output the cursor has left.
+/// Composite all visible cursor cores into their selected output and attach a
+/// transparent clearing frame to every previously painted output now empty.
 ///
 /// Pipeline:
 /// 1. Allocate a memfd-backed wl_shm pool sized at output_w × output_h.
@@ -678,9 +772,7 @@ fn quiesce_hidden(core: &mut RenderStateCore) {
 ///    in `ext_screencopy::encode_buffer_to_png`.
 /// 4. Attach + damage + commit on the layer surface.
 ///
-/// When the cursor is hidden (`core.visible == false`, idle-faded, or
-/// off-screen sentinel) the pixmap is all zeros — the surface remains
-/// transparent and click-through.
+/// Hidden, idle-faded, or off-screen cores paint nothing.
 fn redraw(
     state: &mut OverlayState,
     shm: &WlShm,
@@ -691,19 +783,18 @@ fn redraw(
         .iter()
         .filter_map(|(&id, output)| output.layout(id))
         .collect();
-    let cursor_position =
-        (state.core.visible && state.core.pos.0 >= -100.0 && state.core.idle_alpha >= 0.004)
-            .then_some(state.core.pos);
-    let (selected, targets) = frame_plan(&layouts, &state.painted_outputs, cursor_position);
+    let cursor_positions = state
+        .cores
+        .values()
+        .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
+        .map(|core| core.pos);
+    let (selected, targets) = frame_plan(&layouts, &state.painted_outputs, cursor_positions);
 
     for target in targets {
-        redraw_output(state, shm, qh, target)?;
+        redraw_output(state, shm, qh, target, &layouts)?;
     }
 
-    state.painted_outputs.clear();
-    if let Some(selected) = selected {
-        state.painted_outputs.insert(selected.id);
-    }
+    state.painted_outputs = selected;
     Ok(())
 }
 
@@ -712,6 +803,7 @@ fn redraw_output(
     shm: &WlShm,
     qh: &QueueHandle<OverlayState>,
     target: FrameTarget,
+    layouts: &[OutputLayout],
 ) -> anyhow::Result<()> {
     let Some((surface, layout)) = state
         .outputs
@@ -739,9 +831,10 @@ fn redraw_output(
     // function.
     let pixels: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) };
 
-    // A clearing target intentionally stays transparent. The selected target
-    // subtracts its logical compositor origin from the global cursor position;
-    // this is the same origin contract used by the Windows virtual desktop.
+    // A clearing target intentionally stays transparent. Each cursor selected
+    // for this output subtracts its logical compositor origin from the global
+    // position; this is the same origin contract used by the Windows virtual
+    // desktop.
     let pm_result = tiny_skia::Pixmap::new(w, h);
     let mut pm = match pm_result {
         Some(p) => p,
@@ -754,15 +847,21 @@ fn redraw_output(
             "tiny_skia::Pixmap::new({w}, {h}) failed — out of memory for the overlay buffer"
         ),
     };
-    if target.paint_cursor {
-        cursor_overlay::paint_cursor(
-            &mut pm,
-            &state.core,
-            f64::from(layout.origin_x),
-            f64::from(layout.origin_y),
-            None,
-            1.0,
-        );
+    let mut painted_positions = Vec::new();
+    {
+        // HashMap iteration is intentionally normalized by key so overlapping
+        // named cursors composite deterministically from frame to frame.
+        for (_, core) in visible_cores_for_output(&state.cores, layouts, target.id) {
+            cursor_overlay::paint_cursor(
+                &mut pm,
+                core,
+                f64::from(layout.origin_x),
+                f64::from(layout.origin_y),
+                None,
+                1.0,
+            );
+            painted_positions.push(core.pos);
+        }
     }
 
     // CUA_OVERLAY_DEBUG=1 paints a 60x60 magenta square at the cursor's
@@ -770,23 +869,24 @@ fn redraw_output(
     // layer-shell visibility on a new compositor — the gradient arrow is
     // small at native scale and easy to miss in a screenshot, while the
     // magenta block is impossible to miss.
-    if target.paint_cursor && std::env::var_os("CUA_OVERLAY_DEBUG").is_some() {
-        let (cx, cy) = state.core.pos;
-        let cx = (cx - f64::from(layout.origin_x)) as i32;
-        let cy = (cy - f64::from(layout.origin_y)) as i32;
-        let half = 30i32;
-        for dy in -half..half {
-            for dx in -half..half {
-                let px = cx + dx;
-                let py = cy + dy;
-                if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 {
-                    continue;
+    if std::env::var_os("CUA_OVERLAY_DEBUG").is_some() {
+        for &(cursor_x, cursor_y) in &painted_positions {
+            let cx = (cursor_x - f64::from(layout.origin_x)) as i32;
+            let cy = (cursor_y - f64::from(layout.origin_y)) as i32;
+            let half = 30i32;
+            for dy in -half..half {
+                for dx in -half..half {
+                    let px = cx + dx;
+                    let py = cy + dy;
+                    if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 {
+                        continue;
+                    }
+                    let off = ((py as usize) * (w as usize) + (px as usize)) * 4;
+                    pm.data_mut()[off] = 0xFF; // R
+                    pm.data_mut()[off + 1] = 0x00; // G
+                    pm.data_mut()[off + 2] = 0xFF; // B
+                    pm.data_mut()[off + 3] = 0xFF; // A
                 }
-                let off = ((py as usize) * (w as usize) + (px as usize)) * 4;
-                pm.data_mut()[off] = 0xFF; // R
-                pm.data_mut()[off + 1] = 0x00; // G
-                pm.data_mut()[off + 2] = 0xFF; // B
-                pm.data_mut()[off + 3] = 0xFF; // A
             }
         }
     }
@@ -823,13 +923,11 @@ fn redraw_output(
     state.pending_buffers.insert(buffer_id, (ptr, size, fd));
 
     dbg(&format!(
-        "redraw output={} origin=({}, {}) w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) paint={}",
+        "redraw output={} origin=({}, {}) w={w} h={h} stride={stride} buf_id={buffer_id} cursors={}",
         output_label(state, target.id),
         layout.origin_x,
         layout.origin_y,
-        state.core.pos.0,
-        state.core.pos.1,
-        target.paint_cursor,
+        painted_positions.len(),
     ));
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
@@ -1210,35 +1308,53 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_outputs_use_the_same_deterministic_selection_for_compositing() {
+        let layouts = vec![
+            OutputLayout {
+                id: 8,
+                origin_x: 0,
+                origin_y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            OutputLayout {
+                id: 4,
+                origin_x: 0,
+                origin_y: 0,
+                width: 1920,
+                height: 1080,
+            },
+        ];
+        let mut core = positioned_core();
+        core.pos = (400.0, 300.0);
+        let cores = HashMap::from([("session".to_owned(), core)]);
+
+        assert_eq!(select_output(&layouts, 400.0, 300.0).unwrap().id, 4);
+        assert_eq!(visible_cores_for_output(&cores, &layouts, 4).len(), 1);
+        assert!(visible_cores_for_output(&cores, &layouts, 8).is_empty());
+    }
+
+    #[test]
     fn crossing_outputs_clears_the_old_surface_and_paints_the_new_one() {
         let painted = HashSet::from([1]);
         let (selected, targets) =
             frame_plan(&three_monitor_layout(), &painted, Some((2500.0, 100.0)));
 
-        assert_eq!(selected.map(|output| output.id), Some(2));
-        assert_eq!(
-            targets,
-            vec![
-                FrameTarget {
-                    id: 1,
-                    paint_cursor: false,
-                },
-                FrameTarget {
-                    id: 2,
-                    paint_cursor: true,
-                },
-            ]
-        );
+        assert_eq!(selected, HashSet::from([2]));
+        assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
     }
 
     #[test]
     fn hide_or_session_removal_clears_every_previously_painted_output() {
         let painted = HashSet::from([1, 2, 3]);
-        let (selected, targets) = frame_plan(&three_monitor_layout(), &painted, None);
+        let (selected, targets) = frame_plan(
+            &three_monitor_layout(),
+            &painted,
+            std::iter::empty::<(f64, f64)>(),
+        );
 
-        assert!(selected.is_none());
+        assert!(selected.is_empty());
         assert_eq!(targets.len(), 3);
-        assert!(targets.iter().all(|target| !target.paint_cursor));
         assert_eq!(
             targets.iter().map(|target| target.id).collect::<Vec<_>>(),
             vec![1, 2, 3]
@@ -1248,29 +1364,35 @@ mod tests {
     #[test]
     fn fresh_sentinel_overlay_uses_only_topology_maintenance() {
         let core = RenderStateCore::new(CursorConfig::default());
+        let cores = HashMap::from([("default".to_owned(), core)]);
         assert_eq!(
-            next_wait(&core, false, false),
+            next_wait(&cores, false, false),
             WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL)
         );
-        assert!(!needs_frame_tick(&core));
+        assert!(!any_core_needs_frame_tick(&cores));
         assert_eq!(
-            next_wait(&core, false, true),
+            next_wait(&cores, false, true),
             WlWait::Maintenance(Duration::ZERO)
         );
-        assert!(frame_plan(&three_monitor_layout(), &HashSet::new(), None)
-            .1
-            .is_empty());
+        assert!(frame_plan(
+            &three_monitor_layout(),
+            &HashSet::new(),
+            std::iter::empty::<(f64, f64)>()
+        )
+        .1
+        .is_empty());
     }
 
     #[test]
     fn stable_visible_overlay_sleeps_until_idle_fade_deadline() {
         let mut core = positioned_core();
         core.idle_secs = 0.25;
+        let cores = HashMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(
-            next_wait(&core, false, false),
+            next_wait(&cores, false, false),
             WlWait::Deadline(Duration::from_millis(750))
         );
-        assert!(!needs_frame_tick(&core));
+        assert!(!any_core_needs_frame_tick(&cores));
     }
 
     #[test]
@@ -1278,13 +1400,15 @@ mod tests {
         let mut core = positioned_core();
         core.click_t = Some(0.0);
         assert!(needs_frame_tick(&core));
-        assert_eq!(next_wait(&core, false, false), WlWait::Frame);
+        let mut cores = HashMap::from([("cursor-a".to_owned(), core)]);
+        assert_eq!(next_wait(&cores, false, false), WlWait::Frame);
 
+        let core = cores.get_mut("cursor-a").unwrap();
         core.click_t = None;
         core.idle_secs = 1.0;
         core.idle_alpha = 1.0;
-        assert!(needs_frame_tick(&core));
-        assert_eq!(next_wait(&core, false, false), WlWait::Frame);
+        assert!(needs_frame_tick(core));
+        assert_eq!(next_wait(&cores, false, false), WlWait::Frame);
     }
 
     #[test]
@@ -1296,25 +1420,165 @@ mod tests {
         assert!(core.click_t.is_none());
         assert!(core.path.is_none());
         assert!(core.spring.is_none());
+        let cores = HashMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(
-            next_wait(&core, false, false),
+            next_wait(&cores, false, false),
             WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL)
         );
     }
 
     #[test]
+    fn forward_mapping_preserves_named_cursor_keys() {
+        let snap = message(OverlayCommand::SnapTo {
+            x: 10.0,
+            y: 20.0,
+            heading_radians: None,
+        });
+        assert!(matches!(
+            map_overlay_msg(&snap),
+            Some(WlOverlayCmd::Cmd { key, .. }) if key == "test"
+        ));
+        assert!(matches!(
+            map_overlay_msg(&OverlayMsg::Remove("session-a".to_owned())),
+            Some(WlOverlayCmd::Remove(key)) if key == "session-a"
+        ));
+    }
+
+    #[test]
+    fn named_cursors_render_on_independent_outputs_and_removal_clears_only_one() {
+        let template = CursorConfig::default();
+        let mut cores = HashMap::new();
+        let mut ended = HashSet::new();
+        assert!(apply_keyed_command(
+            &mut cores,
+            &template,
+            &ended,
+            "session-a".to_owned(),
+            OverlayCommand::SnapTo {
+                x: 100.0,
+                y: 100.0,
+                heading_radians: None,
+            },
+        ));
+        assert!(apply_keyed_command(
+            &mut cores,
+            &template,
+            &ended,
+            "session-b".to_owned(),
+            OverlayCommand::SnapTo {
+                x: 2500.0,
+                y: 100.0,
+                heading_radians: None,
+            },
+        ));
+        assert_eq!(cores["session-a"].cfg.cursor_id, "session-a");
+        assert_eq!(cores["session-b"].cfg.cursor_id, "session-b");
+
+        let layouts = three_monitor_layout();
+        assert_eq!(
+            visible_cores_for_output(&cores, &layouts, 1)
+                .into_iter()
+                .map(|(key, _)| key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["session-a"]
+        );
+        assert_eq!(
+            visible_cores_for_output(&cores, &layouts, 2)
+                .into_iter()
+                .map(|(key, _)| key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["session-b"]
+        );
+        let (painted, targets) = frame_plan(
+            &layouts,
+            &HashSet::new(),
+            cores.values().map(|core| core.pos),
+        );
+        assert_eq!(painted, HashSet::from([1, 2]));
+        assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
+
+        assert!(remove_keyed_core(
+            &mut cores,
+            &mut ended,
+            "session-a".to_owned()
+        ));
+        assert!(!cores.contains_key("session-a"));
+        assert!(cores.contains_key("session-b"));
+        assert!(visible_cores_for_output(&cores, &layouts, 1).is_empty());
+        assert_eq!(
+            visible_cores_for_output(&cores, &layouts, 2)
+                .into_iter()
+                .map(|(key, _)| key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["session-b"]
+        );
+        let (selected, targets) =
+            frame_plan(&layouts, &painted, cores.values().map(|core| core.pos));
+        assert_eq!(selected, HashSet::from([2]));
+        assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
+
+        // A queued command cannot resurrect an ended named session.
+        assert!(!apply_keyed_command(
+            &mut cores,
+            &template,
+            &ended,
+            "session-a".to_owned(),
+            OverlayCommand::SnapTo {
+                x: 200.0,
+                y: 200.0,
+                heading_radians: None,
+            },
+        ));
+        assert!(!cores.contains_key("session-a"));
+    }
+
+    #[test]
+    fn named_cursors_schedule_animation_and_idle_deadlines_independently() {
+        let mut idle = positioned_core();
+        idle.idle_secs = 0.25;
+        let mut animated = positioned_core();
+        animated.motion.idle_hide_ms = 4_000.0;
+        animated.click_t = Some(0.0);
+        let mut cores =
+            HashMap::from([("idle".to_owned(), idle), ("animated".to_owned(), animated)]);
+
+        assert_eq!(next_wait(&cores, false, false), WlWait::Frame);
+        cores.get_mut("animated").unwrap().click_t = None;
+        assert_eq!(
+            next_wait(&cores, false, false),
+            WlWait::Deadline(Duration::from_millis(750))
+        );
+    }
+
+    #[test]
+    fn default_cursor_is_not_removed_or_marked_ended() {
+        let mut cores = HashMap::from([(
+            "default".to_owned(),
+            RenderStateCore::new(CursorConfig::default()),
+        )]);
+        let mut ended = HashSet::new();
+        assert!(!remove_keyed_core(
+            &mut cores,
+            &mut ended,
+            "default".to_owned()
+        ));
+        assert!(cores.contains_key("default"));
+        assert!(!ended.contains("default"));
+    }
+
+    #[test]
     fn maintenance_scheduler_wakes_immediately_on_command_arrival() {
         let (tx, rx) = bounded(1);
-        tx.send(WlOverlayCmd::Remove).unwrap();
+        tx.send(WlOverlayCmd::Remove("test".to_owned())).unwrap();
         assert!(matches!(
             wait_for_work(&rx, WlWait::Maintenance(Duration::from_secs(1))),
-            WlWake::Command(WlOverlayCmd::Remove)
+            WlWake::Command(WlOverlayCmd::Remove(key)) if key == "test"
         ));
     }
 
     #[test]
     fn disabled_config_refuses_forwarding_and_thread_startup() {
-        set_config_enabled(false);
+        CONFIG_ENABLED.store(false, Ordering::Release);
         let msg = message(OverlayCommand::SnapTo {
             x: 10.0,
             y: 20.0,

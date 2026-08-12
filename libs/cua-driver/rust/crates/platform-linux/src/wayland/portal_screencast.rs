@@ -25,8 +25,8 @@ use std::os::fd::AsRawFd;
 use std::sync::OnceLock;
 
 use ashpd::desktop::screencast::{
-    CursorMode, OpenPipeWireRemoteOptions, Screencast,
-    SelectSourcesOptions, SourceType, StartCastOptions, Streams,
+    CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, SourceType,
+    StartCastOptions, Streams,
 };
 use ashpd::desktop::{CreateSessionOptions, PersistMode, Session};
 use ashpd::enumflags2::BitFlags;
@@ -222,7 +222,12 @@ fn capture_one_frame(pipewire_fd: i32, node_id: u32) -> anyhow::Result<Vec<u8>> 
         .process(move |stream, _user| {
             // Already captured? Drop further buffers (they'll be queued
             // back via Buffer::Drop) so the run loop can finish.
-            if frame_for_process.lock().ok().map(|g| g.is_some()).unwrap_or(false) {
+            if frame_for_process
+                .lock()
+                .ok()
+                .map(|g| g.is_some())
+                .unwrap_or(false)
+            {
                 let _ = stream.dequeue_buffer();
                 return;
             }
@@ -312,9 +317,18 @@ fn capture_one_frame(pipewire_fd: i32, node_id: u32) -> anyhow::Result<Vec<u8>> 
             Choice,
             Range,
             Rectangle,
-            pw::spa::utils::Rectangle { width: 1920, height: 1080 },
-            pw::spa::utils::Rectangle { width: 1, height: 1 },
-            pw::spa::utils::Rectangle { width: 7680, height: 4320 }
+            pw::spa::utils::Rectangle {
+                width: 1920,
+                height: 1080
+            },
+            pw::spa::utils::Rectangle {
+                width: 1,
+                height: 1
+            },
+            pw::spa::utils::Rectangle {
+                width: 7680,
+                height: 4320
+            }
         ),
         pw::spa::pod::property!(
             pw::spa::param::format::FormatProperties::VideoFramerate,
@@ -323,7 +337,10 @@ fn capture_one_frame(pipewire_fd: i32, node_id: u32) -> anyhow::Result<Vec<u8>> 
             Fraction,
             pw::spa::utils::Fraction { num: 30, denom: 1 },
             pw::spa::utils::Fraction { num: 0, denom: 1 },
-            pw::spa::utils::Fraction { num: 1000, denom: 1 }
+            pw::spa::utils::Fraction {
+                num: 1000,
+                denom: 1
+            }
         ),
     );
     let values: Vec<u8> = pw::spa::pod::serialize::PodSerializer::serialize(
@@ -370,7 +387,13 @@ fn capture_one_frame(pipewire_fd: i32, node_id: u32) -> anyhow::Result<Vec<u8>> 
         .take()
         .ok_or_else(|| anyhow::anyhow!("portal ScreenCast: no frame arrived within timeout"))?;
 
-    encode_frame_to_png(&frame.bytes, frame.width, frame.height, frame.stride, frame.format)
+    encode_frame_to_png(
+        &frame.bytes,
+        frame.width,
+        frame.height,
+        frame.stride,
+        frame.format,
+    )
 }
 
 /// Channel-swap a PipeWire video frame into RGBA8888 and PNG-encode it.
@@ -404,10 +427,8 @@ fn encode_frame_to_png(
         }
     }
     use image::{codecs::png::PngEncoder, ImageBuffer, ImageEncoder, Rgba};
-    let img: ImageBuffer<Rgba<u8>, _> =
-        ImageBuffer::from_raw(width, height, rgba).ok_or_else(|| {
-            anyhow::anyhow!("internal: buffer dims mismatch ({}x{})", width, height)
-        })?;
+    let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, rgba)
+        .ok_or_else(|| anyhow::anyhow!("internal: buffer dims mismatch ({}x{})", width, height))?;
     let mut out: Vec<u8> = Vec::new();
     PngEncoder::new(&mut out).write_image(
         img.as_raw(),

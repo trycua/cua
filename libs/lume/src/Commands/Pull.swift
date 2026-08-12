@@ -3,7 +3,7 @@ import Foundation
 
 struct Pull: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Pull a macOS image from GitHub Container Registry"
+        abstract: "Pull a prebuilt or custom macOS image from an OCI-compatible registry"
     )
 
     @Argument(help: "Image to pull (format: name:tag)")
@@ -13,7 +13,7 @@ struct Pull: AsyncParsableCommand {
         help: "Name for the VM (defaults to image name without tag)", transform: { Optional($0) })
     var name: String?
 
-    @Option(help: "Github Container Registry to pull from. Defaults to ghcr.io")
+    @Option(help: "Container registry to pull from. Defaults to ghcr.io")
     var registry: String = "ghcr.io"
 
     @Option(help: "Organization to pull from. Defaults to trycua")

@@ -55,7 +55,6 @@ agent = ComputerAgent(
 
 For a full, ready-to-run demo (install deps, local computer using Docker, and a composed agent example), see the notebook:
 
-- https://github.com/trycua/cua/blob/models/opencua/notebooks/composite_agents_docker_nb.ipynb
 
 ## What's next
 

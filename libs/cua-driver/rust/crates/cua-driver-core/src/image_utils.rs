@@ -106,8 +106,11 @@ pub fn write_crosshair_png(png_bytes: &[u8], cx: f64, cy: f64, path: &str) -> Re
     let path = if let Some(rest) = path.strip_prefix('~') {
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
-            .map_err(|_| anyhow::anyhow!(
-                "Cannot expand `~` in path {path:?}: neither HOME nor USERPROFILE is set"))?;
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Cannot expand `~` in path {path:?}: neither HOME nor USERPROFILE is set"
+                )
+            })?;
         if home.is_empty() {
             anyhow::bail!("Cannot expand `~` in path {path:?}: HOME/USERPROFILE is empty");
         }
@@ -246,11 +249,11 @@ pub fn encode_rgba_to_png(rgba: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
             rgba.len()
         );
     }
-    let buf: ImageBuffer<image::Rgba<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(w, h, rgba.to_vec())
-            .ok_or_else(|| anyhow!("invalid RGBA buffer for w={w} h={h}"))?;
+    let buf: ImageBuffer<image::Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(w, h, rgba.to_vec())
+        .ok_or_else(|| anyhow!("invalid RGBA buffer for w={w} h={h}"))?;
     let mut out = Vec::new();
-    DynamicImage::ImageRgba8(buf).write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)?;
+    DynamicImage::ImageRgba8(buf)
+        .write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)?;
     Ok(out)
 }
 

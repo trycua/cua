@@ -1,15 +1,14 @@
-import { CustomHeader } from '@/components/custom-header';
-import { ScopedDocsLayout } from '@/components/scoped-docs-layout';
+import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { source } from '@/lib/source';
 import type { ReactNode } from 'react';
 
+// Stock fumadocs docs layout — sidebar tree from content/docs, no custom
+// header/branding. This app is a local MDX preview; production chrome lives on
+// the website.
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <>
-      <CustomHeader />
-      <div className="pt-14">
-        <ScopedDocsLayout tree={source.pageTree}>{children}</ScopedDocsLayout>
-      </div>
-    </>
+    <DocsLayout tree={source.pageTree} nav={{ title: 'Docs preview' }}>
+      {children}
+    </DocsLayout>
   );
 }

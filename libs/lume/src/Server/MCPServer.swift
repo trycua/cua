@@ -2,7 +2,7 @@ import Foundation
 import MCP
 
 /// MCP (Model Context Protocol) server for Lume VM management
-/// Allows AI agents like Claude to manage VMs through MCP tools
+/// Allows MCP clients to manage VMs through tools
 @MainActor
 final class LumeMCPServer {
     private let controller: LumeController
@@ -27,6 +27,7 @@ final class LumeMCPServer {
 
         let transport = StdioTransport()
         try await mcpServer?.start(transport: transport)
+        TelemetryClient.shared.recordMCPSessionStarted()
         await mcpServer?.waitUntilCompleted()
     }
 
@@ -140,11 +141,11 @@ final class LumeMCPServer {
         ```
 
         ### 2. Create a New VM (if needed)
-        Creating a VM takes 15-30 minutes. Use `unattended: "tahoe"` for automatic setup with SSH enabled:
+        Creating a VM takes 15-30 minutes. Use `unattended: "tahoe"` for offline setup with autologin and SSH enabled:
         ```
         lume_create_vm(name: "sandbox", unattended: "tahoe")
         ```
-        The tool returns immediately. Poll `lume_list_vms` to monitor progress—status changes from `provisioning (ipsw_install)` → `running` (during unattended setup) → `stopped`.
+        The tool returns immediately. Poll `lume_list_vms` to monitor progress—status changes from `provisioning (ipsw_install)` → `running` (during SSH verification) → `stopped`.
 
         ### 3. Start the VM
         Start with optional shared directory for file access:
@@ -171,7 +172,7 @@ final class LumeMCPServer {
         - Avoid spaces and special characters
 
         ### Resource Allocation
-        - Default: 4 CPU cores, 8GB RAM, 64GB disk
+        - Default: 4 CPU cores, 8GB RAM, 100GB disk
         - For builds: Consider 8 CPU cores, 16GB RAM
         - Disk grows dynamically (sparse files)
 
@@ -197,7 +198,7 @@ final class LumeMCPServer {
         | `stopped` | Ready to start |
         | `running` | VM is active |
         | `provisioning (ipsw_install)` | Installing macOS |
-        | `running` | VM is running (including during unattended setup) |
+        | `running` | VM is running (including during unattended SSH verification) |
 
         ## Limitations
         - Max 2 macOS VMs running simultaneously (Apple licensing)
@@ -259,7 +260,7 @@ final class LumeMCPServer {
                 messages: [
                     .user("""
                         Create a new macOS sandbox VM named '\(vmName)' with these requirements:
-                        1. Use unattended setup (tahoe preset) for automatic configuration
+                        1. Use unattended setup (tahoe preset) for offline configuration
                         2. The VM should have SSH enabled with credentials lume/lume
                         3. Monitor the provisioning status until complete
                         4. Once ready, start the VM in headless mode
@@ -316,6 +317,14 @@ final class LumeMCPServer {
 
     private var toolDefinitions: [Tool] {
         [
+            Tool(
+                name: "check_for_update",
+                description: "Check whether a newer Lume release is available on GitHub. Read-only; never installs. Mirrors `lume check-update --json`.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([:])
+                ])
+            ),
             Tool(
                 name: "lume_list_vms",
                 description: "List all virtual machines with their status, IP addresses, and resource allocation",
@@ -485,7 +494,7 @@ final class LumeMCPServer {
                         ]),
                         "disk_size": .object([
                             "type": .string("string"),
-                            "description": .string("Disk size, e.g., '64GB' (default: 64GB)")
+                            "description": .string("Disk size, e.g., '100GB' (default: 100GB)")
                         ]),
                         "storage": .object([
                             "type": .string("string"),
@@ -494,6 +503,40 @@ final class LumeMCPServer {
                     ]),
                     "required": .array([.string("name")])
                 ])
+            ),
+            Tool(
+                name: "lume_resize_disk",
+                description: "Grow a stopped VM's disk. For macOS VMs this preserves the paired RecoveryOS partition (relocating it to the new end of disk) and expands the main APFS container so future macOS updates keep working. Grow-only; the VM must be stopped; may take several minutes.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "name": .object([
+                            "type": .string("string"),
+                            "description": .string("Name of the VM to resize")
+                        ]),
+                        "disk_size": .object([
+                            "type": .string("string"),
+                            "description": .string("New disk size, e.g., '100GB'. Must be larger than the current size.")
+                        ]),
+                        "storage": .object([
+                            "type": .string("string"),
+                            "description": .string("Optional storage location name or path")
+                        ]),
+                        "no_backup": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Skip the pre-resize backup (faster, but no automatic rollback on failure). Default false.")
+                        ]),
+                        "keep_backup": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Keep the rollback backup after a successful resize. Default false.")
+                        ]),
+                        "dry_run": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Validate and print the resize plan without modifying the disk. Default false.")
+                        ])
+                    ]),
+                    "required": .array([.string("name"), .string("disk_size")])
+                ])
             )
         ]
     }
@@ -501,39 +544,79 @@ final class LumeMCPServer {
     // MARK: - Tool Call Handler
 
     private func handleToolCall(_ params: CallTool.Parameters) async -> CallTool.Result {
+        let startedAt = Date()
+        let result: CallTool.Result
         do {
             switch params.name {
             case "lume_list_vms":
-                return try await handleListVMs(params.arguments)
+                result = try await handleListVMs(params.arguments)
             case "lume_get_vm":
-                return try await handleGetVM(params.arguments)
+                result = try await handleGetVM(params.arguments)
             case "lume_run_vm":
-                return try await handleRunVM(params.arguments)
+                result = try await handleRunVM(params.arguments)
             case "lume_stop_vm":
-                return try await handleStopVM(params.arguments)
+                result = try await handleStopVM(params.arguments)
             case "lume_clone_vm":
-                return try await handleCloneVM(params.arguments)
+                result = try await handleCloneVM(params.arguments)
             case "lume_delete_vm":
-                return try await handleDeleteVM(params.arguments)
+                result = try await handleDeleteVM(params.arguments)
             case "lume_exec":
-                return try await handleExec(params.arguments)
+                result = try await handleExec(params.arguments)
             case "lume_create_vm":
-                return try await handleCreateVM(params.arguments)
+                result = try await handleCreateVM(params.arguments)
+            case "lume_resize_disk":
+                result = try await handleResizeDisk(params.arguments)
+            case "check_for_update":
+                result = try await handleCheckForUpdate(params.arguments)
             default:
-                return CallTool.Result(
+                result = CallTool.Result(
                     content: [.text("Unknown tool: \(params.name)")],
                     isError: true
                 )
             }
         } catch {
-            return CallTool.Result(
+            result = CallTool.Result(
                 content: [.text("Error: \(error.localizedDescription)")],
                 isError: true
             )
         }
+        let success = result.isError != true
+        TelemetryClient.shared.recordMCPToolCompleted(
+            toolName: params.name,
+            success: success,
+            errorClass: success ? .none : (params.name == "check_for_update" ? .unavailable : .operationError),
+            elapsed: Date().timeIntervalSince(startedAt)
+        )
+        return result
     }
 
     // MARK: - Tool Implementations
+
+    private func handleCheckForUpdate(_ args: [String: Value]?) async throws -> CallTool.Result {
+        let state = await LumeVersionCheck.checkUpdateState(noCache: false)
+        TelemetryClient.shared.recordUpdateChecked(
+            source: "mcp",
+            outcome: state.error != nil ? "unavailable" : (state.updateAvailable ? "available" : "up_to_date"),
+            targetVersion: state.latestVersion,
+            cacheHit: state.cacheHit
+        )
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let json = try encoder.encode(state)
+
+        let summary: String
+        if let error = state.error {
+            summary = "Update check failed: \(error)"
+        } else if state.updateAvailable, let latest = state.latestVersion {
+            summary = "Update available: Lume \(latest) (you have \(state.currentVersion))."
+        } else {
+            summary = "Up to date (Lume \(state.currentVersion))."
+        }
+
+        let payload = String(data: json, encoding: .utf8) ?? "{}"
+        return CallTool.Result(content: [.text("\(summary)\n\n\(payload)")])
+    }
 
     private func handleListVMs(_ args: [String: Value]?) async throws -> CallTool.Result {
         let storage = args?["storage"]?.stringValue
@@ -583,7 +666,8 @@ final class LumeMCPServer {
                     noDisplay: noDisplay,
                     sharedDirectories: sharedDirectories,
                     storage: storage,
-                    clipboard: clipboard
+                    clipboard: clipboard,
+                    telemetryTransport: .mcpStdio
                 )
             } catch {
                 Logger.error(
@@ -632,6 +716,26 @@ final class LumeMCPServer {
 
         try controller.clone(name: name, newName: newName)
         return CallTool.Result(content: [.text("VM '\(name)' cloned to '\(newName)' successfully.")])
+    }
+
+    private func handleResizeDisk(_ args: [String: Value]?) async throws -> CallTool.Result {
+        guard let name = args?["name"]?.stringValue else {
+            return CallTool.Result(content: [.text("Error: 'name' is required")], isError: true)
+        }
+        guard let diskSizeString = args?["disk_size"]?.stringValue else {
+            return CallTool.Result(content: [.text("Error: 'disk_size' is required")], isError: true)
+        }
+        let storage = args?["storage"]?.stringValue
+        let noBackup = args?["no_backup"]?.boolValue ?? false
+        let keepBackup = args?["keep_backup"]?.boolValue ?? false
+        let dryRun = args?["dry_run"]?.boolValue ?? false
+        let diskSize = try parseSize(diskSizeString)
+
+        try controller.updateSettings(
+            name: name, diskSize: diskSize, storage: storage, noBackup: noBackup,
+            keepBackup: keepBackup, dryRun: dryRun)
+        return CallTool.Result(
+            content: [.text("VM '\(name)' disk resized to \(diskSizeString) successfully.")])
     }
 
     private func handleDeleteVM(_ args: [String: Value]?) async throws -> CallTool.Result {
@@ -717,12 +821,12 @@ final class LumeMCPServer {
             memorySize = 8 * 1024 * 1024 * 1024  // 8GB default
         }
 
-        // Parse disk size (default 64GB)
+        // Parse disk size (default 100GB)
         let diskSize: UInt64
         if let diskStr = args?["disk_size"]?.stringValue {
             diskSize = try parseSize(diskStr)
         } else {
-            diskSize = 64 * 1024 * 1024 * 1024  // 64GB default
+            diskSize = 100 * 1024 * 1024 * 1024  // 100GB default
         }
 
         // Load unattended config if specified
@@ -741,7 +845,8 @@ final class LumeMCPServer {
             display: "1920x1080",
             ipsw: ipsw,
             storage: storage,
-            unattendedConfig: unattendedConfig
+            unattendedConfig: unattendedConfig,
+            telemetryTransport: .mcpStdio
         )
 
         var response = "VM '\(name)' creation started. Status: provisioning."

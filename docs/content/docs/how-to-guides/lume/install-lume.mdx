@@ -1,0 +1,59 @@
+---
+title: Install and run Lume
+description: Install Lume, Cua's local Apple Silicon VM manager for macOS and Linux guests.
+---
+
+Lume is Cua's local VM manager for Apple Silicon Macs. Use it when you want to create, run, or serve macOS and Linux VMs on your own machine. It can provide local VM substrate for Cua workflows, but the primary product choice is still [Cua Driver](/tutorials/drive-your-first-app) for an existing machine or [Cua Sandbox](/tutorials/your-first-local-sandbox) for a fresh isolated desktop.
+
+## Requirements
+
+- Apple Silicon Mac (M1, M2, M3, etc.)
+- macOS 13.0 or later
+- At least 8GB of RAM (16GB recommended)
+- At least 50GB of free disk space
+
+## Install Lume
+
+Install with a single command:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
+```
+
+## Verify the install
+
+```bash
+lume --version
+```
+
+## Update Lume
+
+Check whether a newer release is available:
+
+```bash
+lume check-update
+```
+
+Apply an available update:
+
+```bash
+lume update --apply
+```
+
+The installer no longer creates scheduled auto-updaters. Older `lume-update` cron jobs and
+LaunchAgents are removed the next time the installer runs.
+
+## Manual installation
+
+You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
+
+## Next steps
+
+- [Create your first local VM](/tutorials/create-your-first-lume-vm): follow the Tahoe happy path from IPSW to SSH.
+- [Create a vanilla Tahoe VM](/how-to-guides/lume/create-vanilla-vm): create, run, inspect, and remove a local VM.
+- [Manage local VMs](/how-to-guides/lume/manage-vms): share files, use storage locations, and clone disks.
+- [Change SIP on a macOS VM](/how-to-guides/lume/change-sip): change the signed policy from paired Recovery.
+- [Serve the Lume API](/how-to-guides/lume/serve-api): run the local HTTP API for tools and scripts.
+- [Use Lume with MCP](/how-to-guides/lume/use-mcp-server): connect an AI client to local VM tools.
+- [Lume CLI reference](/reference/lume/cli-reference): inspect every command and option.
+- [Lume HTTP API reference](/reference/lume/http-api): use the local API from tools and scripts.

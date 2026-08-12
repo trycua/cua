@@ -71,6 +71,10 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Cua Driver captures the screen so agents can see and interact with the interface you ask them to control.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Cua Driver uses Automation only when a requested action needs to communicate with another app.</string>
     <key>NSSupportsAutomaticTermination</key>
     <true/>
 </dict>

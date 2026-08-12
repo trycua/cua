@@ -1,39 +1,37 @@
-# cua-driver MCP Tool Output Format
+# Cua Driver MCP tool output format
 
-Every tool call returns a ✅ checkmark + concise summary. No structured JSON output.
+Every call keeps the standard MCP `ToolResult` envelope:
 
-## screenshot
-```
-✅ Screenshot — 1920x1080 png
+- `content` contains human-readable text and optional images;
+- `structuredContent` contains the machine-readable successful result;
+- `isError` distinguishes tool failure from a successful outcome.
 
-On-screen windows:
-- Terminal (pid 7476) "cua — Claude Code" [window_id: 2102]
-- Blender (pid 6808) "* Untitled - Blender 5.1.1" [window_id: 2129]
-- Google Chrome (pid 13313) "Download — Blender" [window_id: 1941]
-→ Call get_window_state(pid, window_id) to inspect a window's UI.
-```
+Text is diagnostic, not a stable parsing API.
 
-## get_window_state
-```
-✅ Blender — 11 elements, turn 3 + screenshot
-⚠️  Small AX tree (11 elements) — this app likely uses custom rendering
-    (e.g. Blender, games, Electron). Use pixel clicks: click(pid, x, y)
-    with coordinates from the screenshot.
+## Action tools
 
-- AXApplication "Blender"
-  - [0] AXWindow "* Untitled - Blender 5.1.1" actions=[AXRaise]
-    - [1] AXButton
-    ...
+Successful pointer, keyboard, value, and browser-input actions return the
+closed shared `ActionResult` in `structuredContent`:
+
+```json
+{
+  "effect": "unverifiable",
+  "route": "global_input",
+  "delivery": {"mode": "foreground"},
+  "escalation": {"target": "page", "reason": "effect_unconfirmed"}
+}
 ```
 
-## click
-```
-✅ Posted click to pid 6808.
-```
+Do not parse platform route names, coordinates, targets, or the removed
+`verified` bit from text. Use `effect`, `route`, `delivery`, `evidence`, and
+`escalation`, then call `verify_state` or take a fresh snapshot for the task
+postcondition. See [Action results and postcondition
+verification](action-result-contract.md).
 
-## zoom
-```
-✅ Zoomed region captured at native resolution. To click a target in
-this image, use `click(pid, x, y, from_zoom=true)` where x,y are pixel
-coordinates in THIS zoomed image — the driver maps them back automatically.
-```
+## Observation and state tools
+
+Observation tools retain their typed tool-specific structured payloads.
+`get_window_state`, for example, returns the accessibility outline and element
+records in `structuredContent` and can attach a PNG as image content. A
+multimodal harness interprets the image; Cua Driver does not OCR it or assign
+task meaning.

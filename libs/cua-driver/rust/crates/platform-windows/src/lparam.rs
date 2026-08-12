@@ -145,8 +145,8 @@ mod tests {
             (-1198, 292),
             (-1795, 383),
             (38, 40),
-            (-39, 383),    // representative post-ScreenToClient coord on the
-                           //  secondary-monitor window edge
+            (-39, 383), // representative post-ScreenToClient coord on the
+                        //  secondary-monitor window edge
         ]);
     }
 
@@ -235,8 +235,8 @@ mod tests {
         for sx in window_origin_x..(window_origin_x + 1920) {
             let local_x = sx - window_origin_x; // 0..1920 — well inside i16
             let local_y = 383 - window_origin_y;
-            let lp = pack_xy(local_x, local_y)
-                .expect("post-ScreenToClient coords always fit in i16");
+            let lp =
+                pack_xy(local_x, local_y).expect("post-ScreenToClient coords always fit in i16");
             let rx = unpack_x(lp);
             if let Some(p) = prev {
                 assert_eq!(

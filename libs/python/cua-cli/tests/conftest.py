@@ -31,32 +31,16 @@ def disable_telemetry(monkeypatch):
 
 
 @pytest.fixture
-def temp_credentials_db(tmp_path, monkeypatch):
-    """Provide a temporary credentials database."""
-    cua_dir = tmp_path / ".cua"
-    cua_dir.mkdir(parents=True)
-    db_path = cua_dir / "credentials.db"
-
-    # Patch the CREDENTIALS_DB path in the store module
-    monkeypatch.setattr("cua_cli.auth.store.CREDENTIALS_DB", db_path)
-
-    yield db_path
-
-    if db_path.exists():
-        db_path.unlink()
-
-
-@pytest.fixture
 def mock_api_key(monkeypatch):
-    """Set a mock API key in environment."""
-    monkeypatch.setenv("CUA_API_KEY", "test-api-key-12345")
-    return "test-api-key-12345"
+    """Provide a refreshable bearer token without invoking OIDC."""
 
+    async def token() -> str:
+        return "test-access-token"
 
-@pytest.fixture
-def clear_api_key_env(monkeypatch):
-    """Ensure no API key is in environment."""
-    monkeypatch.delenv("CUA_API_KEY", raising=False)
+    monkeypatch.setattr("cua_cli.auth.oidc.get_access_token", token)
+    monkeypatch.setattr("cua_cli.api.client.get_access_token", token)
+    monkeypatch.setattr("cua_cli.commands.sandbox.get_access_token", token)
+    return "test-access-token"
 
 
 @pytest.fixture

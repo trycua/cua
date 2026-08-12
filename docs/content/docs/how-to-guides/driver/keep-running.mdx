@@ -6,18 +6,36 @@ description: Register Cua Driver as a persistent daemon that starts automaticall
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Use a **persistent daemon** for element-indexed workflows. The per-pid element cache lives inside the process, so one-shot CLI invocations *drop that cache between calls*. The daemon also gives macOS the right TCC attribution and gives Windows an interactive-session proxy.
+External MCP clients and one-shot CLI calls require a daemon. The daemon owns
+the per-pid element cache, permission policy, recording and configuration
+state, macOS TCC attribution, and the Windows interactive-session context. Keep
+it running when you use those interfaces. Applications that import
+`CuaDriver.create()` execute through the same-process SDK and do not need this
+setup.
+
+Every entry below starts the daemon in the default `standard`
+[permission mode](/reference/cua-driver/permission-modes). The mode is fixed at
+launch, so a `bounded` or `unrestricted` daemon needs that configuration in the
+autostart entry itself — see [Pin a permission
+mode](#pin-a-permission-mode).
 
 <Tabs items={['macOS', 'Windows', 'Linux']}>
   <Tab value="macOS">
 
-`cua-driver autostart` is not implemented for macOS yet. Write a LaunchAgent with `install-local.sh --autostart`:
+`cua-driver autostart` is not implemented for macOS yet, so write a LaunchAgent instead.
+
+If you have a checkout of the [cua repo](https://github.com/trycua/cua), the helper script writes it for you (run from the repo root):
 
 ```bash
 bash libs/cua-driver/scripts/install-local.sh --autostart
 ```
 
-You can also create the plist yourself. Save this file at `~/Library/LaunchAgents/com.trycua.cua-driver.plist`:
+Local installers embed the checkout's full Git commit in
+`get_config.source_sha`. A build from a modified or untracked source tree uses
+`<commit>-dirty` so it cannot be mistaken for an exact commit build. Source
+snapshots without `.git` must provide `CUA_DRIVER_SOURCE_SHA` explicitly.
+
+If you installed via the one-line installer and have no checkout, create the plist yourself. Save this file at `~/Library/LaunchAgents/com.trycua.cua-driver.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -60,7 +78,7 @@ cua-driver autostart enable
 cua-driver autostart kick
 ```
 
-`enable` registers a Scheduled Task named `cua-driver-serve` with `LogonType: Interactive`. That keeps the daemon in Session 1+ instead of Session 0. The command is idempotent, so running it again after an upgrade updates the binary path automatically.
+`enable` registers a Scheduled Task named `cua-driver-serve` with `LogonType: Interactive`. That keeps the daemon in Session 1+ instead of Session 0. The command is idempotent, so running it again after an upgrade updates the binary path automatically. Run it from a non-interactive context (over SSH, or in Session 0 as `SYSTEM`) and it fails with a confusing `No mapping between account names and security IDs was done` error — use RDP or the local console instead.
 
 `kick` starts the task immediately, so you do not need to wait for the next logon.
 
@@ -70,6 +88,11 @@ Check the task state when you need it:
 cua-driver autostart status
 # registered (running)
 ```
+
+Only `not-registered` confirms that the Scheduled Task is absent. A
+`permission-denied` or `unknown` result means the current process could not
+inspect Task Scheduler; the command exits non-zero and preserves the original
+diagnostic instead of telling you to re-register blindly.
 
 Remove the autostart registration:
 
@@ -120,8 +143,97 @@ On CI runners or headless machines where the daemon should survive user logout, 
 loginctl enable-linger $USER
 ```
 
+A headless box has no `graphical-session.target`, so on those machines also change the unit's `[Install]` section to `WantedBy=default.target` — otherwise `enable` has nothing to hook into and the daemon won't start on boot.
+
   </Tab>
 </Tabs>
+
+## Pin a permission mode
+
+`--permission-mode`, `--session-policy`, `--approve-session-policy`, and
+`--dangerously-bypass-approvals` are read once, when the daemon starts. Put them
+in the autostart entry so an unattended restart comes back in the same mode
+instead of falling back to `standard`.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+Add each flag as its own `<string>` inside `ProgramArguments`, after `serve`:
+
+```xml
+<key>ProgramArguments</key>
+<array>
+  <string>/Applications/CuaDriver.app/Contents/MacOS/cua-driver</string>
+  <string>serve</string>
+  <string>--permission-mode</string>
+  <string>bounded</string>
+  <string>--session-policy</string>
+  <string>/Users/you/cua-session.yaml</string>
+  <string>--approve-session-policy</string>
+</array>
+```
+
+`launchd` does not expand `~` or run a shell, so the manifest path must be
+absolute. Reload the agent after editing:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+launchctl load  ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+`cua-driver autostart enable` always registers a bare `serve` command and has no
+mode flags, so configure the equivalent User-scope environment variables. The
+Scheduled Task inherits them at logon:
+
+```powershell
+setx CUA_DRIVER_PERMISSION_MODE bounded
+setx CUA_DRIVER_SESSION_POLICY_FILE "$env:USERPROFILE\cua-session.yaml"
+setx CUA_DRIVER_SESSION_POLICY_APPROVED 1
+```
+
+`setx` affects new processes only, so restart the daemon for the change to take
+effect:
+
+```powershell
+cua-driver stop
+cua-driver autostart kick
+```
+
+  </Tab>
+  <Tab value="Linux">
+
+Extend `ExecStart` in `~/.config/systemd/user/cua-driver.service`:
+
+```ini
+ExecStart=%h/.local/bin/cua-driver serve --permission-mode bounded --session-policy %h/cua-session.yaml --approve-session-policy
+```
+
+Then reload and restart the unit:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart cua-driver.service
+```
+
+  </Tab>
+</Tabs>
+
+Every form is trusted launch configuration: anyone who can edit the plist, the
+Scheduled Task, the systemd unit, or those environment variables can change the
+mode the daemon comes back in. Bad configuration fails startup rather than
+silently downgrading to `standard` — a bounded daemon with no approved manifest,
+or `unrestricted` without its acknowledgement, does not bind its action socket
+at all. Confirm the daemon is up, then make one call your manifest does not
+allow and check that it is refused:
+
+```bash
+cua-driver status
+cua-driver call <a tool outside allow.tools> '{}'
+# Error: ...
+```
 
 ## Verify it's running
 

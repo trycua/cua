@@ -1,46 +1,28 @@
 # docs
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+Public documentation content and assets live in this repository. The production
+renderer, redirects, analytics, and site configuration live in `trycua/cloud`.
+This app is a local MDX preview for contributors to the public repository.
 
-Run development server:
+Run the local preview:
 
 ```bash
-npm run dev
-# or
 pnpm dev
-# or
-yarn dev
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+Open http://localhost:8090 with your browser to see the result.
 
-## Explore
+## Docs conventions
 
-In the project, you can see:
+Public docs live in `content/docs/` and follow the Diátaxis modes:
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `app/layout.config.tsx`: Shared options for layouts, optional but preferred to keep.
+- `tutorials/` teach a guided first success.
+- `how-to-guides/` give steps for a specific goal.
+- `concepts/` contains Diátaxis explanations of concepts, constraints, and
+  tradeoffs.
+- `reference/` is dry lookup: commands, APIs, contracts, limits.
 
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
-
-### Fumadocs MDX
-
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
-
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
-
-## Setup Telemetry
-
-We use PostHog for telemetry to improve the clarity and structure of our documentation. Start by copying the `.env.example` and adding in your PostHog API key and host.
-
-```bash
-cp .env.example .env
-```
+Place content by what the reader is trying to do, not by topic. Do not mix modes in one page; move reference tables to reference pages and link to them from how-to guides or explanations.
 
 ## Learn More
 

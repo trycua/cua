@@ -222,7 +222,9 @@ final class Home {
         }
     }
 
-    /// Clones a VM directory using APFS clonefile for disk.img and regular copy for small files
+    /// Clones a complete VM state using APFS clonefile for disk.img and regular copies for
+    /// auxiliary files. macOS disk and auxiliary storage must remain paired because boot
+    /// policy state spans both files.
     /// - Parameters:
     ///   - sourceName: Name of the source VM
     ///   - destName: Name for the destination VM

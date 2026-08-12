@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { SiOpenai, SiAnthropic, SiMarkdown, SiGithub } from 'react-icons/si';
-import posthog from 'posthog-js';
 
 interface DocActionsMenuProps {
   pageUrl: string;
@@ -31,11 +30,6 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
 
-      posthog.capture('docs_copy_markdown_clicked', {
-        page: pageUrl,
-        page_title: pageTitle,
-        success: true,
-      });
     } catch (error) {
       console.error('Error copying markdown:', error);
 
@@ -48,12 +42,6 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
         console.error('Error copying URL:', fallbackError);
       }
 
-      posthog.capture('docs_copy_markdown_clicked', {
-        page: pageUrl,
-        page_title: pageTitle,
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
     }
   };
 
@@ -61,20 +49,12 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
     if (!filePath) {
       return;
     }
-    posthog.capture('docs_edit_github_clicked', {
-      page: pageUrl,
-      page_title: pageTitle,
-    });
 
     const githubEditUrl = `https://github.com/trycua/cua/edit/main/docs/content/docs/${filePath}`;
     window.open(githubEditUrl, '_blank', 'noopener,noreferrer');
   };
 
   const handleOpenChatGPT = () => {
-    posthog.capture('docs_open_chatgpt_clicked', {
-      page: pageUrl,
-      page_title: pageTitle,
-    });
 
     const docUrl = `https://cua.ai${pageUrl}?utm_source=cua.ai/docs`;
     const prompt = `I need help understanding this cua.ai documentation page: "${pageTitle}". Please read and help me with: ${docUrl}`;
@@ -83,10 +63,6 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
   };
 
   const handleOpenClaude = () => {
-    posthog.capture('docs_open_claude_clicked', {
-      page: pageUrl,
-      page_title: pageTitle,
-    });
 
     const docUrl = `https://cua.ai${pageUrl}?utm_source=cua.ai/docs`;
     const prompt = `I need help understanding this cua.ai documentation page: "${pageTitle}". Please read and help me with: ${docUrl}`;

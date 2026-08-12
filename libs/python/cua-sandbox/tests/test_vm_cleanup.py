@@ -1,6 +1,6 @@
 """Unit tests for VM cleanup on connection failure and destroy() resilience.
 
-These tests mock CloudTransport so they run without a real cloud API.
+These tests mock FleetCloudTransport so they run without a real cloud API.
 They verify that:
   1. _create() cleans up a provisioned VM when _connect() fails.
   2. destroy() runs every cleanup step independently — a failure in one
@@ -15,7 +15,7 @@ import httpx
 import pytest
 from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox
-from cua_sandbox.transport.cloud import CloudTransport
+from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 
 pytestmark = pytest.mark.asyncio
 
@@ -25,9 +25,9 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 
-def _make_cloud_transport(*, name: str = "test-vm") -> CloudTransport:
-    """Return a CloudTransport with internal state set as if _create_vm() succeeded."""
-    t = CloudTransport.__new__(CloudTransport)
+def _make_cloud_transport(*, name: str = "test-vm") -> FleetCloudTransport:
+    """Return a FleetCloudTransport with internal state set as if _create_vm() succeeded."""
+    t = FleetCloudTransport.__new__(FleetCloudTransport)
     t._name = name
     t._api_key_override = "sk-fake"
     t._base_url = "https://api.example.com"
@@ -41,7 +41,7 @@ def _make_cloud_transport(*, name: str = "test-vm") -> CloudTransport:
     return t
 
 
-def _make_sandbox(transport: CloudTransport, **kwargs) -> Sandbox:
+def _make_sandbox(transport: FleetCloudTransport, **kwargs) -> Sandbox:
     """Return a Sandbox wrapping *transport* without calling _connect()."""
     return Sandbox(
         transport,
@@ -66,12 +66,12 @@ class TestCreateCleansUpOnConnectFailure:
         transport.delete_vm = AsyncMock()
 
         with patch(
-            "cua_sandbox.sandbox.CloudTransport",
+            "cua_sandbox.sandbox.FleetCloudTransport",
             return_value=transport,
         ):
             with pytest.raises(httpx.ReadTimeout):
                 await Sandbox._create(
-                    image=Image.linux("ubuntu", "24.04"),
+                    image=Image.from_registry("registry.example/workspace:latest"),
                     api_key="sk-fake",
                     telemetry_enabled=False,
                 )
@@ -85,12 +85,12 @@ class TestCreateCleansUpOnConnectFailure:
         transport.delete_vm = AsyncMock()
 
         with patch(
-            "cua_sandbox.sandbox.CloudTransport",
+            "cua_sandbox.sandbox.FleetCloudTransport",
             return_value=transport,
         ):
             with pytest.raises(RuntimeError, match="unexpected"):
                 await Sandbox._create(
-                    image=Image.linux("ubuntu", "24.04"),
+                    image=Image.from_registry("registry.example/workspace:latest"),
                     api_key="sk-fake",
                     telemetry_enabled=False,
                 )
@@ -104,12 +104,12 @@ class TestCreateCleansUpOnConnectFailure:
         transport.delete_vm = AsyncMock(side_effect=httpx.ConnectError("api down"))
 
         with patch(
-            "cua_sandbox.sandbox.CloudTransport",
+            "cua_sandbox.sandbox.FleetCloudTransport",
             return_value=transport,
         ):
             with pytest.raises(TimeoutError, match="poll timeout"):
                 await Sandbox._create(
-                    image=Image.linux("ubuntu", "24.04"),
+                    image=Image.from_registry("registry.example/workspace:latest"),
                     api_key="sk-fake",
                     telemetry_enabled=False,
                 )
@@ -125,12 +125,12 @@ class TestCreateCleansUpOnConnectFailure:
         transport.delete_vm = AsyncMock()
 
         with patch(
-            "cua_sandbox.sandbox.CloudTransport",
+            "cua_sandbox.sandbox.FleetCloudTransport",
             return_value=transport,
         ):
             with pytest.raises(ValueError, match="no api key"):
                 await Sandbox._create(
-                    image=Image.linux("ubuntu", "24.04"),
+                    image=Image.from_registry("registry.example/workspace:latest"),
                     api_key="sk-fake",
                     telemetry_enabled=False,
                 )
@@ -144,12 +144,12 @@ class TestCreateCleansUpOnConnectFailure:
         transport.delete_vm = AsyncMock()
 
         with patch(
-            "cua_sandbox.sandbox.CloudTransport",
+            "cua_sandbox.sandbox.FleetCloudTransport",
             return_value=transport,
         ):
             with pytest.raises(KeyboardInterrupt):
                 await Sandbox._create(
-                    image=Image.linux("ubuntu", "24.04"),
+                    image=Image.from_registry("registry.example/workspace:latest"),
                     api_key="sk-fake",
                     telemetry_enabled=False,
                 )
@@ -231,19 +231,148 @@ class TestDestroyResilience:
         transport.delete_vm.assert_awaited_once()
 
     async def test_non_cloud_transport_skips_delete_vm(self):
-        """Non-CloudTransport sandboxes should not call delete_vm."""
-        transport = AsyncMock()  # generic mock, not a CloudTransport instance
+        """Non-FleetCloudTransport sandboxes should not call delete_vm."""
+        transport = AsyncMock()  # generic mock, not a FleetCloudTransport instance
         sb = Sandbox(transport, name="local-vm", _ephemeral=True, _telemetry_enabled=False)
 
         await sb.destroy()
 
         transport.disconnect.assert_awaited_once()
-        # delete_vm should not be called since transport is not CloudTransport
+        # delete_vm should not be called since transport is not FleetCloudTransport
         assert not hasattr(transport, "delete_vm") or not transport.delete_vm.called
 
 
 # ===================================================================
-# 3. ephemeral() integration — cleanup through the context manager
+# 3. Fleet server_port forwarding and validation
+# ===================================================================
+
+
+class TestFleetServerPortForwarding:
+    """Sandbox factories should pass server_port to Fleet and validate it early."""
+
+    @pytest.mark.parametrize("server_port", [1, 65535])
+    async def test_create_forwards_server_port(self, server_port):
+        sandbox = object()
+        with patch.object(Sandbox, "_create", AsyncMock(return_value=sandbox)) as create:
+            result = await Sandbox.create(
+                Image.from_registry("registry.example/workspace:latest"),
+                server_port=server_port,
+                telemetry_enabled=False,
+            )
+
+        assert result is sandbox
+        assert create.await_args.kwargs["server_port"] == server_port
+
+    async def test_create_forwards_default_server_port(self):
+        sandbox = object()
+        with patch.object(Sandbox, "_create", AsyncMock(return_value=sandbox)) as create:
+            result = await Sandbox.create(
+                Image.from_registry("registry.example/workspace:latest"),
+                telemetry_enabled=False,
+            )
+
+        assert result is sandbox
+        assert create.await_args.kwargs["server_port"] == 8000
+
+    async def test_ephemeral_forwards_server_port(self):
+        sandbox = _make_sandbox(_make_cloud_transport(name="port-e2e"), ephemeral=True)
+        sandbox.destroy = AsyncMock()
+        with patch.object(Sandbox, "_create", AsyncMock(return_value=sandbox)) as create:
+            async with Sandbox.ephemeral(
+                Image.from_registry("registry.example/workspace:latest"),
+                server_port=5000,
+                telemetry_enabled=False,
+            ):
+                pass
+
+        assert create.await_args.kwargs["server_port"] == 5000
+
+    async def test_create_passes_server_port_to_fleet_transport(self):
+        transport = _make_cloud_transport(name="port-fleet")
+        transport.connect = AsyncMock()
+
+        with (
+            patch.object(Sandbox, "_uses_fleet", return_value=True),
+            patch(
+                "cua_sandbox.sandbox.FleetCloudTransport",
+                return_value=transport,
+            ) as fleet_transport,
+            patch.object(Sandbox, "_connect", AsyncMock()),
+        ):
+            await Sandbox._create(
+                image=Image.from_registry("registry.example/workspace:latest"),
+                server_port=5000,
+                telemetry_enabled=False,
+            )
+
+        assert fleet_transport.call_args.kwargs["server_port"] == 5000
+
+    async def test_existing_pool_does_not_pass_server_port_to_fleet_transport(self):
+        transport = _make_cloud_transport(name="existing-pool")
+
+        with (
+            patch.object(Sandbox, "_uses_fleet", return_value=True),
+            patch(
+                "cua_sandbox.sandbox.FleetCloudTransport",
+                return_value=transport,
+            ) as fleet_transport,
+            patch.object(Sandbox, "_connect", AsyncMock()),
+        ):
+            await Sandbox._create(
+                name="existing-pool",
+                server_port=5000,
+                telemetry_enabled=False,
+            )
+
+        assert "server_port" not in fleet_transport.call_args.kwargs
+
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_create_rejects_invalid_server_port_before_local_provisioning(self, server_port):
+        runtime = AsyncMock()
+
+        with pytest.raises(ValueError, match="server_port must be an integer between 1 and 65535"):
+            await Sandbox.create(
+                Image.from_registry("registry.example/workspace:latest"),
+                local=True,
+                runtime=runtime,
+                server_port=server_port,
+                telemetry_enabled=False,
+            )
+
+        runtime.start.assert_not_awaited()
+
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_invalid_server_port_rejects_before_legacy_cloud_provisioning(self, server_port):
+        with patch("cua_sandbox.sandbox._make_transport") as make_transport:
+            with pytest.raises(
+                ValueError, match="server_port must be an integer between 1 and 65535"
+            ):
+                await Sandbox._create(
+                    image=Image.from_registry("registry.example/workspace:latest"),
+                    api_key="sk-legacy",
+                    server_port=server_port,
+                    telemetry_enabled=False,
+                )
+
+        make_transport.assert_not_called()
+
+    @pytest.mark.parametrize("server_port", [True, False, 0, -1, 65536, 5000.0, "5000"])
+    async def test_invalid_server_port_rejects_before_fleet_provisioning(self, server_port):
+        with patch("cua_sandbox.sandbox.FleetCloudTransport") as fleet_transport:
+            with pytest.raises(
+                ValueError, match="server_port must be an integer between 1 and 65535"
+            ):
+                await Sandbox._create(
+                    image=Image.from_registry("registry.example/workspace:latest"),
+                    server_port=server_port,
+                    telemetry_enabled=False,
+                )
+
+        fleet_transport.assert_not_called()
+
+
+# ===================================================================
+# 4. ephemeral() integration — cleanup through the context manager
 # ===================================================================
 
 
@@ -259,18 +388,18 @@ class TestEphemeralCleanup:
 
         with (
             patch.object(
-                CloudTransport,
+                FleetCloudTransport,
                 "__init__",
                 lambda self, **kw: None,
             ),
             patch.object(
-                CloudTransport,
+                FleetCloudTransport,
                 "__new__",
                 lambda cls, **kw: transport,
             ),
         ):
             async with Sandbox.ephemeral(
-                Image.linux("ubuntu", "24.04"),
+                Image.from_registry("registry.example/workspace:latest"),
                 api_key="sk-fake",
                 telemetry_enabled=False,
             ) as sb:
@@ -287,19 +416,19 @@ class TestEphemeralCleanup:
 
         with (
             patch.object(
-                CloudTransport,
+                FleetCloudTransport,
                 "__init__",
                 lambda self, **kw: None,
             ),
             patch.object(
-                CloudTransport,
+                FleetCloudTransport,
                 "__new__",
                 lambda cls, **kw: transport,
             ),
         ):
             with pytest.raises(AssertionError):
                 async with Sandbox.ephemeral(
-                    Image.linux("ubuntu", "24.04"),
+                    Image.from_registry("registry.example/workspace:latest"),
                     api_key="sk-fake",
                     telemetry_enabled=False,
                 ) as _sb:
@@ -315,19 +444,19 @@ class TestEphemeralCleanup:
 
         with (
             patch.object(
-                CloudTransport,
+                FleetCloudTransport,
                 "__init__",
                 lambda self, **kw: None,
             ),
             patch.object(
-                CloudTransport,
+                FleetCloudTransport,
                 "__new__",
                 lambda cls, **kw: transport,
             ),
         ):
             with pytest.raises(httpx.ReadTimeout):
                 async with Sandbox.ephemeral(
-                    Image.linux("ubuntu", "24.04"),
+                    Image.from_registry("registry.example/workspace:latest"),
                     api_key="sk-fake",
                     telemetry_enabled=False,
                 ) as _sb:

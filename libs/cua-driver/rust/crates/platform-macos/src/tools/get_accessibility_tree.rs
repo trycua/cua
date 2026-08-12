@@ -5,7 +5,10 @@
 //! `get_window_state` with `capture_mode="ax"` to skip the screenshot).
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -16,7 +19,9 @@ pub struct GetAccessibilityTreeTool {
 }
 
 impl GetAccessibilityTreeTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -24,8 +29,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_accessibility_tree".into(),
-        description:
-            "Return a lightweight snapshot of the desktop: running regular apps and \
+        description: "Return a lightweight snapshot of the desktop: running regular apps and \
              on-screen visible windows with their bounds, z-order, and owner pid.\n\n\
              For the full AX subtree of a single window (with interactive element indices \
              you can click by), use `get_window_state` instead — that's the heavy per-window \
@@ -36,30 +40,35 @@ fn def() -> &'static ToolDef {
             "properties": {},
             "additionalProperties": false
         }),
-        read_only:   true,
+        read_only: true,
         destructive: false,
-        idempotent:  true,
-        open_world:  false,
+        idempotent: true,
+        open_world: false,
     })
 }
 
 #[async_trait]
 impl Tool for GetAccessibilityTreeTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
         let _ = &self.state; // state not needed for this tool
 
-        let apps    = crate::apps::list_running_apps();
+        let apps = crate::apps::list_running_apps();
         let windows = crate::windows::visible_windows();
 
         let mut lines = vec![format!(
             "{} running app(s), {} visible window(s)",
-            apps.len(), windows.len()
+            apps.len(),
+            windows.len()
         )];
 
         for app in &apps {
-            let bid = app.bundle_id.as_deref()
+            let bid = app
+                .bundle_id
+                .as_deref()
                 .map(|b| format!(" [{b}]"))
                 .unwrap_or_default();
             lines.push(format!("- {} (pid {}){}", app.name, app.pid, bid));
@@ -80,7 +89,7 @@ impl Tool for GetAccessibilityTreeTool {
                 ));
             }
             lines.push(
-                "→ Call get_window_state(pid, window_id) to inspect a window's UI.".to_owned()
+                "→ Call get_window_state(pid, window_id) to inspect a window's UI.".to_owned(),
             );
         }
 

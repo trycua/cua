@@ -45,7 +45,7 @@ struct UnattendedConfig: Codable, Sendable {
     /// Seconds to wait before starting automation after VM boots
     let bootWait: Int
 
-    /// Boot commands to execute for Setup Assistant automation
+    /// Compatibility boot commands. Offline setup ignores these.
     let bootCommands: [String]
 
     /// Optional health check to verify setup success

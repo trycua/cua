@@ -2,12 +2,23 @@
 
 import argparse
 import logging
+import os
 import sys
 import time
 
 from cua_cli import __version__
-from cua_cli.commands import auth, do, image, mcp, platform, sandbox, skills, trajectory
-from cua_cli.commands import workspace as workspace_cmd
+from cua_cli.auth.oidc import DEFAULT_RUN_API_BASE
+from cua_cli.commands import (
+    auth,
+    do,
+    image,
+    mcp,
+    platform,
+    sandbox,
+    skills,
+    trajectory,
+    wif_token,
+)
 from cua_cli.utils.output import print_error
 
 try:
@@ -52,7 +63,7 @@ def create_parser() -> argparse.ArgumentParser:
     do.register_parser(subparsers)
     do.register_host_consent_parser(subparsers)
     trajectory.register_parser(subparsers)
-    workspace_cmd.register_parser(subparsers)
+    wif_token.register_parser(subparsers)
 
     return parser
 
@@ -64,6 +75,9 @@ def main() -> int:
     logging.basicConfig(level=logging.WARNING)
     for name in ("computer", "cua_core", "cua_core.telemetry", "httpx", "httpcore", "cua_sandbox"):
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    # The CLI only sends cloud requests to the run API, never a legacy endpoint.
+    os.environ["CUA_BASE_URL"] = DEFAULT_RUN_API_BASE
 
     parser = create_parser()
     args = parser.parse_args()
@@ -95,8 +109,8 @@ def main() -> int:
             exit_code = do.execute_host_consent(args)
         elif args.command in ("trajectory", "traj"):
             exit_code = trajectory.execute(args)
-        elif args.command in ("workspace", "ws"):
-            exit_code = workspace_cmd.execute(args)
+        elif args.command == "wif-token":
+            exit_code = wif_token.execute(args)
         else:
             print_error(f"Unknown command: {args.command}")
             exit_code = 1
@@ -110,7 +124,7 @@ def main() -> int:
         exit_code = 1
         return exit_code
     finally:
-        if _TELEMETRY_AVAILABLE and is_telemetry_enabled():
+        if args.command != "wif-token" and _TELEMETRY_AVAILABLE and is_telemetry_enabled():
             record_event(
                 "cli_command",
                 {

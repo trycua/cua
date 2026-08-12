@@ -14,5 +14,7 @@ jobs:
       context_dir: libs/xfce
       tag_prefix: docker-xfce-v
       docker_hub_org: trycua
+      # kicad/kicad:9.0 currently publishes an amd64 image only.
+      skip_arm64: true
     secrets:
       DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

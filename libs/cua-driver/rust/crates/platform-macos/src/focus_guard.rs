@@ -31,7 +31,7 @@
 //! that isn't yet ported — and empirically the layer-3 reactive guard
 //! catches the majority of side-effects when combined with
 //! `WindowChangeDetector`'s wildcard lease at the snapshot→detect
-//! boundary. We document this gap in PARITY.md so the port is auditable.
+//! boundary. This gap is a known, intentional limitation.
 //!
 //! ## Why this is a separate module
 //!
@@ -183,13 +183,7 @@ mod tests {
     /// 50ms sleep doesn't deadlock.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn arms_lease_when_target_differs_from_prior() {
-        let n = with_focus_suppressed(
-            Some(123),
-            Some(456),
-            "test.armed",
-            || async { 99 },
-        )
-        .await;
+        let n = with_focus_suppressed(Some(123), Some(456), "test.armed", || async { 99 }).await;
         assert_eq!(n, 99);
     }
 

@@ -1,0 +1,223 @@
+{
+  "generatedAt": "2026-07-18T11:28:46.267790Z",
+  "kind": "release-backfill-skip-ledger",
+  "schemaVersion": 1,
+  "skips": [
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "cua-driver-rs:0.2.15",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "cua-driver-rs:0.2.17",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "cua-driver-rs:0.3.1",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "commit 662ef4376eae198dd96b050957f911810bc9ff37 has an unresolved human coauthor email; add an exceptional identityOverrides entry",
+      "key": "cua-driver-rs:0.5.8",
+      "reason": "unresolved-identity",
+      "stage": "evidence"
+    },
+    {
+      "details": "AI review found no user-visible change to publish; evidence: commit:74ac4755f9a95a49382b4bc67f4edb76f50c68e3",
+      "key": "lume:0.1.2",
+      "reason": "no-product-changes",
+      "stage": "authoring"
+    },
+    {
+      "details": "The release tag points to the same commit as its predecessor.",
+      "key": "lume:0.1.3",
+      "reason": "same-tag-sha",
+      "stage": "evidence"
+    },
+    {
+      "details": "AI review found no user-visible change to publish; evidence: commit:f244cb3dbdee8bb966f33356a8a32331396443e0",
+      "key": "lume:0.1.4",
+      "reason": "no-product-changes",
+      "stage": "authoring"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.13",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The release tag points to the same commit as its predecessor.",
+      "key": "lume:0.1.17",
+      "reason": "same-tag-sha",
+      "stage": "evidence"
+    },
+    {
+      "details": "AI review found no user-visible change to publish; evidence: commit:5bf25c4a538df0a758c7b53558fc587ecc6e0b23",
+      "key": "lume:0.1.21",
+      "reason": "no-product-changes",
+      "stage": "authoring"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.22",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.23",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.24",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.25",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.26",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.27",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.28",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.29",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.30",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.33",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.35",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.36",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.1.37",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The release tag points to the same commit as its predecessor.",
+      "key": "lume:0.1.38",
+      "reason": "same-tag-sha",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.2",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.16",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.22",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "AI review found no user-visible change to publish; evidence: pr:764",
+      "key": "lume:0.2.25",
+      "reason": "no-product-changes",
+      "stage": "authoring"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.26",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.38",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.43",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.46",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.50",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.51",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.52",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    },
+    {
+      "details": "The explicit product range contains no non-release commits.",
+      "key": "lume:0.2.64",
+      "reason": "no-product-changes",
+      "stage": "evidence"
+    }
+  ]
+}

@@ -8,12 +8,10 @@
 #   stop_cua_driver_daemons          ↔  Stop-CuaDriverDaemons
 #   show_cua_driver_daemon_survivors ↔  Show-CuaDriverDaemonSurvivors
 #
-# This script is sourced (not exec'd) by the per-backend install
-# helpers:
+# This script is sourced (not exec'd) by the Rust install helpers:
 #
 #   * _install-rust.sh           (production Rust delegate)
 #   * _install-local-rust.sh     (dev Rust installer)
-#   * _install-local-swift.sh    (dev Swift installer)
 #
 # Loaders: on-disk first when run from a checked-out tree, else fetched
 # from GitHub raw via `curl` (mirrors the irm | iex path that
@@ -46,9 +44,8 @@
 # fixed is still there" because the in-memory code is pre-fix.
 #
 # Layered escalation, in order of decreasing politeness:
-#   1. macOS: `launchctl unload <plist>` on every LaunchAgent we know
-#      we install (com.trycua.cua-driver-rs.plist for the Rust port,
-#      com.trycua.cua_driver_daemon.plist for the Swift driver). Unload
+#   1. macOS: `launchctl unload <plist>` on the Rust LaunchAgent
+#      (com.trycua.cua-driver-rs.plist). Unload
 #      is the documented way to stop a launchd-managed daemon — it
 #      also clears the KeepAlive flag so launchd doesn't immediately
 #      respawn the process we're about to kill. No-op (with stderr
@@ -62,12 +59,8 @@
 #      isn't aware we're swapping the binary out from under it).
 #
 # Daemon-name coverage:
-#   The Rust binary and the Swift binary BOTH exec as `cua-driver` (same
-#   product name — see build-app.sh `--identifier com.trycua.driver`
-#   and _install-rust.sh `BINARY_NAME="cua-driver"`). One `pkill -x
-#   cua-driver` covers both, so callers don't need a per-backend
-#   variant — the kill is naturally symmetric across the Rust/Swift
-#   split. `cua-driver-uia` is a Windows-only helper (see
+#   The Rust binary execs as `cua-driver`. One `pkill -x cua-driver`
+#   stops it. `cua-driver-uia` is a Windows-only helper (see
 #   libs/cua-driver/rust/crates/cua-driver-uia/) and never exists on
 #   macOS/Linux, so no pkill for it here.
 #
@@ -87,14 +80,13 @@ stop_cua_driver_daemons() {
                 # no-op-with-warning when the plist doesn't exist; swallow
                 # stderr to keep the install log clean.
                 local plist
-                for plist in \
-                    "$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist" \
-                    "$HOME/Library/LaunchAgents/com.trycua.cua_driver_daemon.plist"
-                do
+                # Rust LaunchAgent plist.
+                plist="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
+                if [ -f "$plist" ]; then
                     if [ -f "$plist" ]; then
                         launchctl unload "$plist" >/dev/null 2>&1 || true
                     fi
-                done
+                fi
                 ;;
             Linux)
                 # systemctl --user is the only supported supervisor on

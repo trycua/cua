@@ -5,7 +5,9 @@ on:
     paths:
       - "docs/content/**"
       - "docs/src/**"
+      - "docs/package.json"
       - "docs/scripts/check-links.ts"
+      - "docs/scripts/check-hygiene.ts"
 
 jobs:
   check-internal-links:
@@ -29,6 +31,10 @@ jobs:
 
       - name: Check internal links
         run: pnpm docs:check-links
+        working-directory: docs
+
+      - name: Check docs hygiene
+        run: pnpm docs:check-hygiene
         working-directory: docs
 
       - name: Show help if check failed

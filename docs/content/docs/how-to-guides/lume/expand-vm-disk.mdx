@@ -1,0 +1,57 @@
+---
+title: Expand a VM disk
+description: Increase a stopped Lume VM's disk and verify the guest capacity.
+---
+
+Use this guide to increase an existing VM's total disk capacity. Lume does not
+support shrinking VM disks.
+
+## Preview the resize
+
+Stop the VM and validate the proposed size without changing the disk:
+
+```bash
+lume stop macos-tahoe
+lume set macos-tahoe --disk-size 120GB --dry-run
+```
+
+Resolve any reported layout, encryption, host-space, or VM-state error before
+continuing.
+
+## Expand the disk
+
+Set the new total capacity:
+
+```bash
+lume set macos-tahoe --disk-size 120GB
+```
+
+Lume creates a rollback copy for macOS VMs. The operation can take several
+minutes while Lume preserves RecoveryOS and expands the APFS container.
+
+Use `--keep-backup` to retain the rollback files after success:
+
+```bash
+lume set macos-tahoe --disk-size 120GB --keep-backup
+```
+
+Use `--no-backup` only when you have another verified copy of the VM. Automatic
+rollback is unavailable when a resize without a backup fails.
+
+## Verify the guest capacity
+
+Boot the VM and inspect its root container:
+
+```bash
+lume run --no-display macos-tahoe
+lume ssh macos-tahoe 'diskutil info / | grep "Container Total Space"'
+lume stop macos-tahoe
+```
+
+For Linux VMs, grow the guest partition and filesystem after Lume increases the
+image. The exact commands depend on the partition table and filesystem.
+
+See [Disk resizing limits](/reference/lume/limits#disk-resizing) for supported
+macOS layouts. Read [How Lume expands macOS
+disks](/concepts/how-lume-expands-macos-disks) for the RecoveryOS and rollback
+model.

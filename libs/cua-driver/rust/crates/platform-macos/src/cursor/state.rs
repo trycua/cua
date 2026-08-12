@@ -7,18 +7,12 @@ use std::sync::Mutex;
 /// Per-instance cursor configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CursorConfig {
-    /// Instance identifier for multi-cursor use cases. Default: "default".
+    /// Session-owned cursor identifier.
     pub cursor_id: String,
-    /// Built-in icon name ("arrow", "crosshair", "hand") or path to PNG/SVG.
-    pub cursor_icon: Option<String>,
-    /// Hex color (e.g. "#00FFFF") or CSS name for the glow/indicator.
-    pub cursor_color: Option<String>,
-    /// Short label rendered near the cursor dot.
-    pub cursor_label: Option<String>,
-    /// Dot radius in points. Default: 16.
-    pub cursor_size: Option<f64>,
-    /// Opacity 0.0–1.0. Default: 0.85.
-    pub cursor_opacity: Option<f64>,
+    /// Installed cursor theme id.
+    pub theme_id: String,
+    /// Accessibility motion preference.
+    pub reduced_motion: cursor_overlay::ReducedMotion,
     /// Whether the overlay is currently visible.
     pub enabled: bool,
 }
@@ -27,11 +21,8 @@ impl Default for CursorConfig {
     fn default() -> Self {
         Self {
             cursor_id: "default".into(),
-            cursor_icon: None,
-            cursor_color: Some("#00FFFF".into()),
-            cursor_label: None,
-            cursor_size: Some(16.0),
-            cursor_opacity: Some(0.85),
+            theme_id: cursor_overlay::DEFAULT_THEME_ID.into(),
+            reduced_motion: cursor_overlay::ReducedMotion::Auto,
             enabled: true,
         }
     }
@@ -64,7 +55,9 @@ impl CursorRegistry {
             position: None,
         };
         map.insert("default".into(), default);
-        Self { inner: Mutex::new(map) }
+        Self {
+            inner: Mutex::new(map),
+        }
     }
 
     pub fn get_or_create(&self, cursor_id: &str) -> CursorState {
@@ -80,15 +73,27 @@ impl CursorRegistry {
         // they pass through unchanged. Return the live entry if one survives,
         // else a transient default so callers get a sane value without a write.
         if cua_driver_core::session::is_session_ended(cursor_id) {
-            return inner.get(cursor_id).cloned().unwrap_or_else(|| CursorState {
-                config: CursorConfig { cursor_id: cursor_id.to_owned(), ..Default::default() },
-                position: None,
-            });
+            return inner
+                .get(cursor_id)
+                .cloned()
+                .unwrap_or_else(|| CursorState {
+                    config: CursorConfig {
+                        cursor_id: cursor_id.to_owned(),
+                        ..Default::default()
+                    },
+                    position: None,
+                });
         }
-        inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorState {
-            config: CursorConfig { cursor_id: cursor_id.to_owned(), ..Default::default() },
-            position: None,
-        }).clone()
+        inner
+            .entry(cursor_id.to_owned())
+            .or_insert_with(|| CursorState {
+                config: CursorConfig {
+                    cursor_id: cursor_id.to_owned(),
+                    ..Default::default()
+                },
+                position: None,
+            })
+            .clone()
     }
 
     /// Non-creating read of a single cursor's state. Returns None when the id
@@ -108,10 +113,12 @@ impl CursorRegistry {
             return;
         }
         let mut inner = self.inner.lock().unwrap();
-        let entry = inner.entry(config.cursor_id.clone()).or_insert_with(|| CursorState {
-            config: config.clone(),
-            position: None,
-        });
+        let entry = inner
+            .entry(config.cursor_id.clone())
+            .or_insert_with(|| CursorState {
+                config: config.clone(),
+                position: None,
+            });
         entry.config = config;
     }
 
@@ -125,10 +132,15 @@ impl CursorRegistry {
         let mut inner = self.inner.lock().unwrap();
         // Get-or-create so a per-session cursor that moves before any explicit
         // enable/style call still shows up in get_agent_cursor_state.
-        let state = inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorState {
-            config: CursorConfig { cursor_id: cursor_id.to_owned(), ..Default::default() },
-            position: None,
-        });
+        let state = inner
+            .entry(cursor_id.to_owned())
+            .or_insert_with(|| CursorState {
+                config: CursorConfig {
+                    cursor_id: cursor_id.to_owned(),
+                    ..Default::default()
+                },
+                position: None,
+            });
         state.position = Some(CursorPosition { x, y });
     }
 
@@ -140,10 +152,15 @@ impl CursorRegistry {
             return;
         }
         let mut inner = self.inner.lock().unwrap();
-        let state = inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorState {
-            config: CursorConfig { cursor_id: cursor_id.to_owned(), ..Default::default() },
-            position: None,
-        });
+        let state = inner
+            .entry(cursor_id.to_owned())
+            .or_insert_with(|| CursorState {
+                config: CursorConfig {
+                    cursor_id: cursor_id.to_owned(),
+                    ..Default::default()
+                },
+                position: None,
+            });
         state.config.enabled = enabled;
     }
 
@@ -190,12 +207,18 @@ mod tests {
 
         reg.set_enabled(sid, true);
         reg.update_position(sid, 10.0, 20.0);
-        reg.update_config(CursorConfig { cursor_id: sid.to_owned(), ..Default::default() });
+        reg.update_config(CursorConfig {
+            cursor_id: sid.to_owned(),
+            ..Default::default()
+        });
         let got = reg.get_or_create(sid);
 
         // get_or_create returns a transient default value, but must NOT persist.
         assert_eq!(got.config.cursor_id, sid);
-        assert!(reg.get(sid).is_none(), "no entry may be created for an ended session");
+        assert!(
+            reg.get(sid).is_none(),
+            "no entry may be created for an ended session"
+        );
         assert!(
             !reg.all_states().iter().any(|s| s.config.cursor_id == sid),
             "ended session cursor must never appear in the registry"

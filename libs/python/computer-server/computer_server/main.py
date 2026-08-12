@@ -8,7 +8,7 @@ import os
 import platform
 import time
 import traceback
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import asynccontextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from typing import Any, Dict, List, Literal, Optional, Union, cast
 
@@ -96,13 +96,28 @@ if HAS_MCP:
     except Exception as e:
         logger.warning(f"Failed to create MCP server: {e}")
 
+
+@asynccontextmanager
+async def _application_lifespan(application: FastAPI):
+    """Run FastMCP's lifespan and release the shared driver runtime on exit."""
+
+    try:
+        if _mcp_http_app:
+            async with _mcp_http_app.lifespan(application):
+                yield
+        else:
+            yield
+    finally:
+        await HandlerFactory.close_handlers()
+
+
 # Configure application with WebSocket settings and MCP lifespan
 app = FastAPI(
     title="Computer API",
     description="API for the Computer project",
     version="0.1.0",
     websocket_max_size=WEBSOCKET_MAX_SIZE,
-    lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
+    lifespan=_application_lifespan,
     redirect_slashes=False,
 )
 
@@ -280,7 +295,7 @@ except Exception:
     file_handler,
     desktop_handler,
     window_handler,
-) = HandlerFactory.create_handlers()
+) = HandlerFactory.get_handlers()
 
 
 # Helper function for direction-based scrolling
@@ -392,6 +407,15 @@ handlers = {
 # so non-Android server instances don't fail at startup with AttributeError.
 if hasattr(automation_handler, "multitouch_gesture"):
     handlers["multitouch_gesture"] = automation_handler.multitouch_gesture
+
+# Whole-desktop state belongs to the Cua Driver backend. Keep the legacy
+# command map stable for native/VNC handlers that do not implement it.
+if hasattr(automation_handler, "get_desktop_state"):
+    handlers["get_desktop_state"] = automation_handler.get_desktop_state
+if hasattr(automation_handler, "get_capture_scope_state"):
+    handlers["get_capture_scope_state"] = automation_handler.get_capture_scope_state
+if hasattr(automation_handler, "escalate_capture_scope"):
+    handlers["escalate_capture_scope"] = automation_handler.escalate_capture_scope
 
 
 class AuthenticationManager:

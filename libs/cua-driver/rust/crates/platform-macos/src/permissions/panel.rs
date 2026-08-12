@@ -135,8 +135,7 @@ pub fn panel_enabled() -> bool {
 /// Safety / threading: panics if invoked off the main thread. Callers
 /// should check [`panel_enabled`] first to avoid the panic.
 pub fn show_modal(opts: PanelOpts) -> PanelOutcome {
-    let _mtm = MainThreadMarker::new()
-        .expect("show_modal must be called from the main thread");
+    let _mtm = MainThreadMarker::new().expect("show_modal must be called from the main thread");
     unsafe { show_modal_unsafe(&opts) }
 }
 
@@ -170,8 +169,7 @@ pub fn pump_run_loop_briefly(seconds: f64) {
         return;
     }
     unsafe {
-        let run_loop: *mut AnyObject =
-            msg_send![class!(NSRunLoop), currentRunLoop];
+        let run_loop: *mut AnyObject = msg_send![class!(NSRunLoop), currentRunLoop];
         if run_loop.is_null() {
             std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
             return;
@@ -180,8 +178,7 @@ pub fn pump_run_loop_briefly(seconds: f64) {
         // deadline. `[NSRunLoop runMode:beforeDate:]` blocks up to
         // that deadline while dispatching pending input sources +
         // timers — including TCC notification taps.
-        let date: *mut AnyObject =
-            msg_send![class!(NSDate), dateWithTimeIntervalSinceNow: seconds];
+        let date: *mut AnyObject = msg_send![class!(NSDate), dateWithTimeIntervalSinceNow: seconds];
         if date.is_null() {
             std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
             return;
@@ -308,8 +305,7 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     );
     let _: () = msg_send![content_view, addSubview: subheading];
     // Subheading is secondary text — apply secondaryLabelColor.
-    let secondary_color: *mut AnyObject =
-        msg_send![class!(NSColor), secondaryLabelColor];
+    let secondary_color: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
     let _: () = msg_send![subheading, setTextColor: secondary_color];
 
     y -= 16.0; // gap before first row
@@ -318,7 +314,10 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     let ax_row = build_row(
         MissingPermission::Accessibility,
         opts.initial_status.accessibility,
-        NSPoint { x: PAD, y: y - ROW_H },
+        NSPoint {
+            x: PAD,
+            y: y - ROW_H,
+        },
         NSSize {
             width: WIN_W - 2.0 * PAD,
             height: ROW_H,
@@ -330,7 +329,10 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     let sr_row = build_row(
         MissingPermission::ScreenRecording,
         opts.initial_status.screen_recording,
-        NSPoint { x: PAD, y: y - ROW_H },
+        NSPoint {
+            x: PAD,
+            y: y - ROW_H,
+        },
         NSSize {
             width: WIN_W - 2.0 * PAD,
             height: ROW_H,
@@ -340,7 +342,13 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     y -= ROW_H + 8.0;
 
     // ---- Ready strip (initially hidden; shown by poll on all-green) ----
-    let ready_strip = build_ready_strip(NSPoint { x: PAD, y: y - READY_STRIP_H }, WIN_W - 2.0 * PAD);
+    let ready_strip = build_ready_strip(
+        NSPoint {
+            x: PAD,
+            y: y - READY_STRIP_H,
+        },
+        WIN_W - 2.0 * PAD,
+    );
     let _: () = msg_send![content_view, addSubview: ready_strip];
     let initially_all_green =
         opts.initial_status.accessibility && opts.initial_status.screen_recording;
@@ -502,7 +510,9 @@ unsafe fn poll_tick_inner() {
     let mut should_stop = false;
     HANDLES.with(|cell| {
         let mut guard = cell.borrow_mut();
-        let Some(handles) = guard.as_mut() else { return };
+        let Some(handles) = guard.as_mut() else {
+            return;
+        };
         if status == handles.last_status {
             // No change — skip the redraw. Avoids needlessly thrashing
             // the layout engine every second on a steady-state panel.
@@ -789,10 +799,7 @@ fn panel_target_class() -> &'static objc2::runtime::AnyClass {
                 objc2::sel!(openSettings:),
                 on_open_settings as extern "C" fn(_, _, _),
             );
-            builder.add_method(
-                objc2::sel!(dismiss:),
-                on_dismiss as extern "C" fn(_, _, _),
-            );
+            builder.add_method(objc2::sel!(dismiss:), on_dismiss as extern "C" fn(_, _, _));
             builder.add_method(
                 objc2::sel!(pollTick:),
                 on_poll_tick as extern "C" fn(_, _, _),

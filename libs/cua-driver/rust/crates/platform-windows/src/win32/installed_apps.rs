@@ -7,14 +7,18 @@
 //!    `IShellLinkW::GetPath`, and emits one entry per `.exe` target.
 //!
 //! 2. **UWP / packaged apps**: queries WinRT
-//!    `PackageManager::FindPackagesWithPackageTypes(Main)` for every
-//!    `Main` package installed in the current context. Builds the
+//!    `PackageManager::FindPackagesByUserSecurityIdWithPackageTypes("", Main)` for
+//!    every `Main` package installed for the current user. Builds the
 //!    `shell:appsFolder\{PackageFamilyName}!{AppId}` launch token so
 //!    callers can hand it to `launch_app`; `{AppId}` falls back to `App`
 //!    when the package manifest does not surface a specific
 //!    Application.Id.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::System::Com::{
@@ -237,7 +241,158 @@ fn decode_wstr(buf: &[u16]) -> String {
 
 // ── UWP / packaged-app enumeration via WinRT PackageManager ──────────────────
 
+const UWP_SCAN_TIMEOUT: Duration = Duration::from_secs(4);
+const UWP_SCAN_RECOVERY_COOLDOWN: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UwpScanDeadlineError {
+    Timeout,
+    Busy,
+    Unavailable,
+}
+
+/// Process-wide bound for the optional WinRT package scan.
+///
+/// PackageManager calls cannot be safely cancelled after they enter WinRT. A
+/// timed-out worker therefore retains this gate until it actually returns;
+/// retries fail fast instead of accumulating one blocked thread per
+/// `list_apps` call. Once a late worker returns, a short cooldown prevents a
+/// hot retry loop against a broken package repository or token context.
+struct UwpScanSingleFlight {
+    in_flight: AtomicBool,
+    cooldown_until_ms: AtomicU64,
+    cooldown_ms: u64,
+}
+
+impl UwpScanSingleFlight {
+    const fn new(cooldown_ms: u64) -> Self {
+        Self {
+            in_flight: AtomicBool::new(false),
+            cooldown_until_ms: AtomicU64::new(0),
+            cooldown_ms,
+        }
+    }
+
+    fn run<T, F>(self: &Arc<Self>, timeout: Duration, f: F) -> Result<T, UwpScanDeadlineError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let now = uwp_scan_now_ms();
+        if now < self.cooldown_until_ms.load(Ordering::Acquire)
+            || self
+                .in_flight
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return Err(UwpScanDeadlineError::Busy);
+        }
+
+        let (tx, rx) = mpsc::channel();
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let worker_timed_out = Arc::clone(&timed_out);
+        let worker_gate = Arc::clone(self);
+        let spawn = thread::Builder::new()
+            .name("cua-uwp-package-scan".to_owned())
+            .spawn(move || {
+                let _guard = UwpScanInFlightGuard {
+                    gate: worker_gate,
+                    timed_out: worker_timed_out,
+                };
+                let _ = tx.send(f());
+            });
+
+        if let Err(error) = spawn {
+            self.in_flight.store(false, Ordering::Release);
+            tracing::warn!(
+                target: "installed_apps",
+                "scan_uwp_packages: failed to start bounded WinRT worker: {error}"
+            );
+            return Err(UwpScanDeadlineError::Unavailable);
+        }
+
+        match rx.recv_timeout(timeout) {
+            Ok(result) => Ok(result),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                timed_out.store(true, Ordering::Release);
+                // Arm the cooldown here as well as in the worker guard. The
+                // worker can return in the narrow interval between
+                // `recv_timeout` expiring and observing `timed_out`; recording
+                // it on the caller side ensures that race cannot immediately
+                // launch another package query.
+                self.cooldown_until_ms.store(
+                    uwp_scan_now_ms().saturating_add(self.cooldown_ms),
+                    Ordering::Release,
+                );
+                tracing::warn!(
+                    target: "installed_apps",
+                    "scan_uwp_packages: current-user WinRT query exceeded {}ms; returning Start Menu apps without UWP results. No additional package worker will start until this query returns",
+                    timeout.as_millis()
+                );
+                Err(UwpScanDeadlineError::Timeout)
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                tracing::warn!(
+                    target: "installed_apps",
+                    "scan_uwp_packages: bounded WinRT worker exited without a result"
+                );
+                Err(UwpScanDeadlineError::Unavailable)
+            }
+        }
+    }
+}
+
+struct UwpScanInFlightGuard {
+    gate: Arc<UwpScanSingleFlight>,
+    timed_out: Arc<AtomicBool>,
+}
+
+impl Drop for UwpScanInFlightGuard {
+    fn drop(&mut self) {
+        if self.timed_out.load(Ordering::Acquire) {
+            self.gate.cooldown_until_ms.store(
+                uwp_scan_now_ms().saturating_add(self.gate.cooldown_ms),
+                Ordering::Release,
+            );
+            tracing::warn!(
+                target: "installed_apps",
+                "scan_uwp_packages: timed-out WinRT query returned; cooling down for {}ms before retry",
+                self.gate.cooldown_ms
+            );
+        }
+        self.gate.in_flight.store(false, Ordering::Release);
+    }
+}
+
+fn uwp_scan_single_flight() -> &'static Arc<UwpScanSingleFlight> {
+    static GATE: OnceLock<Arc<UwpScanSingleFlight>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        Arc::new(UwpScanSingleFlight::new(
+            UWP_SCAN_RECOVERY_COOLDOWN.as_millis() as u64,
+        ))
+    })
+}
+
+fn uwp_scan_now_ms() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
 fn scan_uwp_packages() -> Vec<InstalledApp> {
+    match uwp_scan_single_flight().run(UWP_SCAN_TIMEOUT, scan_uwp_packages_unbounded) {
+        Ok(packages) => packages,
+        Err(UwpScanDeadlineError::Busy) => {
+            tracing::debug!(
+                target: "installed_apps",
+                "scan_uwp_packages: skipped while a prior WinRT query is in flight or cooling down"
+            );
+            Vec::new()
+        }
+        Err(UwpScanDeadlineError::Timeout | UwpScanDeadlineError::Unavailable) => Vec::new(),
+    }
+}
+
+fn scan_uwp_packages_unbounded() -> Vec<InstalledApp> {
     // Wrapped in catch_unwind because the WinRT activation path can panic on
     // very old Windows builds (pre-1809) that lack PackageManager altogether.
     let result = std::panic::catch_unwind(|| -> windows::core::Result<Vec<InstalledApp>> {
@@ -245,7 +400,14 @@ fn scan_uwp_packages() -> Vec<InstalledApp> {
         use windows::Management::Deployment::{PackageManager, PackageTypes};
 
         let pm = PackageManager::new()?;
-        let packages = pm.FindPackagesWithPackageTypes(PackageTypes::Main)?;
+        // The no-user overload queries the machine package repository and can
+        // require privileges a normal per-user daemon does not have. Microsoft
+        // documents an empty SID here as the current user, which matches both
+        // list_apps semantics and Get-AppxPackage's default scope.
+        let packages = pm.FindPackagesByUserSecurityIdWithPackageTypes(
+            &windows::core::HSTRING::new(),
+            PackageTypes::Main,
+        )?;
 
         let mut out = Vec::new();
         for pkg in packages {
@@ -311,7 +473,7 @@ fn scan_uwp_packages() -> Vec<InstalledApp> {
             // packaging stack reliably has Microsoft.WindowsCalculator and
             // similar OS-bundled UWP apps registered for every user that's
             // logged in interactively at least once, so a zero result usually
-            // means PackageManager.FindPackagesWithPackageTypes failed
+            // means PackageManager.FindPackagesByUserSecurityIdWithPackageTypes failed
             // silently (rare COM hiccup, locale issue, etc.) rather than a
             // truly empty package set. Surfacing this in tracing lets users
             // and triage agents (#1636) diagnose without an extra Win32 round-
@@ -319,7 +481,7 @@ fn scan_uwp_packages() -> Vec<InstalledApp> {
             if v.is_empty() {
                 tracing::warn!(
                     target: "installed_apps",
-                    "scan_uwp_packages: WinRT PackageManager.FindPackagesWithPackageTypes(Main) \
+                    "scan_uwp_packages: WinRT PackageManager.FindPackagesByUserSecurityIdWithPackageTypes(current user, Main) \
                      returned 0 UWP packages. Expected at least the OS-bundled apps \
                      (Calculator, modern Settings, Photos, ...). See #1636 — usually means \
                      either a COM activation hiccup or a per-user package context the daemon \
@@ -491,6 +653,64 @@ fn unix_secs_to_rfc3339(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn wedged_uwp_scan_has_bounded_worker_growth_and_recovers() {
+        let gate = Arc::new(UwpScanSingleFlight::new(40));
+        let starts = Arc::new(AtomicUsize::new(0));
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        let starts_for_worker = Arc::clone(&starts);
+        let active_for_worker = Arc::clone(&active);
+        let max_active_for_worker = Arc::clone(&max_active);
+        let first = gate.run(Duration::from_millis(20), move || {
+            starts_for_worker.fetch_add(1, Ordering::SeqCst);
+            let now_active = active_for_worker.fetch_add(1, Ordering::SeqCst) + 1;
+            max_active_for_worker.fetch_max(now_active, Ordering::SeqCst);
+            started_tx
+                .send(())
+                .expect("test should observe worker start");
+            release_rx.recv().expect("test should release worker");
+            active_for_worker.fetch_sub(1, Ordering::SeqCst);
+            7
+        });
+
+        assert_eq!(first, Err(UwpScanDeadlineError::Timeout));
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker should have started");
+
+        for _ in 0..100 {
+            assert_eq!(
+                gate.run(Duration::from_millis(20), || 99),
+                Err(UwpScanDeadlineError::Busy)
+            );
+        }
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        assert_eq!(max_active.load(Ordering::SeqCst), 1);
+
+        release_tx
+            .send(())
+            .expect("worker should still be listening");
+        let wait_deadline = Instant::now() + Duration::from_secs(1);
+        while gate.in_flight.load(Ordering::Acquire) && Instant::now() < wait_deadline {
+            thread::yield_now();
+        }
+        assert!(!gate.in_flight.load(Ordering::Acquire));
+        assert_eq!(
+            gate.run(Duration::from_millis(20), || 99),
+            Err(UwpScanDeadlineError::Busy),
+            "a late return should enter cooldown"
+        );
+
+        thread::sleep(Duration::from_millis(50));
+        assert_eq!(gate.run(Duration::from_secs(1), || 42), Ok(42));
+        assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn opaque_system_family_matches_guid_prefix() {

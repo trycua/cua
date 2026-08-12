@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Verify that checked-in Driver and Lume release versions agree."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import re
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 and earlier
+    import tomli as tomllib
+from typing import Sequence
+
+
+class VersionError(RuntimeError):
+    """Checked-in version sources do not describe one release."""
+
+
+def read_match(path: Path, pattern: str) -> str:
+    match = re.search(pattern, path.read_text(), re.MULTILINE)
+    if not match:
+        raise VersionError(f"could not read a release version from {path}")
+    return match.group(1)
+
+
+def require_equal(product: str, expected: str, values: dict[str, str]) -> None:
+    mismatches = {name: value for name, value in values.items() if value != expected}
+    if mismatches:
+        details = ", ".join(f"{name}={value}" for name, value in sorted(mismatches.items()))
+        raise VersionError(f"{product} expects {expected}; mismatched sources: {details}")
+
+
+def stable_version_tuple(version: str) -> tuple[int, int, int]:
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise VersionError(f"expected an exact stable x.y.z version, got {version!r}")
+    major, minor, patch = version.split(".")
+    return int(major), int(minor), int(patch)
+
+
+def driver_installer_versions(root: Path) -> dict[str, str]:
+    base = root / "libs/cua-driver"
+    return {
+        ".github/release-state/cua-driver-rs-published-version": (
+            root / ".github/release-state/cua-driver-rs-published-version"
+        ).read_text().strip(),
+        "scripts/_install-rust.sh": read_match(
+            base / "scripts/_install-rust.sh", r'^CUA_DRIVER_RS_BAKED_VERSION="([^"]+)"'
+        ),
+        "scripts/install.ps1": read_match(
+            base / "scripts/install.ps1",
+            r'^\$Script:CuaDriverRsBakedVersion\s*=\s*"([^"]+)"',
+        ),
+    }
+
+
+def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
+    base = root / "libs/cua-driver"
+    docs = root / "docs/content/docs/reference/cua-driver"
+    expected = (base / "rust/VERSION").read_text().strip()
+    cargo = tomllib.loads((base / "rust/Cargo.toml").read_text())
+    python_project = tomllib.loads((base / "python/pyproject.toml").read_text())
+    typescript_package = json.loads(
+        (base / "typescript/package.json").read_text()
+    )
+    typescript_lock = json.loads(
+        (base / "typescript/package-lock.json").read_text()
+    )
+    values = {
+        "rust/Cargo.toml": str(cargo["workspace"]["package"]["version"]),
+        "python/pyproject.toml": str(python_project["project"]["version"]),
+        "python/src/cua_driver/__init__.py": read_match(
+            base / "python/src/cua_driver/__init__.py", r'^__version__\s*=\s*"([^"]+)"'
+        ),
+        "typescript/package.json": str(typescript_package["version"]),
+        "typescript/package-lock.json": str(typescript_lock["version"]),
+        "typescript/package-lock.json:root": str(
+            typescript_lock["packages"][""]["version"]
+        ),
+        "rust/Skills/cua-driver/SKILL.md": read_match(
+            base / "rust/Skills/cua-driver/SKILL.md",
+            r"^version:\s*([^\s#]+)",
+        ),
+        "docs/cli-reference.mdx:metadata": read_match(
+            docs / "cli-reference.mdx", r"^  Version: (\S+)$"
+        ),
+        "docs/cli-reference.mdx:body": read_match(
+            docs / "cli-reference.mdx", r"Documented against Cua Driver \*\*(\S+)\*\*\."
+        ),
+        "docs/mcp-tools.mdx:metadata": read_match(
+            docs / "mcp-tools.mdx", r"^  Version: (\S+)$"
+        ),
+    }
+
+    members = [base / "rust" / member for member in cargo["workspace"]["members"]]
+    local_names = {
+        tomllib.loads((member / "Cargo.toml").read_text())["package"]["name"] for member in members
+    }
+    lock = tomllib.loads((base / "rust/Cargo.lock").read_text())
+    for package in lock["package"]:
+        if package["name"] in local_names:
+            values[f"rust/Cargo.lock:{package['name']}"] = str(package["version"])
+    missing = local_names - {
+        key.split(":", 1)[1] for key in values if key.startswith("rust/Cargo.lock:")
+    }
+    if missing:
+        raise VersionError(f"Cargo.lock is missing workspace packages: {sorted(missing)}")
+    return expected, values
+
+
+def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
+    base = root / "libs/lume"
+    docs = root / "docs/content/docs/reference/lume"
+    expected = (base / "VERSION").read_text().strip()
+    return expected, {
+        "src/Main.swift": read_match(
+            base / "src/Main.swift", r'static let current: String = "([^"]+)"'
+        ),
+        "scripts/install.sh": read_match(
+            base / "scripts/install.sh", r'^LUME_BAKED_VERSION="([^"]+)"'
+        ),
+        "docs/cli-reference.mdx:metadata": read_match(
+            docs / "cli-reference.mdx", r"^  Version: (\S+)$"
+        ),
+        "docs/cli-reference.mdx:body": read_match(
+            docs / "cli-reference.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
+        ),
+        "docs/http-api.mdx:metadata": read_match(docs / "http-api.mdx", r"^  Version: (\S+)$"),
+        "docs/http-api.mdx:body": read_match(
+            docs / "http-api.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
+        ),
+    }
+
+
+def validate(root: Path, product: str) -> None:
+    manifest = json.loads((root / ".release-please-manifest.json").read_text())
+    if product in {"all", "driver"}:
+        expected, values = driver_versions(root)
+        values[".release-please-manifest.json"] = str(manifest["libs/cua-driver"])
+        require_equal("Cua Driver", expected, values)
+        installers = driver_installer_versions(root)
+        installer_version = next(iter(installers.values()))
+        require_equal("Cua Driver baked installers", installer_version, installers)
+        if stable_version_tuple(installer_version) > stable_version_tuple(expected):
+            raise VersionError(
+                f"Cua Driver baked installers advertise {installer_version}, "
+                f"ahead of source release {expected}"
+            )
+    if product in {"all", "lume"}:
+        expected, values = lume_versions(root)
+        values[".release-please-manifest.json"] = str(manifest["libs/lume"])
+        require_equal("Lume", expected, values)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
+    parser.add_argument("--product", choices=("all", "driver", "lume"), default="all")
+    args = parser.parse_args(argv)
+    try:
+        validate(args.repo_root.resolve(), args.product)
+    except (KeyError, OSError, VersionError, ValueError) as error:
+        print(f"release version error: {error}", file=sys.stderr)
+        return 1
+    print(f"release versions agree for {args.product}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

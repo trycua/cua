@@ -91,11 +91,9 @@ class TestMcpServerSmoke:
 
     @staticmethod
     def _load_mcp_server_module():
-        # Import the module file directly. Importing through
-        # `computer_server.mcp_server` first executes computer_server/__init__.py,
-        # which imports platform input backends and fails on headless Linux CI
-        # with no DISPLAY. The MCP module itself has no runtime dependency on
-        # those input backends until a tool is actually invoked.
+        # Import the module file directly so this smoke remains isolated from
+        # the package's public import surface. The MCP module itself has no
+        # runtime dependency on platform input backends until a tool is invoked.
         module_path = Path(__file__).parents[1] / "computer_server" / "mcp_server.py"
         spec = importlib.util.spec_from_file_location("_computer_server_mcp_smoke", module_path)
         assert spec is not None
@@ -112,6 +110,19 @@ class TestMcpServerSmoke:
 
         assert mcp_server is not None
         assert mcp_app is not None
+
+    @pytest.mark.asyncio
+    async def test_cua_driver_capture_scope_tools_are_registered(self):
+        mcp_module = self._load_mcp_server_module()
+
+        tools = await mcp_module.create_mcp_server().list_tools()
+        names = {tool.name for tool in tools}
+
+        assert {
+            "computer_get_desktop_state",
+            "computer_get_capture_scope_state",
+            "computer_escalate_capture_scope",
+        } <= names
 
     def test_mcp_http_app_accepts_initialize_post(self):
         from starlette.testclient import TestClient

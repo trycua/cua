@@ -1,0 +1,10 @@
+{
+  "packages": [
+    {
+      "name": "cyclops-sdk",
+      "manifest_path": "/workspace/other/Cargo.toml",
+      "id": "wrong 0.1.0"
+    }
+  ],
+  "workspace_members": ["wrong 0.1.0"]
+}

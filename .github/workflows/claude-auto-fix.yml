@@ -252,7 +252,7 @@ jobs:
 
           TYPESCRIPT TOOLS:
           - prettier: code formatter
-          - TypeScript: type checking via node ./scripts/typescript-typecheck.js
+          - TypeScript: type checking via pnpm -C libs/typescript typecheck
           - pnpm: package manager
 
           TASK:
@@ -269,10 +269,10 @@ jobs:
             - Formatting: uv run black .
             - Linting: uv run ruff check . --fix
           For TypeScript lint failures:
-            - Formatting: pnpm prettier --write "**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"
+            - Formatting: pnpm -C libs/typescript format
           After auto-fixing, verify the fix passes:
             - Python: uv run isort --check-only . && uv run black --check . && uv run ruff check .
-            - TypeScript: pnpm prettier --check "**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"
+            - TypeScript: pnpm -C libs/typescript format:check
 
           FIXING TEST FAILURES:
           For Python test failures:
@@ -280,7 +280,7 @@ jobs:
             - The test environment uses CUA_TELEMETRY_ENABLED=false
             - Tests use pytest-asyncio with asyncio_mode=auto
           For TypeScript build/type failures:
-            - Check types: node ./scripts/typescript-typecheck.js
+            - Check types: pnpm -C libs/typescript typecheck
             - Build: cd libs/typescript && pnpm install && pnpm build
 
           IMPORTANT:

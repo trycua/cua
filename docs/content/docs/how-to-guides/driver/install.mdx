@@ -8,13 +8,17 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Driver supports macOS, Windows, and Linux. Use the same **one-line installer** on each platform; the script selects the right install path for the host and *does not require administrator access*.
 
+<Callout type="info">
+  Cua Driver sends content-free product telemetry by default. The installer shows this notice before the first event. Run `cua-driver telemetry disable` at any time to stop telemetry; the preference persists across upgrades. See [Telemetry and privacy](/reference/cua-driver/telemetry) for the exact event schema and identity controls.
+</Callout>
+
 <Tabs items={['macOS', 'Windows', 'Linux']}>
   <Tab value="macOS">
 
 **Requirements:** macOS 14 (Sonoma) or later on Apple Silicon or Intel.
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
 The installer places `CuaDriver.app` in `/Applications` and creates the `~/.local/bin/cua-driver` symlink. The app bundle uses the `com.trycua.driver` signing identity, so macOS TCC permissions for Accessibility and Screen Recording remain attached across upgrades.
@@ -27,29 +31,44 @@ If `~/.local/bin` is missing from your PATH, the installer detects your shell (`
 **Requirements:** Windows 10/11 or Windows Server with an interactive desktop session and PowerShell.
 
 ```powershell
-irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+irm https://cua.ai/driver/install.ps1 | iex
+cua-driver autostart kick
 ```
 
-The installer downloads the release under `%USERPROFILE%\.cua-driver\packages\releases\` and exposes `cua-driver.exe` from `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`. It runs without administrator privileges, detects whether the host is x64 or arm64, and appends the install directory to your User-scope `Path` so new PowerShell windows can resolve `cua-driver.exe`.
+The installer downloads the release under `%USERPROFILE%\.cua-driver\packages\releases\` and exposes `cua-driver.exe` from `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`. It runs without administrator privileges, detects whether the host is x64 or arm64, and appends the install directory to your User-scope `Path` so new PowerShell windows can resolve `cua-driver.exe`. It also attempts to register the `cua-driver-serve` autostart task; `kick` starts that task immediately, so you do not need to sign out or restart Windows. Registration needs an interactive session, so on a non-interactive or SSH install it is skipped — set it up later with [`cua-driver autostart enable`](/how-to-guides/driver/keep-running).
 
 To skip the PATH change, pass the no-update flag:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1))) -NoPathUpdate
+& ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoPathUpdate
 ```
 
   </Tab>
   <Tab value="Linux">
 
-**Requirements:** an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2 for accessibility-tree tools.
+**Requirements:** an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2 for accessibility-tree tools. The window-driving tools (`click`, `type_text`, `get_window_state`) need a live display server and a running app, so a headless server has no windows to drive until you start a desktop session (for example `xfce4` under `Xvfb`).
+
+On a minimal or server image, install the runtime libraries the binary links against first. Unlike the installer itself, this step needs `sudo`; without `libXi` the binary fails to launch with `libXi.so.6: cannot open shared object file`, before `doctor` can even run:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+sudo apt install libxi6 at-spi2-core
+```
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
 The installer downloads the binary to `~/.cua-driver/packages/releases/`, points `~/.cua-driver/packages/current` at that release, and creates the `~/.local/bin/cua-driver` symlink. It does not use sudo.
 
-X11 is fully supported. Native Wayland input and capture remain opt-in with `CUA_DRIVER_RS_ENABLE_WAYLAND=1` and are still maturing; Wayland sessions use XWayland by default. After installation, run `cua-driver doctor` to check distro-specific requirements such as the AT-SPI bus and ffmpeg.
+X11 is fully supported. Native Wayland remains opt-in with
+`CUA_DRIVER_RS_ENABLE_WAYLAND=1` and has compositor-specific limits. Sway is
+supported with limits, GNOME requires the maintained WinRects helper, and KDE
+remains experimental. Without the opt-in, Wayland sessions use XWayland routes
+where the target exposes a real X11 window. See
+[Platform support](/reference/cua-driver/platform-support#linux-window-systems)
+for the exact accepted surfaces. After installation, run `cua-driver doctor`
+to check distro-specific requirements such as the AT-SPI bus and display
+server.
 
   </Tab>
 </Tabs>
@@ -58,20 +77,56 @@ X11 is fully supported. Native Wayland input and capture remain opt-in with `CUA
 
 ```bash
 cua-driver --version
-# cua-driver 0.5.x
+# cua-driver 0.13.0
 ```
 
 For a full environment and install report:
 
 ```bash
 cua-driver doctor
-# [ok  ] binary: cua-driver 0.5.x (aarch64-macos)
+# [ok  ] binary: cua-driver 0.13.0 (aarch64-macos)
 # [ok  ] install dir: /Users/you/.local/bin/cua-driver
 # [ok  ] home dir: /Users/you/.cua-driver (3 release dirs cached)
 # ...
 ```
 
 `doctor` checks the version, install layout, and telemetry setup on every platform. It also runs platform probes for TCC on macOS, the interactive session on Windows, and AT-SPI plus the display server on Linux.
+
+## Choose a permission mode
+
+Cua Driver authorizes every agent action inside the native runtime, and the mode is fixed when that runtime starts. An agent cannot change it, and neither can you change it on a running daemon — you restart the daemon with different flags. Decide which mode you want before starting the daemon below.
+
+| Mode | Use it when |
+| ---- | ----------- |
+| `standard` | Normal local CLI and MCP use. Observation, input, isolated browser use, recording, and validated file transfer run without prompts. Residual boundaries, such as attaching to an existing logged-in Chromium profile, still need an explicit grant. |
+| `bounded` | An unattended agent, gateway, or embedded application must stay inside a reviewed manifest of tools, applications, browser origins, and directories. Anything outside the manifest is denied. |
+| `unrestricted` | The machine is disposable or fully trusted and you accept every capability the built-in, managed, and user policy ceilings still allow. |
+
+`standard` is the default and is what the rest of this guide assumes, so plain `cua-driver serve` needs no flags. For `bounded`, pass a manifest plus the review acknowledgement:
+
+```bash
+cua-driver serve \
+  --permission-mode bounded \
+  --session-policy ~/cua-session.yaml \
+  --approve-session-policy
+```
+
+For `unrestricted`, pass the dangerous acknowledgement. `--permission-mode unrestricted` on its own fails closed:
+
+```bash
+cua-driver serve --dangerously-bypass-approvals
+```
+
+On macOS, put those flags after `serve` in the app-bundle launch so TCC attribution stays with `CuaDriver.app`. The manifest path must resolve on its own: your shell expands `~` before `open` sees it, but a relative path fails, because an app started by `open` does not inherit the shell's working directory.
+
+```bash
+open -n -g -a CuaDriver --args serve \
+  --permission-mode bounded \
+  --session-policy ~/cua-session.yaml \
+  --approve-session-policy
+```
+
+See [Permission modes](/reference/cua-driver/permission-modes) for exactly what each mode allows, and [Write a bounded manifest](/how-to-guides/driver/write-a-bounded-manifest) for a tested manifest. To keep a non-default mode across reboots, its flags belong in the autostart entry — see [Pin a permission mode](/how-to-guides/driver/keep-running#pin-a-permission-mode).
 
 ## Grant TCC permissions (macOS only)
 
@@ -87,7 +142,34 @@ Then grant both permissions:
 cua-driver permissions grant
 ```
 
-That command launches CuaDriver through LaunchServices and waits while you approve Accessibility and Screen Recording in the macOS dialogs.
+That command launches CuaDriver through LaunchServices so macOS attributes the prompts to the app, then waits.
+
+macOS prompts once for Accessibility. Note that it offers **Open System Settings**, not **Allow** — the dialog alone grants nothing:
+
+![The macOS Accessibility Access prompt: “CuaDriver” would like to control this computer using accessibility features, with Open System Settings and Deny buttons](https://github.com/user-attachments/assets/b7a5a0c0-f297-4249-81f9-ca42c6b6f8ba)
+
+Clicking **Open System Settings** adds CuaDriver to the Accessibility list, still switched off. Toggle it on:
+
+![CuaDriver listed under Accessibility in System Settings with its toggle switched off](https://github.com/user-attachments/assets/d149fe5a-28cb-460c-8868-4eda80d540a4)
+
+Screen Recording prompts separately, in the same shape:
+
+![The macOS Screen Recording prompt: “CuaDriver” would like to record this computer’s screen and audio, with Open System Settings and Deny buttons](https://github.com/user-attachments/assets/69efc964-a375-495e-8a27-400c9dd08e17)
+
+Toggle CuaDriver on under **Screen & System Audio Recording** too:
+
+![CuaDriver listed under Screen & System Audio Recording in System Settings with its toggle switched off](https://github.com/user-attachments/assets/469308b5-84d7-4fd6-a580-e62925120337)
+
+The prompt only registers the app; the toggle is what grants access. macOS may offer to quit and reopen CuaDriver when you flip one — accept, because a changed grant takes effect only after the responsible app fully relaunches. If the daemon does not come back, rerun `open -n -g -a CuaDriver --args serve`.
+
+macOS does not always raise both prompts in one pass. Confirm what landed with `cua-driver permissions status`, and if only one of the two appeared, run the pair again to prompt for the other:
+
+```bash
+open -n -g -a CuaDriver --args serve
+cua-driver permissions grant
+```
+
+If CuaDriver is missing from either list, add it with **+** and pick `/Applications/CuaDriver.app` — see [macOS permissions](/reference/cua-driver/macos-permissions) for recovering a stale registration.
 
 You can also trigger the prompts yourself:
 
@@ -98,7 +180,7 @@ cua-driver check_permissions
 macOS opens the Accessibility and Screen Recording prompts. Grant both permissions, then run the check again:
 
 ```bash
-cua-driver check_permissions
+cua-driver permissions status
 # ✅ Accessibility: granted.
 # ✅ Screen Recording: granted.
 ```
@@ -109,6 +191,8 @@ cua-driver check_permissions
 
 ## Next steps
 
+- [Permission modes](/reference/cua-driver/permission-modes): what standard allows, and how bounded and unrestricted differ.
+- [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill): add the cross-platform instructions from ClawHub or install them directly for another agent.
 - [Keep Cua Driver running](/how-to-guides/driver/keep-running): configure autostart so the daemon comes back after reboots.
 - [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent): register it with Claude Code, Cursor, Codex, and other clients.
 - [Update Cua Driver](/how-to-guides/driver/update): check for new releases and apply them.

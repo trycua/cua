@@ -1,33 +1,24 @@
 """HTTP API client for CUA cloud services."""
 
 import hashlib
-import os
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote
 
 import aiohttp
-from cua_cli.auth.store import require_api_key
+from cua_cli.auth.oidc import DEFAULT_RUN_API_BASE, get_access_token
 from cua_core.http import cua_version_headers
-
-DEFAULT_API_BASE = "https://api.cua.ai"
-
-
-def get_api_base() -> str:
-    """Get the API base URL."""
-    return os.environ.get("CUA_API_BASE", DEFAULT_API_BASE).rstrip("/")
 
 
 class CloudAPIClient:
-    """HTTP client for CUA cloud API."""
+    """HTTP client for authenticated run.cua.ai API requests."""
 
-    def __init__(self, api_key: Optional[str] = None, api_base: Optional[str] = None):
-        self.api_key = api_key or require_api_key()
-        self.api_base = api_base or get_api_base()
+    def __init__(self, api_base: str = DEFAULT_RUN_API_BASE):
+        self.api_base = api_base.rstrip("/")
 
-    def _headers(self) -> dict[str, str]:
+    async def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {await get_access_token()}",
             "Accept": "application/json",
             **cua_version_headers(),
         }
@@ -45,7 +36,7 @@ class CloudAPIClient:
             Tuple of (status_code, response_data)
         """
         url = f"{self.api_base}{path}"
-        headers = self._headers()
+        headers = await self._headers()
 
         if json is not None:
             headers["Content-Type"] = "application/json"

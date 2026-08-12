@@ -1,0 +1,40 @@
+{
+  "name": "cyclops-cs",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "sdk:browser": "./scripts/ensure-browser-sdk-binding.sh",
+    "dev": "npm run sdk:browser && vite",
+    "build": "npm run sdk:browser && npm run build:app",
+    "build:app": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "npm run sdk:browser && tsc -b --noEmit",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "test:e2e": "npm run sdk:browser && playwright test",
+    "test:e2e:ui": "npm run sdk:browser && playwright test --ui",
+    "test:sdk-models": "rm -rf target/sdk-model-tests && tsc e2e/sdk-models.unit.ts src/sdk/status.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --outDir target/sdk-model-tests --skipLibCheck && node target/sdk-model-tests/e2e/sdk-models.unit.js"
+  },
+  "dependencies": {
+    "@cloudscape-design/collection-hooks": "^1.0.93",
+    "@cloudscape-design/components": "^3.0.825",
+    "@cloudscape-design/global-styles": "^1.0.36",
+    "@novnc/novnc": "^1.7.0",
+    "@ubjs/core": "0.31.0-3",
+    "ansi-to-html": "^0.7.2",
+    "keycloak-js": "^25.0.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "@playwright/test": "^1.60.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

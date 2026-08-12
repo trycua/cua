@@ -1,0 +1,46 @@
+name: "CI: cua-cli GitHub WIF token"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "libs/python/cua-cli/**"
+      - ".github/workflows/ci-py-cli-wif-token.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      - name: Install cua-cli from the locked dependency set
+        working-directory: libs/python/cua-cli
+        run: uv sync --frozen
+      - name: Validate GitHub WIF token claims
+        working-directory: libs/python/cua-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          FLEETS_TOKEN="$(uv run cua wif-token github)"
+          export FLEETS_TOKEN
+          uv run python - <<'PY'
+          import base64
+          import json
+          import os
+
+          parts = os.environ["FLEETS_TOKEN"].split(".")
+          if len(parts) != 3:
+              raise SystemExit("GitHub returned a non-JWT token")
+          payload = parts[1] + "=" * (-len(parts[1]) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          if claims.get("iss") != "https://token.actions.githubusercontent.com":
+              raise SystemExit("unexpected issuer")
+          aud = claims.get("aud")
+          if aud != "fleets" and not (isinstance(aud, list) and "fleets" in aud):
+              raise SystemExit("unexpected audience")
+          PY
+          unset FLEETS_TOKEN

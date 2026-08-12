@@ -272,9 +272,12 @@ enum APIDocExtractor {
                 fields: [
                     APIFieldDoc(name: "cpu", type: "integer", required: false, description: "New number of CPU cores", defaultValue: nil),
                     APIFieldDoc(name: "memory", type: "string", required: false, description: "New memory size (e.g., 16GB)", defaultValue: nil),
-                    APIFieldDoc(name: "diskSize", type: "string", required: false, description: "New disk size (e.g., 100GB)", defaultValue: nil),
+                    APIFieldDoc(name: "diskSize", type: "string", required: false, description: "New total disk size (increase only)", defaultValue: nil),
                     APIFieldDoc(name: "display", type: "string", required: false, description: "New display resolution", defaultValue: nil),
-                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil)
+                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil),
+                    APIFieldDoc(name: "noBackup", type: "boolean", required: false, description: "Skip the macOS rollback backup", defaultValue: "false"),
+                    APIFieldDoc(name: "keepBackup", type: "boolean", required: false, description: "Keep rollback files after success", defaultValue: "false"),
+                    APIFieldDoc(name: "dryRun", type: "boolean", required: false, description: "Validate the resize plan without modifying the disk", defaultValue: "false")
                 ]
             ),
             responseBody: APIResponseDoc(

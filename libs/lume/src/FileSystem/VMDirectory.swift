@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // MARK: - VMDirectory
@@ -17,22 +18,29 @@ struct VMDirectory: Sendable {
         static let config = "config.json"
         static let sessions = "sessions.json"
         static let provisioning = ".provisioning"
+        static let resizeMarker = "resize.lock.json"
+        static let diskBackup = "disk.img.pre-resize"
+        static let configBackup = "config.json.pre-resize"
     }
-    
+
     // MARK: - Properties
-    
+
     let dir: Path
     let nvramPath: Path
     let diskPath: Path
     let configPath: Path
     let sessionsPath: Path
     let provisioningPath: Path
-    
+    let resizeMarkerPath: Path
+    let diskBackupPath: Path
+    let configBackupPath: Path
+    let resizeGuardPath: Path
+
     /// The name of the VM directory
     var name: String { dir.name }
-    
+
     // MARK: - Initialization
-    
+
     /// Creates a new VMDirectory instance
     /// - Parameters:
     ///   - dir: The base directory path for the VM
@@ -43,6 +51,12 @@ struct VMDirectory: Sendable {
         self.configPath = dir.file(FileNames.config)
         self.sessionsPath = dir.file(FileNames.sessions)
         self.provisioningPath = dir.file(FileNames.provisioning)
+        self.resizeMarkerPath = dir.file(FileNames.resizeMarker)
+        self.diskBackupPath = dir.file(FileNames.diskBackup)
+        self.configBackupPath = dir.file(FileNames.configBackup)
+        self.resizeGuardPath = Path(
+            dir.url.deletingLastPathComponent()
+                .appendingPathComponent(".\(dir.name).resize.guard", isDirectory: false))
     }
 }
 
@@ -81,22 +95,119 @@ extension VMDirectory {
 // MARK: - Disk Management
 
 extension VMDirectory {
-    /// Resizes the VM's disk to the specified size
+    /// Resizes the VM's disk to the specified size (grow-only).
     /// - Parameter size: The new size in bytes
-    /// - Throws: VMDirectoryError if the disk operation fails
+    /// - Throws: VMDirectoryError if the disk operation fails or would shrink
+    ///   the image (which silently truncates and corrupts the APFS tail).
     func setDisk(_ size: UInt64) throws {
-        do {
-            if !diskPath.exists() {
-                guard FileManager.default.createFile(atPath: diskPath.path, contents: nil) else {
-                    throw VMDirectoryError.fileCreationFailed(diskPath.path)
-                }
+        if !diskPath.exists() {
+            guard FileManager.default.createFile(atPath: diskPath.path, contents: nil) else {
+                throw VMDirectoryError.fileCreationFailed(diskPath.path)
             }
-            
-            let handle = try FileHandle(forWritingTo: diskPath.url)
-            defer { try? handle.close() }
-            
+        }
+
+        let currentSize =
+            ((try? FileManager.default.attributesOfItem(atPath: diskPath.path))?[.size]
+            as? NSNumber)?.uint64Value ?? 0
+        guard size >= currentSize else {
+            throw VMDirectoryError.diskOperationFailed(
+                "refusing to shrink disk from \(currentSize) to \(size) bytes")
+        }
+
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forWritingTo: diskPath.url)
+        } catch {
+            throw VMDirectoryError.diskOperationFailed(
+                "could not open \(diskPath.path): \(error.localizedDescription)")
+        }
+        defer { try? handle.close() }
+
+        do {
             try handle.truncate(atOffset: size)
         } catch {
+            throw VMDirectoryError.diskOperationFailed(
+                "truncate to \(size) bytes failed: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - Resize Transaction Marker
+
+extension VMDirectory {
+    func tryAcquireResizeGuard(exclusive: Bool) throws -> FileHandle? {
+        if !resizeGuardPath.exists() {
+            guard FileManager.default.createFile(atPath: resizeGuardPath.path, contents: Data()) else {
+                throw VMDirectoryError.fileCreationFailed(resizeGuardPath.path)
+            }
+        }
+        let handle = try FileHandle(forUpdating: resizeGuardPath.url)
+        let operation = exclusive ? (LOCK_EX | LOCK_NB) : (LOCK_SH | LOCK_NB)
+        guard flock(handle.fileDescriptor, operation) == 0 else {
+            try? handle.close()
+            return nil
+        }
+        return handle
+    }
+
+    /// Loads the resize transaction marker if a resize is in progress.
+    func loadResizeMarker() throws -> ResizeMarker? {
+        guard resizeMarkerPath.exists() else {
+            return nil
+        }
+        do {
+            let data = try Data(contentsOf: resizeMarkerPath.url)
+            let marker = try JSONDecoder().decode(ResizeMarker.self, from: data)
+            guard marker.version == ResizeMarker.currentVersion else {
+                throw DiskResizeError.invalidResizeMarker("unsupported version \(marker.version)")
+            }
+            return marker
+        } catch let error as DiskResizeError {
+            throw error
+        } catch {
+            throw DiskResizeError.invalidResizeMarker(error.localizedDescription)
+        }
+    }
+
+    /// True if a disk resize transaction is currently armed.
+    func hasResizeMarker() -> Bool {
+        resizeMarkerPath.exists()
+    }
+
+    /// Persists (and fsyncs) the resize transaction marker.
+    func saveResizeMarker(_ marker: ResizeMarker) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        let data = try encoder.encode(marker)
+        let temporary = resizeMarkerPath.path + ".tmp"
+        guard FileManager.default.createFile(atPath: temporary, contents: data) else {
+            throw VMDirectoryError.fileCreationFailed(temporary)
+        }
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: temporary))
+        try handle.synchronize()
+        try handle.close()
+        guard Darwin.rename(temporary, resizeMarkerPath.path) == 0 else {
+            throw VMDirectoryError.diskOperationFailed(
+                "could not commit resize marker: \(String(cString: strerror(errno)))")
+        }
+        try syncDirectory()
+    }
+
+    /// Removes the resize transaction marker after the transaction resolves.
+    func clearResizeMarker() throws {
+        guard resizeMarkerPath.exists() else { return }
+        try FileManager.default.removeItem(atPath: resizeMarkerPath.path)
+        try syncDirectory()
+    }
+
+    private func syncDirectory() throws {
+        let directoryFD = Darwin.open(dir.path, O_RDONLY)
+        guard directoryFD >= 0 else {
+            throw VMDirectoryError.diskOperationFailed("could not open VM directory for sync")
+        }
+        defer { Darwin.close(directoryFD) }
+        guard Darwin.fsync(directoryFD) == 0 else {
+            throw VMDirectoryError.diskOperationFailed("could not sync VM directory")
         }
     }
 }

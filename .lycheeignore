@@ -6,5 +6,7 @@ https://console.cloud.google.com/*
 https://www.hud.ai/*
 # openai.com returns 403 to automated checkers but resolves fine in-browser
 https://openai.com/*
+# GitHub user attachments require a browser session and return 404 to anonymous link checkers
+https://github.com/user-attachments/assets/*
 # Self-referential install.sh URL: resolves once this PR merges to main
 https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh

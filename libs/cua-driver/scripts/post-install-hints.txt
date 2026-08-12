@@ -8,16 +8,22 @@ Next steps:
   2. Grant permissions (macOS — Accessibility + Screen Recording):
        {{BINARY}} permissions status   # report status (read-only; tells you which
                                        # identity the grants belong to)
-       {{BINARY}} permissions grant    # the correct way to grant — launches CuaDriver
-                                       # so the dialog says "Cua Driver" and the grant
-                                       # sticks to the driver, not your terminal.
+       {{BINARY}} permissions grant    # the correct way to grant — launches the installed
+                                       # app so every dialog and Settings entry matches
+                                       # this driver identity, not your terminal.
                                    # Tip: `--autostart` (above) keeps a launchd daemon
                                    # running so you grant once and it persists.
 
   3. Agent skill pack (optional):
        {{BINARY}} skills install   # fetch + link the cua-driver skill pack
-                                   # into Claude Code / Codex / OpenClaw / OpenCode.
-                                   # The install never touches your agent dirs.
+                                   # into Claude Code / Codex / Prime Agent /
+                                   # OpenClaw / OpenCode and other supported agents.
+                                   # The binary installer never touches your agent dirs.
+
+     Prime Agent needs no MCP registration. It loads the installed skill and
+     calls cua-driver from its persistent IPython environment. Print its setup:
+       {{BINARY}} mcp-config --client prime-agent
+     Then run /reload in Prime Agent (or start a new session).
 
   4. As an MCP server — run the one matching your client. Each is also
      available via '{{BINARY}} mcp-config --client <name>':
@@ -33,6 +39,12 @@ Next steps:
 
      • Codex (OpenAI):
          codex mcp add cua-driver -- {{BINARY}} mcp
+
+     • Qwen Code:
+         qwen mcp add cua-driver {{BINARY}} mcp
+
+     • Factory Droid:
+         droid mcp add cua-driver "{{BINARY}} mcp"
 
      • OpenClaw:
          {{BINARY}} mcp-config --client openclaw
@@ -54,7 +66,37 @@ Next steps:
          {{BINARY}} mcp-config --client opencode   # JSON for opencode.json
          {{BINARY}} mcp-config --client hermes     # YAML for ~/.hermes/config.yaml
 
+     • Muse Code (macOS / Linux — merge into
+       $XDG_CONFIG_HOME/muse/settings.json, or ~/.config/muse/settings.json):
+         {
+           "mcp_servers": {
+             "cua-driver": {
+               "enabled": true,
+               "transport": "stdio",
+               "command": "{{BINARY}}",
+               "args": ["mcp"]
+             }
+           }
+         }
+       Start a new Muse session after saving; MCP servers load at startup.
+
+     • ZCode (Z.ai — GUI app; paste in Settings → MCP Servers):
+         {{BINARY}} mcp-config --client zcode
+
      For other clients accepting the generic mcpServers shape:
          {{BINARY}} mcp-config
 
-Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust
+  Permission modes:
+     • standard is the promptless default for normal automation.
+     • To use an existing logged-in Chrome or Edge profile in standard:
+         {{BINARY}} mcp --grant existing-profile
+       Add the same flag to `serve` when using a long-running daemon.
+     • Use bounded with a reviewed manifest to limit tools, apps, browser
+       profiles, origins, and file roots:
+         {{BINARY}} serve --permission-mode bounded \
+           --session-policy ./cua-session.yaml --approve-session-policy
+     • unrestricted requires explicit risk acceptance:
+         {{BINARY}} serve --permission-mode unrestricted \
+           --dangerously-bypass-approvals
+
+Docs: https://cua.ai/docs/how-to-guides/driver/connect-your-agent

@@ -1,0 +1,178 @@
+---
+title: 'Task definition reference'
+description: 'Python types, decorators, and lifecycle signatures for Cua-Bench task modules.'
+---
+
+A Cua-Bench task directory contains a `main.py` module. The module exports
+decorated lifecycle functions that Cua-Bench discovers for a dataset split.
+
+## `Task`
+
+```python
+Task(
+    description: str,
+    task_id: str | None = None,
+    metadata: dict | None = None,
+    computer: dict | None = None,
+)
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `description` | Yes | Natural-language objective presented to the agent. |
+| `task_id` | No | Stable identifier supplied by the task author or dataset. |
+| `metadata` | No | Variant-specific values consumed by lifecycle functions. |
+| `computer` | No | Provider and setup configuration for the environment. |
+
+A computer configuration has this shape:
+
+```python
+{
+    "provider": "simulated",
+    "setup_config": {
+        "os_type": "macos",
+        "width": 512,
+        "height": 512,
+    },
+}
+```
+
+Provider-specific settings may add more keys to `setup_config`.
+
+## Lifecycle decorators
+
+Every decorator accepts a split as a positional string or as `split="..."`.
+The default split is `train`.
+
+| Decorator | Function result |
+|-----------|-----------------|
+| `@tasks_config` | A list of `Task` variants. |
+| `@setup_task` | No required return value. |
+| `@solve_task` | No required return value. The function is optional. |
+| `@evaluate_task` | The task's evaluation result, commonly `list[float]`. |
+
+The parameterized forms are equivalent:
+
+```python
+@cb.tasks_config("train")
+def load():
+    ...
+
+@cb.tasks_config(split="train")
+def load():
+    ...
+```
+
+### Configuration
+
+```python
+@cb.tasks_config(split="train")
+def load() -> list[cb.Task]:
+    ...
+```
+
+Configuration runs when the task module is loaded. Each returned `Task` is a
+selectable variant, indexed from zero by the CLI.
+
+### Setup
+
+```python
+@cb.setup_task(split="train")
+async def setup(
+    task_cfg: cb.Task,
+    session: cb.DesktopSession,
+) -> None:
+    ...
+```
+
+Setup receives the selected variant and its started session. Session operations
+are asynchronous and must be awaited.
+
+### Oracle
+
+```python
+@cb.solve_task(split="train")
+async def solve(
+    task_cfg: cb.Task,
+    session: cb.DesktopSession,
+) -> None:
+    ...
+```
+
+The oracle is invoked when a run requests the solution. It operates on the
+state prepared by setup.
+
+### Evaluation
+
+```python
+@cb.evaluate_task(split="train")
+async def evaluate(
+    task_cfg: cb.Task,
+    session: cb.DesktopSession,
+) -> list[float]:
+    ...
+```
+
+Evaluation inspects the current session state. A task may return multiple
+reward components; their meaning is defined by that task or dataset.
+
+## Common session operations
+
+`DesktopSession` is the shared interface supplied to lifecycle functions.
+Common asynchronous operations include:
+
+| Operation | Result |
+|-----------|--------|
+| `launch_window(...)` | Opens HTML, a folder, or a URL and returns a window identifier. |
+| `execute_javascript(pid, script)` | Evaluates JavaScript in a task window. |
+| `click_element(pid, selector)` | Clicks an element identified by a CSS selector. |
+| `execute_action(action)` | Delivers a Cua-Bench input action. |
+| `screenshot()` | Returns the current screenshot as bytes. |
+
+Support for an operation can depend on the selected provider.
+
+## Minimal module
+
+```python
+from pathlib import Path
+
+import cua_bench as cb
+
+pid = None
+
+
+@cb.tasks_config(split="train")
+def load():
+    return [
+        cb.Task(
+            description='Click the "Submit" button.',
+            computer={
+                "provider": "simulated",
+                "setup_config": {"os_type": "macos"},
+            },
+        )
+    ]
+
+
+@cb.setup_task(split="train")
+async def setup(task_cfg: cb.Task, session: cb.DesktopSession):
+    global pid
+    pid = await session.launch_window(
+        html=(Path(__file__).parent / "gui/index.html").read_text(),
+        title="Task",
+    )
+
+
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
+    await session.click_element(pid, "#submit")
+
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession):
+    clicked = await session.execute_javascript(pid, "window.__clicked")
+    return [1.0] if clicked is True else [0.0]
+```
+
+The [CLI reference](/reference/cua-bench/cli-reference) describes the commands
+that inspect and execute task modules.

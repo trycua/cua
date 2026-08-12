@@ -19,24 +19,77 @@
 //! the user's session) instead of debugging a non-bug.
 
 #[cfg(target_os = "windows")]
-use windows::core::PCWSTR;
-#[cfg(target_os = "windows")]
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED,
-};
+use windows::Win32::Foundation::HANDLE;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::StationsAndDesktops::{
-    CloseWindowStation, OpenWindowStationW,
+    CloseDesktop, GetProcessWindowStation, GetThreadDesktop, GetUserObjectInformationW,
+    OpenInputDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, HDESK, UOI_NAME,
 };
 #[cfg(target_os = "windows")]
-use windows::Win32::System::Threading::GetCurrentProcessId;
-#[cfg(target_os = "windows")]
-use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+/// Snapshot of the desktop context visible to the calling process.
+#[derive(Debug, Clone)]
+pub struct DesktopState {
+    pub session_id: Option<u32>,
+    pub has_process_window_station: bool,
+    pub process_window_station_error: Option<String>,
+    pub thread_desktop_name: Option<String>,
+    pub thread_desktop_error: Option<String>,
+    pub input_desktop_name: Option<String>,
+    pub input_desktop_error: Option<String>,
+    pub foreground_hwnd: Option<usize>,
+}
+
+impl DesktopState {
+    /// True when the session input desktop is the normal user desktop.
+    pub fn input_desktop_is_default(&self) -> bool {
+        self.input_desktop_name
+            .as_deref()
+            .map(|name| name.eq_ignore_ascii_case("Default"))
+            .unwrap_or(false)
+    }
+
+    pub fn has_foreground_window(&self) -> bool {
+        self.foreground_hwnd.is_some()
+    }
+
+    pub fn summary(&self) -> String {
+        fn describe(name: &Option<String>, error: &Option<String>) -> String {
+            match (name, error) {
+                (Some(name), _) => name.clone(),
+                (None, Some(error)) => format!("error({error})"),
+                (None, None) => "unknown".to_owned(),
+            }
+        }
+
+        let session = self
+            .session_id
+            .map(|sid| sid.to_string())
+            .unwrap_or_else(|| "unknown".to_owned());
+        let window_station = if self.has_process_window_station {
+            "attached".to_owned()
+        } else {
+            describe(&None, &self.process_window_station_error)
+        };
+        let thread_desktop = describe(&self.thread_desktop_name, &self.thread_desktop_error);
+        let input_desktop = describe(&self.input_desktop_name, &self.input_desktop_error);
+        let foreground = self
+            .foreground_hwnd
+            .map(|hwnd| format!("0x{hwnd:x}"))
+            .unwrap_or_else(|| "0".to_owned());
+
+        format!(
+            "session={session}; window_station={window_station}; \
+             thread_desktop={thread_desktop}; input_desktop={input_desktop}; \
+             foreground_hwnd={foreground}"
+        )
+    }
+}
 
 /// Session ID of the calling process via `ProcessIdToSessionId`.
 ///
@@ -55,75 +108,120 @@ pub fn current_session_id() -> Option<u32> {
     }
 }
 
+#[cfg(target_os = "windows")]
+unsafe fn desktop_name(handle: HDESK) -> Result<String, String> {
+    let mut buf = vec![0u16; 256];
+    let mut needed = 0u32;
+    GetUserObjectInformationW(
+        HANDLE(handle.0),
+        UOI_NAME,
+        Some(buf.as_mut_ptr() as *mut std::ffi::c_void),
+        (buf.len() * std::mem::size_of::<u16>()) as u32,
+        Some(&mut needed),
+    )
+    .map_err(|e| format!("{e}"))?;
+
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    Ok(String::from_utf16_lossy(&buf[..end]))
+}
+
+#[cfg(target_os = "windows")]
+pub fn desktop_state() -> DesktopState {
+    unsafe {
+        let session_id = current_session_id();
+        let (has_process_window_station, process_window_station_error) =
+            match GetProcessWindowStation() {
+                Ok(h) if !h.0.is_null() => (true, None),
+                Ok(_) => (
+                    false,
+                    Some("GetProcessWindowStation returned null".to_owned()),
+                ),
+                Err(e) => (false, Some(format!("GetProcessWindowStation: {e}"))),
+            };
+
+        let (thread_desktop_name, thread_desktop_error) =
+            match GetThreadDesktop(GetCurrentThreadId()) {
+                Ok(h) => match desktop_name(h) {
+                    Ok(name) => (Some(name), None),
+                    Err(e) => (None, Some(format!("GetThreadDesktop name: {e}"))),
+                },
+                Err(e) => (None, Some(format!("GetThreadDesktop: {e}"))),
+            };
+
+        let (input_desktop_name, input_desktop_error) =
+            match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS) {
+                Ok(h) => {
+                    let name = desktop_name(h);
+                    let _ = CloseDesktop(h);
+                    match name {
+                        Ok(name) => (Some(name), None),
+                        Err(e) => (None, Some(format!("OpenInputDesktop name: {e}"))),
+                    }
+                }
+                Err(e) => (None, Some(format!("OpenInputDesktop: {e}"))),
+            };
+
+        let fg = GetForegroundWindow();
+        let foreground_hwnd = (!fg.0.is_null()).then_some(fg.0 as usize);
+
+        DesktopState {
+            session_id,
+            has_process_window_station,
+            process_window_station_error,
+            thread_desktop_name,
+            thread_desktop_error,
+            input_desktop_name,
+            input_desktop_error,
+            foreground_hwnd,
+        }
+    }
+}
+
 /// Whether the calling process has an attached interactive desktop.
 ///
 /// Two-step check:
-///   1. `OpenWindowStationW(L"WinSta0", ...)` — succeeds when the
-///      interactive window station exists and we can open a handle.
+///   1. Session id is not `0` (services). SSH-launched Windows processes
+///      normally land in Session 0 and cannot drive the user's desktop.
 ///   2. `GetForegroundWindow()` — returns a non-null HWND when a desktop
 ///      with a foreground window is actually attached (i.e. an
 ///      interactive logon session is active, not just a locked screen
 ///      with no foreground app).
 ///
-/// `Ok(true)` only when both succeed. `Ok(false)` when `OpenWindowStationW`
-/// succeeded but `GetForegroundWindow` returned null (locked desktop or
-/// transient state). `Err` when `OpenWindowStationW` failed outright.
+/// `Ok(true)` only when both succeed. `Ok(false)` when there is a non-service
+/// session with an attached window station but `GetForegroundWindow` returned
+/// null (locked desktop or transient state). `Err` when the process is in
+/// Session 0 or has no attached window station.
 #[cfg(target_os = "windows")]
 pub fn interactive_desktop_check() -> Result<bool, String> {
-    unsafe {
-        let name: Vec<u16> = "WinSta0\0".encode_utf16().collect();
-        // 0 access mask = read-only probe; we never actually need to read
-        // or modify the station, just confirm a handle is openable.
-        let h = OpenWindowStationW(PCWSTR(name.as_ptr()), false, 0)
-            .map_err(|e| format!("OpenWindowStationW(WinSta0): {e}"))?;
-        let fg = GetForegroundWindow();
-        let _ = CloseWindowStation(h);
-        Ok(fg.0 != std::ptr::null_mut())
-    }
+    let state = desktop_state();
+    classify_interactive_desktop(&state)
 }
 
-/// Probe whether `CoCreateInstance(CUIAutomation)` succeeds — the same
-/// COM call used by `get_window_state` / `list_windows` element-walks.
-///
-/// Initialises COM (apartment-threaded) for the duration of the probe
-/// and uninitialises before returning so the rest of the doctor run is
-/// unaffected.
-///
-/// **COM lifecycle invariant** — the IUIAutomation interface produced by
-/// CoCreateInstance must be released BEFORE CoUninitialize tears down
-/// the apartment, or `IUnknown::Release` will dereference freed COM
-/// infrastructure and segfault (0xC0000005 ACCESS_VIOLATION). We flatten
-/// the probe result into a plain `Result<(), String>` first so the
-/// `IUIAutomation` is dropped at the end of the statement, then call
-/// CoUninitialize on the next line.
+#[cfg(target_os = "windows")]
+fn classify_interactive_desktop(state: &DesktopState) -> Result<bool, String> {
+    match state.session_id {
+        Some(0) => return Err("running in Windows Session 0".to_owned()),
+        Some(_) => {}
+        None => {
+            return Err(
+                "could not determine the Windows session id; refusing desktop runtime ownership"
+                    .to_owned(),
+            );
+        }
+    }
+    if !state.has_process_window_station {
+        return Err(state
+            .process_window_station_error
+            .clone()
+            .unwrap_or_else(|| "GetProcessWindowStation returned null".to_owned()));
+    }
+    Ok(state.has_foreground_window())
+}
+
+/// Probe the same bounded desktop child enumeration used by window tools.
 #[cfg(target_os = "windows")]
 pub fn ui_automation_available() -> Result<(), String> {
-    unsafe {
-        // Failure here means COM is already initialised in this thread
-        // (likely apartment-threaded too); we only call CoUninitialize
-        // when our CoInitializeEx actually paired with a fresh init.
-        let init_result = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let need_uninit = init_result.is_ok();
-
-        // Bind to `_` immediately so the IUIAutomation interface is
-        // dropped (and `Release()` runs while COM is still up) before
-        // we proceed to CoUninitialize. Holding the binding past
-        // CoUninitialize and letting Drop run at function return
-        // causes a use-after-free in the COM apartment.
-        let result = CoCreateInstance::<_, IUIAutomation>(
-            &CUIAutomation,
-            None,
-            CLSCTX_INPROC_SERVER,
-        )
-        .map(|_| ())
-        .map_err(|e| format!("{e}"));
-
-        if need_uninit {
-            CoUninitialize();
-        }
-
-        result
-    }
+    crate::uia::windows_enum::probe_desktop_availability()
 }
 
 // ── Non-Windows stubs so the cua-driver crate can call into us
@@ -133,6 +231,20 @@ pub fn ui_automation_available() -> Result<(), String> {
 #[cfg(not(target_os = "windows"))]
 pub fn current_session_id() -> Option<u32> {
     None
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn desktop_state() -> DesktopState {
+    DesktopState {
+        session_id: None,
+        has_process_window_station: false,
+        process_window_station_error: Some("not a Windows host".to_owned()),
+        thread_desktop_name: None,
+        thread_desktop_error: Some("not a Windows host".to_owned()),
+        input_desktop_name: None,
+        input_desktop_error: Some("not a Windows host".to_owned()),
+        foreground_hwnd: None,
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -172,6 +284,42 @@ pub fn is_non_interactive_error(err: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn state(session_id: u32, attached: bool, foreground: bool) -> DesktopState {
+        DesktopState {
+            session_id: Some(session_id),
+            has_process_window_station: attached,
+            process_window_station_error: (!attached).then(|| "no station".into()),
+            thread_desktop_name: None,
+            thread_desktop_error: None,
+            input_desktop_name: None,
+            input_desktop_error: None,
+            foreground_hwnd: foreground.then_some(1),
+        }
+    }
+
+    #[test]
+    fn session_zero_is_classified_as_runtime_unavailable() {
+        let error = classify_interactive_desktop(&state(0, true, true)).unwrap_err();
+        assert!(error.contains("Session 0"));
+        assert_eq!(
+            classify_interactive_desktop(&state(2, true, true)),
+            Ok(true)
+        );
+        assert_eq!(
+            classify_interactive_desktop(&state(2, true, false)),
+            Ok(false),
+            "a temporarily locked interactive session remains a valid owner"
+        );
+        let mut unknown = state(2, true, true);
+        unknown.session_id = None;
+        assert!(
+            classify_interactive_desktop(&unknown)
+                .unwrap_err()
+                .contains("could not determine"),
+            "an unclassified process must not be allowed to claim an interactive runtime"
+        );
+    }
+
     #[test]
     fn current_session_id_returns_some_on_windows() {
         // ProcessIdToSessionId on the current process must always succeed.
@@ -191,8 +339,8 @@ mod tests {
         match ui_automation_available() {
             Ok(()) => {}
             Err(e) => {
-                let non_interactive = current_session_id() == Some(0)
-                    || is_non_interactive_error(&e);
+                let non_interactive =
+                    current_session_id() == Some(0) || is_non_interactive_error(&e);
                 assert!(
                     non_interactive,
                     "ui_automation_available failed in what looks like an interactive session: {e}",

@@ -1,0 +1,15 @@
+{
+  "workspace_members": ["exact-a 0.1.0", "exact-b 0.1.0"],
+  "packages": [
+    {
+      "id": "exact-a 0.1.0",
+      "name": "cyclops-sdk",
+      "manifest_path": "/workspace/cyclops-cs/sdk/Cargo.toml"
+    },
+    {
+      "id": "exact-b 0.1.0",
+      "name": "cyclops-sdk",
+      "manifest_path": "/workspace/cyclops-cs/sdk/Cargo.toml"
+    }
+  ]
+}

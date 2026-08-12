@@ -14,17 +14,19 @@
 //! Architecture mirrors the existing `wayland/persistent_vptr.rs`: one
 //! owner thread (`cua-overlay-wl`) holds the wayland Connection +
 //! EventQueue + layer surface; commands flow in over a `crossbeam-channel`.
-//! The render core is ticked at ~60Hz via a calloop timer so motion +
-//! spring physics + click pulse advance smoothly even when no new
-//! Position command has arrived.
+//! The render core wakes at frame cadence only while pixels can change;
+//! stable or hidden state blocks on the command channel without polling.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    OnceLock,
+};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use cursor_overlay::{CursorConfig, OverlayCommand, OverlayMsg, CursorKey, RenderStateCore};
+use cursor_overlay::{CursorConfig, OverlayCommand, OverlayMsg, RenderStateCore};
 use wayland_client::{
     protocol::{
         wl_buffer::WlBuffer,
@@ -39,7 +41,7 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1::{self, Layer, ZwlrLayerShellV1},
+    zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
 
@@ -48,12 +50,20 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 /// SetPressed) are forwarded as-is so the layer-shell overlay matches the
 /// X11 visual: bloom + animated arrow + click pulse + press ring.
 enum WlOverlayCmd {
-    Cmd { key: CursorKey, cmd: OverlayCommand },
-    Remove { key: CursorKey },
+    Cmd { cmd: OverlayCommand },
+    Remove,
     Shutdown,
 }
 
 static TX: OnceLock<Sender<WlOverlayCmd>> = OnceLock::new();
+// Starts false deliberately: the platform registration path must explicitly
+// opt the native Wayland overlay in with the daemon's CursorConfig. This keeps
+// lazy forwarding from bypassing --no-overlay before any window exists.
+static CONFIG_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_config_enabled(enabled: bool) {
+    CONFIG_ENABLED.store(enabled, Ordering::Release);
+}
 
 fn tx() -> Option<&'static Sender<WlOverlayCmd>> {
     TX.get()
@@ -61,7 +71,10 @@ fn tx() -> Option<&'static Sender<WlOverlayCmd>> {
 
 /// Lazily start the owner thread. Idempotent — safe to call from every
 /// MCP tool invocation; subsequent calls are no-ops.
-pub fn ensure_started() {
+pub fn ensure_started() -> bool {
+    if !CONFIG_ENABLED.load(Ordering::Acquire) {
+        return false;
+    }
     TX.get_or_init(|| {
         let (tx, rx) = bounded::<WlOverlayCmd>(64);
         thread::Builder::new()
@@ -74,6 +87,7 @@ pub fn ensure_started() {
             .expect("spawn cua-overlay-wl thread");
         tx
     });
+    true
 }
 
 /// Translate a generic [`OverlayMsg`] (the cross-platform command shape)
@@ -81,17 +95,23 @@ pub fn ensure_started() {
 /// every variant the X11 path handles; only `ShowFocusRect` (macOS-only)
 /// is silently dropped here.
 pub fn forward(msg: &OverlayMsg) -> bool {
+    if !should_forward(CONFIG_ENABLED.load(Ordering::Acquire), msg) {
+        return false;
+    }
     // Lazy startup: spawning the layer-shell owner thread + connecting to
     // the Wayland compositor takes 100-300ms. Doing that at cua-driver mcp
     // boot (the old eager-init path) was tipping the borderline CI
     // cursor-click-gif test over its 20s budget. ensure_started is
     // idempotent so calling it on every forward is fine — the OnceLock
     // bypasses the spawn after the first call.
-    ensure_started();
+    if !ensure_started() {
+        return false;
+    }
     let Some(tx) = tx() else { return false };
     match msg {
         OverlayMsg::Remove(k) => {
-            let _ = tx.try_send(WlOverlayCmd::Remove { key: k.clone() });
+            let _ = k;
+            let _ = tx.try_send(WlOverlayCmd::Remove);
             true
         }
         OverlayMsg::Cmd(kc) => {
@@ -99,12 +119,19 @@ pub fn forward(msg: &OverlayMsg) -> bool {
                 return false;
             }
             let _ = tx.try_send(WlOverlayCmd::Cmd {
-                key: kc.key.clone(),
                 cmd: kc.cmd.clone(),
             });
             true
         }
     }
+}
+
+fn should_forward(config_enabled: bool, msg: &OverlayMsg) -> bool {
+    config_enabled
+        && !matches!(
+            msg,
+            OverlayMsg::Cmd(kc) if matches!(&kc.cmd, OverlayCommand::ShowFocusRect(_))
+        )
 }
 
 /// Cleanly stop the owner thread. Tests use this; production code typically
@@ -216,7 +243,11 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     layer_surface.set_exclusive_zone(-1);
     layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
 
-    // Click-through: empty input region.
+    // Click-through: empty input region. Standard Wayland intentionally does
+    // not expose another client's global pointer position, so this surface
+    // cannot implement the macOS/Windows/X11 badge-hover reveal without a
+    // compositor-owned adapter. Giving it an input region would steal the
+    // user's pointer events instead of observing them.
     let region: WlRegion = compositor.create_region(&qh, ());
     surface.set_input_region(Some(&region));
     region.destroy();
@@ -242,24 +273,41 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     if !state.configured {
         anyhow::bail!("layer surface never received configure event");
     }
-    dbg(&format!("configured: w={} h={}", state.output_w, state.output_h));
+    dbg(&format!(
+        "configured: w={} h={}",
+        state.output_w, state.output_h
+    ));
 
-    // Main loop. Tick the render core at ~60Hz so motion + spring physics
-    // + click pulse animate smoothly; redraw every tick when the cursor is
-    // visible. Commands arriving via the channel update the render core
-    // first, then the next tick paints the result.
-    redraw(&mut state, &shm, &qh)?;
-    queue.roundtrip(&mut state)?;
-
-    let frame_dur = std::time::Duration::from_millis(16);
+    // Demand-driven main loop. A stable cursor blocks on the command channel;
+    // only active motion, click/fade animation, or the exact idle-fade
+    // deadline schedules a wake. This avoids display-sized SHM allocation and
+    // conversion at 60Hz when no pixel can change while preserving immediate
+    // command wakeups.
     let mut last_tick = Instant::now();
+    let mut frame_tick_needed = false;
     loop {
-        // Drain all pending commands without blocking.
+        let wait = next_wait(&state.core, frame_tick_needed);
+        let (first_cmd, timed_out) = match wait_for_work(&rx, wait) {
+            WlWake::Command(cmd) => (Some(cmd), None),
+            WlWake::Timeout => (None, Some(wait)),
+            WlWake::Disconnected => break,
+        };
+
+        let now = Instant::now();
+        let elapsed = now.duration_since(last_tick).as_secs_f64();
+        last_tick = now;
+
+        let mut dirty = false;
         let mut shutdown = false;
+        let mut pending = first_cmd;
         loop {
-            match rx.try_recv() {
-                Ok(WlOverlayCmd::Shutdown) => { shutdown = true; break; }
-                Ok(WlOverlayCmd::Cmd { cmd, .. }) => {
+            let received = pending.take().map(Ok).unwrap_or_else(|| rx.try_recv());
+            match received {
+                Ok(WlOverlayCmd::Shutdown) => {
+                    shutdown = true;
+                    break;
+                }
+                Ok(WlOverlayCmd::Cmd { cmd }) => {
                     // Seed: if the cursor is still at the off-screen sentinel
                     // `(-200, -200)` from `RenderStateCore::new`, snap to a
                     // point near the MoveTo / SnapTo target so the spring
@@ -284,37 +332,52 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     // apply_command_base consumes every variant the X11
                     // path handles. `move_to_snap_sentinel` / `click_pulse
                     // _sentinel_only` are both `false` here — same as X11.
-                    let _ = state.core.apply_command_base(cmd, false, false);
+                    let disabling = matches!(&cmd, OverlayCommand::SetEnabled(false));
+                    dirty |= state.core.apply_command_base(cmd, false, false);
+                    if disabling {
+                        quiesce_hidden(&mut state.core);
+                    }
                 }
-                Ok(WlOverlayCmd::Remove { .. }) => {
+                Ok(WlOverlayCmd::Remove) => {
                     // Single-cursor overlay: removing the active cursor
                     // hides it. Multi-cursor wlroots support can layer on
                     // top of this in a follow-up if needed.
+                    dirty |= state.core.visible || state.core.pos.0 >= -100.0;
                     state.core.visible = false;
+                    quiesce_hidden(&mut state.core);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
-                Err(crossbeam_channel::TryRecvError::Disconnected) => { shutdown = true; break; }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    shutdown = true;
+                    break;
+                }
             }
         }
-        if shutdown { break; }
+        if shutdown {
+            break;
+        }
 
-        // Tick animation forward and repaint if anything changed.
-        let now = Instant::now();
-        let dt = now.duration_since(last_tick).as_secs_f64().min(0.05);
-        last_tick = now;
-        state.core.tick_motion(dt);
-        if state.configured {
+        // Advance only on a scheduled animation/fade wake. A command wake
+        // applies the new state at dt=0, avoiding a jump proportional to how
+        // long the loop was parked.
+        if let Some(timeout_kind) = timed_out {
+            let dt = match timeout_kind {
+                WlWait::Frame => elapsed.min(0.05),
+                WlWait::Deadline(_) => elapsed,
+                WlWait::Block => unreachable!("a blocking receive cannot time out"),
+            };
+            state.core.tick_motion(dt);
+            dirty = true;
+        }
+        let next_frame_tick_needed = needs_frame_tick(&state.core);
+        if state.configured && (dirty || frame_tick_needed || next_frame_tick_needed) {
             redraw(&mut state, &shm, &qh)?;
+            // Flush the committed frame and dispatch wl_buffer.release before
+            // parking. The buffer map remains authoritative until release, so
+            // no mmap/fd can be reclaimed while the compositor still uses it.
+            queue.roundtrip(&mut state)?;
         }
-        queue.dispatch_pending(&mut state)?;
-
-        // Sleep for the remainder of the frame budget so the loop doesn't
-        // spin. Channel-driven wakeups would be lower-latency, but layer
-        // overlays only need to keep up with display refresh.
-        let elapsed = last_tick.elapsed();
-        if elapsed < frame_dur {
-            std::thread::sleep(frame_dur - elapsed);
-        }
+        frame_tick_needed = next_frame_tick_needed;
     }
 
     if let Some(ls) = state.layer_surface.take() {
@@ -325,6 +388,82 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     }
     queue.roundtrip(&mut state)?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WlWait {
+    Block,
+    Frame,
+    Deadline(Duration),
+}
+
+enum WlWake {
+    Command(WlOverlayCmd),
+    Timeout,
+    Disconnected,
+}
+
+fn wait_for_work(rx: &Receiver<WlOverlayCmd>, wait: WlWait) -> WlWake {
+    match wait {
+        WlWait::Block => match rx.recv() {
+            Ok(cmd) => WlWake::Command(cmd),
+            Err(_) => WlWake::Disconnected,
+        },
+        WlWait::Frame => match rx.recv_timeout(Duration::from_millis(16)) {
+            Ok(cmd) => WlWake::Command(cmd),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => WlWake::Timeout,
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => WlWake::Disconnected,
+        },
+        WlWait::Deadline(timeout) => match rx.recv_timeout(timeout) {
+            Ok(cmd) => WlWake::Command(cmd),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => WlWake::Timeout,
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => WlWake::Disconnected,
+        },
+    }
+}
+
+fn next_wait(core: &RenderStateCore, frame_tick_needed: bool) -> WlWait {
+    if frame_tick_needed || needs_frame_tick(core) {
+        return WlWait::Frame;
+    }
+    idle_fade_wait(core)
+        .map(WlWait::Deadline)
+        .unwrap_or(WlWait::Block)
+}
+
+fn needs_frame_tick(core: &RenderStateCore) -> bool {
+    if !core.visible || core.pos.0 < -100.0 {
+        return false;
+    }
+    let fade_start = core.motion.idle_hide_ms / 1000.0;
+    core.path.is_some()
+        || core.spring.is_some()
+        || core.click_t.is_some()
+        || core.session_badge_needs_frame_tick()
+        || (core.motion.idle_hide_ms > 0.0
+            && core.idle_secs >= fade_start
+            && core.idle_alpha >= 0.004)
+}
+
+fn idle_fade_wait(core: &RenderStateCore) -> Option<Duration> {
+    if !core.visible
+        || core.pos.0 < -100.0
+        || core.motion.idle_hide_ms <= 0.0
+        || core.path.is_some()
+        || core.spring.is_some()
+        || core.click_t.is_some()
+    {
+        return None;
+    }
+    let remaining = core.motion.idle_hide_ms / 1000.0 - core.idle_secs;
+    (remaining.is_finite() && remaining > 0.0).then(|| Duration::from_secs_f64(remaining))
+}
+
+fn quiesce_hidden(core: &mut RenderStateCore) {
+    core.path = None;
+    core.spring = None;
+    core.spring_tgt = None;
+    core.click_t = None;
 }
 
 /// Render one cursor frame into a fresh wl_shm ARGB8888 buffer and attach
@@ -343,16 +482,22 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
 /// When the cursor is hidden (`core.visible == false`, idle-faded, or
 /// off-screen sentinel) the pixmap is all zeros — the surface remains
 /// transparent and click-through.
-fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>) -> anyhow::Result<()> {
-    let Some(surface) = state.surface.as_ref() else { return Ok(()) };
+fn redraw(
+    state: &mut OverlayState,
+    shm: &WlShm,
+    qh: &QueueHandle<OverlayState>,
+) -> anyhow::Result<()> {
+    let Some(surface) = state.surface.as_ref() else {
+        return Ok(());
+    };
     let w = state.output_w.max(1);
     let h = state.output_h.max(1);
     let stride = w as i32 * 4;
     let size = (stride as usize) * (h as usize);
 
     // Reuses the same anon_shm pattern as the screencopy path in mod.rs.
-    let (fd, ptr) = super::anon_shm(size)
-        .map_err(|e| anyhow::anyhow!("overlay shm allocation failed: {e}"))?;
+    let (fd, ptr) =
+        super::anon_shm(size).map_err(|e| anyhow::anyhow!("overlay shm allocation failed: {e}"))?;
 
     // SAFETY: ptr came from mmap of `size` bytes, lifetime bounded to this
     // function.
@@ -397,7 +542,7 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
                     continue;
                 }
                 let off = ((py as usize) * (w as usize) + (px as usize)) * 4;
-                pm.data_mut()[off] = 0xFF;     // R
+                pm.data_mut()[off] = 0xFF; // R
                 pm.data_mut()[off + 1] = 0x00; // G
                 pm.data_mut()[off + 2] = 0xFF; // B
                 pm.data_mut()[off + 3] = 0xFF; // A
@@ -405,15 +550,15 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
         }
     }
 
-// RGBA → BGRA channel swap. tiny_skia stores pixels as RGBA8888
+    // RGBA → BGRA channel swap. tiny_skia stores pixels as RGBA8888
     // (premultiplied); wl_shm Argb8888 is little-endian = BGRA in memory.
     // Mirrors the inverse swap in ext_screencopy::encode_buffer_to_png.
     let src = pm.data();
     for i in (0..size).step_by(4) {
         // pm.data() is already RGBA premultiplied; just swap R↔B.
-        pixels[i] = src[i + 2];     // B ← R
+        pixels[i] = src[i + 2]; // B ← R
         pixels[i + 1] = src[i + 1]; // G
-        pixels[i + 2] = src[i];     // R ← B
+        pixels[i + 2] = src[i]; // R ← B
         pixels[i + 3] = src[i + 3]; // A
     }
 
@@ -436,7 +581,10 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     let buffer_id = buffer.id().protocol_id();
     state.pending_buffers.insert(buffer_id, (ptr, size, fd));
 
-    dbg(&format!("redraw w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) visible={}", state.core.pos.0, state.core.pos.1, state.core.visible));
+    dbg(&format!(
+        "redraw w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) visible={}",
+        state.core.pos.0, state.core.pos.1, state.core.visible
+    ));
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
@@ -455,23 +603,29 @@ impl Dispatch<wl_registry::WlRegistry, ()> for OverlayState {
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
-                    state.compositor = Some(registry.bind::<WlCompositor, _, _>(
-                        name, version.min(6), qh, ()));
+                    state.compositor =
+                        Some(registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ()));
                 }
                 "wl_shm" => {
                     state.shm = Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()));
                 }
                 "wl_output" => {
                     if state.output.is_none() {
-                        state.output = Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ()));
+                        state.output =
+                            Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ()));
                     }
                 }
                 "zwlr_layer_shell_v1" => {
-                    state.layer_shell = Some(registry.bind::<ZwlrLayerShellV1, _, _>(
-                        name, version.min(4), qh, ()));
+                    state.layer_shell =
+                        Some(registry.bind::<ZwlrLayerShellV1, _, _>(name, version.min(4), qh, ()));
                 }
                 _ => {}
             }
@@ -487,7 +641,8 @@ impl Dispatch<WlCompositor, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<WlShm, ()> for OverlayState {
@@ -498,7 +653,8 @@ impl Dispatch<WlShm, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<WlOutput, ()> for OverlayState {
@@ -528,7 +684,8 @@ impl Dispatch<ZwlrLayerShellV1, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<ZwlrLayerSurfaceV1, ()> for OverlayState {
@@ -540,7 +697,12 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for OverlayState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let zwlr_layer_surface_v1::Event::Configure { serial, width, height } = event {
+        if let zwlr_layer_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        {
             layer.ack_configure(serial);
             if width > 0 {
                 state.output_w = width;
@@ -561,7 +723,8 @@ impl Dispatch<WlSurface, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<WlShmPool, ()> for OverlayState {
@@ -572,7 +735,8 @@ impl Dispatch<WlShmPool, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<WlBuffer, ()> for OverlayState {
@@ -605,5 +769,94 @@ impl Dispatch<WlRegion, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cursor_overlay::KeyedOverlayCommand;
+
+    fn message(cmd: OverlayCommand) -> OverlayMsg {
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: "test".to_owned(),
+            cmd,
+        })
+    }
+
+    fn positioned_core() -> RenderStateCore {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (100.0, 100.0);
+        core.motion.idle_hide_ms = 1_000.0;
+        core
+    }
+
+    #[test]
+    fn fresh_sentinel_overlay_blocks_without_frame_polling() {
+        let core = RenderStateCore::new(CursorConfig::default());
+        assert_eq!(next_wait(&core, false), WlWait::Block);
+        assert!(!needs_frame_tick(&core));
+    }
+
+    #[test]
+    fn stable_visible_overlay_sleeps_until_idle_fade_deadline() {
+        let mut core = positioned_core();
+        core.idle_secs = 0.25;
+        assert_eq!(
+            next_wait(&core, false),
+            WlWait::Deadline(Duration::from_millis(750))
+        );
+        assert!(!needs_frame_tick(&core));
+    }
+
+    #[test]
+    fn animation_and_fade_use_frame_cadence() {
+        let mut core = positioned_core();
+        core.click_t = Some(0.0);
+        assert!(needs_frame_tick(&core));
+        assert_eq!(next_wait(&core, false), WlWait::Frame);
+
+        core.click_t = None;
+        core.idle_secs = 1.0;
+        core.idle_alpha = 1.0;
+        assert!(needs_frame_tick(&core));
+        assert_eq!(next_wait(&core, false), WlWait::Frame);
+    }
+
+    #[test]
+    fn hidden_and_disabled_state_quiesces_deterministically() {
+        let mut core = positioned_core();
+        core.click_t = Some(0.25);
+        core.visible = false;
+        quiesce_hidden(&mut core);
+        assert!(core.click_t.is_none());
+        assert!(core.path.is_none());
+        assert!(core.spring.is_none());
+        assert_eq!(next_wait(&core, false), WlWait::Block);
+    }
+
+    #[test]
+    fn blocked_scheduler_wakes_on_command_arrival() {
+        let (tx, rx) = bounded(1);
+        tx.send(WlOverlayCmd::Remove).unwrap();
+        assert!(matches!(
+            wait_for_work(&rx, WlWait::Block),
+            WlWake::Command(WlOverlayCmd::Remove)
+        ));
+    }
+
+    #[test]
+    fn disabled_config_refuses_forwarding_and_thread_startup() {
+        set_config_enabled(false);
+        let msg = message(OverlayCommand::SnapTo {
+            x: 10.0,
+            y: 20.0,
+            heading_radians: None,
+        });
+        let had_thread = TX.get().is_some();
+        assert!(!should_forward(false, &msg));
+        assert!(!ensure_started());
+        assert_eq!(TX.get().is_some(), had_thread);
+    }
 }

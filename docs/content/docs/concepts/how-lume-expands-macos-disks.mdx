@@ -1,0 +1,74 @@
+---
+title: How Lume expands macOS disks
+description: Understand RecoveryOS relocation, APFS growth, and rollback during a Lume disk resize.
+---
+
+A macOS virtual disk contains more than the main APFS container. Apple silicon
+macOS installations also include iBoot System Container (ISC) and paired
+RecoveryOS partitions. Their order determines where new capacity appears when
+the disk image grows.
+
+## Why growing the image is insufficient
+
+A standard Lume macOS disk has this layout:
+
+```text
+[ ISC ][ main APFS ][ RecoveryOS ]
+```
+
+Increasing the length of `disk.img` appends free sectors after RecoveryOS:
+
+```text
+[ ISC ][ main APFS ][ RecoveryOS ][ free space ]
+```
+
+APFS can grow only into adjacent free space. RecoveryOS therefore prevents the
+main container from using the appended capacity. Increasing the image length
+alone changes the virtual device size without increasing the guest filesystem.
+
+## RecoveryOS moves with its identity intact
+
+Lume resizes a stopped macOS VM offline. It copies RecoveryOS to the new end of
+the disk, preserving the partition type, unique identifier, attributes, size,
+and contents. It then rewrites both GUID Partition Table copies and asks
+`diskutil` to grow the main APFS container into the adjacent space.
+
+```text
+[ ISC ][ expanded main APFS ][ RecoveryOS ]
+```
+
+Keeping RecoveryOS preserves the paired recovery environment used by macOS
+updates and startup-security operations. Deleting the partition can make the
+space available, but leaves the VM without that paired environment.
+
+## Resizing is a transaction
+
+Before modifying the disk, Lume validates the partition table, confirms that
+the VM is stopped, and creates a copy-on-write backup when the storage volume
+supports it. A persistent marker records the transaction phase. Run, clone,
+and push operations refuse to use the VM while that marker exists.
+
+Lume verifies the relocated RecoveryOS bytes and the expanded APFS capacity
+before it updates the configured disk size. If a step fails, it restores the
+disk and configuration from the backup. A later resize invocation also detects
+and restores an interrupted transaction.
+
+Skipping the backup removes automatic rollback. It does not relax partition,
+VM-state, or post-resize verification checks.
+
+## Supported layouts
+
+The resizer accepts the standard three-partition Lume macOS layout and fails
+closed when it finds unfamiliar geometry. It supports increases only. FileVault
+guests are excluded because offline host tools cannot safely validate and grow
+their encrypted APFS state through this flow.
+
+Linux disk images do not contain paired RecoveryOS. Lume can increase their
+image size, but the guest remains responsible for growing its partition and
+filesystem.
+
+## Related pages
+
+- [Manage local Lume VMs](/how-to-guides/lume/manage-vms#expand-a-vm-disk)
+- [How SIP works in Lume VMs](/concepts/how-sip-works-in-lume-vms)
+- [Lume CLI reference](/reference/lume/cli-reference#set)

@@ -1,0 +1,23 @@
+diff --git a/core/display.js b/core/display.js
+index 4efd6f4b97dfda3ab450723ff8c722c8258d60fc..e20a68db8da2d9b26ac288a7ef15ff8b83ef69e0 100644
+--- a/core/display.js
++++ b/core/display.js
+@@ -411,6 +411,8 @@ export default class Display {
+             let data = new Uint8ClampedArray(arr.buffer,
+                                              arr.byteOffset + offset,
+                                              width * height * 4);
++            // trycua: macOS VM framebuffers arrive BGR; swap R/B per pixel.
++            for (let _i = 0; _i < data.length; _i += 4) { const _r = data[_i]; data[_i] = data[_i + 2]; data[_i + 2] = _r; }
+             let img = new ImageData(data, width, height);
+             this._drawCtx.putImageData(img, x, y);
+             this._damage(x, y, width, height);
+@@ -472,7 +474,8 @@ export default class Display {
+     }
+ 
+     _setFillColor(color) {
+-        const newStyle = 'rgb(' + color[0] + ',' + color[1] + ',' + color[2] + ')';
++        // trycua: macOS VM framebuffers arrive BGR; swap R/B so colors render correctly.
++        const newStyle = 'rgb(' + color[2] + ',' + color[1] + ',' + color[0] + ')';
+         if (newStyle !== this._prevDrawStyle) {
+             this._drawCtx.fillStyle = newStyle;
+             this._prevDrawStyle = newStyle;

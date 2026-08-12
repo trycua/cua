@@ -1,0 +1,100 @@
+name: Monitor branded installer endpoints
+
+on:
+  schedule:
+    # Run daily; the first scheduled run will be the next day after merge.
+    - cron: '15 14 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: monitor-branded-installers
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check public installer endpoints
+        id: endpoints
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          endpoints=(
+            "https://cua.ai/driver/install.sh|cua-driver"
+            "https://cua.ai/driver/install.ps1|cua-driver"
+            "https://cua.ai/driver/uninstall.sh|cua-driver"
+            "https://cua.ai/driver/uninstall.ps1|cua-driver"
+            "https://cua.ai/driver/_install-rust.sh|cua-driver"
+            "https://cua.ai/driver/_install-common.sh|cua-driver"
+            "https://cua.ai/driver/_install-common.psm1|cua-driver"
+            "https://cua.ai/driver/post-install-hints.txt|cua-driver"
+            "https://cua.ai/lume/install.sh|Lume"
+            "https://cua.ai/lume/uninstall.sh|Lume"
+          )
+
+          failures=()
+          mkdir -p /tmp/branded-installer-check
+          for entry in "${endpoints[@]}"; do
+            url="${entry%%|*}"
+            marker="${entry##*|}"
+            key=$(echo "$url" | sed 's#https://##; s#[^A-Za-z0-9]#_#g')
+            headers="/tmp/branded-installer-check/${key}.headers"
+            body="/tmp/branded-installer-check/${key}.body"
+
+            status=$(curl --silent --show-error --location --max-redirs 0 \
+              --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url" || true)
+            content_type=$(awk -F': ' 'tolower($1)=="content-type" {print $2}' "$headers" | tail -1 | tr -d '\r')
+
+            if [[ "$status" != "200" ]]; then
+              failures+=("$url returned HTTP $status")
+            elif [[ "$content_type" != text/* ]]; then
+              failures+=("$url returned unexpected Content-Type: ${content_type:-missing}")
+            elif ! grep -qi -- "$marker" "$body"; then
+              failures+=("$url did not contain expected marker $marker")
+            fi
+          done
+
+          if ((${#failures[@]})); then
+            {
+              echo 'failures<<EOF'
+              printf '%s\n' "${failures[@]}"
+              echo EOF
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo 'failures=' >> "$GITHUB_OUTPUT"
+
+      - name: Open or update monitoring issue
+        if: failure() && steps.endpoints.outputs.failures != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILURES: ${{ steps.endpoints.outputs.failures }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title='Branded installer endpoint check is failing'
+          body=$(cat <<EOF
+          The daily branded installer monitor found one or more failures.
+
+          ```
+          ${FAILURES}
+          ```
+
+          Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Checked at: ${GITHUB_SHA}
+          EOF
+          )
+
+          issue_number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [[ -n "$issue_number" ]]; then
+            gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

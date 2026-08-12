@@ -1,0 +1,36 @@
+---
+title: Antigravity CLI
+description: Connect Google's Antigravity CLI to Cua Driver over MCP.
+icon: Rocket
+---
+
+Antigravity CLI supports local stdio MCP servers. Generate the current Cua Driver configuration:
+
+```bash
+cua-driver mcp-config --client antigravity
+```
+
+Merge the generated `cua-driver` entry into the top-level `mcpServers` object in the global configuration:
+
+```text
+~/.gemini/config/mcp_config.json
+```
+
+For project scope, use `.agents/mcp_config.json` in the workspace. The configuration has this shape:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "/absolute/path/to/cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Restart `agy` after changing the file, then open `/mcp` to inspect the server status. Cua Driver's legacy `--client gemini` alias prints the same Antigravity configuration.
+
+Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent#other-supported-clients) for runtime and permission guidance.
+
+Upstream: [Antigravity MCP documentation](https://antigravity.google/docs/mcp) and Google's [Gemini CLI migration guide](https://antigravity.google/docs/cli/gcli-migration).

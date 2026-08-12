@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -23,19 +24,80 @@ type ctxKey int
 
 const UserKey ctxKey = 1
 
-var opaQuery *rego.PreparedEvalQuery
-var opaEventQuery *rego.PreparedEvalQuery
 var opaAdminQuery *rego.PreparedEvalQuery
-var opaPoolAdmissionQuery *rego.PreparedEvalQuery
 
+// authzPolicy is the shared principal vocabulary every surface module imports.
+// It holds no allow rule of its own; see authz.rego.
+//
 //go:embed authz.rego
 var authzPolicy string
 
-//go:embed filters.rego
-var filtersPolicy string
-
 //go:embed pool_admission.rego
 var poolAdmissionPolicy string
+
+// authzOwnershipPolicy is the namespace-ownership boundary. Like
+// pool_admission.rego it is not a surface — it is a conjunct several surfaces
+// carry — so it is registered by name below rather than through
+// surfacePolicySources.
+//
+//go:embed authz_ownership.rego
+var authzOwnershipPolicy string
+
+// surfacePolicySources is the base module plus one module per authorization
+// surface, keyed by the name policy_routes.go registers it under. Registration
+// is a loop over this map rather than a call per module so that adding a surface
+// is one entry in one place — and so that a module added here but bound to no
+// route is caught by the correspondence test rather than sitting compiled and
+// unreachable.
+var surfacePolicySources = map[string]struct {
+	filename string
+	source   string
+}{
+	"authz-base":         {"authz_base.rego", authzBasePolicy},
+	"authz-keys":         {"authz_keys.rego", authzKeysPolicy},
+	"authz-config":       {"authz_config.rego", authzConfigPolicy},
+	"authz-billing":      {"authz_billing.rego", authzBillingPolicy},
+	"authz-namespaces":   {"authz_namespaces.rego", authzNamespacesPolicy},
+	"authz-github-trust": {"authz_github_trust.rego", authzGitHubTrustPolicy},
+	"authz-user-keys":    {"authz_user_keys.rego", authzUserKeysPolicy},
+	"authz-k8s":          {"authz_k8s.rego", authzK8sPolicy},
+	"authz-orch":         {"authz_orch.rego", authzOrchPolicy},
+	"authz-svc":          {"authz_svc.rego", authzSvcPolicy},
+	"authz-state-query":  {"authz_state_query.rego", authzStateQueryPolicy},
+}
+
+//go:embed authz_base.rego
+var authzBasePolicy string
+
+//go:embed authz_keys.rego
+var authzKeysPolicy string
+
+//go:embed authz_config.rego
+var authzConfigPolicy string
+
+//go:embed authz_billing.rego
+var authzBillingPolicy string
+
+//go:embed authz_namespaces.rego
+var authzNamespacesPolicy string
+
+//go:embed authz_github_trust.rego
+var authzGitHubTrustPolicy string
+
+//go:embed authz_user_keys.rego
+var authzUserKeysPolicy string
+
+//go:embed authz_k8s.rego
+var authzK8sPolicy string
+
+//go:embed authz_orch.rego
+var authzOrchPolicy string
+
+//go:embed authz_svc.rego
+var authzSvcPolicy string
+
+//go:embed authz_state_query.rego
+var authzStateQueryPolicy string
 
 // flagPrefix is the OpenFeature path under which the auth package's OPA
 // flags live. The dev SimpleEnvProvider maps it to env vars prefixed
@@ -43,8 +105,7 @@ var poolAdmissionPolicy string
 // replacing "/" and "-" with "_"); the aws-ssm provider uses the path
 // as the SSM Parameter Store prefix directly.
 //
-//	/feature-flags/cyclops-cs/admin-subs             → CYCLOPS_CS_ADMIN_SUBS
-//	/feature-flags/cyclops-cs/event-reason-allowlist → CYCLOPS_CS_EVENT_REASON_ALLOWLIST
+//	/feature-flags/cyclops-cs/admin-subs → CYCLOPS_CS_ADMIN_SUBS
 //
 // Values are JSON string arrays (e.g. '["sub1","sub2"]').
 const flagPrefix = "/feature-flags/cyclops-cs/"
@@ -53,9 +114,9 @@ const flagPrefix = "/feature-flags/cyclops-cs/"
 // before re-resolving via OpenFeature. Refresh is lazy and ad-hoc: the
 // next caller that arrives after expiry triggers a re-resolve on the
 // request path — there is no background ticker. Flags are passed into
-// each OPA evaluation as `input.flags` (see OpaMiddleware / EvalIsAdmin /
-// EvalVisibleEvents), so a refreshed value takes effect on the very next
-// request without rebuilding any prepared query or restarting the pod.
+// each OPA evaluation as `input.flags` (see newRequestPolicyInput /
+// EvalIsAdmin), so a refreshed value takes effect on the very next request
+// without rebuilding any prepared query or restarting the pod.
 const flagsTTL = 1 * time.Minute
 
 var (
@@ -76,14 +137,13 @@ var (
 	ffClient     *openfeature.Client
 )
 
-// flagsData returns the resolved feature-flag map (admin_subs,
-// event_reason_allowlist, …), TTL-cached at flagsTTL. On a hit it returns
-// the cached map under the lock; on a miss it resolves via OpenFeature
-// behind a singleflight so only one goroutine fans out to SSM while the
-// rest share the result. The map is meant to be placed under input.flags
-// for OPA; the policy references a subset of keys (admin_subs /
-// event_reason_allowlist), extras are ignored, and absent keys evaluate as
-// undefined (implicitly denying / redacting).
+// flagsData returns the resolved feature-flag map (admin_subs, …), TTL-cached
+// at flagsTTL. On a hit it returns the cached map under the lock; on a miss it
+// resolves via OpenFeature behind a singleflight so only one goroutine fans out
+// to SSM while the rest share the result. The map is meant to be placed under
+// input.flags for OPA; the policy references a subset of keys (admin_subs),
+// extras are ignored, and absent keys evaluate as undefined (implicitly
+// denying).
 //
 // The OpenFeature provider is installed by featureflags.SetupProvider at
 // startup (main.go) — aws-ssm in prod, SimpleEnvProvider in dev, with the
@@ -186,7 +246,18 @@ func loadStringList(ctx context.Context, client *openfeature.Client, flagKey str
 // valid across flag refreshes. The OpenFeature provider must be installed
 // by featureflags.SetupProvider before this runs.
 func LoadOpa() {
-	// authz queries only need authz.rego (is_admin lives there too).
+	RegisterPolicyModule("authz", "authz.rego", authzPolicy)
+	RegisterPolicyModule("pool-admission", "pool_admission.rego", poolAdmissionPolicy)
+	RegisterPolicyModule("authz-ownership", "authz_ownership.rego", authzOwnershipPolicy)
+	for name, module := range surfacePolicySources {
+		RegisterPolicyModule(name, module.filename, module.source)
+	}
+
+	// authz queries only need authz.rego. Route authorization is not one of
+	// them — that runs through the policy library, which composes the base
+	// module with one surface module per route from the registry above. What is
+	// left is is_admin, a decision EvalIsAdmin makes off a User rather than a
+	// request, which is why it is not a policy-library node.
 	prepareAuthzQuery := func(q string) *rego.PreparedEvalQuery {
 		pq, err := rego.New(
 			rego.Query(q),
@@ -198,79 +269,12 @@ func LoadOpa() {
 		return &pq
 	}
 
-	// filter queries need both authz.rego (for data.authz.is_admin) and filters.rego
-	prepareFilterQuery := func(q string) *rego.PreparedEvalQuery {
-		pq, err := rego.New(
-			rego.Query(q),
-			rego.Module("authz.rego", authzPolicy),
-			rego.Module("filters.rego", filtersPolicy),
-		).PrepareForEval(context.Background())
-		if err != nil {
-			log.Fatalf("opa: prepare filter %q: %v", q, err)
-		}
-		return &pq
-	}
-
-	opaQuery = prepareAuthzQuery("data.authz.allow")
 	opaAdminQuery = prepareAuthzQuery("data.authz.is_admin")
-	opaEventQuery = prepareFilterQuery("data.filters.visible_events")
-	poolAdmissionQuery, err := rego.New(
-		rego.Query("data.pool_admission.allow"),
-		rego.Module("pool_admission.rego", poolAdmissionPolicy),
-	).PrepareForEval(context.Background())
-	if err != nil {
-		log.Fatalf("opa: prepare pool admission policy: %v", err)
-	}
-	opaPoolAdmissionQuery = &poolAdmissionQuery
 
 	// Warm the flag cache once so the first request isn't slowed by the
 	// initial resolve and any SSM/provider misconfiguration surfaces in the
 	// startup logs rather than on a user's first call.
 	_ = flagsData()
-}
-
-// EvalPoolAdmission validates an OSGymWorkspacePool write body before it is
-// forwarded to Kubernetes.
-func EvalPoolAdmission(ctx context.Context, method string, object map[string]any) (bool, error) {
-	res, err := opaPoolAdmissionQuery.Eval(ctx, rego.EvalInput(map[string]any{
-		"method": method,
-		"object": object,
-	}))
-	if err != nil {
-		return false, err
-	}
-	return res.Allowed(), nil
-}
-
-// EvalVisibleEvents runs the data.filters.visible_events query against the
-// provided events slice and user sub. Returns the filtered slice.
-// items must be a []interface{} (the raw JSON-unmarshalled K8s event objects).
-func EvalVisibleEvents(ctx context.Context, user *User, items []interface{}) ([]interface{}, error) {
-	input := map[string]interface{}{
-		"user":   buildUserInput(user),
-		"flags":  flagsData(),
-		"events": items,
-	}
-	res, err := opaEventQuery.Eval(ctx, rego.EvalInput(input))
-	if err != nil {
-		return nil, err
-	}
-	if len(res) == 0 || len(res[0].Expressions) == 0 {
-		return []interface{}{}, nil
-	}
-	// visible_events is a set rule — the result is a set of event objects.
-	switch v := res[0].Expressions[0].Value.(type) {
-	case []interface{}:
-		return v, nil
-	case map[string]interface{}:
-		// OPA may return a set as a map when the set is non-empty.
-		out := make([]interface{}, 0, len(v))
-		for _, ev := range v {
-			out = append(out, ev)
-		}
-		return out, nil
-	}
-	return []interface{}{}, nil
 }
 
 // EvalIsAdmin returns true if the user's JWT sub is in input.flags.admin_subs
@@ -293,6 +297,20 @@ func EvalIsAdmin(ctx context.Context, user *User) (bool, error) {
 	}
 	v, _ := res[0].Expressions[0].Value.(bool)
 	return v, nil
+}
+
+// EvalBillingEnabled resolves the billing UI flag for the authenticated user.
+// The flag defaults off so absent provider configuration never exposes billing.
+func EvalBillingEnabled(ctx context.Context, user *User) (bool, error) {
+	if user == nil || user.ID == "" {
+		return false, nil
+	}
+	ffClientOnce.Do(func() {
+		ffClient = openfeature.NewClient("cyclops-cs-auth")
+	})
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return ffClient.BooleanValue(callCtx, "/feature-flags/cyclops-cs/billing-enabled", false, openfeature.NewEvaluationContext(user.ID, nil))
 }
 
 func writeJSONErr(w http.ResponseWriter, status int, msg string) {
@@ -337,7 +355,7 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		// ── JWT validation ─────────────────────────────────────────
-		user, err := validate(raw)
+		user, err := validateWithContext(r.Context(), raw)
 		if err != nil {
 			result = err.Error()
 			writeJSONErr(w, http.StatusUnauthorized, "auth token is invalid")
@@ -353,61 +371,30 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 		if authConfig != nil && authConfig.UserKeyClientPfx != "" {
 			userKeyPfx = authConfig.UserKeyClientPfx
 		}
-		if strings.HasPrefix(user.AZP, userKeyPfx) {
-			if userSub := user.Claims["user_sub"]; userSub != "" {
-				user.ID = userSub
-			}
-			if userGroups := user.Claims["user_groups"]; userGroups != "" {
-				user.Groups = strings.Split(userGroups, ",")
-			}
+		if err := applyUserKeyIdentity(user, userKeyPfx); err != nil {
+			result = err.Error()
+			writeJSONErr(w, http.StatusUnauthorized, "auth token is invalid")
+			return
 		}
 
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserKey, user)))
 	})
 }
 
-// OpaMiddleware evaluates `data.authz.allow` against
-//
-//	{ method, path, route, params, user: { sub, azp, namespace, email } }
-//
-// The `route` and `params` map are filled by RouteContext below before
-// this middleware runs; they let policy reason about the matched
-// route ("/api/gateway/{name}") and its parameters separately from the
-// raw URL path.
-func OpaMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		result := "allowed"
-		defer func() {
-			slog.Debug("opa", "elapsed", time.Since(start), "result", result,
-				"traceId", r.Context().Value(middlewares.ContextKey("traceId")))
-		}()
-
-		user, _ := r.Context().Value(UserKey).(*User)
-		userInput := buildUserInput(user)
-		route, _ := r.Context().Value(routeKey).(string)
-		params, _ := r.Context().Value(paramsKey).(map[string]string)
-		input := map[string]any{
-			"method": r.Method,
-			"path":   r.URL.Path,
-			"route":  route,
-			"params": params,
-			"user":   userInput,
-			"flags":  flagsData(),
-		}
-		res, err := opaQuery.Eval(r.Context(), rego.EvalInput(input))
-		if err != nil {
-			result = err.Error()
-			writeJSONErr(w, http.StatusInternalServerError, "policy evaluation failed")
-			return
-		}
-		if !res.Allowed() {
-			result = "forbidden"
-			writeJSONErr(w, http.StatusForbidden, "forbidden")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+func applyUserKeyIdentity(user *User, userKeyPfx string) error {
+	if !strings.HasPrefix(user.AZP, userKeyPfx) {
+		return nil
+	}
+	userSub := user.Claims["user_sub"]
+	if userSub == "" {
+		return fmt.Errorf("user-key token is missing user_sub")
+	}
+	user.ID = userSub
+	user.PrincipalType = PrincipalTypeUserKey
+	if userGroups := user.Claims["user_groups"]; userGroups != "" {
+		user.Groups = strings.Split(userGroups, ",")
+	}
+	return nil
 }
 
 func buildUserInput(user *User) map[string]any {
@@ -415,11 +402,14 @@ func buildUserInput(user *User) map[string]any {
 		return map[string]any{}
 	}
 	return map[string]any{
-		"sub":       user.ID,
-		"azp":       user.AZP,
-		"namespace": user.Namespace,
-		"email":     user.Email,
-		"groups":    user.Groups,
+		"sub":                user.ID,
+		"azp":                user.AZP,
+		"namespace":          user.Namespace,
+		"email":              user.Email,
+		"groups":             user.Groups,
+		"principal_type":     user.PrincipalType,
+		"repository":         user.Repository,
+		"allowed_namespaces": user.AllowedNamespaces,
 	}
 }
 
@@ -434,9 +424,42 @@ const (
 	paramsKey routeCtxKey = 2
 )
 
+// routeParamNames returns the wildcard names in a route pattern, in the order
+// they appear: "/api/svc/{namespace}/{service}/{path...}" yields namespace,
+// service, path. These are the names r.PathValue is keyed by, so the trailing
+// "..." of a multi-segment wildcard is not part of the name.
+//
+// This scans the Go 1.22 ServeMux pattern grammar and nothing wider: a wildcard
+// is a whole path segment wrapped in braces, and "{$}" — the end-of-path anchor
+// — binds no value.
+func routeParamNames(route string) []string {
+	var names []string
+	for _, segment := range strings.Split(route, "/") {
+		if len(segment) < 2 || segment[0] != '{' || segment[len(segment)-1] != '}' {
+			continue
+		}
+		name := strings.TrimSuffix(segment[1:len(segment)-1], "...")
+		if name == "" || name == "$" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 // RouteContext stamps the matched route name + params onto the request
-// context before TokenAuthMiddleware/OpaMiddleware run.
-func RouteContext(route string, paramKeys ...string) func(http.Handler) http.Handler {
+// context before TokenAuthMiddleware and the authorization stage run.
+//
+// The parameter names come from the route pattern rather than from a list the
+// caller supplies alongside it. A caller-supplied list is a second copy of what
+// the pattern already says, and the two can disagree silently: drop a name and
+// the policy's input.params.X is undefined, its rule body fails, `default allow
+// = false` answers, and the route returns 403 for every request — no compile
+// error, no log, and the cause is a deleted string in a different file and a
+// different language from the policy that needed it. Deriving them means there
+// is no second list to disagree with.
+func RouteContext(route string) func(http.Handler) http.Handler {
+	paramKeys := routeParamNames(route)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			params := map[string]string{}

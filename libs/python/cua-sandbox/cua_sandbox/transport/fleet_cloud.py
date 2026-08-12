@@ -3,35 +3,45 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Mapping, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
+import httpx
 from cua_sandbox._config import (
     get_client_id,
     get_client_secret,
     get_fleet_base_url,
+    get_fleet_token,
     get_token_url,
 )
 from cua_sandbox.image import Image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport
 from fleet_sdk import (
+    AccessTokenProvider,
+    AccessTokenProviderError,
     CreateClaimRequest,
     CreatePoolRequest,
+    CreatePoolRequestBuilder,
     CreateTemplateRequest,
+    CreateTemplateRequestBuilder,
     CyclopsClient,
     CyclopsConfiguration,
     CyclopsCredentials,
+    CyclopsTokenProviderConfiguration,
     HttpRequest,
-    OsGymSandboxTemplateSpec,
-    OsGymSandboxWarmPoolSpec,
+    OsGymSandboxTemplateSpecBuilder,
+    OsGymSandboxWarmPoolSpecBuilder,
     PreservedJson,
-    SandboxService,
-    SandboxTemplateRef,
+    SandboxServiceBuilder,
+    SandboxTemplateRefBuilder,
     ServiceProtocol,
-    VmTemplate,
+    VmTemplateBuilder,
 )
 
 if TYPE_CHECKING:
@@ -39,20 +49,142 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_DNS_LABEL_MAX_LENGTH = 63
+_CLAIM_HASH_LENGTH = 16
+
+
+def _claim_name(pool_name: str) -> str:
+    normalized_name = pool_name.lower()
+    legacy_name = f"{normalized_name}-claim"
+    if len(legacy_name) <= _DNS_LABEL_MAX_LENGTH:
+        return legacy_name
+
+    hash_suffix = hashlib.sha256(normalized_name.encode()).hexdigest()[:_CLAIM_HASH_LENGTH]
+    prefix_length = _DNS_LABEL_MAX_LENGTH - len(hash_suffix) - 1
+    prefix = normalized_name[:prefix_length].rstrip("-")
+    return f"{prefix}-{hash_suffix}"
+
+
+_GITHUB_WIF_AUDIENCE = "fleets"
+_GitHubTokenRequest = Callable[[str, dict[str, str]], Awaitable[tuple[int, Mapping[str, Any]]]]
+
+
+async def _httpx_json_get(url: str, headers: dict[str, str]) -> tuple[int, Mapping[str, Any]]:
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(url, headers=headers)
+    payload = response.json()
+    if not isinstance(payload, Mapping):
+        raise ValueError("GitHub OIDC endpoint returned an invalid response")
+    return response.status_code, payload
+
+
+def _with_audience(request_url: str, audience: str) -> str:
+    parts = urlsplit(request_url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key != "audience"
+    ]
+    query.append(("audience", audience))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+class _GitHubActionsAccessTokenProvider(AccessTokenProvider):
+    """Refresh a Fleet workload token through GitHub Actions OIDC after a 401."""
+
+    def __init__(
+        self,
+        token: str,
+        *,
+        environ: Mapping[str, str] | None = None,
+        request: _GitHubTokenRequest = _httpx_json_get,
+    ) -> None:
+        self._token = token
+        self._environ = os.environ if environ is None else environ
+        self._request = request
+
+    async def get_access_token(self, force_refresh: bool) -> str:
+        if not force_refresh:
+            return self._token
+
+        request_url = self._environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "").strip()
+        request_token = self._environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "").strip()
+        if not request_url or not request_token:
+            raise AccessTokenProviderError.Failed(
+                "GitHub Actions OIDC environment is unavailable for token refresh"
+            )
+
+        try:
+            status, payload = await self._request(
+                _with_audience(request_url, _GITHUB_WIF_AUDIENCE),
+                {
+                    "Accept": "application/json",
+                    "Authorization": f"bearer {request_token}",
+                },
+            )
+        except AccessTokenProviderError:
+            raise
+        except Exception as error:
+            raise AccessTokenProviderError.Failed("GitHub OIDC token refresh failed") from error
+
+        if status != 200:
+            raise AccessTokenProviderError.Failed(
+                f"GitHub OIDC token refresh failed with HTTP {status}"
+            )
+        token = payload.get("value")
+        if not isinstance(token, str) or not token.strip():
+            raise AccessTokenProviderError.Failed(
+                "GitHub OIDC token refresh returned an empty token"
+            )
+        self._token = token.strip()
+        return self._token
+
+
+class _StaticAccessTokenProvider(AccessTokenProvider):
+    """Return a configured Fleet workload token without attempting refresh."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    async def get_access_token(self, force_refresh: bool) -> str:
+        return self._token
+
 
 class _FleetClient:
     """Thin async facade over the generated Cyclops SDK."""
 
     def __init__(self) -> None:
-        client_id = get_client_id()
-        client_secret = get_client_secret()
-        if not client_id or not client_secret:
-            raise ValueError(
-                "Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, "
-                "or cua.configure(client_id=..., client_secret=...)."
-            )
+        self._closed = False
+        fleet_token = get_fleet_token()
+        if not fleet_token:
+            client_id = get_client_id()
+            client_secret = get_client_secret()
+            if not client_id or not client_secret:
+                raise ValueError(
+                    "Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, "
+                    "or cua.configure(client_id=..., client_secret=...)."
+                )
         self._base_url = get_fleet_base_url().rstrip("/")
         self._http_client = CyclopsHttpClient()
+        if fleet_token:
+            configuration = CyclopsTokenProviderConfiguration(
+                base_url=self._base_url,
+                pool_poll_interval_ms=2000,
+                pool_poll_limit=300,
+                claim_poll_interval_ms=2000,
+                claim_poll_limit=300,
+            )
+            self._client = CyclopsClient.connect_with_access_token_provider(
+                configuration,
+                (
+                    _GitHubActionsAccessTokenProvider(fleet_token)
+                    if os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "").strip()
+                    and os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "").strip()
+                    else _StaticAccessTokenProvider(fleet_token)
+                ),
+                self._http_client,
+            )
+            return
         configuration = CyclopsConfiguration(
             base_url=self._base_url,
             token_url=get_token_url(),
@@ -65,7 +197,10 @@ class _FleetClient:
         self._client = CyclopsClient.connect(configuration, self._http_client)
 
     async def close(self) -> None:
+        if self._closed:
+            return
         await self._http_client.aclose()
+        self._closed = True
 
     async def create_pool(self, request: CreatePoolRequest) -> Any:
         return await self._client.create_pool(request)
@@ -84,6 +219,15 @@ class _FleetClient:
 
     async def delete_template(self, template: Any) -> None:
         await self._client.delete_template(template)
+
+    async def get_namespace(self, name: str) -> Any:
+        return await self._client.get_namespace(name)
+
+    async def create_namespace(self, name: str) -> Any:
+        return await self._client.create_namespace(name)
+
+    async def delete_namespace(self, name: str) -> None:
+        await self._client.delete_namespace(name)
 
     async def create_claim(self, request: CreateClaimRequest) -> Any:
         return await self._client.create_claim(request)
@@ -107,6 +251,15 @@ class _FleetClient:
     async def wait_claim(self, claim: Any) -> Any:
         return await self._client.wait_claim(claim)
 
+    async def renew_claim(self, claim: Any, shutdown_time: str) -> Any:
+        renew = getattr(self._client, "renew_claim", None)
+        if renew is None:
+            raise RuntimeError(
+                "the installed cua-fleet release does not support claim renewal; "
+                "upgrade to a build whose CyclopsClient exposes renew_claim"
+            )
+        return await renew(claim, shutdown_time)
+
     async def delete_claim(self, claim: Any) -> None:
         await self._client.delete_claim(claim)
 
@@ -124,33 +277,20 @@ class _FleetClient:
     async def get_pool(self, name: str) -> Any:
         return await self._client.get_pool(name)
 
-    async def get_claim(self, pool: Any) -> Any:
-        expected = f"{pool.metadata.name}-claim"
+    async def list_claims(self, namespace: str) -> list[Any]:
+        return await self._client.list_claims(namespace)
+
+    async def get_claim(self, pool: Any, name: str | None = None) -> Any:
+        expected = name or _claim_name(pool.metadata.name)
         for claim in await self._client.list_claims(pool.metadata.namespace):
             if claim.metadata.name == expected:
                 return claim
         raise LookupError(f"Fleet claim {expected!r} was not found")
 
     async def list_pools(self) -> list[Any]:
-        response = await self._http_client.execute(
-            HttpRequest(method="GET", url=f"{self._base_url}/api/namespaces", headers=[], body=None)
+        raise NotImplementedError(
+            "Fleet sandbox listing requires namespace discovery; use an exact sandbox name instead"
         )
-        if not 200 <= response.status < 300:
-            raise RuntimeError(f"Fleet namespace listing failed with HTTP {response.status}")
-        payload = json.loads(response.body)
-        items = payload if isinstance(payload, list) else payload.get("items", [])
-        namespaces = [
-            (
-                item
-                if isinstance(item, str)
-                else item.get("name") or item.get("metadata", {}).get("name")
-            )
-            for item in items
-        ]
-        pools = await asyncio.gather(
-            *(self._client.list_pools(namespace) for namespace in namespaces if namespace)
-        )
-        return [pool for namespace_pools in pools for pool in namespace_pools]
 
     async def set_pool_replicas(self, pool: Any, replicas: int) -> Any:
         pool.spec.replicas = replicas
@@ -185,7 +325,7 @@ class _FleetClient:
 
 
 class FleetCloudTransport(FleetTransport):
-    """Provision and manage registry-image sandboxes through Fleet."""
+    """Provision image-backed pools or claim pre-created pools through Fleet."""
 
     def __init__(
         self,
@@ -198,9 +338,19 @@ class FleetCloudTransport(FleetTransport):
         region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        server_port: int = 8000,
+        pool_name: str | None = None,
+        create_claim: bool = False,
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
     ) -> None:
+        if (
+            isinstance(server_port, bool)
+            or not isinstance(server_port, int)
+            or server_port < 1
+            or server_port > 65535
+        ):
+            raise ValueError("server_port must be an integer between 1 and 65535")
         if disk_gb is not None:
             raise ValueError("disk_gb is not supported by the Fleet cloud transport")
         if region != "us-east-1":
@@ -222,14 +372,19 @@ class FleetCloudTransport(FleetTransport):
             raise ValueError("services must map non-empty names to TCP ports")
         self._image = image
         self._name = name
+        self._explicit_pool = pool_name is not None
+        self._pool_name = pool_name or name
+        self._create_claim = create_claim
+        self._claim_name = name if pool_name else _claim_name(name)
         self._cpu = cpu
         self._memory_mb = memory_mb
         self._time_to_start = time_to_start if time_to_start is not None else 600.0
         self._request_timeout = request_timeout or 30.0
+        self._server_port = server_port
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
         self._provisioned = False
-        self._owns_resources = image is not None
+        self._owns_resources = image is not None or create_claim
         self._template: Any = None
         self._pool: Any = None
         self._claim: Any = None
@@ -246,26 +401,46 @@ class FleetCloudTransport(FleetTransport):
             try:
                 if self._pool is None:
                     if self._image is None:
-                        self._pool = await self._sdk.get_pool(self._name)
+                        self._pool = await self._sdk.get_pool(self._pool_name)
+                        if self._create_claim:
+                            self._pool = await self._sdk.set_pool_replicas(self._pool, 1)
+                            self._pool = await self._sdk.wait_pool(self._pool)
                     else:
                         self._validate_image(self._image)
-                        self._template = await self._sdk.create_template(self._template_request())
-                        self._pool = await self._sdk.create_pool(self._pool_request())
+                        self._pool = await self._sdk.reconcile_pool(self._pool_request())
+                        self._template = await self._sdk.reconcile_template(
+                            self._template_request()
+                        )
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
-                    if self._image is None:
-                        self._claim = await self._sdk.get_claim(self._pool)
+                    if self._image is None and not self._create_claim:
+                        self._claim = await self._get_claim()
                     else:
-                        self._claim = await self._sdk.create_claim(
-                            CreateClaimRequest(pool=self._pool, spec=None)
-                        )
+                        try:
+                            self._claim = await self._sdk.create_claim(
+                                CreateClaimRequest(
+                                    pool=self._pool, spec=None, name=self._claim_name
+                                )
+                            )
+                        except Exception as create_error:
+                            try:
+                                self._claim = await self._get_claim()
+                            except Exception as lookup_error:
+                                raise create_error from lookup_error
                 bound = await self._sdk.wait_claim(self._claim)
                 await self._sdk.wait_service_ready(bound, "server", self._time_to_start)
             except BaseException as provisioning_error:
+                cleanup_error: BaseException | None = None
                 try:
                     if self._owns_resources:
                         await self._cleanup_resources()
-                except BaseException as cleanup_error:
+                except BaseException as error:
+                    cleanup_error = error
+                finally:
+                    if self._owns_resources:
+                        self._pool = None
+                        self._template = None
+                if cleanup_error is not None:
                     logger.warning(
                         "Failed to clean up Fleet sandbox %r: %s", self._name, cleanup_error
                     )
@@ -289,7 +464,7 @@ class FleetCloudTransport(FleetTransport):
             raise ValueError("Fleet services can only expose numeric TCP ports")
         if not self._provisioned:
             raise ValueError("Transport not connected")
-        service = "server" if sandbox_port == 8000 else f"port-{sandbox_port}"
+        service = "server" if sandbox_port == self._server_port else f"port-{sandbox_port}"
         from cua_sandbox.interfaces.tunnel import TunnelInfo
 
         endpoint = self._sdk.service_url(self._bound, service)
@@ -308,12 +483,6 @@ class FleetCloudTransport(FleetTransport):
         if self._claim is not None:
             await self._sdk.delete_claim(self._claim)
             self._claim = None
-        if self._pool is not None:
-            await self._sdk.delete_pool(self._pool)
-            self._pool = None
-        if self._template is not None:
-            await self._sdk.delete_template(self._template)
-            self._template = None
         self._provisioned = False
 
     @classmethod
@@ -355,63 +524,81 @@ class FleetCloudTransport(FleetTransport):
         await cls.resume_sandbox(name, time_to_start)
 
     @classmethod
-    async def delete_sandbox(cls, name: str) -> None:
+    async def delete_sandbox(cls, name: str, *, pool_name: str | None = None) -> None:
         sdk = _FleetClient()
         try:
-            pool = await sdk.get_pool(name)
-            template_name = pool.spec.sandbox_template_ref.name
-            await sdk.delete_claim(await sdk.get_claim(pool))
-            await sdk.delete_pool(pool)
-            await sdk.delete_template(
-                await sdk.get_template(pool.metadata.namespace, template_name)
-            )
+            pool = await sdk.get_pool(pool_name or name)
+            if pool_name is not None:
+                claim = await sdk.get_claim(pool, name)
+            else:
+                claim = await sdk.get_claim(pool)
+            await sdk.delete_claim(claim)
         finally:
             await sdk.close()
 
+    async def _get_claim(self) -> Any:
+        if self._explicit_pool:
+            return await self._sdk.get_claim(self._pool, self._claim_name)
+        return await self._sdk.get_claim(self._pool)
+
     def _template_request(self) -> CreateTemplateRequest:
         assert self._image is not None
-        service_ports = self._services or {
-            "server": 8000,
-            **{f"port-{port}": port for port in self._image._ports if port != 8000},
-        }
+        if self._services is not None:
+            service_ports = {
+                "server": self._server_port,
+                **{name: port for name, port in self._services.items() if name != "server"},
+            }
+        else:
+            service_ports = {
+                "server": self._server_port,
+                **{
+                    f"port-{port}": port for port in self._image._ports if port != self._server_port
+                },
+            }
         services = [
-            SandboxService(name=name, target_port=port, protocol=ServiceProtocol.TCP)
+            SandboxServiceBuilder()
+            .name(name)
+            .target_port(port)
+            .protocol(ServiceProtocol.TCP)
+            .build()
             for name, port in service_ports.items()
         ]
-        return CreateTemplateRequest(
-            namespace=self._name,
-            name=self._name,
-            spec=OsGymSandboxTemplateSpec(
-                vm_template=VmTemplate(
-                    container_disk_image=self._image._registry,
-                    command=None,
-                    runtime=None,
-                    runtime_class_name=None,
-                    node_selector=None,
-                    tolerations=None,
-                    image_pull_policy=None,
-                    image_pull_secret="ecr-credentials",
-                    cpu_cores=self._cpu,
-                    memory=None if self._memory_mb is None else f"{self._memory_mb}Mi",
-                    firmware=None,
-                    probes=PreservedJson.from_json(
-                        json.dumps({"readinessProbe": {"tcpSocket": {"port": 8000}}})
-                    ),
-                    services=services,
-                    oidc=None,
-                ),
-            ),
+        vm_template_builder = (
+            VmTemplateBuilder()
+            .container_disk_image(self._image._registry)
+            .image_pull_secret("ecr-credentials")
+            .probes(
+                PreservedJson.from_json(
+                    json.dumps({"readinessProbe": {"tcpSocket": {"port": self._server_port}}})
+                )
+            )
+            .services(services)
+        )
+        if self._cpu is not None:
+            vm_template_builder = vm_template_builder.cpu_cores(self._cpu)
+        if self._memory_mb is not None:
+            vm_template_builder = vm_template_builder.memory(f"{self._memory_mb}Mi")
+
+        template_spec = (
+            OsGymSandboxTemplateSpecBuilder().vm_template(vm_template_builder.build()).build()
+        )
+        return (
+            CreateTemplateRequestBuilder()
+            .namespace(self._pool_name)
+            .name(self._pool_name)
+            .spec(template_spec)
+            .build()
         )
 
     def _pool_request(self) -> CreatePoolRequest:
-        return CreatePoolRequest(
-            namespace=self._name,
-            spec=OsGymSandboxWarmPoolSpec(
-                replicas=self._replicas,
-                sandbox_template_ref=SandboxTemplateRef(name=self._name),
-                autoscaling=None,
-            ),
+        template_ref = SandboxTemplateRefBuilder().name(self._pool_name).build()
+        pool_spec = (
+            OsGymSandboxWarmPoolSpecBuilder()
+            .replicas(self._replicas)
+            .sandbox_template_ref(template_ref)
+            .build()
         )
+        return CreatePoolRequestBuilder().namespace(self._pool_name).spec(pool_spec).build()
 
     @staticmethod
     def _service_names(template: Any) -> list[str]:
@@ -420,7 +607,7 @@ class FleetCloudTransport(FleetTransport):
     @staticmethod
     def _validate_image(image: Image) -> None:
         if not image._registry:
-            raise ValueError("Fleet cloud sandboxes require Image.from_registry(...)")
+            raise NotImplementedError("Fleet cloud sandboxes require Image.from_registry(...)")
         if (
             image._layers
             or image._env
@@ -428,6 +615,6 @@ class FleetCloudTransport(FleetTransport):
             or image._snapshot_source
             or image._disk_path
         ):
-            raise ValueError(
+            raise NotImplementedError(
                 "Fleet cloud supports registry images with optional exposed services only"
             )

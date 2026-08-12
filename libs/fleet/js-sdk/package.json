@@ -28,7 +28,7 @@
     "generate:check": "node ./scripts/check-generated-client.mjs",
     "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.js",
+    "test": "npm run build && node --test test/*.test.js test/*.test.mjs",
     "prepublishOnly": "npm run generate:check && npm run typecheck && npm test && npm run build"
   },
   "keywords": [

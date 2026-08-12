@@ -94,7 +94,15 @@ elif [[ "$OS" == "Linux" && -f "$SYSTEMD_UNIT" ]]; then
     rm -f "$SYSTEMD_UNIT"
     log "removed systemd user unit $SYSTEMD_UNIT"
 fi
-pkill -x cua-driver-local >/dev/null 2>&1 || true
+# See the note in _install-local-rust.sh: `pkill -x cua-driver-local` never
+# matches on Linux, because `-x` compares against the 15-char truncated
+# `comm` and the name is 16. Match argv[0], anchored so the launcher shells
+# that merely mention the path in their script text are left alone.
+for _daemon_bin in "$CLI_LINK" "$HOME_DIR/packages/current/cua-driver-local"; do
+    [ -n "$_daemon_bin" ] || continue
+    pkill -f "^${_daemon_bin}([[:space:]]|\$)" >/dev/null 2>&1 || true
+done
+unset _daemon_bin
 
 # Revoke only the local bundle's TCC rows, while LaunchServices can resolve it.
 if [[ "$OS" == "Darwin" && "$RESET_TCC" == "1" ]] && command -v tccutil >/dev/null 2>&1; then

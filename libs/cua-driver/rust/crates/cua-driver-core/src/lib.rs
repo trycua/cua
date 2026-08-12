@@ -46,6 +46,7 @@ pub fn parent_liveness_stdin_enabled() -> bool {
 }
 
 pub mod action_record;
+pub mod action_target;
 pub mod authorization;
 pub mod background_input;
 pub mod browser;

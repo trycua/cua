@@ -20,7 +20,9 @@ Created on enter, destroyed on exit.
 ```python
 from cua_sandbox import Sandbox, Image
 
-async with Sandbox.ephemeral(Image.linux()) as sb:
+async with Sandbox.ephemeral(
+    Image.from_registry("registry.example/desktop-workspace@sha256:...")
+) as sb:
     await sb.shell.run("uname -a")
     await sb.screenshot()
 ```
@@ -32,9 +34,11 @@ Provision a new sandbox that stays alive after your script exits.
 ```python
 from cua_sandbox import Sandbox, Image
 
-sb = await Sandbox.create(Image.linux())
+sb = await Sandbox.create(
+    Image.from_registry("registry.example/desktop-workspace@sha256:...")
+)
 await sb.shell.run("uname -a")
-print(sb.name)  # save this to reconnect later
+print(sb.claim_name)  # Fleet lifecycle identifier; save this to reconnect later
 await sb.disconnect()
 ```
 
@@ -92,97 +96,80 @@ Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `
 
 Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
 
-## Fleet templates and pools
+## Fleet pools and durable claims
 
-Use a pool to keep reusable registry-image sandboxes warm. The VM shape — image, resources, exposed services — lives in a *template*; a pool only says how many replicas to keep warm and which template to use. Reconcile the template first, then the pool that references it. Reconciliation is idempotent for both: it creates the missing resource or updates the existing one with the same name. Each claim is released when the context exits, including when the block raises.
+For production workloads, claim from an existing pool. Supplying `pool=` never changes its configuration; `name=` names the claim, while `sb.name` is the separately bound sandbox resource.
 
 ```python
-from cua_sandbox import (
-    CreatePoolRequest,
-    CreateTemplateRequest,
-    OsGymSandboxTemplateSpec,
-    OsGymSandboxWarmPoolSpec,
-    Pool,
-    SandboxService,
-    SandboxTemplateRef,
-    ServiceProtocol,
-    Template,
-    VmTemplate,
+from cua_sandbox import Sandbox
+
+sb = await Sandbox.create(
+    pool="workspace",
+    name="workflow-123",
+    service="mcp",
+    keep_alive_minutes=30,
 )
 
-await Template.reconcile(
-    CreateTemplateRequest(
-        namespace="foo",
-        name="workspace",
-        spec=OsGymSandboxTemplateSpec(
-            vm_template=VmTemplate(
-                container_disk_image="registry.example/workspace:latest",
-                command=None,
-                runtime=None,
-                runtime_class_name=None,
-                node_selector=None,
-                tolerations=None,
-                image_pull_policy=None,
-                image_pull_secret="ecr-credentials",
-                cpu_cores=4,
-                memory="8Gi",
-                firmware=None,
-                probes=None,
-                services=[
-                    SandboxService(name="server", target_port=8000, protocol=ServiceProtocol.TCP),
-                    SandboxService(name="mcp", target_port=3000, protocol=ServiceProtocol.TCP),
-                ],
-                oidc=None,
-            ),
-        ),
-    )
-)
+reference = sb.to_dict()
+await sb.disconnect()  # claim remains held
 
-pool = await Pool.reconcile(
-    CreatePoolRequest(
-        namespace="foo",
-        spec=OsGymSandboxWarmPoolSpec(
-            replicas=1,
-            sandbox_template_ref=SandboxTemplateRef(name="workspace"),
-            autoscaling=None,
-        ),
-    )
-)
-
-async with pool.claim() as sb:
-    result = await sb.shell.run("echo hello")
-
-    # Requests use the same authenticated Fleet claim.
-    response = await sb.services.request(
-        "mcp", method="POST", path="/mcp", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1}
-    )
-    response.raise_for_status()
+# A later process or Temporal activity re-resolves the live claim.
+sb = await Sandbox.from_dict(reference)
+await sb.keep_alive(minutes=30)
+await sb.close()  # idempotently releases the claim
 ```
 
-For scripts that use the synchronous facade:
+If `pool=` is omitted, a registry image is required. `Sandbox.create(image)` applies a deterministic reusable pool and claims from it. `Sandbox.ephemeral(image)` instead creates an isolated temporary pool and deletes it after releasing the claim, preserving teardown-by-default semantics.
 
 ```python
-from cua_sandbox.sync import Pool, Template
-
-Template.reconcile(template_request)  # same CreateTemplateRequest as above
-pool = Pool.reconcile(pool_request)  # same CreatePoolRequest as above
-with pool.claim() as sb:
-    result = sb.shell.run("echo hello")
-```
-
-```python
-import os
-
-import cua_sandbox as cua
 from cua_sandbox import Image, Sandbox
 
-cua.configure(
-    client_id=os.environ["CUA_CLIENT_ID"],
-    client_secret=os.environ["CUA_CLIENT_SECRET"],
-)
+image = Image.from_registry("registry.example/desktop-workspace@sha256:...")
 
 async with Sandbox.ephemeral(
-    Image.from_registry("registry.example/desktop-workspace@sha256:...").expose(3000)
+    image,
+    name="job-123",
+    cpu=4,
+    memory_mb=4096,
+    server_port=5000,
 ) as sb:
     await sb.shell.run("uname -a")
 ```
+
+To deliberately retain deterministic warm capacity for later calls, opt in with `keep_pool=True`:
+
+```python
+async with Sandbox.ephemeral(image, keep_pool=True) as sb:
+    await sb.shell.run("uname -a")
+```
+
+The equivalent lower-level reusable-pool API is:
+
+```python
+from cua_sandbox import Image, Pool
+
+pool = await Pool.apply(
+    Image.from_registry("registry.example/desktop-workspace@sha256:..."),
+    replicas=1,
+    cpu=4,
+    memory_mb=4096,
+    services={"server": 8000, "mcp": 3000},
+)
+
+sb = await pool.claim(name="job-123", service="mcp")
+await sb.close()
+```
+
+`Pool.claim()` is both awaitable and an async context manager, so existing scoped usage remains valid:
+
+```python
+async with pool.claim(name="job-123") as sb:
+    await sb.shell.run("echo hello")
+```
+
+`Pool.reconcile(CreatePoolRequest(...))` and `Template.reconcile(CreateTemplateRequest(...))` remain available for advanced generated-schema configuration. The public generated builders should be used instead of constructing builder-enabled Fleet records directly.
+
+The image must run the CUA computer-server `/cmd` API on the configured `server_port`.
+Windows computer-server images continue to use the default port `8000`.
+
+Fleet currently supports registry images, CPU, memory, replica count, and named TCP services. Local image builds, layers, injected files or environment, snapshots, custom disks, unsupported regions, and provider-crossing serialization raise `NotImplementedError`.

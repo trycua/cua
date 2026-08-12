@@ -67,6 +67,12 @@ fn registered_tool_contracts_match_on_active_backend() {
             .unwrap_or_else(|| json!({}));
         violations.extend(shared_schema_violations(name, &schema));
 
+        if let Some(output_schema) = tool.get("outputSchema") {
+            if output_schema.get("type") != Some(&json!("object")) {
+                violations.push(format!("{name}: outputSchema root must have type=object"));
+            }
+        }
+
         let schema_accepts_delivery_mode = schema
             .pointer("/properties/delivery_mode")
             .is_some_and(Value::is_object);
@@ -84,12 +90,17 @@ fn registered_tool_contracts_match_on_active_backend() {
         }
 
         if is_action_result_tool(name) {
-            let expected = ActionResult::output_schema();
+            // The live surface advertises the success shape beside the refusal
+            // envelope, because MCP holds every `structuredContent` — refusals
+            // included — to the advertised schema. The success variant must
+            // still be the shared ActionResult schema, byte for byte.
+            let expected =
+                cua_driver_contract::advertised_output_schema(ActionResult::output_schema());
             let actual = tool.get("outputSchema");
             if actual != Some(&expected) {
                 violations.push(format!(
-                    "{name}: live outputSchema does not equal the shared ActionResult schema; \
-                     actual={} expected={expected}",
+                    "{name}: live outputSchema does not equal the advertised ActionResult schema \
+                     (success variant + refusal envelope); actual={} expected={expected}",
                     actual.unwrap_or(&Value::Null)
                 ));
             }

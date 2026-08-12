@@ -279,6 +279,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "uniffi",
+ "uniffi-builder-derive",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -308,6 +309,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "uniffi",
+ "uniffi-builder-derive",
 ]
 
 [[package]]
@@ -1895,6 +1897,15 @@ dependencies = [
  "uniffi_core",
  "uniffi_macros",
  "uniffi_pipeline",
+]
+
+[[package]]
+name = "uniffi-builder-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

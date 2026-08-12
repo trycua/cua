@@ -1,0 +1,33 @@
+---
+title: Hermes
+description: Connect Nous Research's Hermes Agent to Cua Driver over MCP.
+icon: Waypoints
+---
+
+Hermes Agent can launch local MCP servers from `~/.hermes/config.yaml`. Generate the current configuration from Cua Driver:
+
+```bash
+cua-driver mcp-config --client hermes
+```
+
+Paste the generated block under `mcp_servers`, then run `/reload-mcp` inside Hermes. The configuration shape is:
+
+```yaml
+mcp_servers:
+  cua-driver:
+    command: '/absolute/path/to/cua-driver'
+    args: ['mcp']
+```
+
+Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent#other-supported-clients) for runtime and permission guidance.
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/dcc5a81f-6379-4378-a225-adaf5dfa5dcd"
+  poster="https://github.com/user-attachments/assets/15091959-0f93-4076-9338-18ef3a737091"
+  title="Four Hermes sessions share a Windows desktop"
+  sourceUrl="https://x.com/francedot/status/2061706670208897279"
+>
+  Independent Hermes agents operate separate apps through the same Cua Driver runtime.
+</VideoDemo>
+
+Upstream: [Hermes Agent documentation](https://hermes-agent.nousresearch.com/docs/).

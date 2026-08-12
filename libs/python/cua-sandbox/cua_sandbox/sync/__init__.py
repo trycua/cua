@@ -111,10 +111,53 @@ class Pool:
         """Synchronously create or update a Fleet pool."""
         return cls(_run(_AsyncPool.reconcile(request)))
 
+    @classmethod
+    def get(cls, name: str) -> "Pool":
+        """Synchronously fetch an existing Fleet pool without changing it."""
+        return cls(_run(_AsyncPool.get(name)))
+
+    @classmethod
+    def apply(
+        cls,
+        image: Image,
+        *,
+        name: str | None = None,
+        replicas: int = 1,
+        cpu: int | None = None,
+        memory_mb: int | None = None,
+        services: dict[str, int] | None = None,
+    ) -> "Pool":
+        """Synchronously apply an image-backed Fleet pool."""
+        return cls(
+            _run(
+                _AsyncPool.apply(
+                    image,
+                    name=name,
+                    replicas=replicas,
+                    cpu=cpu,
+                    memory_mb=memory_mb,
+                    services=services,
+                )
+            )
+        )
+
+    def delete(self) -> None:
+        """Synchronously delete this Fleet pool."""
+        _run(self._async_pool.delete())
+
     @contextmanager
-    def claim(self, *, spec: ClaimSpec | None = None) -> Iterator[_SyncProxy]:
-        """Synchronously lease a sandbox and release the claim on exit."""
-        context = self._async_pool.claim(spec=spec)
+    def claim(
+        self,
+        *,
+        spec: ClaimSpec | None = None,
+        name: str | None = None,
+        service: str = "server",
+        time_to_start: float | None = None,
+    ) -> Iterator[_SyncProxy]:
+        """Synchronously claim a sandbox and release it on exit."""
+        context = self._async_pool.claim(
+            spec=spec, name=name, service=service, time_to_start=time_to_start
+        )
         sandbox = _run(context.__aenter__())
         try:
             yield _SyncProxy(sandbox)

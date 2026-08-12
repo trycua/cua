@@ -26,6 +26,13 @@ runtime-neutral agent boundary.
 only the tools and resources in a reviewed manifest. `unrestricted` requires
 `--dangerously-bypass-approvals`.
 
+The mode belongs to the process that owns the runtime and is fixed at launch:
+`cua-driver serve` takes the flags, while `cua-driver mcp` and embedding hosts
+use the matching `CUA_DRIVER_PERMISSION_MODE`,
+`CUA_DRIVER_CAPABILITY_MANIFEST_FILE`, and
+`CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED` variables. Choose it before starting
+the daemon; a running daemon must be restarted to change it.
+
 Attaching to an existing logged-in Chromium profile remains explicit:
 
 ```bash
@@ -79,6 +86,31 @@ For direct agent integrations, see the
 [`examples/agent-sdks`](examples/agent-sdks/README.md) Codex and Claude Agent
 SDK examples. They connect the agent to `cua-driver mcp` without importing a
 generated Cua client.
+
+## Muse Code
+
+[Muse Code](https://research.meta.ai/blog/introducing-muse-code-and-muse-spark-1-2)
+can use Cua Driver as a local stdio MCP server on macOS and Linux. Merge the
+following entry into `$XDG_CONFIG_HOME/muse/settings.json`, or
+`~/.config/muse/settings.json` when `XDG_CONFIG_HOME` is not set:
+
+```json
+{
+  "mcp_servers": {
+    "cua-driver": {
+      "enabled": true,
+      "transport": "stdio",
+      "command": "/absolute/path/to/cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Use the installed binary's absolute path, which `command -v cua-driver` prints.
+Merge the `cua-driver` entry with any existing `mcp_servers` instead of
+replacing the settings file. Start a new Muse session after saving the file;
+Muse loads MCP servers at session startup.
 
 Contributor documentation:
 

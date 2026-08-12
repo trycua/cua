@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import aiohttp
 from cua_cli.auth.oidc import get_access_token
+from cua_cli.auth.workload import get_fleets_token
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import (
     print_error,
@@ -160,6 +161,13 @@ async def _get_sandbox_api_url(name: str, local: bool) -> tuple[str, Optional[st
     return url, api_key
 
 
+async def _cloud_auth_kwargs() -> dict[str, str]:
+    """Return cloud SDK authentication keyword arguments for the active mode."""
+    if get_fleets_token():
+        return {}
+    return {"api_key": await get_access_token()}
+
+
 # ---------------------------------------------------------------------------
 # Parser registration
 # ---------------------------------------------------------------------------
@@ -186,7 +194,13 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         )
         launch_parser.add_argument(
             "image",
+            nargs="?",
             help="Image to launch (e.g. macos, ubuntu:24.04, windows:11)",
+        )
+        launch_parser.add_argument(
+            "--pool",
+            default=None,
+            help="Claim the named pre-created Fleet pool",
         )
         launch_parser.add_argument(
             "--local",
@@ -413,10 +427,19 @@ def execute(args: argparse.Namespace) -> int:
 def cmd_launch(args: argparse.Namespace) -> int:
     """Launch a new sandbox."""
 
+    image_arg = getattr(args, "image", None)
+    pool = getattr(args, "pool", None)
+    if bool(image_arg) == bool(pool):
+        print_error("Specify exactly one of IMAGE or --pool")
+        return 1
+    if pool and not getattr(args, "name", None):
+        print_error("--name is required with --pool")
+        return 1
+
     async def _run() -> int:
         from cua_sandbox import Sandbox
 
-        image = _parse_image(args.image, vm=getattr(args, "vm", False))
+        image = _parse_image(image_arg, vm=getattr(args, "vm", False)) if image_arg else None
 
         memory_mb = _parse_memory(args.memory) if args.memory else None
         disk_gb = _parse_disk(args.disk) if args.disk else None
@@ -424,7 +447,9 @@ def cmd_launch(args: argparse.Namespace) -> int:
         local = getattr(args, "local", False)
 
         try:
-            if local:
+            if pool:
+                sb = await Sandbox.create(pool=pool, name=args.name)
+            elif local:
                 sb = await Sandbox.create(
                     image,
                     local=True,
@@ -442,11 +467,11 @@ def cmd_launch(args: argparse.Namespace) -> int:
                     create_kwargs["memory_mb"] = memory_mb
                 if disk_gb is not None:
                     create_kwargs["disk_gb"] = disk_gb
-                api_key = await get_access_token()
-                create_kwargs["api_key"] = api_key
+                create_kwargs.update(await _cloud_auth_kwargs())
                 sb = await Sandbox.create(image, **create_kwargs)
 
-            name = sb.name
+            claim_name = getattr(sb, "claim_name", None)
+            name = claim_name if isinstance(claim_name, str) and claim_name else sb.name
             await sb.disconnect()
         except Exception as e:
             import traceback
@@ -490,9 +515,11 @@ def cmd_ls(args: argparse.Namespace) -> int:
                 pass
 
         if show_all or not local:
+            if get_fleets_token():
+                print_error("Listing Fleet sandboxes is not supported; use 'cua sb info NAME'.")
+                return 1
             try:
-                api_key = await get_access_token()
-                cloud_list = await Sandbox.list(local=False, api_key=api_key)
+                cloud_list = await Sandbox.list(local=False, **await _cloud_auth_kwargs())
                 for s in cloud_list:
                     results.append(
                         {
@@ -529,9 +556,7 @@ def cmd_info(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             info = await Sandbox.get_info(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(str(e))
@@ -573,9 +598,7 @@ def cmd_suspend(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             await Sandbox.suspend(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to suspend sandbox: {e}")
@@ -594,9 +617,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             await Sandbox.resume(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to resume sandbox: {e}")
@@ -615,9 +636,7 @@ def cmd_restart(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             await Sandbox.restart(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to restart sandbox: {e}")
@@ -652,9 +671,7 @@ def cmd_delete(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             await Sandbox.delete(args.name, local=local, **kwargs)
         except Exception as e:
             print_error(f"Failed to delete sandbox: {e}")
@@ -673,9 +690,7 @@ def cmd_vnc(args: argparse.Namespace) -> int:
         from cua_sandbox import Sandbox
 
         try:
-            kwargs: dict[str, Any] = {}
-            if not local:
-                kwargs["api_key"] = await get_access_token()
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
             sb = await Sandbox.connect(args.name, local=local, **kwargs)
             vnc_url = await sb.get_display_url(share=True)
             await sb.disconnect()
@@ -946,31 +961,41 @@ def cmd_exec(args: argparse.Namespace) -> int:
         return 1
 
     async def _run() -> int:
+        from cua_sandbox import Sandbox
+
         try:
-            api_url, api_key = await _get_sandbox_api_url(args.name, local)
-        except ValueError as e:
-            print_error(str(e))
+            kwargs: dict[str, Any] = {} if local else await _cloud_auth_kwargs()
+            sb = await Sandbox.connect(args.name, local=local, **kwargs)
+        except Exception as e:
+            print_error(f"Failed to connect to sandbox: {e}")
             return 1
 
-        result = await _exec_noninteractive(args.name, api_url, api_key, command)
+        try:
+            result = await sb.shell.run(command, timeout=120)
+        except Exception as e:
+            print_error(f"Failed to execute command: {e}")
+            return 1
+        finally:
+            await sb.disconnect()
 
+        output = {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+        }
         if getattr(args, "json", False):
-            print_json(result)
-            return result.get("returncode") or result.get("return_code") or 0
+            print_json(output)
+        else:
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            if stdout:
+                print(stdout)
+            if stderr:
+                print(stderr, file=sys.stderr)
 
-        if not result.get("success", True):
-            print_error(result.get("error", "Command failed"))
-            return 1
-
-        stdout = result.get("stdout", "").strip()
-        stderr = result.get("stderr", "").strip()
-        returncode = result.get("returncode") or result.get("return_code") or 0
-
-        if stdout:
-            print(stdout)
-        if stderr:
-            print(stderr, file=sys.stderr)
-
-        return returncode
+        if result.returncode != 0:
+            print_error(f"Command failed with exit code {result.returncode}")
+            return result.returncode
+        return 0
 
     return run_async(_run())

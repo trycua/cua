@@ -77,6 +77,7 @@ async def initialize_mcp(client: CyclopsClient, sandbox) -> int:
                     HttpHeader(name="content-type", value="application/json"),
                 ],
                 body=body,
+                timeout_secs=None,
             ),
         )
         if 200 <= response.status < 300:

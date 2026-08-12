@@ -171,6 +171,6 @@ fn persistent_capture_scope_key_is_retired() {
     assert_eq!(code(&response), Some("config_key_retired"));
     assert_eq!(
         response["result"]["structuredContent"]["replacement"],
-        "start_session.capture_scope"
+        "action.target"
     );
 }

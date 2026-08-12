@@ -69,7 +69,8 @@ private func initializeMcp(client: CyclopsClient, sandbox: Sandbox) async throws
                     HttpHeader(name: "accept", value: "application/json, text/event-stream"),
                     HttpHeader(name: "content-type", value: "application/json"),
                 ],
-                body: body
+                body: body,
+                timeoutSecs: nil
             )
         )
         if (200...299).contains(Int(response.status)) { return response.status }

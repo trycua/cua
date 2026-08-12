@@ -75,6 +75,12 @@ Direct installation keeps only the current host's OS guide by default. Pass `--a
 cua-driver skills install --all-platforms
 ```
 
+Prime Agent is supported directly. When `~/.prime/agent/skills/` exists,
+`cua-driver skills install` links the pack there; Prime Agent also discovers the
+shared `~/.agents/skills/` location used by Codex. Run `/reload` in Prime Agent
+or start a new session after installing or updating the skill so it reloads the
+guidance.
+
 ## Next steps
 
 - [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent): register the MCP server when the agent uses MCP.

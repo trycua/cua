@@ -57,11 +57,16 @@ var (
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 	}, []string{"operation", "status"})
 
-	// Upstream proxy SLIs (/api/gateway + /api/orch + /api/k8s)
+	// Upstream proxy SLIs (/api/svc + /api/orch + /api/k8s)
 	UpstreamProxyRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "cyclops_cs_upstream_proxy_requests_total",
-		Help: "Total requests proxied to upstream services (gateway/orch/k8s).",
+		Help: "Total requests proxied to upstream services (svc/orch/k8s).",
 	}, []string{"target", "status_code"})
+
+	BillingWebhookEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "cyclops_cs_billing_webhook_events_total",
+		Help: "Total Stripe billing webhook requests by processing result and event type.",
+	}, []string{"result", "event_type"})
 
 	UpstreamProxyDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "cyclops_cs_upstream_proxy_duration_seconds",
@@ -208,4 +213,8 @@ func StartMetricsServer(addr string) error {
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	return srv.ListenAndServe()
+}
+
+func RecordBillingWebhook(result, eventType string) {
+	BillingWebhookEventsTotal.WithLabelValues(result, eventType).Inc()
 }

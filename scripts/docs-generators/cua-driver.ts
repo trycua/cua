@@ -73,10 +73,14 @@ export interface MCPInputSchema {
 }
 
 export interface MCPPropertyDoc {
-  type: string | string[];
-  description: string;
+  type?: string | string[];
+  description?: string;
   items?: { type: string };
   enum?: string[];
+  const?: unknown;
+  anyOf?: MCPPropertyDoc[];
+  oneOf?: MCPPropertyDoc[];
+  properties?: Record<string, MCPPropertyDoc>;
   minItems?: number;
   maxItems?: number;
   minimum?: number;
@@ -726,7 +730,7 @@ export function generateMCPToolDoc(tool: MCPToolDoc): string[] {
       const isRequired = required.has(propName);
       const requiredLabel = isRequired ? 'required' : 'optional';
       const typeLabel = formatPropertyType(prop);
-      const description = escapeMdxText(prop.description ?? '');
+      const description = escapeMdxText(propertyDescription(prop));
       const details: string[] = [];
       if (prop.default !== undefined) details.push(`default: \`${JSON.stringify(prop.default)}\``);
       if (prop.minimum !== undefined || prop.maximum !== undefined) {
@@ -785,11 +789,37 @@ function escapeMdxText(value: string): string {
 }
 
 function formatPropertyType(prop: MCPPropertyDoc): string {
+  const alternatives = prop.anyOf ?? prop.oneOf;
+  if (alternatives?.length) {
+    const labels = alternatives
+      .filter((alternative) => alternative.type !== 'null')
+      .flatMap((alternative) => {
+        if (alternative.oneOf?.length) {
+          return alternative.oneOf.map(discriminatedObjectLabel);
+        }
+        return [discriminatedObjectLabel(alternative)];
+      });
+    if (labels.length > 0) return [...new Set(labels)].join(' or ');
+  }
   if (prop.type === 'array') {
     const itemType = prop.items?.type ?? 'unknown';
     return `array of ${itemType}`;
   }
-  return Array.isArray(prop.type) ? prop.type.join(' or ') : prop.type;
+  return Array.isArray(prop.type) ? prop.type.join(' or ') : (prop.type ?? 'unknown');
+}
+
+function discriminatedObjectLabel(schema: MCPPropertyDoc): string {
+  const kind = schema.properties?.kind?.const;
+  return typeof kind === 'string' ? `${kind} target` : (schema.type ?? 'object');
+}
+
+function propertyDescription(prop: MCPPropertyDoc): string {
+  if (prop.description) return prop.description;
+  for (const alternative of prop.anyOf ?? prop.oneOf ?? []) {
+    const nested = propertyDescription(alternative);
+    if (nested) return nested;
+  }
+  return '';
 }
 
 function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {

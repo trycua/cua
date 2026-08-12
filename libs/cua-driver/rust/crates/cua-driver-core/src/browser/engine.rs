@@ -96,7 +96,7 @@ fn authorize_live_browser_origin(
     let manifest = manifest.ok_or_else(|| {
         refuse(
             BrowserRefusalCode::BrowserOriginOutsideScope,
-            "the bounded session policy is unavailable",
+            "the capability manifest is unavailable",
         )
     })?;
     manifest
@@ -1425,15 +1425,13 @@ impl BrowserEngine {
 
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
         let dispatch_context = crate::tool::current_dispatch_authorization_context();
-        let dispatch_mode = dispatch_context
-            .as_ref()
-            .map(|context| context.mode())
-            .map(Ok)
-            .unwrap_or_else(crate::authorization::configured_permission_mode);
-        if dispatch_mode.is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded) {
+        if dispatch_context
+            .as_deref()
+            .is_some_and(|context| context.capability_manifest().is_some())
+        {
             let live_url = self.live_top_level_url(&conn, &cdp_session).await?;
-            // A browser mutation admitted for a delegated bounded session
-            // must use that exact session's manifest. Falling back to the
+            // A browser mutation admitted for a delegated session must use
+            // that exact session's capability manifest. Falling back to the
             // process compatibility manifest would let a missing task-local
             // context borrow unrelated authority.
             let manifest = dispatch_context
@@ -1441,10 +1439,10 @@ impl BrowserEngine {
                 .ok_or_else(|| {
                     refuse(
                         BrowserRefusalCode::BrowserOriginOutsideScope,
-                        "the bounded browser authorization context is unavailable",
+                        "the browser authorization context is unavailable",
                     )
                 })?
-                .bounded_manifest();
+                .capability_manifest();
             authorize_live_browser_origin(manifest, &live_url)?;
         }
         Ok(ValidatedTab {

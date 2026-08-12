@@ -111,7 +111,17 @@ pub enum ServiceProtocol {
     UDP,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct SandboxService {
     #[schemars(description = "Service name suffix (sandbox name is prepended).")]
@@ -162,7 +172,17 @@ pub struct OidcConfig {
     pub refresh_interval_seconds: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct VmTemplate {
     #[schemars(
@@ -255,7 +275,17 @@ pub(crate) fn date_time_schema(_: &mut schemars::SchemaGenerator) -> schemars::S
     schemars::json_schema!({"type": "string", "format": "date-time"})
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 pub struct SandboxTemplateRef {
     pub name: String,
 }

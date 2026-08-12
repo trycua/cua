@@ -8,19 +8,19 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 By the end of this tutorial, your agent will open Calculator, compute 6 × 7,
 and report 42 through **Cua Driver**. You will install the driver, connect
-Claude Code, Codex, or Hermes, and run the same prompt on macOS, Windows, or
+Claude Code, Codex, Prime Agent, or Hermes, and run the same prompt on macOS, Windows, or
 Linux.
 
 New to agents that operate applications? Start with [What is computer use?](/concepts/what-is-computer-use) for the model behind the workflow, then return here to build one.
 
 <VideoDemo
-  src="https://github.com/user-attachments/assets/354af433-8769-44ff-beab-b5cb02ff798e"
-  poster="https://github.com/user-attachments/assets/6f878582-8f5d-4400-be44-fc503fcbc1ab"
-  title="Preview: agents play a Windows piano app"
-  sourceUrl="https://x.com/francedot/status/2062231318294131130"
+  src="https://github.com/user-attachments/assets/11b248e5-d505-4349-aaae-ad9f95a1162f"
+  poster="https://github.com/user-attachments/assets/0fb62243-56ec-4d51-8771-35640a5e6031"
+  title="Drive a legacy postal app with Cua Driver"
+  sourceUrl="https://x.com/trycua/status/2059693301276565841"
   className="my-8"
 >
-  Cua Driver coordinates several agent cursors to play a Windows piano app at Microsoft Build. You
+  Cua Driver fills shipment details and prints receipts in a Windows desktop app with no API. You
   will start with a smaller Calculator task below.
 </VideoDemo>
 
@@ -82,7 +82,10 @@ Use the same one-line installer on every platform; it picks the right path for t
 
     ```powershell
     irm https://cua.ai/driver/install.ps1 | iex
+    cua-driver autostart kick
     ```
+
+    The installer registers Cua Driver to start automatically at sign-in. `kick` starts it immediately, so you do not need to sign out or restart Windows before continuing.
 
   </Tab>
   <Tab value="Linux">
@@ -96,7 +99,7 @@ Use the same one-line installer on every platform; it picks the right path for t
 </Tabs>
 
 <Callout type="info">
-  Full install steps, PATH setup, and permission details live in the install guide. See [Install Cua Driver](/how-to-guides/driver/install).
+  Full install steps, PATH setup, and permission details live in the install guide. See [Install Cua Driver](/how-to-guides/driver/install). The daemon you just started runs in the default `standard` authorization mode, which is the right choice for this tutorial; once you move past Calculator, read [Permission modes](/reference/cua-driver/permission-modes) to decide whether a real workload should be `bounded` instead.
 </Callout>
 
 ## 2. Verify it is working
@@ -119,7 +122,7 @@ If you see your running apps listed, the plumbing works. That is the only CLI yo
 
 Register Cua Driver with your agent harness once.
 
-<Tabs items={['Claude Code', 'Codex', 'OpenClaw', 'Hermes']}>
+<Tabs items={['Claude Code', 'Codex', 'Prime Agent', 'OpenClaw', 'Hermes']}>
   <Tab value="Claude Code">
     Install the Claude Code skill. This is turnkey: the skill teaches Claude Code how to drive apps through Cua Driver, and you then ask in plain English.
 
@@ -153,6 +156,19 @@ Register Cua Driver with your agent harness once.
     ```
 
     Restart Codex or open a fresh Codex session after registration so the new tools appear.
+  </Tab>
+  <Tab value="Prime Agent">
+    Install the Cua Driver skill pack. Prime Agent discovers it from its native
+    skill directory and calls Cua Driver from the persistent IPython environment;
+    no MCP registration is required.
+
+    ```bash
+    cua-driver skills install
+    cua-driver mcp-config --client prime-agent
+    ```
+
+    Run `/reload` in Prime Agent or start a new session after installation so
+    the skill appears. Use `/skill:cua-driver` to load it explicitly.
   </Tab>
   <Tab value="OpenClaw">
     Print the OpenClaw registration command:
@@ -201,7 +217,7 @@ Using Cursor, Gemini/Antigravity, OpenCode, or Pi instead? See [Connect your age
 
 You can now prompt your agent in plain English, and it will drive Cua Driver for you.
 
-<Tabs items={['Claude Code', 'Codex']}>
+<Tabs items={['Claude Code', 'Codex', 'Prime Agent']}>
   <Tab value="Claude Code">
     ```text
     > Using the cua-computer-use MCP, open the Calculator, compute 6 × 7, and tell me the result.
@@ -227,6 +243,20 @@ You can now prompt your agent in plain English, and it will drive Cua Driver for
     → click 6 [element_index=11]
     → click = [element_index=22]
     → get_window_state
+    ✓ The result is 42.
+    ```
+  </Tab>
+  <Tab value="Prime Agent">
+    ```text
+    > Using the Cua Driver skill, open the Calculator, compute 6 × 7, and read the result back.
+
+    → launch_app Calculator
+    → get_window_state
+    → click 7
+    → click ×
+    → click 6
+    → click =
+    → verify_state
     ✓ The result is 42.
     ```
   </Tab>

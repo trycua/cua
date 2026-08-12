@@ -25,6 +25,31 @@ test.describe("User API keys", () => {
     await expect(page.getByText("sa-testuser-mykey")).toBeVisible()
   })
 
+  test("renders keys when the backend returns a null scope", async ({ page }) => {
+    await page.unroute("**/api/user-keys")
+    await page.route("**/api/user-keys", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          keys: [
+            {
+              id: "key-1",
+              client_id: "sa-testuser-mykey",
+              name: "my-key",
+              scope: null,
+            },
+          ],
+        }),
+      }),
+    )
+
+    await page.goto("/user-keys")
+
+    await expect(page.getByText("Error: SdkError.Body")).not.toBeVisible()
+    await expect(page.getByText("my-key")).toBeVisible()
+    await expect(page.getByText("sa-testuser-mykey")).toBeVisible()
+  })
+
   test("shows the create key form", async ({ page }) => {
     await page.goto("/user-keys")
 

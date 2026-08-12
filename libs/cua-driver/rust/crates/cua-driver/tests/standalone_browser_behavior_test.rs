@@ -3641,6 +3641,13 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "Linux window capture already includes the browser-owned prompt surface: {}",
                 before.raw
             );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                before.structured()["capture_coverage"]["browser_chrome"]["status"],
+                "may_be_incomplete_in_window_scope",
+                "{}",
+                before.raw
+            );
         } else {
             assert_eq!(
                 before.structured()["capture_coverage"]["browser_chrome"]["status"],
@@ -3648,6 +3655,8 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "{}",
                 before.raw
             );
+        }
+        if !cfg!(target_os = "linux") {
             assert_eq!(
                 before.structured()["capture_coverage"]["recovery"]["when"],
                 "verified_window_action_ineffective",
@@ -3655,34 +3664,22 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 before.raw
             );
             assert_eq!(
-                before.structured()["capture_coverage"]["recovery"]["escalate"],
+                before.structured()["capture_coverage"]["recovery"]["act_target"],
                 serde_json::json!({
-                    "tool": "escalate_session",
-                    "reason": "foreground_ineffective",
+                    "kind": "desktop",
+                    "display_id": "primary",
                 }),
                 "{}",
                 before.raw
             );
+            assert!(
+                before.structured()["capture_coverage"]["recovery"]
+                    .get("escalate")
+                    .is_none(),
+                "{}",
+                before.raw
+            );
         }
-        let escalated = fixture.driver.call(
-            "escalate_session",
-            serde_json::json!({
-                "session": window_session,
-                "reason": "foreground_ineffective",
-                "detail": "browser chrome may be outside window capture",
-            }),
-        );
-        assert!(
-            !escalated.is_error(),
-            "desktop inspection escalation failed: {}",
-            escalated.raw
-        );
-        assert_eq!(
-            escalated.structured()["effective_scope"],
-            "desktop",
-            "{}",
-            escalated.raw
-        );
         let desktop_before = fixture.driver.call(
             "get_desktop_state",
             serde_json::json!({
@@ -3741,6 +3738,13 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             assert!(
                 window.structured()["capture_coverage"]["browser_chrome"].is_null(),
                 "Linux window capture already includes the browser-owned prompt surface: {}",
+                window.raw
+            );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                window.structured()["capture_coverage"]["browser_chrome"]["status"],
+                "may_be_incomplete_in_window_scope",
+                "{}",
                 window.raw
             );
         } else {
@@ -3812,7 +3816,7 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
                 "click",
                 serde_json::json!({
                     "session": window_session,
-                    "scope": "desktop",
+                    "target": {"kind": "desktop", "display_id": "primary"},
                     "x": x,
                     "y": y,
                 }),
@@ -3923,6 +3927,11 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
             assert!(
                 !desktop_has_materially_more_prompt_pixels,
                 "Linux desktop capture unexpectedly contained materially more permission UI than window capture: {metrics}"
+            );
+        } else if cfg!(target_os = "macos") {
+            assert!(
+                window_changed_pixels >= minimum_prompt_pixels,
+                "macOS window capture omitted the tested notification permission surface: {metrics}"
             );
         } else {
             assert!(

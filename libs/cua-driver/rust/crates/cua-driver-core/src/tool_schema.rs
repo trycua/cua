@@ -15,24 +15,32 @@
 //!     required-set spec. Each platform calls it from a test against its own
 //!     registry, so CI fails the moment a platform drifts.
 //!
-//! Descriptions are intentionally NOT compared — prose can legitimately vary
+//! Descriptions are generally not compared because prose can legitimately vary
 //! per tool (a `delivery_mode` blurb mentioning "PIXEL click" vs "AX insert").
-//! The gate enforces *shape* (`type` / `enum` / `items`), which is what governs
-//! client compatibility.
+//! The `session` guidance is the exception: action tools must tell callers that
+//! public labels are preferred for multi-call work and must be repeated on each
+//! call. Lifecycle-management tools keep their resource-specific wording.
 
 use serde_json::{json, Value};
 
 // ── Fragments ────────────────────────────────────────────────────────────────
 
-/// `session` — the per-run agent-cursor identity. Uniform across every tool.
+/// `session` is an optional public lifecycle label. Uniform across every tool.
 pub fn session_schema() -> Value {
     json!({
         "type": "string",
-        "description": "Optional session id: declares/uses the agent cursor and \
-            per-session state for this run. The same id works over MCP, the CLI, \
-            or the raw socket, and follows the run across apps/windows. Omit to \
-            run cursor-less."
+        "description": cua_driver_contract::MULTI_CALL_SESSION_DESCRIPTION
     })
+}
+
+/// Canonical lifecycle guidance plus a tool-specific ownership or precedence note.
+pub fn session_schema_with(note: &str) -> Value {
+    let mut schema = session_schema();
+    schema["description"] = Value::String(format!(
+        "{} {note}",
+        cua_driver_contract::MULTI_CALL_SESSION_DESCRIPTION
+    ));
+    schema
 }
 
 /// `delivery_mode` — the best-effort-background ladder rung. The prose varies by
@@ -171,6 +179,33 @@ fn structural(schema: &Value) -> Value {
     Value::Object(out)
 }
 
+fn session_guidance_is_exempt(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "start_session"
+            | "end_session"
+            | "get_session"
+            | "get_session_state"
+            | "list_sessions"
+            | "escalate_session"
+            | "set_agent_cursor_enabled"
+            | "set_agent_cursor_motion"
+            | "set_agent_cursor_theme"
+            | "get_agent_cursor_state"
+    )
+}
+
+fn session_description_has_multi_call_guidance(schema: &Value) -> bool {
+    schema
+        .get("description")
+        .and_then(Value::as_str)
+        .map(|description| description.split_whitespace().collect::<Vec<_>>().join(" "))
+        .is_some_and(|description| {
+            description.contains("prefer a short public session label")
+                && description.contains("repeat it on every call that accepts it")
+        })
+}
+
 /// Check one tool's `input_schema` against the shared canon. Returns a list of
 /// human-readable violation strings (empty == consistent). Each platform calls
 /// this for every tool in its registry from a test.
@@ -187,6 +222,15 @@ pub fn shared_schema_violations(tool_name: &str, input_schema: &Value) -> Vec<St
                         "{tool_name}.{pname}: shape {got} diverges from shared canon {canon}"
                     ));
                 }
+            }
+            if pname == "session"
+                && !session_guidance_is_exempt(tool_name)
+                && !session_description_has_multi_call_guidance(pschema)
+            {
+                violations.push(format!(
+                    "{tool_name}.session: description must prefer a short public session label \
+                     for multi-call work and tell callers to repeat it on every accepting call"
+                ));
             }
         }
     }
@@ -225,6 +269,41 @@ mod tests {
         let with_prose = json!({ "type": "string", "enum": ["a", "b"], "description": "x" });
         let s = structural(&with_prose);
         assert_eq!(s, json!({ "type": "string", "enum": ["a", "b"] }));
+    }
+
+    #[test]
+    fn session_description_prefers_named_multi_call_runs() {
+        let schema = session_schema();
+        let description = schema["description"]
+            .as_str()
+            .expect("session schema should carry agent guidance");
+        assert!(description.contains("prefer a short public session label"));
+        assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("implicit lifecycle session"));
+    }
+
+    #[test]
+    fn action_session_description_without_repeat_guidance_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "session": { "type": "string", "description": "Optional session id." }
+            }
+        });
+        let violations = shared_schema_violations("clipboard_write", &tool);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("repeat it on every accepting call"));
+    }
+
+    #[test]
+    fn lifecycle_session_tools_keep_resource_specific_descriptions() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "session": { "type": "string", "description": "Public label to end." }
+            }
+        });
+        assert!(shared_schema_violations("end_session", &tool).is_empty());
     }
 
     #[test]

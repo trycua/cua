@@ -22,6 +22,11 @@ tasks.register<JavaExec>("contract") {
     mainClass.set("TestAsyncClientKt")
     jvmArgs("-Djna.library.path=" + System.getenv("CYCLOPS_SDK_NATIVE_DIR"))
 }
+tasks.register<JavaExec>("builderContract") {
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("TestBuildersKt")
+    jvmArgs("-Djna.library.path=" + System.getenv("CYCLOPS_SDK_NATIVE_DIR"))
+}
 tasks.register<JavaExec>("example") {
     dependsOn(example.classesTaskName)
     classpath = example.runtimeClasspath

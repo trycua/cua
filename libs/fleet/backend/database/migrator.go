@@ -1,0 +1,1179 @@
+package database
+
+import (
+	"context"
+	"crypto/sha256"
+	"embed"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+//go:embed all:migrations
+var migrationFS embed.FS
+
+type Config struct {
+	MigrationURL string
+	Credentials  CredentialURLs
+}
+
+type CredentialURLs struct {
+	Application string
+	Writer      string
+	Exporter    string
+	RoleAdmin   string
+	Metabase    string
+}
+
+type migrationFile struct {
+	Version int64
+	Name    string
+	SQL     string
+	SHA256  string
+}
+
+type appliedMigration struct {
+	Version int64
+	Name    string
+	SHA256  string
+}
+
+type credential struct {
+	Role     string
+	Password string
+}
+
+type migrationEvent struct {
+	Version    int64
+	Filename   string
+	SHA256     string
+	DurationMS int64
+}
+
+type credentialEvent struct {
+	Role       string
+	DurationMS int64
+}
+
+type staticRoleContract struct {
+	role            string
+	login           bool
+	inherit         bool
+	createRole      bool
+	createDB        bool
+	connectionLimit int
+	validUntil      string
+}
+
+type staticRoleAttributes struct {
+	login           bool
+	inherit         bool
+	createRole      bool
+	createDB        bool
+	connectionLimit int
+	validUntil      string
+	super           bool
+	replication     bool
+	bypassRLS       bool
+}
+
+type staticMembershipContract struct {
+	role, member        string
+	admin, inherit, set bool
+}
+
+type staticMembershipGrant struct {
+	grantor             string
+	grantorSuperuser    bool
+	admin, inherit, set bool
+}
+
+type dynamicTenantRole struct {
+	name            string
+	registered      bool
+	login           bool
+	inherit         bool
+	createRole      bool
+	createDB        bool
+	super           bool
+	replication     bool
+	bypassRLS       bool
+	connectionLimit int
+	validUntil      string
+}
+
+type roleReconciliationEvent struct {
+	Role       string
+	DurationMS int64
+}
+
+type membershipReconciliationEvent struct {
+	Role       string
+	DurationMS int64
+}
+type migrationSummary struct {
+	DatabaseHost string
+	DatabaseName string
+	Current      int64
+	Target       int64
+	Pending      int
+	Applied      int
+	Skipped      int
+	Started      time.Time
+	Result       string
+}
+
+var expectedCredentialRoles = map[string]string{
+	"application": "cyclops_app",
+	"writer":      "k8s_state_writer",
+	"exporter":    "k8s_state_exporter",
+	"role-admin":  "k8s_role_admin",
+	"metabase":    "k8s_metabase",
+}
+
+const createAppliedMigrationsTableStatement = `create table if not exists cyclops_migrations.applied_migrations (
+	application_order bigint generated always as identity unique,
+	version bigint primary key,
+	filename text not null unique,
+	sha256 text not null,
+	applied_at timestamptz not null default clock_timestamp()
+)`
+
+const selectAppliedMigrationsStatement = `select version, filename, sha256 from cyclops_migrations.applied_migrations order by application_order`
+
+const insertAppliedMigrationStatement = `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values ($1, $2, $3)`
+
+func embeddedMigrations() ([]migrationFile, error) {
+	entries, err := fs.ReadDir(migrationFS, "migrations")
+	if err != nil {
+		return nil, fmt.Errorf("list database migrations: %w", err)
+	}
+
+	files := make([]migrationFile, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+
+		prefix, _, ok := strings.Cut(entry.Name(), "_")
+		if !ok || len(prefix) != 6 {
+			return nil, fmt.Errorf("migration %q must start with a six-digit version", entry.Name())
+		}
+		version, err := strconv.ParseInt(prefix, 10, 64)
+		if err != nil || version < 1 {
+			return nil, fmt.Errorf("migration %q has invalid version", entry.Name())
+		}
+
+		contents, err := migrationFS.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("read migration %s: %w", entry.Name(), err)
+		}
+		digest := sha256.Sum256(contents)
+		files = append(files, migrationFile{
+			Version: version,
+			Name:    entry.Name(),
+			SQL:     string(contents),
+			SHA256:  hex.EncodeToString(digest[:]),
+		})
+	}
+
+	sort.Slice(files, func(i, j int) bool { return files[i].Version < files[j].Version })
+	for index, file := range files {
+		expected := int64(index + 1)
+		if file.Version != expected {
+			return nil, fmt.Errorf("migration sequence gap: expected %06d, got %06d", expected, file.Version)
+		}
+	}
+	return files, nil
+}
+
+func checkAppliedMigration(file migrationFile, applied appliedMigration) error {
+	if applied.Name != file.Name {
+		return fmt.Errorf("migration %06d filename changed after application: recorded %s, current %s", file.Version, applied.Name, file.Name)
+	}
+	if applied.SHA256 != file.SHA256 {
+		return fmt.Errorf("migration %s changed after application: recorded %s, current %s", file.Name, applied.SHA256, file.SHA256)
+	}
+	return nil
+}
+
+func validateAppliedMigrations(files []migrationFile, applied []appliedMigration) error {
+	filesByVersion := make(map[int64]migrationFile, len(files))
+	for _, file := range files {
+		filesByVersion[file.Version] = file
+	}
+	for _, row := range applied {
+		file, ok := filesByVersion[row.Version]
+		if !ok {
+			return fmt.Errorf("migration ledger contains applied version %06d with no embedded migration", row.Version)
+		}
+		if err := checkAppliedMigration(file, row); err != nil {
+			return err
+		}
+	}
+
+	for index := 1; index < len(applied); index++ {
+		previous := applied[index-1].Version
+		current := applied[index].Version
+		if current == previous {
+			return fmt.Errorf("migration ledger contains duplicate version %06d", current)
+		}
+		if current < previous {
+			return fmt.Errorf("migration ledger rows are out of order: version %06d follows %06d", current, previous)
+		}
+	}
+
+	for index, row := range applied {
+		expected := int64(index + 1)
+		if row.Version != expected {
+			return fmt.Errorf("migration ledger version gap: expected %06d, got %06d", expected, row.Version)
+		}
+	}
+	return nil
+}
+
+func migrationTargetVersion(files []migrationFile) int64 {
+	if len(files) == 0 {
+		return 0
+	}
+	return files[len(files)-1].Version
+}
+
+func migrationCurrentVersion(applied []appliedMigration) int64 {
+	var current int64
+	for _, row := range applied {
+		if row.Version > current {
+			current = row.Version
+		}
+	}
+	return current
+}
+
+func databaseTarget(connectionConfig *pgx.ConnConfig) string {
+	if connectionConfig.Host == "" && connectionConfig.Database == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (database_host=%s database_name=%s)", connectionConfig.Host, connectionConfig.Database)
+}
+
+func parseMigrationConfig(url string) (*pgx.ConnConfig, error) {
+	connectionConfig, err := pgx.ParseConfig(url)
+	if err != nil {
+		return nil, errors.New("parse migration database URL")
+	}
+	return connectionConfig, nil
+}
+
+func logMigrationSummary(summary migrationSummary) {
+	slog.Info("database migration summary",
+		"database_host", summary.DatabaseHost,
+		"database_name", summary.DatabaseName,
+		"current_version", summary.Current,
+		"target_version", summary.Target,
+		"pending", summary.Pending,
+		"applied", summary.Applied,
+		"skipped", summary.Skipped,
+		"duration_ms", time.Since(summary.Started).Milliseconds(),
+		"result", summary.Result,
+	)
+}
+
+func Run(ctx context.Context, config Config) (runErr error) {
+	credentials, err := parseCredentialURLs(config.Credentials)
+	if err != nil {
+		return err
+	}
+	files, err := embeddedMigrations()
+	if err != nil {
+		return err
+	}
+
+	connectionConfig, err := parseMigrationConfig(config.MigrationURL)
+	if err != nil {
+		return err
+	}
+	summary := migrationSummary{
+		DatabaseHost: connectionConfig.Host,
+		DatabaseName: connectionConfig.Database,
+		Target:       migrationTargetVersion(files),
+		Pending:      len(files),
+		Started:      time.Now(),
+		Result:       "failed",
+	}
+	defer func() { logMigrationSummary(summary) }()
+
+	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	if err != nil {
+		return fmt.Errorf("connect migration database%s", databaseTarget(connectionConfig))
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin database migrations: %w", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	ledgerStatements := []string{
+		`select pg_advisory_xact_lock(hashtext('cyclops-database-migrations'))`,
+		`create schema if not exists cyclops_migrations`,
+		createAppliedMigrationsTableStatement,
+	}
+	for index, statement := range ledgerStatements {
+		started := time.Now()
+		if _, err := transaction.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("prepare migration ledger: %w", err)
+		}
+		if index == 0 {
+			slog.Info("database migration advisory lock acquired",
+				"database_host", connectionConfig.Host,
+				"database_name", connectionConfig.Database,
+				"duration_ms", time.Since(started).Milliseconds(),
+			)
+		}
+	}
+
+	rows, err := transaction.Query(ctx, selectAppliedMigrationsStatement)
+	if err != nil {
+		return fmt.Errorf("read migration ledger: %w", err)
+	}
+	applied := make([]appliedMigration, 0)
+	for rows.Next() {
+		var row appliedMigration
+		if err := rows.Scan(&row.Version, &row.Name, &row.SHA256); err != nil {
+			rows.Close()
+			return fmt.Errorf("read migration ledger: %w", err)
+		}
+		applied = append(applied, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read migration ledger: %w", err)
+	}
+	rows.Close()
+	if err := validateAppliedMigrations(files, applied); err != nil {
+		return err
+	}
+
+	appliedByVersion := make(map[int64]appliedMigration, len(applied))
+	for _, row := range applied {
+		appliedByVersion[row.Version] = row
+	}
+	summary.Current = migrationCurrentVersion(applied)
+	summary.Pending = len(files) - len(applied)
+
+	migrationEvents := make([]migrationEvent, 0, summary.Pending)
+	for _, file := range files {
+		started := time.Now()
+		if _, ok := appliedByVersion[file.Version]; ok {
+			summary.Skipped++
+			slog.Info("database migration",
+				"version", file.Version,
+				"filename", file.Name,
+				"sha256", file.SHA256,
+				"duration_ms", time.Since(started).Milliseconds(),
+				"result", "skipped",
+			)
+			continue
+		}
+
+		if _, err := transaction.Exec(ctx, file.SQL); err != nil {
+			return fmt.Errorf("apply migration %s: %w", file.Name, err)
+		}
+		if _, err := transaction.Exec(ctx,
+			insertAppliedMigrationStatement,
+			file.Version, file.Name, file.SHA256,
+		); err != nil {
+			return fmt.Errorf("record migration %s: %w", file.Name, err)
+		}
+		migrationEvents = append(migrationEvents, migrationEvent{
+			Version:    file.Version,
+			Filename:   file.Name,
+			SHA256:     file.SHA256,
+			DurationMS: time.Since(started).Milliseconds(),
+		})
+	}
+
+	roleEvents, membershipEvents, err := reconcileStaticRoleContracts(ctx, transaction)
+	if err != nil {
+		return err
+	}
+	credentialEvents, err := reconcilePasswords(ctx, transaction, credentials)
+	if err != nil {
+		return err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("commit database migrations: %w", err)
+	}
+
+	for _, event := range migrationEvents {
+		slog.Info("database migration",
+			"version", event.Version,
+			"filename", event.Filename,
+			"sha256", event.SHA256,
+			"duration_ms", event.DurationMS,
+			"result", "applied",
+		)
+	}
+	for _, event := range roleEvents {
+		slog.Info("database role reconciled",
+			"role", event.Role,
+			"duration_ms", event.DurationMS,
+			"result", "reconciled",
+		)
+	}
+	for _, event := range membershipEvents {
+		slog.Info("database role membership reconciled",
+			"role", event.Role,
+			"duration_ms", event.DurationMS,
+			"result", "reconciled",
+		)
+	}
+	for _, event := range credentialEvents {
+		slog.Info("database credential reconciled",
+			"role", event.Role,
+			"duration_ms", event.DurationMS,
+			"result", "reconciled",
+		)
+	}
+	summary.Applied = len(migrationEvents)
+	summary.Result = "success"
+	return nil
+}
+
+func parseCredentialURLs(urls CredentialURLs) ([]credential, error) {
+	inputs := []struct {
+		Name string
+		URL  string
+	}{
+		{Name: "application", URL: urls.Application},
+		{Name: "writer", URL: urls.Writer},
+		{Name: "exporter", URL: urls.Exporter},
+		{Name: "role-admin", URL: urls.RoleAdmin},
+		{Name: "metabase", URL: urls.Metabase},
+	}
+
+	credentials := make([]credential, 0, len(inputs))
+	for _, input := range inputs {
+		connectionConfig, err := pgx.ParseConfig(input.URL)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s credential database URL", input.Name)
+		}
+		expectedRole := expectedCredentialRoles[input.Name]
+		if connectionConfig.User != expectedRole {
+			return nil, fmt.Errorf("%s credential database URL must use the expected role", input.Name)
+		}
+		if connectionConfig.Password == "" {
+			return nil, fmt.Errorf("%s credential database URL must include a password", input.Name)
+		}
+		credentials = append(credentials, credential{Role: expectedRole, Password: connectionConfig.Password})
+	}
+	return credentials, nil
+}
+
+func staticRoleContracts() []staticRoleContract {
+	return []staticRoleContract{
+		{role: "cyclops_app", login: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "k8s_state_owner", inherit: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "k8s_state_writer", login: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "k8s_state_exporter", login: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "k8s_query_tenant", inherit: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "k8s_query_admin", inherit: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "k8s_role_admin", login: true, createRole: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "k8s_reporting_owner", inherit: true, connectionLimit: -1, validUntil: "infinity"},
+		{role: "k8s_metabase", login: true, connectionLimit: -1, validUntil: "infinity"},
+	}
+}
+
+func staticRoleSettingsContracts() map[string]map[string]string {
+	return map[string]map[string]string{
+		"k8s_metabase": {
+			"default_transaction_read_only":       "on",
+			"statement_timeout":                   "20000ms",
+			"idle_in_transaction_session_timeout": "20000ms",
+		},
+	}
+}
+
+func staticMembershipContracts(migrationOwner string) []staticMembershipContract {
+	return []staticMembershipContract{
+		{role: "k8s_state_owner", member: migrationOwner, admin: false, inherit: false, set: true},
+		{role: "k8s_reporting_owner", member: migrationOwner, admin: false, inherit: false, set: true},
+		{role: "k8s_query_tenant", member: "k8s_role_admin", admin: true, inherit: false, set: false},
+		{role: "k8s_query_admin", member: "k8s_reporting_owner", admin: false, inherit: true, set: false},
+	}
+}
+
+func postgresBoolean(value bool) string {
+	if value {
+		return "TRUE"
+	}
+	return "FALSE"
+}
+
+func staticRoleAlterClauses(contract staticRoleContract, attributes staticRoleAttributes) (string, error) {
+	unsafeAttributes := make([]string, 0, 4)
+	if attributes.createDB {
+		unsafeAttributes = append(unsafeAttributes, "rolcreatedb=true")
+	}
+	if attributes.super {
+		unsafeAttributes = append(unsafeAttributes, "rolsuper=true")
+	}
+	if attributes.replication {
+		unsafeAttributes = append(unsafeAttributes, "rolreplication=true")
+	}
+	if attributes.bypassRLS {
+		unsafeAttributes = append(unsafeAttributes, "rolbypassrls=true")
+	}
+	if len(unsafeAttributes) != 0 {
+		return "", fmt.Errorf("static role %s has unsafe privileged drift: %s; the migration owner cannot safely repair these attributes", contract.role, strings.Join(unsafeAttributes, ", "))
+	}
+
+	clauses := make([]string, 0, 6)
+	if attributes.login != contract.login {
+		clauses = append(clauses, map[bool]string{true: "LOGIN", false: "NOLOGIN"}[contract.login])
+	}
+	if attributes.inherit != contract.inherit {
+		clauses = append(clauses, map[bool]string{true: "INHERIT", false: "NOINHERIT"}[contract.inherit])
+	}
+	if attributes.createRole != contract.createRole {
+		clauses = append(clauses, map[bool]string{true: "CREATEROLE", false: "NOCREATEROLE"}[contract.createRole])
+	}
+	if attributes.connectionLimit != contract.connectionLimit {
+		clauses = append(clauses, "CONNECTION LIMIT "+strconv.Itoa(contract.connectionLimit))
+	}
+	if attributes.validUntil != contract.validUntil {
+		clauses = append(clauses, "VALID UNTIL '"+contract.validUntil+"'")
+	}
+	return strings.Join(clauses, " "), nil
+}
+
+func readStaticRoleAttributes(ctx context.Context, transaction pgx.Tx, role string) (staticRoleAttributes, error) {
+	var attributes staticRoleAttributes
+	err := transaction.QueryRow(ctx, `
+		select rolcanlogin, rolinherit, rolcreaterole, rolcreatedb, rolconnlimit, coalesce(rolvaliduntil::text, 'infinity'), rolsuper, rolreplication, rolbypassrls
+		from pg_roles
+		where rolname = $1`, role).Scan(
+		&attributes.login,
+		&attributes.inherit,
+		&attributes.createRole,
+		&attributes.createDB,
+		&attributes.connectionLimit,
+		&attributes.validUntil,
+		&attributes.super,
+		&attributes.replication,
+		&attributes.bypassRLS,
+	)
+	if err != nil {
+		return staticRoleAttributes{}, fmt.Errorf("read static role %s attributes: %w", role, err)
+	}
+	return attributes, nil
+}
+
+func reconcileStaticRoleContracts(ctx context.Context, transaction pgx.Tx) ([]roleReconciliationEvent, []membershipReconciliationEvent, error) {
+	var migrationOwner string
+	if err := transaction.QueryRow(ctx, `select current_user`).Scan(&migrationOwner); err != nil {
+		return nil, nil, fmt.Errorf("read migration role: %w", err)
+	}
+	membershipContracts := staticMembershipContracts(migrationOwner)
+	if err := validateStaticRoleMemberships(ctx, transaction, migrationOwner, membershipContracts); err != nil {
+		return nil, nil, err
+	}
+
+	roleEvents := make([]roleReconciliationEvent, 0, len(staticRoleContracts()))
+	for _, contract := range staticRoleContracts() {
+		started := time.Now()
+		attributes, err := readStaticRoleAttributes(ctx, transaction, contract.role)
+		if err != nil {
+			return nil, nil, err
+		}
+		clauses, err := staticRoleAlterClauses(contract, attributes)
+		if err != nil {
+			return nil, nil, err
+		}
+		if clauses != "" {
+			if _, err := transaction.Exec(ctx, "alter role "+pgx.Identifier{contract.role}.Sanitize()+" "+clauses); err != nil {
+				return nil, nil, fmt.Errorf("reconcile static role %s: %w", contract.role, err)
+			}
+		}
+		roleEvents = append(roleEvents, roleReconciliationEvent{Role: contract.role, DurationMS: time.Since(started).Milliseconds()})
+	}
+
+	membershipEvents := make([]membershipReconciliationEvent, 0, len(membershipContracts))
+	for _, contract := range membershipContracts {
+		started := time.Now()
+		grants, err := readStaticMembershipGrants(ctx, transaction, contract)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		var migrationOwnerGrant *staticMembershipGrant
+		for index := range grants {
+			grant := &grants[index]
+			if grant.grantor == migrationOwner {
+				migrationOwnerGrant = grant
+				continue
+			}
+			if allowsImplicitCreatorAdminMembership(contract.role, contract.member, migrationOwner, *grant) {
+				continue
+			}
+			return nil, nil, foreignStaticMembershipGrantError(contract, grant.grantor, migrationOwner)
+		}
+
+		if migrationOwnerGrant == nil || migrationOwnerGrant.admin != contract.admin || migrationOwnerGrant.inherit != contract.inherit || migrationOwnerGrant.set != contract.set {
+			roleIdentifier := pgx.Identifier{contract.role}.Sanitize()
+			memberIdentifier := pgx.Identifier{contract.member}.Sanitize()
+			grantorIdentifier := pgx.Identifier{migrationOwner}.Sanitize()
+			if migrationOwnerGrant != nil {
+				statement := "revoke " + roleIdentifier + " from " + memberIdentifier + " granted by " + grantorIdentifier + " restrict"
+				if _, err := transaction.Exec(ctx, statement); err != nil {
+					return nil, nil, fmt.Errorf("remove drifted static role membership %s -> %s: %w", contract.role, contract.member, err)
+				}
+			}
+			statement := "grant " + roleIdentifier + " to " + memberIdentifier +
+				" with admin " + postgresBoolean(contract.admin) +
+				", inherit " + postgresBoolean(contract.inherit) +
+				", set " + postgresBoolean(contract.set) +
+				" granted by " + grantorIdentifier
+			if _, err := transaction.Exec(ctx, statement); err != nil {
+				return nil, nil, fmt.Errorf("reconcile static role membership %s -> %s: %w", contract.role, contract.member, err)
+			}
+		}
+		membershipEvents = append(membershipEvents, membershipReconciliationEvent{Role: contract.role, DurationMS: time.Since(started).Milliseconds()})
+	}
+
+	if err := reconcileStaticRoleSettings(ctx, transaction); err != nil {
+		return nil, nil, err
+	}
+	return roleEvents, membershipEvents, nil
+}
+
+func foreignStaticMembershipGrantError(contract staticMembershipContract, grantor, migrationOwner string) error {
+	return fmt.Errorf("static role membership %s -> %s has grantor %s instead of migration owner %s; revoke the foreign grant without CASCADE before rerunning the migration", contract.role, contract.member, grantor, migrationOwner)
+}
+
+func validateStaticRoleMemberships(ctx context.Context, transaction pgx.Tx, migrationOwner string, contracts []staticMembershipContract) error {
+	for _, contract := range contracts {
+		grants, err := readStaticMembershipGrants(ctx, transaction, contract)
+		if err != nil {
+			return err
+		}
+		for _, grant := range grants {
+			if grant.grantor != migrationOwner && contract.member != migrationOwner && !allowsImplicitCreatorAdminMembership(contract.role, contract.member, migrationOwner, grant) {
+				return foreignStaticMembershipGrantError(contract, grant.grantor, migrationOwner)
+			}
+		}
+	}
+
+	dynamicTenants, err := validateQueryTenantRoleMembers(ctx, transaction, migrationOwner, contracts)
+	if err != nil {
+		return err
+	}
+	for _, contract := range staticRoleContracts() {
+		if contract.role == "k8s_query_tenant" {
+			continue
+		}
+		if err := validateStaticRoleMembers(ctx, transaction, migrationOwner, contract.role, contracts); err != nil {
+			return err
+		}
+	}
+
+	for _, contract := range staticRoleContracts() {
+		if err := validateStaticRoleParents(ctx, transaction, contract.role, contracts, dynamicTenants); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateStaticRoleMembers(ctx context.Context, transaction pgx.Tx, migrationOwner, role string, contracts []staticMembershipContract) error {
+	creatorGrants, err := readStaticMembershipGrants(ctx, transaction, staticMembershipContract{role: role, member: migrationOwner})
+	if err != nil {
+		return err
+	}
+	allowMigrationOwnerGrant := isDeclaredStaticMembership(role, migrationOwner, contracts)
+	if !staticCreatorAdminMembershipsAreExact(migrationOwner, creatorGrants, allowMigrationOwnerGrant) {
+		return staticCreatorAdminMembershipError(role, migrationOwner)
+	}
+
+	rows, err := transaction.Query(ctx, `
+		select member_role.rolname, grantor_role.rolname, grantor_role.rolsuper, membership.admin_option, membership.inherit_option, membership.set_option
+		from pg_auth_members as membership
+		join pg_roles as member_role on member_role.oid = membership.member
+		join pg_roles as grantor_role on grantor_role.oid = membership.grantor
+		where membership.roleid = $1::regrole
+		order by member_role.rolname, grantor_role.rolname`, role)
+	if err != nil {
+		return fmt.Errorf("read static role members for %s: %w", role, err)
+	}
+	defer rows.Close()
+
+	unexpected := map[string]struct{}{}
+	for rows.Next() {
+		var member string
+		var grant staticMembershipGrant
+		if err := rows.Scan(&member, &grant.grantor, &grant.grantorSuperuser, &grant.admin, &grant.inherit, &grant.set); err != nil {
+			return fmt.Errorf("scan static role member for %s: %w", role, err)
+		}
+		if member == migrationOwner || isDeclaredStaticMembership(role, member, contracts) {
+			continue
+		}
+		unexpected[member] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate static role members for %s: %w", role, err)
+	}
+	if len(unexpected) != 0 {
+		return fmt.Errorf("static role %s has unexpected members %s; revoke them without CASCADE before rerunning the migration", role, sortedRoleNames(unexpected))
+	}
+	return nil
+}
+
+func validateQueryTenantRoleMembers(ctx context.Context, transaction pgx.Tx, migrationOwner string, contracts []staticMembershipContract) (map[string]dynamicTenantRole, error) {
+	if _, err := transaction.Exec(ctx, `set local role k8s_state_owner`); err != nil {
+		return nil, fmt.Errorf("validate k8s_query_tenant memberships requires SET ROLE k8s_state_owner; restore the declared migration-owner membership before rerunning the migration: %w", err)
+	}
+	dynamicTenants, err := readRegisteredDynamicTenantRoles(ctx, transaction)
+	if err != nil {
+		_, _ = transaction.Exec(ctx, `reset role`)
+		return nil, err
+	}
+	rows, err := transaction.Query(ctx, `
+		select member_role.rolname
+		from pg_auth_members as membership
+		join pg_roles as member_role on member_role.oid = membership.member
+		where membership.roleid = 'k8s_query_tenant'::regrole
+		order by member_role.rolname`)
+	if err != nil {
+		_, _ = transaction.Exec(ctx, `reset role`)
+		return nil, fmt.Errorf("read k8s_query_tenant members: %w", err)
+	}
+
+	unexpected := map[string]struct{}{}
+	for rows.Next() {
+		var member string
+		if err := rows.Scan(&member); err != nil {
+			rows.Close()
+			_, _ = transaction.Exec(ctx, `reset role`)
+			return nil, fmt.Errorf("scan k8s_query_tenant member: %w", err)
+		}
+		if member == migrationOwner || isDeclaredStaticMembership("k8s_query_tenant", member, contracts) {
+			continue
+		}
+		if _, ok := dynamicTenants[member]; ok {
+			continue
+		}
+		unexpected[member] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		_, _ = transaction.Exec(ctx, `reset role`)
+		return nil, fmt.Errorf("iterate k8s_query_tenant members: %w", err)
+	}
+	rows.Close()
+	if _, err := transaction.Exec(ctx, `reset role`); err != nil {
+		return nil, fmt.Errorf("reset role after validating k8s_query_tenant memberships: %w", err)
+	}
+	if len(unexpected) != 0 {
+		return nil, fmt.Errorf("k8s_query_tenant has unregistered dynamic tenant member %s; remove the membership without CASCADE or register it through k8s_role_admin before rerunning the migration", sortedRoleNames(unexpected))
+	}
+
+	creatorGrants, err := readStaticMembershipGrants(ctx, transaction, staticMembershipContract{role: "k8s_query_tenant", member: migrationOwner})
+	if err != nil {
+		return nil, err
+	}
+	if !staticCreatorAdminMembershipsAreExact(migrationOwner, creatorGrants, false) {
+		return nil, staticCreatorAdminMembershipError("k8s_query_tenant", migrationOwner)
+	}
+	for _, tenant := range dynamicTenants {
+		if err := validateRegisteredTenantRoleMemberships(ctx, transaction, tenant); err != nil {
+			return nil, err
+		}
+	}
+	return dynamicTenants, nil
+}
+
+func readRegisteredDynamicTenantRoles(ctx context.Context, transaction pgx.Tx) (map[string]dynamicTenantRole, error) {
+	rows, err := transaction.Query(ctx, `
+		select tenant_role.role_name::text,
+			member_role.rolname,
+			coalesce(member_role.rolcanlogin, false),
+			coalesce(member_role.rolinherit, false),
+			coalesce(member_role.rolcreaterole, false),
+			coalesce(member_role.rolcreatedb, false),
+			coalesce(member_role.rolsuper, false),
+			coalesce(member_role.rolreplication, false),
+			coalesce(member_role.rolbypassrls, false),
+			coalesce(member_role.rolconnlimit, -1),
+			coalesce(member_role.rolvaliduntil::text, 'infinity')
+		from k8s_state.query_tenant_role as tenant_role
+		left join pg_roles as member_role on member_role.rolname = tenant_role.role_name::text
+		order by tenant_role.role_name`)
+	if err != nil {
+		return nil, fmt.Errorf("read registered tenant roles: %w", err)
+	}
+	defer rows.Close()
+
+	tenants := map[string]dynamicTenantRole{}
+	for rows.Next() {
+		var tenant dynamicTenantRole
+		var roleName *string
+		if err := rows.Scan(&tenant.name, &roleName, &tenant.login, &tenant.inherit, &tenant.createRole, &tenant.createDB, &tenant.super, &tenant.replication, &tenant.bypassRLS, &tenant.connectionLimit, &tenant.validUntil); err != nil {
+			return nil, fmt.Errorf("scan registered tenant role: %w", err)
+		}
+		if roleName == nil {
+			return nil, fmt.Errorf("registered tenant role %s does not exist; restore or unregister it before rerunning the migration", tenant.name)
+		}
+		tenant.registered = true
+		tenants[tenant.name] = tenant
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate registered tenant roles: %w", err)
+	}
+	return tenants, nil
+}
+
+func validateRegisteredTenantRoleMemberships(ctx context.Context, transaction pgx.Tx, tenant dynamicTenantRole) error {
+	creatorGrants, err := readStaticMembershipGrants(ctx, transaction, staticMembershipContract{role: tenant.name, member: "k8s_role_admin"})
+	if err != nil {
+		return err
+	}
+	controllerGrants, err := readStaticMembershipGrants(ctx, transaction, staticMembershipContract{role: "k8s_query_tenant", member: tenant.name})
+	if err != nil {
+		return err
+	}
+	var inboundCount, parentCount int
+	if err := transaction.QueryRow(ctx, `select count(*) from pg_auth_members where roleid = $1::regrole`, tenant.name).Scan(&inboundCount); err != nil {
+		return fmt.Errorf("count registered tenant %s members: %w", tenant.name, err)
+	}
+	if err := transaction.QueryRow(ctx, `select count(*) from pg_auth_members where member = $1::regrole`, tenant.name).Scan(&parentCount); err != nil {
+		return fmt.Errorf("count registered tenant %s parent roles: %w", tenant.name, err)
+	}
+	if inboundCount != 1 || parentCount != 1 || !registeredTenantMembershipsAreExact(tenant, creatorGrants, controllerGrants) {
+		return fmt.Errorf("registered tenant role %s has memberships outside the controller contract; remove the drift without CASCADE before rerunning the migration", tenant.name)
+	}
+	return nil
+}
+
+func staticCreatorAdminMembershipsAreExact(member string, grants []staticMembershipGrant, allowOwnerGrant bool) bool {
+	foreignCount := 0
+	ownerCount := 0
+	for _, grant := range grants {
+		if grant.grantor == member {
+			ownerCount++
+			continue
+		}
+		foreignCount++
+		if !grant.grantorSuperuser || !grant.admin || grant.inherit || grant.set {
+			return false
+		}
+	}
+	return foreignCount == 1 && ownerCount <= 1 && (allowOwnerGrant || ownerCount == 0)
+}
+
+func staticCreatorAdminMembershipError(role, member string) error {
+	return fmt.Errorf("role %s must have exactly one foreign creator-admin membership for %s granted by a true PostgreSQL superuser with admin=true inherit=false set=false", role, member)
+}
+
+func creatorAdminMembershipsAreExact(member string, grants []staticMembershipGrant) bool {
+	return len(grants) == 1 &&
+		grants[0].grantor != member &&
+		grants[0].grantorSuperuser &&
+		grants[0].admin && !grants[0].inherit && !grants[0].set
+}
+
+func registeredTenantMembershipsAreExact(tenant dynamicTenantRole, inbound, parents []staticMembershipGrant) bool {
+	return dynamicTenantRoleMatchesControllerContract(tenant) &&
+		creatorAdminMembershipsAreExact("k8s_role_admin", inbound) &&
+		len(parents) == 1 &&
+		parents[0].grantor == "k8s_role_admin" &&
+		!parents[0].admin && parents[0].inherit && !parents[0].set
+}
+
+func creatorAdminMembershipError(role, member string) error {
+	return fmt.Errorf("role %s must have exactly one implicit creator-admin membership for %s granted by a true PostgreSQL superuser with admin=true inherit=false set=false", role, member)
+}
+
+func dynamicTenantRoleMatchesControllerContract(tenant dynamicTenantRole) bool {
+	return tenant.registered &&
+		len(tenant.name) == len("k8s_tenant_")+32 &&
+		strings.HasPrefix(tenant.name, "k8s_tenant_") &&
+		isLowerHex(tenant.name[len("k8s_tenant_"):]) &&
+		tenant.login && tenant.inherit && !tenant.createRole && !tenant.createDB && !tenant.super && !tenant.replication && !tenant.bypassRLS &&
+		tenant.connectionLimit == -1 && tenant.validUntil == "infinity"
+}
+
+func allowsRegisteredTenantCreatorAdminMembership(tenant dynamicTenantRole, member string, grant staticMembershipGrant) bool {
+	return dynamicTenantRoleMatchesControllerContract(tenant) &&
+		member == "k8s_role_admin" &&
+		grant.grantor != member &&
+		grant.grantorSuperuser &&
+		grant.admin && !grant.inherit && !grant.set
+}
+
+func isDeclaredStaticMembership(role, member string, contracts []staticMembershipContract) bool {
+	for _, contract := range contracts {
+		if contract.role == role && contract.member == member {
+			return true
+		}
+	}
+	return false
+}
+
+func isLowerHex(value string) bool {
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validateStaticRoleParents(ctx context.Context, transaction pgx.Tx, role string, contracts []staticMembershipContract, dynamicTenants map[string]dynamicTenantRole) error {
+	rows, err := transaction.Query(ctx, `
+		select parent_role.rolname, grantor_role.rolname, grantor_role.rolsuper, membership.admin_option, membership.inherit_option, membership.set_option
+		from pg_auth_members as membership
+		join pg_roles as parent_role on parent_role.oid = membership.roleid
+		join pg_roles as grantor_role on grantor_role.oid = membership.grantor
+		where membership.member = $1::regrole
+		order by parent_role.rolname`, role)
+	if err != nil {
+		return fmt.Errorf("read static role parents for %s: %w", role, err)
+	}
+	defer rows.Close()
+
+	unexpected := map[string]struct{}{}
+	for rows.Next() {
+		var parent string
+		var grant staticMembershipGrant
+		if err := rows.Scan(&parent, &grant.grantor, &grant.grantorSuperuser, &grant.admin, &grant.inherit, &grant.set); err != nil {
+			return fmt.Errorf("scan static role parent for %s: %w", role, err)
+		}
+		if isDeclaredStaticMembership(parent, role, contracts) || allowsRegisteredTenantCreatorAdminMembership(dynamicTenants[parent], role, grant) {
+			continue
+		}
+		unexpected[parent] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate static role parents for %s: %w", role, err)
+	}
+	if len(unexpected) != 0 {
+		return fmt.Errorf("static role %s has unexpected parent roles %s; revoke them without CASCADE before rerunning the migration", role, sortedRoleNames(unexpected))
+	}
+	return nil
+}
+
+func sortedRoleNames(names map[string]struct{}) string {
+	ordered := make([]string, 0, len(names))
+	for name := range names {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
+	return strings.Join(ordered, ", ")
+}
+
+func reconcileStaticRoleSettings(ctx context.Context, transaction pgx.Tx) error {
+	contracts := staticRoleSettingsContracts()
+	for _, roleContract := range staticRoleContracts() {
+		actual, err := readStaticRoleSettings(ctx, transaction, roleContract.role)
+		if err != nil {
+			return err
+		}
+		desired := contracts[roleContract.role]
+		if staticRoleSettingsMatch(actual, desired) {
+			continue
+		}
+
+		roleIdentifier := pgx.Identifier{roleContract.role}.Sanitize()
+		for _, setting := range actual {
+			statement := "alter role " + roleIdentifier
+			if setting.database != "" {
+				statement += " in database " + pgx.Identifier{setting.database}.Sanitize()
+			}
+			statement += " reset all"
+			if _, err := transaction.Exec(ctx, statement); err != nil {
+				return fmt.Errorf("reset static role settings for %s: %w", roleContract.role, err)
+			}
+		}
+
+		settingNames := make([]string, 0, len(desired))
+		for name := range desired {
+			settingNames = append(settingNames, name)
+		}
+		sort.Strings(settingNames)
+		for _, name := range settingNames {
+			var value string
+			if err := transaction.QueryRow(ctx, `select format('%L', $1::text)`, desired[name]).Scan(&value); err != nil {
+				return fmt.Errorf("quote static role setting %s for %s: %w", name, roleContract.role, err)
+			}
+			if _, err := transaction.Exec(ctx, "alter role "+roleIdentifier+" set "+name+" = "+value); err != nil {
+				return fmt.Errorf("reconcile static role setting %s for %s: %w", name, roleContract.role, err)
+			}
+		}
+	}
+	return nil
+}
+
+type staticRoleSetting struct {
+	database string
+	values   map[string]string
+}
+
+func readStaticRoleSettings(ctx context.Context, transaction pgx.Tx, role string) ([]staticRoleSetting, error) {
+	rows, err := transaction.Query(ctx, `
+		select coalesce(database.datname, ''), setting.setconfig
+		from pg_db_role_setting as setting
+		join pg_roles as configured_role on configured_role.oid = setting.setrole
+		left join pg_database as database on database.oid = setting.setdatabase
+		where configured_role.rolname = $1
+		order by setting.setdatabase`, role)
+	if err != nil {
+		return nil, fmt.Errorf("read static role settings for %s: %w", role, err)
+	}
+	defer rows.Close()
+
+	settings := []staticRoleSetting{}
+	for rows.Next() {
+		var setting staticRoleSetting
+		var values []string
+		if err := rows.Scan(&setting.database, &values); err != nil {
+			return nil, fmt.Errorf("scan static role settings for %s: %w", role, err)
+		}
+		setting.values = make(map[string]string, len(values))
+		for _, value := range values {
+			name, configuredValue, ok := strings.Cut(value, "=")
+			if !ok {
+				return nil, fmt.Errorf("static role %s has malformed setting %q", role, value)
+			}
+			setting.values[name] = configuredValue
+		}
+		settings = append(settings, setting)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate static role settings for %s: %w", role, err)
+	}
+	return settings, nil
+}
+
+func staticRoleSettingsMatch(actual []staticRoleSetting, desired map[string]string) bool {
+	if len(desired) == 0 {
+		return len(actual) == 0
+	}
+	return len(actual) == 1 && actual[0].database == "" && mapsEqual(actual[0].values, desired)
+}
+
+func mapsEqual(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, leftValue := range left {
+		if right[key] != leftValue {
+			return false
+		}
+	}
+	return true
+}
+
+func isMigrationOwnedStaticRole(role string) bool {
+	for _, contract := range staticRoleContracts() {
+		if contract.role == role {
+			return true
+		}
+	}
+	return false
+}
+
+func allowsImplicitCreatorAdminMembership(role, member, migrationOwner string, grant staticMembershipGrant) bool {
+	return isMigrationOwnedStaticRole(role) &&
+		member == migrationOwner &&
+		grant.grantor != migrationOwner &&
+		grant.grantorSuperuser &&
+		grant.admin &&
+		!grant.inherit &&
+		!grant.set
+}
+
+func readStaticMembershipGrants(ctx context.Context, transaction pgx.Tx, contract staticMembershipContract) ([]staticMembershipGrant, error) {
+	rows, err := transaction.Query(ctx, `
+		select grantor_role.rolname, grantor_role.rolsuper, membership.admin_option, membership.inherit_option, membership.set_option
+		from pg_auth_members as membership
+		join pg_roles as grantor_role on grantor_role.oid = membership.grantor
+		where membership.roleid = $1::regrole and membership.member = $2::regrole
+		order by grantor_role.rolname`, contract.role, contract.member)
+	if err != nil {
+		return nil, fmt.Errorf("read static role membership %s -> %s: %w", contract.role, contract.member, err)
+	}
+	defer rows.Close()
+
+	var grants []staticMembershipGrant
+	for rows.Next() {
+		var grant staticMembershipGrant
+		if err := rows.Scan(&grant.grantor, &grant.grantorSuperuser, &grant.admin, &grant.inherit, &grant.set); err != nil {
+			return nil, fmt.Errorf("scan static role membership %s -> %s: %w", contract.role, contract.member, err)
+		}
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate static role membership %s -> %s: %w", contract.role, contract.member, err)
+	}
+	return grants, nil
+}
+
+func reconcilePasswords(ctx context.Context, transaction pgx.Tx, credentials []credential) ([]credentialEvent, error) {
+	events := make([]credentialEvent, 0, len(credentials))
+	for _, credential := range credentials {
+		started := time.Now()
+		var quotedPassword string
+		if err := transaction.QueryRow(ctx, `select format('%L', $1::text)`, credential.Password).Scan(&quotedPassword); err != nil {
+			return nil, fmt.Errorf("quote password for role %s: %w", credential.Role, err)
+		}
+		if _, err := transaction.Exec(ctx, "alter role "+pgx.Identifier{credential.Role}.Sanitize()+" password "+quotedPassword); err != nil {
+			return nil, fmt.Errorf("reconcile password for role %s: %w", credential.Role, err)
+		}
+		events = append(events, credentialEvent{Role: credential.Role, DurationMS: time.Since(started).Milliseconds()})
+	}
+	return events, nil
+}
+
+func CurrentVersion(ctx context.Context, url string) (int64, error) {
+	connectionConfig, err := pgx.ParseConfig(url)
+	if err != nil {
+		return 0, errors.New("parse database URL")
+	}
+	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
+	if err != nil {
+		return 0, fmt.Errorf("connect database%s", databaseTarget(connectionConfig))
+	}
+	defer connection.Close(ctx)
+
+	var version int64
+	err = connection.QueryRow(ctx, `select coalesce(max(version), 0) from cyclops_migrations.applied_migrations`).Scan(&version)
+	if err != nil {
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) && (databaseError.Code == "42P01" || databaseError.Code == "3F000") {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read database schema version: %w", err)
+	}
+	return version, nil
+}
+
+func RequireVersion(ctx context.Context, url string, minimum int64) error {
+	current, err := CurrentVersion(ctx, url)
+	if err != nil {
+		return err
+	}
+	if current < minimum {
+		return fmt.Errorf("database schema version %d is older than required version %d", current, minimum)
+	}
+	return nil
+}

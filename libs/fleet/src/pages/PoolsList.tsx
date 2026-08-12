@@ -9,12 +9,12 @@ import Pagination from "@cloudscape-design/components/pagination"
 import PropertyFilter from "@cloudscape-design/components/property-filter"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
-import { api } from "../api/cyclops"
+import { deletePool, getPool, listPools } from "../sdk/pools"
 import {
   derivePoolStatus,
   reconcileTombstones,
   tombstonePool,
-} from "../api/pools"
+} from "../sdk/status"
 import { PoolStatusPill } from "../components/PoolStatus"
 import { useFlash } from "../components/FlashContext"
 
@@ -39,7 +39,7 @@ export function PoolsList() {
   const load = async () => {
     setLoading(true)
     try {
-      const poolList = await api.listPools()
+      const poolList = await listPools()
       reconcileTombstones(poolList.map(p => p.name))
       setRows(
         poolList.map(p => ({
@@ -65,7 +65,7 @@ export function PoolsList() {
     if (selected.length === 0) return
     setBusy(true)
     try {
-      await Promise.all(selected.map(p => api.deletePool(p.namespace, p.name)))
+      await Promise.all(selected.map(p => deletePool(p.namespace, p.name)))
       for (const p of selected) tombstonePool(p.name)
       flash.push({
         type: "success",
@@ -93,7 +93,7 @@ export function PoolsList() {
     if (!src) return
     setDuplicating(true)
     try {
-      const full = await api.getPool(src.namespace, src.name)
+      const full = await getPool(src.namespace, src.name)
       navigate("/pools/new", { state: { source: full } })
     } catch (e) {
       flash.push({

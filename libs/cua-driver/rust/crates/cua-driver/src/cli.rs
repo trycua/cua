@@ -58,11 +58,11 @@ pub enum Command {
         /// Temporary trusted-launcher compatibility path for the forgeable
         /// file-backed existing-profile approval artifact.
         allow_legacy_existing_profile_approval: bool,
-        /// Immutable bounded-autonomy manifest selected by the trusted
-        /// launcher. Valid only in bounded mode.
-        session_policy: Option<String>,
+        /// Immutable narrow-only capability manifest selected by the trusted
+        /// launcher. Required in bounded mode and optional in other profiles.
+        capability_manifest: Option<String>,
         /// Deliberate launch-time confirmation that the manifest was reviewed.
-        approve_session_policy: bool,
+        approve_capability_manifest: bool,
         /// True when `--no-permissions-gate` is on argv.  The env-var
         /// `CUA_DRIVER_RS_PERMISSIONS_GATE=0` short-circuits the gate too
         /// (checked inside the gate itself), so the flag is only one of
@@ -85,6 +85,12 @@ pub enum Command {
         all: bool,
     },
     Status {
+        socket: Option<String>,
+    },
+    /// `cua-driver sessions list [--json]` — content-free operator view of
+    /// the live sessions owned by the selected daemon runtime.
+    Sessions {
+        json: bool,
         socket: Option<String>,
     },
     Recording {
@@ -158,7 +164,7 @@ pub enum Command {
     /// `cua-driver skills {install|update|uninstall|status|path}` —
     /// agent skill-pack management. The verb is the ONLY way a user
     /// installs or updates the cua-driver skill pack into their agent
-    /// dirs (Claude Code / Codex / OpenClaw / OpenCode); the install
+    /// dirs (Claude Code / Codex / Prime Agent / OpenClaw / OpenCode); the install
     /// scripts never touch ~/.claude/skills/ etc. directly. `install`
     /// fetches the matching versioned release asset
     /// (`cua-driver-rs-v<v>-skills.tar.gz` — the asset filename keeps
@@ -211,6 +217,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--permission-mode",
     "--grant",
     "--session-policy",
+    "--capability-manifest",
     "--pid-file",
     "--type",
     "--host-bundle-id",
@@ -269,6 +276,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("stop") => Some("stop"),
         Some("revoke") => Some("revoke"),
         Some("status") => Some("status"),
+        Some("sessions") => Some("sessions"),
         Some("recording") => Some("recording"),
         Some("dump-docs") => Some("dump_docs"),
         Some("update") => Some("update"),
@@ -346,6 +354,10 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "reset" => "reset",
             _ => "other",
         },
+        Some("sessions") => match subcommand.unwrap_or("list") {
+            "list" => "list",
+            _ => "other",
+        },
         Some("autostart") => match subcommand.unwrap_or("") {
             "enable" => "enable",
             "disable" => "disable",
@@ -393,6 +405,7 @@ fn finite_client_kind_from_args(args: &[String]) -> &'static str {
         "opencode" => "opencode",
         "hermes" => "hermes",
         "pi" => "pi",
+        "prime-agent" => "prime_agent",
         "antigravity" | "gemini" => "antigravity",
         "qwen" | "qwen-code" => "qwen_code",
         "droid" | "factory" => "factory_droid",
@@ -431,7 +444,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, cursor-theme");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, cursor-theme, sessions");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -461,8 +474,8 @@ pub fn parse_command() -> Command {
         println!();
         println!("skills options (agent skill-pack management, opt-in):");
         println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
-        println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, OpenClaw,");
-        println!("                                  OpenCode). Idempotent. Never overwrites existing user links.");
+        println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, Prime Agent,");
+        println!("                                  OpenClaw, OpenCode). Idempotent. Never overwrites existing user links.");
         println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
         println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
@@ -498,10 +511,14 @@ pub fn parse_command() -> Command {
             "                                  controls the macOS OS-permission onboarding UI."
         );
         println!(
-            "  --session-policy <path>         Required in bounded mode; immutable tool manifest."
+            "  --capability-manifest <path>    Narrow-only tool/resource manifest; required in bounded mode."
         );
-        println!("  --approve-session-policy        Required with --session-policy; the trusted launcher asserts");
+        println!("  --approve-capability-manifest   Required with --capability-manifest; the trusted launcher asserts");
         println!("                                  that the human reviewed this exact manifest at startup.");
+        println!("  --session-policy <path>         Deprecated alias for --capability-manifest.");
+        println!(
+            "  --approve-session-policy        Deprecated alias for --approve-capability-manifest."
+        );
         println!();
         println!("authorization revocation:");
         println!("  cua-driver revoke --session <id>  Stop and revoke one session's grants.");
@@ -690,8 +707,14 @@ pub fn parse_command() -> Command {
             allow_legacy_existing_profile_approval: args
                 .iter()
                 .any(|a| a == "--allow-legacy-existing-profile-approval"),
-            session_policy: flag_value(&args, "--session-policy"),
-            approve_session_policy: args.iter().any(|a| a == "--approve-session-policy"),
+            capability_manifest: aliased_flag_value(
+                &args,
+                "--capability-manifest",
+                "--session-policy",
+            ),
+            approve_capability_manifest: args
+                .iter()
+                .any(|a| a == "--approve-capability-manifest" || a == "--approve-session-policy"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             claude_code_compat,
@@ -711,6 +734,17 @@ pub fn parse_command() -> Command {
             }
         }
         Some("status") => Command::Status { socket },
+        Some("sessions") => {
+            let subcommand = pos.next().unwrap_or("list");
+            if subcommand != "list" {
+                eprintln!("Unknown sessions subcommand '{subcommand}'. Valid: list");
+                process::exit(64);
+            }
+            Command::Sessions {
+                json: args.iter().any(|arg| arg == "--json"),
+                socket,
+            }
+        }
         Some("recording") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
             let rest: Vec<String> = pos.map(str::to_owned).collect();
@@ -1045,6 +1079,19 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn aliased_flag_value(args: &[String], preferred: &str, deprecated: &str) -> Option<String> {
+    let preferred_value = flag_value(args, preferred);
+    let deprecated_value = flag_value(args, deprecated);
+    if preferred_value.is_some()
+        && deprecated_value.is_some()
+        && preferred_value != deprecated_value
+    {
+        eprintln!("{preferred} conflicts with deprecated {deprecated}");
+        process::exit(64);
+    }
+    preferred_value.or(deprecated_value)
 }
 
 /// Return every value of a repeatable `--flag value` or `--flag=value`.
@@ -1475,8 +1522,10 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary. Supported value: existing-profile." },
                   { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
                   { "name": "--allow-legacy-existing-profile-approval", "type": "flag", "description": "Temporary migration flag for the unprotected file-backed existing-profile artifact." },
-                  { "name": "--session-policy", "type": "string", "description": "Immutable tool manifest required in bounded mode." },
-                  { "name": "--approve-session-policy", "type": "flag", "description": "Trusted-launcher confirmation that the exact bounded manifest was reviewed." },
+                  { "name": "--capability-manifest", "type": "string", "description": "Optional narrow-only tool/resource ceiling; required in bounded mode." },
+                  { "name": "--approve-capability-manifest", "type": "flag", "description": "Trusted-launcher confirmation that the exact capability manifest was reviewed." },
+                  { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
+                  { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
@@ -1495,6 +1544,13 @@ pub fn build_manifest() -> serde_json::Value {
             { "name": "status",
               "description": "Report daemon status (running / not / unhealthy).",
               "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
+            { "name": "sessions",
+              "description": "List content-free lifecycle summaries for sessions owned by the daemon runtime.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "Only: list. Default: list." },
+                  { "name": "--json", "type": "flag", "description": "Emit the machine-readable session summary." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
+              ] },
             { "name": "list-tools",
               "description": "Print the canonical tool name + one-line summary for every registered MCP tool.",
               "args": [] },
@@ -1510,8 +1566,8 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "mcp-config",
-              "description": "Print the MCP server config snippet or a client-specific install command.",
-              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, qwen, droid, zcode. Omit for the generic snippet." } ] },
+              "description": "Print client-specific connection guidance (MCP config where supported).",
+              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode. Omit for the generic snippet." } ] },
             { "name": "manifest",
               "description": "Emit this machine-readable description of the CLI surface.",
               "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
@@ -1576,10 +1632,11 @@ pub fn build_manifest() -> serde_json::Value {
     })
 }
 
-/// Print the MCP server config snippet or a client-specific install command.
+/// Print client-specific connection guidance (MCP config where supported).
 ///
 /// `--client <name>` selects one of: claude, codex, cursor, hermes,
-/// antigravity, openclaw, opencode, pi. Omit for the generic JSON snippet.
+/// antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode.
+/// Omit for the generic JSON snippet.
 pub fn run_mcp_config(client: Option<&str>) {
     let binary = std::env::current_exe()
         .ok()
@@ -1755,6 +1812,18 @@ pub fn run_mcp_config(client: Option<&str>) {
                  exactly the shape Pi is designed around."
             );
         }
+        Some("prime-agent") => {
+            println!(
+                "Prime Agent loads Agent Skills and can call cua-driver directly from its\n\
+                 persistent IPython control environment. No MCP registration is required.\n\n\
+                 Install and verify the Cua Driver skill pack:\n\n\
+                     {binary} skills install\n\
+                     {binary} skills status\n\n\
+                 Then run /reload in Prime Agent (or start a new session) and ask it to\n\
+                 use the Cua Driver skill. Use /skill:cua-driver to invoke it explicitly.\n\
+                 The skill calls the cua-driver CLI with a snapshot/action/verify workflow."
+            );
+        }
         Some("qwen") | Some("qwen-code") => {
             // Qwen Code (Alibaba's open-source coding CLI, a Gemini-CLI fork).
             // Config: ~/.qwen/settings.json (user) or .qwen/settings.json
@@ -1794,7 +1863,7 @@ pub fn run_mcp_config(client: Option<&str>) {
             );
         }
         Some(other) => {
-            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, qwen, droid, zcode.");
+            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode.");
             process::exit(2);
         }
     }
@@ -1893,16 +1962,32 @@ pub fn run_call(
             .clone()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
         cua_driver_core::tool_args::sanitize_reserved_args(&mut args_for_daemon);
+        let transport_session = format!("cli-{}", uuid::Uuid::new_v4());
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some(tool.to_owned()),
             args: Some(args_for_daemon),
-            // CLI one-shot is its own ephemeral, anonymous/global session.
-            session_id: None,
+            // Every one-shot call owns one disposable implicit transport
+            // session. The daemon closes all lifecycle state attached to it
+            // synchronously after the response is received.
+            session_id: Some(transport_session.clone()),
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
-        match crate::serve::send_request(&socket_path, &req) {
+        let response = crate::serve::send_request(&socket_path, &req);
+        let cleanup = crate::serve::DaemonRequest {
+            method: "session_end".into(),
+            name: None,
+            args: None,
+            session_id: Some(transport_session),
+            observation_origin: None,
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
+        };
+        let cleanup_result = crate::serve::send_request(&socket_path, &cleanup);
+        if let Err(error) = cleanup_result {
+            eprintln!("warning: disposable session cleanup failed: {error}");
+        }
+        match response {
             Ok(resp) => {
                 if resp.ok {
                     if let Some(result) = resp.result {
@@ -3044,13 +3129,15 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true},
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
-                    {"name":"session-policy","short_name":null,"help":"Immutable tool manifest required in bounded mode.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"session-policy","short_name":null,"help":"Deprecated alias for capability-manifest.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
                     {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
                     {"name":"allow-legacy-existing-profile-approval","short_name":null,"help":"Temporary migration flag for the unprotected file-backed existing-profile artifact.","default_value":false},
-                    {"name":"approve-session-policy","short_name":null,"help":"Trusted-launcher confirmation that the exact bounded manifest was reviewed.","default_value":false},
+                    {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
+                    {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
                     {"name":"no-overlay","short_name":null,"help":"Disable the agent cursor overlay for this daemon.","default_value":false}
@@ -3094,8 +3181,8 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "mcp-config",
-                "abstract": "Print MCP server config or a client-specific install command.",
-                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, qwen, droid, and zcode.",
+                "abstract": "Print client-specific connection guidance (MCP config where supported).",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode.",
                 "arguments": no_args,
                 "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
                 "flags": no_flags,
@@ -3663,7 +3750,7 @@ pub fn run_config_cmd(
             };
             if key == "capture_scope" {
                 eprintln!(
-                    "config key 'capture_scope' is retired; use start_session(capture_scope=auto|window|desktop)"
+                    "config key 'capture_scope' is retired; select a window or desktop target on each action"
                 );
                 process::exit(64);
             }
@@ -3704,7 +3791,7 @@ pub fn run_config_cmd(
             };
             if key == "capture_scope" {
                 eprintln!(
-                    "config key 'capture_scope' is retired; use start_session(capture_scope=auto|window|desktop)"
+                    "config key 'capture_scope' is retired; select a window or desktop target on each action"
                 );
                 process::exit(64);
             }
@@ -3869,6 +3956,26 @@ mod tests {
     }
 
     #[test]
+    fn deprecated_session_policy_flag_remains_a_capability_manifest_alias() {
+        let argv = args(&["serve", "--session-policy", "/tmp/legacy.yaml"]);
+        assert_eq!(
+            aliased_flag_value(&argv, "--capability-manifest", "--session-policy"),
+            Some("/tmp/legacy.yaml".to_owned())
+        );
+
+        let identical = args(&[
+            "serve",
+            "--capability-manifest=/tmp/shared.yaml",
+            "--session-policy",
+            "/tmp/shared.yaml",
+        ]);
+        assert_eq!(
+            aliased_flag_value(&identical, "--capability-manifest", "--session-policy"),
+            Some("/tmp/shared.yaml".to_owned())
+        );
+    }
+
+    #[test]
     fn finite_call_tool_extraction_supports_subcommand_and_legacy_forms() {
         assert_eq!(
             finite_tool_name_from_args(&args(&["call", "click", r#"{\"x\":1}"#])),
@@ -3922,6 +4029,11 @@ mod tests {
             "set"
         );
         assert_eq!(finite_operation_from_args(&args(&["skills"])), "status");
+        assert_eq!(finite_operation_from_args(&args(&["sessions"])), "list");
+        assert_eq!(
+            finite_operation_from_args(&args(&["sessions", "private-value"])),
+            "other"
+        );
         assert_eq!(
             finite_operation_from_args(&args(&["update", "--apply"])),
             "apply"
@@ -3950,6 +4062,10 @@ mod tests {
         assert_eq!(
             finite_client_kind_from_args(&args(&["mcp-config", "--client", "antigravity"])),
             "antigravity"
+        );
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["mcp-config", "--client", "prime-agent"])),
+            "prime_agent"
         );
         assert_eq!(
             finite_client_kind_from_args(&args(&["mcp-config", "--client", "/private/client"])),

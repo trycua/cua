@@ -5,7 +5,7 @@
     "index",
     "driver",
     "sandbox",
-    "(fleets)",
+    "fleets",
     "lume",
     "cua-bench",
     "recipes",

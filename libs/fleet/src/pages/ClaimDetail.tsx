@@ -10,9 +10,11 @@ import Modal from "@cloudscape-design/components/modal"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Spinner from "@cloudscape-design/components/spinner"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
-import { api, claimsApi, type Claim } from "../api/cyclops"
 import { useFlash } from "../components/FlashContext"
 import { DesktopPane } from "../components/DesktopPane"
+import { deleteClaim, getClaim } from "../sdk/claims"
+import type { Claim } from "../sdk/models"
+import { getPool } from "../sdk/pools"
 
 function phaseType(phase: string): "success" | "pending" | "error" | "info" {
   switch (phase) {
@@ -42,8 +44,8 @@ export function ClaimDetail() {
     setLoading(true)
     try {
       const [claimData, poolData] = await Promise.all([
-        claimsApi.get(namespace, claimName),
-        api.getPool(namespace, poolName),
+        getClaim(namespace, claimName),
+        getPool(namespace, poolName),
       ])
       setClaim(claimData)
       setServices(poolData.services)
@@ -70,7 +72,7 @@ export function ClaimDetail() {
     if (!claim || claim.phase !== "Pending") return
     const id = setInterval(async () => {
       try {
-        const c = await claimsApi.get(namespace, claimName)
+        const c = await getClaim(namespace, claimName)
         setClaim(c)
       } catch {
         // Silent — next tick will retry
@@ -82,7 +84,7 @@ export function ClaimDetail() {
   const release = async () => {
     setReleasing(true)
     try {
-      await claimsApi.remove(namespace, claimName)
+      await deleteClaim(namespace, claimName)
       flash.push({ type: "success", header: `Released claim ${claimName}` })
       navigate(`/pools/${namespace}/${poolName}`)
     } catch (e) {

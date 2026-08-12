@@ -1,8 +1,11 @@
 name: "CI: Release Reminder"
 
+# This workflow only reads PR metadata through GitHub's API. It deliberately
+# never checks out or executes contributor-controlled code, so
+# pull_request_target is safe here and lets the reminder work for fork PRs.
 on:
-  pull_request:
-    types: [opened, synchronize, labeled, unlabeled]
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 jobs:
   release-reminder:
@@ -13,10 +16,10 @@ jobs:
       - name: Check for publishable changes and remind
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          REPO="${{ github.repository }}"
-
           # Get changed files in this PR
           CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only 2>/dev/null || true)
 
@@ -67,7 +70,7 @@ jobs:
           fi
 
           # Check which ones already have release labels
-          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+          LABELS="$LABELS_JSON"
           HAS_NO_RELEASE=false
           if echo "$LABELS" | grep -q '"no-release"'; then
             HAS_NO_RELEASE=true

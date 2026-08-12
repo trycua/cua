@@ -100,14 +100,6 @@ export async function mockAuth(page: Page): Promise<void> {
     })
   })
 
-  // Mock the /api/config endpoint (feature flags)
-  await page.route("**/api/config", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ admin: false }),
-    }),
-  )
-
   // Intercept any stray Keycloak endpoint requests
   await page.route("**/realms/cyclops-cs/**", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
@@ -127,7 +119,7 @@ export interface MockNamespace {
 
 const DEFAULT_NAMESPACES: MockNamespace[] = [
   {
-    name: "my-workspace",
+    name: "demo-pool",
     status: "Active",
     createdAt: "2026-01-15T10:00:00Z",
     labels: null,
@@ -253,51 +245,184 @@ export async function mockUserKeysApi(
 }
 
 // ---------------------------------------------------------------------------
-// Pools API mocking (K8s CRD via kubectl-proxy sidecar)
+// GitHub trust policies mocking
 // ---------------------------------------------------------------------------
 
-export async function mockPoolsApi(page: Page): Promise<void> {
-  // List pools: GET /api/k8s/apis/cua.ai/v1/osgymworkspacepools
-  await page.route("**/api/k8s/apis/cua.ai/v1/osgymworkspacepools", async (route) => {
+export interface MockGitHubTrustPolicy {
+  id: string
+  owner_sub: string
+  name: string
+  repository: string
+  allowed_namespaces: string[]
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+const DEFAULT_GITHUB_TRUST_POLICIES: MockGitHubTrustPolicy[] = [
+  {
+    id: "gh-policy-1",
+    owner_sub: "test-user-id",
+    name: "cloud-ci",
+    repository: "trycua/cloud",
+    allowed_namespaces: ["my-workspace", "preview-a"],
+    enabled: true,
+    created_at: "2026-06-26T10:00:00Z",
+    updated_at: "2026-06-26T10:30:00Z",
+  },
+]
+
+export async function mockGitHubTrustPoliciesApi(
+  page: Page,
+  policies: MockGitHubTrustPolicy[] = DEFAULT_GITHUB_TRUST_POLICIES,
+): Promise<void> {
+  await page.route("**/api/github-trust-policies", async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
-          items: [
-            {
-              metadata: { name: "demo-pool", namespace: "my-workspace" },
-              spec: { replicas: 2 },
-              status: { phase: "Ready", availableCount: 2 },
-            },
-          ],
+          policies,
+          oidc: {
+            issuer: "https://token.actions.githubusercontent.com",
+            audience: "fleets",
+          },
         }),
       })
-    } else {
-      await route.continue()
+      return
     }
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON()
+      const created: MockGitHubTrustPolicy = {
+        id: `gh-policy-${Date.now()}`,
+        owner_sub: "test-user-id",
+        name: body.name,
+        repository: body.repository,
+        allowed_namespaces: body.allowed_namespaces ?? [],
+        enabled: body.enabled ?? true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+      policies.unshift(created)
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(created),
+      })
+      return
+    }
+    await route.continue()
   })
 
-  // Create pool: POST /api/k8s/apis/cua.ai/v1/namespaces/*/osgymworkspacepools
+  await page.route("**/api/github-trust-policies/*", async (route) => {
+    const url = new URL(route.request().url())
+    const id = url.pathname.split("/").pop()
+    const policy = policies.find(item => item.id === id)
+    if (route.request().method() === "PATCH") {
+      if (!policy) {
+        await route.fulfill({ status: 404, body: JSON.stringify({ error: "not found" }) })
+        return
+      }
+      const body = route.request().postDataJSON()
+      Object.assign(policy, body, { updated_at: new Date().toISOString() })
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(policy),
+      })
+      return
+    }
+    if (route.request().method() === "DELETE") {
+      const idx = policies.findIndex(item => item.id === id)
+      if (idx >= 0) policies.splice(idx, 1)
+      await route.fulfill({ status: 204, body: "" })
+      return
+    }
+    await route.continue()
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Pools API mocking (K8s CRD via kubectl-proxy sidecar)
+// ---------------------------------------------------------------------------
+
+export async function mockPoolsApi(page: Page): Promise<void> {
+  const pool = {
+    apiVersion: "osgym.cua.ai/v1alpha1",
+    kind: "OSGymSandboxWarmPool",
+    metadata: { name: "demo-pool", namespace: "demo-pool" },
+    spec: {
+      replicas: 2,
+      sandboxTemplateRef: { name: "demo-pool-template" },
+    },
+    status: { replicas: 2, readyReplicas: 2 },
+  }
+  const template = {
+    apiVersion: "osgym.cua.ai/v1alpha1",
+    kind: "OSGymSandboxTemplate",
+    metadata: { name: "demo-pool-template", namespace: "demo-pool" },
+    spec: {
+      vmTemplate: {
+        containerDiskImage: "test-image:latest",
+        cpuCores: 4,
+        memory: "4Gi",
+        services: [],
+      },
+    },
+  }
+
   await page.route(
-    "**/api/k8s/apis/cua.ai/v1/namespaces/*/osgymworkspacepools",
+    "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
     async (route) => {
-      if (route.request().method() === "POST") {
+      const namespace = route.request().url().split("/namespaces/")[1].split("/")[0]
+      if (route.request().method() === "GET") {
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ items: namespace === "demo-pool" ? [pool] : [] }),
+        })
+      } else if (route.request().method() === "POST") {
         const body = route.request().postDataJSON()
         await route.fulfill({
           status: 201,
           contentType: "application/json",
-          body: JSON.stringify({
-            metadata: {
-              name: body.metadata.name,
-              namespace: route.request().url().split("/namespaces/")[1].split("/")[0],
-            },
-            spec: body.spec,
-            status: { phase: "Provisioning" },
-          }),
+          body: JSON.stringify({ ...body, status: { replicas: body.spec.replicas } }),
         })
       } else {
         await route.continue()
       }
+    },
+  )
+
+  await page.route(
+    "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo-pool/osgymsandboxwarmpools/demo-pool",
+    async (route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill({ contentType: "application/json", body: JSON.stringify(pool) })
+      } else if (route.request().method() === "DELETE") {
+        await route.fulfill({ status: 204, body: "" })
+      } else {
+        await route.continue()
+      }
+    },
+  )
+
+  await page.route(
+    "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxtemplates",
+    async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: route.request().postData() ?? "{}",
+        })
+      } else {
+        await route.continue()
+      }
+    },
+  )
+
+  await page.route(
+    "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo-pool/osgymsandboxtemplates/demo-pool-template",
+    async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(template) })
     },
   )
 }
@@ -316,14 +441,16 @@ export async function mockClaimsApi(page: Page): Promise<void> {
           body: JSON.stringify({
             items: [
               {
+                apiVersion: "osgym.cua.ai/v1alpha1",
+                kind: "OSGymSandboxClaim",
                 metadata: {
                   name: "claim-abc123",
-                  namespace: "pool-demo-pool",
+                  namespace: "demo-pool",
                   creationTimestamp: "2026-05-28T10:00:00Z",
                 },
                 spec: {
                   sandboxTemplateRef: { name: "demo-pool-template" },
-                  warmpool: "default",
+                  warmpool: "demo-pool",
                 },
                 status: {
                   phase: "Bound",
@@ -342,9 +469,11 @@ export async function mockClaimsApi(page: Page): Promise<void> {
           status: 201,
           contentType: "application/json",
           body: JSON.stringify({
+            apiVersion: "osgym.cua.ai/v1alpha1",
+            kind: "OSGymSandboxClaim",
             metadata: {
               name: body.metadata.name,
-              namespace: "pool-demo-pool",
+              namespace: "demo-pool",
               creationTimestamp: new Date().toISOString(),
             },
             spec: body.spec,
@@ -369,4 +498,3 @@ export async function mockClaimsApi(page: Page): Promise<void> {
     },
   )
 }
-

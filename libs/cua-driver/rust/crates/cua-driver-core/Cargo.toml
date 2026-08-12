@@ -25,6 +25,10 @@ regorus = { version = "0.10.1", optional = true }
 # helpers extracted from `platform-{macos,windows,linux}/src/capture.rs` so
 # all three platforms call the same code path.
 image = { workspace = true }
+# Compatibility constraint for image's zune-jpeg decoder. This dependency is
+# intentionally direct so SDK consumers without this workspace lockfile cannot
+# resolve the incompatible zune-core 0.5.2 release.
+zune-core = { workspace = true }
 # Used by the `browser` module's pooled CDP browser-endpoint WebSocket.
 # Same versions platform-macos already depends on, to avoid duplicate
 # crate versions in the workspace graph. No TLS features: the endpoint
@@ -44,6 +48,13 @@ libc = "0.2"
 # a duplicate crate version.
 [dev-dependencies]
 tempfile = "3"
+# Test-only. Asserts the advertised `outputSchema` the way a strict MCP client
+# does — by validating real payloads against it. The runtime itself validates
+# success output by deserialising into the Rust type, so this stays out of the
+# shipped dependency graph.
+# Version matches the one regorus already pulls into this crate's graph, so
+# the test dependency reuses that build instead of adding a second copy.
+jsonschema = { version = "0.46", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

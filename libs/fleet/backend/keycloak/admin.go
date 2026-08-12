@@ -366,7 +366,7 @@ func (a *Admin) ListUserKeyClients(ctx context.Context, ownerSub string) ([]User
 			if attrs["managed_by"] != "cyclops-cs-backend" || attrs["key_type"] != "user" || attrs["owner_sub"] != ownerSub {
 				continue
 			}
-			var scope []string
+			scope := []string{}
 			if s := attrs["scope"]; s != "" {
 				scope = strings.Split(s, ",")
 			}

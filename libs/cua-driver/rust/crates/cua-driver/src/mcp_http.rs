@@ -91,6 +91,20 @@ async fn serve_conn(
     sdk: Arc<crate::sdk_adapter::SdkAdapter>,
     token: Arc<str>,
 ) -> anyhow::Result<()> {
+    let transport_session = format!("http-{}", uuid::Uuid::new_v4());
+    struct TransportCleanup {
+        sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+        transport_session: String,
+    }
+    impl Drop for TransportCleanup {
+        fn drop(&mut self) {
+            self.sdk.end_transport_sessions(&self.transport_session);
+        }
+    }
+    let _cleanup = TransportCleanup {
+        sdk: sdk.clone(),
+        transport_session: transport_session.clone(),
+    };
     loop {
         let Some(req) = read_http_request(&mut stream, &token).await? else {
             return Ok(()); // clean EOF
@@ -122,7 +136,7 @@ async fn serve_conn(
             )
             .await?;
         } else {
-            match dispatch(&req.body, &sdk).await {
+            match dispatch(&req.body, &sdk, &transport_session).await {
                 Some(resp_json) => {
                     write_http(&mut stream, 200, resp_json.as_bytes(), keep_alive).await?
                 }
@@ -142,13 +156,18 @@ async fn serve_conn(
 /// Parse a JSON-RPC request body and dispatch via the shared MCP handler. Returns
 /// `Some(json)` for a request, or `None` for a notification (no `id`). Applies the
 /// caller-declared `session` identity so HTTP behaves identically to stdio.
-async fn dispatch(body: &[u8], sdk: &Arc<crate::sdk_adapter::SdkAdapter>) -> Option<String> {
+async fn dispatch(
+    body: &[u8],
+    sdk: &Arc<crate::sdk_adapter::SdkAdapter>,
+    transport_session: &str,
+) -> Option<String> {
     let mut req: Request = match serde_json::from_slice(body) {
         Ok(r) => r,
         Err(_) => return Some(serialize(&Response::parse_error())),
     };
     req.id.as_ref()?;
     let initialize_metadata = req.initialize_metadata();
+    apply_session_identity(&mut req, transport_session);
     let session_context = req.tool_call().ok().and_then(|call| {
         sdk.begin_tool_call(
             &call.name,
@@ -158,7 +177,6 @@ async fn dispatch(body: &[u8], sdk: &Arc<crate::sdk_adapter::SdkAdapter>) -> Opt
         )
     });
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-    apply_session_identity(&mut req);
     let timer = http_tool_observation_timer(&req, |name| sdk.is_known_tool(name));
     let response = handle_request(req, id, sdk.as_ref()).await;
     if let Some(timer) = timer {
@@ -194,7 +212,7 @@ fn serialize(resp: &Response) -> String {
 /// recording key) — the HTTP-side equivalent of
 /// `serve.rs::apply_session_identity`. Runtime-private idle-TTL activity is
 /// refreshed later at the authorized registry boundary.
-fn apply_session_identity(req: &mut Request) {
+fn apply_session_identity(req: &mut Request, transport_session: &str) {
     let Some(params) = req.params.as_mut() else {
         return;
     };
@@ -206,10 +224,15 @@ fn apply_session_identity(req: &mut Request) {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_owned());
-    if let Some(sess) = session {
-        args.entry("_session_id")
-            .or_insert_with(|| serde_json::Value::String(sess.clone()));
-    }
+    let effective = session.unwrap_or_else(|| transport_session.to_owned());
+    args.insert(
+        "_session_id".to_owned(),
+        serde_json::Value::String(effective),
+    );
+    args.insert(
+        "_transport_session_id".to_owned(),
+        serde_json::Value::String(transport_session.to_owned()),
+    );
 }
 
 /// One parsed HTTP/1.1 request.
@@ -418,7 +441,7 @@ mod tests {
             "params": { "name": "click", "arguments": { "pid": 1, "session": "alpha" } }
         }))
         .unwrap();
-        apply_session_identity(&mut req);
+        apply_session_identity(&mut req, "http-test");
         let args = req.params.unwrap();
         let args = args.get("arguments").unwrap();
         assert_eq!(args.get("_session_id").unwrap(), "alpha");
@@ -426,15 +449,16 @@ mod tests {
     }
 
     #[test]
-    fn apply_session_identity_noop_without_session() {
+    fn apply_session_identity_uses_transport_implicit_without_session() {
         let mut req: Request = serde_json::from_value(json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": { "name": "list_apps", "arguments": {} }
         }))
         .unwrap();
-        apply_session_identity(&mut req);
+        apply_session_identity(&mut req, "http-test");
         let args = req.params.unwrap();
-        assert!(args.get("arguments").unwrap().get("_session_id").is_none());
+        assert_eq!(args["arguments"]["_session_id"], "http-test");
+        assert_eq!(args["arguments"]["_transport_session_id"], "http-test");
     }
 
     #[test]
@@ -503,6 +527,7 @@ mod tests {
         let response = dispatch(
             br#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}"#,
             &sdk,
+            "http-test",
         )
         .await
         .expect("JSON-RPC response");

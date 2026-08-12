@@ -1,6 +1,6 @@
 use crate::{
     CreatePoolRequest, CyclopsClient, HttpHeader, HttpRequest, HttpResponse, Pool,
-    ResourceMetadata, SdkError, routes,
+    ResourceMetadata, SdkError, namespaces::NamespaceOwnership, routes,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::sync::Arc;
@@ -13,19 +13,12 @@ struct ResourceList<T> {
     items: Vec<T>,
 }
 
-enum NamespaceOwnership {
-    Created,
-    Existing,
-}
-
 #[uniffi::export]
 impl CyclopsClient {
     pub async fn create_pool(
         self: Arc<Self>,
         request: CreatePoolRequest,
     ) -> Result<Pool, SdkError> {
-        let namespace_collection_url = routes::namespace_collection(self.base_url())?;
-        let namespace_item_url = routes::namespace_item(self.base_url(), &request.namespace)?;
         let collection_url = routes::pool_collection(self.base_url(), &request.namespace)?;
         let pool = Pool {
             api_version: "osgym.cua.ai/v1alpha1".into(),
@@ -34,6 +27,7 @@ impl CyclopsClient {
                 namespace: request.namespace.clone(),
                 name: request.namespace,
                 labels: None,
+                creation_timestamp: None,
             },
             spec: request.spec,
             status: None,
@@ -49,7 +43,7 @@ impl CyclopsClient {
             .namespace_lifecycle_guard(&pool.metadata.namespace)
             .await;
         let namespace_created = matches!(
-            self.ensure_namespace(&namespace_collection_url, &pool.metadata.namespace)
+            self.create_namespace_if_missing(&pool.metadata.namespace)
                 .await?,
             NamespaceOwnership::Created
         );
@@ -65,7 +59,9 @@ impl CyclopsClient {
             Ok(pool) => Ok(pool),
             Err(error) => {
                 if namespace_created {
-                    let _ = self.delete_namespace(&namespace_item_url).await;
+                    let _ = Arc::clone(&self)
+                        .delete_namespace(pool.metadata.namespace.clone())
+                        .await;
                 }
                 Err(error)
             }
@@ -108,7 +104,7 @@ impl CyclopsClient {
 
     pub async fn update_pool(self: Arc<Self>, pool: Pool) -> Result<Pool, SdkError> {
         let item_url = self.pool_item_url(&pool)?;
-        let body = to_json(&pool)?;
+        let body = pool_merge_patch_json(&pool)?;
         self.send_json_crud(
             "update pool",
             merge_patch_request(item_url, Some(body)),
@@ -120,7 +116,6 @@ impl CyclopsClient {
     pub async fn delete_pool(self: Arc<Self>, pool: Pool) -> Result<(), SdkError> {
         self.ensure_lifecycle_pool_identity(&pool)?;
         let item_url = self.pool_item_url(&pool)?;
-        let namespace_url = routes::namespace_item(self.base_url(), &pool.metadata.namespace)?;
         let _lifecycle_guard = self
             .namespace_lifecycle_guard(&pool.metadata.namespace)
             .await;
@@ -130,43 +125,13 @@ impl CyclopsClient {
             &[200, 202, 204, 404],
         )
         .await?;
-        self.delete_namespace(&namespace_url).await
+        Arc::clone(&self)
+            .delete_namespace(pool.metadata.namespace.clone())
+            .await
     }
 }
 
 impl CyclopsClient {
-    async fn ensure_namespace(
-        &self,
-        namespace_url: &Url,
-        namespace: &str,
-    ) -> Result<NamespaceOwnership, SdkError> {
-        let response = self
-            .send_allowed(
-                "create namespace",
-                json_request(
-                    "POST",
-                    namespace_url.clone(),
-                    Some(to_json(&serde_json::json!({ "name": namespace }))?),
-                ),
-                &[201, 409],
-            )
-            .await?;
-        match response.status {
-            201 => Ok(NamespaceOwnership::Created),
-            409 => Ok(NamespaceOwnership::Existing),
-            status => Err(SdkError::status("create namespace", status, &response.body)),
-        }
-    }
-
-    async fn delete_namespace(&self, namespace_url: &Url) -> Result<(), SdkError> {
-        self.send_unit_crud(
-            "delete namespace",
-            json_request("DELETE", namespace_url.clone(), None),
-            &[200, 202, 204, 404],
-        )
-        .await
-    }
-
     fn ensure_lifecycle_pool_identity(&self, pool: &Pool) -> Result<(), SdkError> {
         if pool.metadata.namespace != pool.metadata.name {
             return Err(SdkError::Configuration {
@@ -208,7 +173,7 @@ impl CyclopsClient {
         Ok(())
     }
 
-    async fn send_allowed(
+    pub(crate) async fn send_allowed(
         &self,
         operation: &str,
         request: HttpRequest,
@@ -255,7 +220,18 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
             },
         ],
         body,
+        timeout_secs: None,
     }
+}
+
+fn pool_merge_patch_json(pool: &Pool) -> Result<Vec<u8>, SdkError> {
+    let mut value = serde_json::to_value(pool).map_err(|error| SdkError::Body {
+        reason: error.to_string(),
+    })?;
+    if pool.spec.autoscaling.is_none() {
+        value["spec"]["autoscaling"] = serde_json::Value::Null;
+    }
+    to_json(&value)
 }
 
 fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>, SdkError> {

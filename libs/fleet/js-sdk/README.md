@@ -23,6 +23,9 @@ console.log(response.data.keys)
 Keep `clientSecret` in server-side environment variables or a secret manager.
 Never expose client credentials in browser bundles or client-side code.
 
+This README lives under `cyclops-cs/`, which means documentation-only changes
+here still exercise the preview image build workflow for pull requests.
+
 ## Node.js and Fetch API support
 
 The generated client uses the standard Fetch API. Node.js 18+ supplies it

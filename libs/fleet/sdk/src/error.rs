@@ -71,3 +71,18 @@ pub fn bounded_body(body: &[u8]) -> String {
     }
     rendered[..end].into()
 }
+
+#[derive(Debug, Error, uniffi::Error)]
+pub enum SdkBuildError {
+    #[error("{record_type} is missing required field {field}")]
+    MissingRequiredField { record_type: String, field: String },
+}
+
+impl SdkBuildError {
+    pub fn missing(record_type: &str, field: &str) -> Self {
+        Self::MissingRequiredField {
+            record_type: record_type.into(),
+            field: field.into(),
+        }
+    }
+}

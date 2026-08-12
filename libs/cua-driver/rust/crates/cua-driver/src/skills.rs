@@ -43,6 +43,7 @@
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
+//! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
 //!   `%APPDATA%\opencode\skills\` (Windows)
@@ -201,6 +202,10 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".agents/skills"),
     },
     Agent {
+        label: "Prime Agent",
+        parent: AgentParent::Home(".prime/agent/skills"),
+    },
+    Agent {
         label: "OpenClaw",
         parent: AgentParent::Home(".openclaw/skills"),
     },
@@ -331,7 +336,7 @@ fn install(flags: &[String], force: bool) -> Result<()> {
         }
     }
     if !linked_any {
-        println!("(No agent skills dirs present yet — install Claude Code / Codex / OpenClaw / OpenCode / Antigravity / Hermes then re-run.)");
+        println!("(No agent skills dirs present yet — install Claude Code / Codex / Prime Agent / OpenClaw / OpenCode / Antigravity / Hermes then re-run.)");
     }
     Ok(())
 }
@@ -776,9 +781,22 @@ fn print_path() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_tar_gz, SKILL_FILES};
+    use super::{extract_tar_gz, AgentParent, AGENTS, SKILL_FILES};
     use std::path::PathBuf;
     use tempfile::tempdir;
+
+    #[test]
+    fn prime_agent_target_matches_its_native_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Prime Agent")
+            .expect("Prime Agent must remain a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".prime/agent/skills")
+        ));
+    }
 
     /// Build a gzipped tarball with the entries given as
     /// `(path, contents)` pairs. Returns the raw `.tar.gz` bytes.
@@ -889,6 +907,56 @@ mod tests {
             assert!(
                 browser.contains(required),
                 "browser skill lost required clipboard outcome guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_skill_keeps_sessions_and_authorization_as_separate_concepts() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
+            .expect("canonical browser skill must be readable");
+
+        for required in [
+            "Choose the target on each action",
+            "transport's implicit session",
+            "prefer a short public",
+            "pass the same label on every call that accepts it",
+            "Passing it once is not sticky",
+            "revive a name after",
+            "There is no `deescalate_session`",
+            "--capability-manifest",
+            "--approve-capability-manifest",
+            "It can remove tools or typed resources",
+            "permission authority. A public session",
+        ] {
+            assert!(
+                skill.contains(required),
+                "skill lost required lifecycle/authorization guidance: {required}"
+            );
+        }
+        for forbidden in [
+            "one-way session phase",
+            "if session policy allows",
+            "Pass `session` on the first action",
+        ] {
+            assert!(
+                !skill.contains(forbidden),
+                "skill restored stale session-state guidance: {forbidden}"
+            );
+        }
+        for required in [
+            "start_session(session?)",
+            "optional; can name before acting",
+            "prefer a short `session` label",
+            "Passing it once is not sticky",
+            "one-shot CLI calls use disposable transports",
+        ] {
+            assert!(
+                browser.contains(required),
+                "browser skill lost required session guidance: {required}"
             );
         }
     }

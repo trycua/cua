@@ -770,6 +770,608 @@ public func FfiConverterTypeAccessTokenProvider_lower(_ value: AccessTokenProvid
 
 
 
+public protocol CreateClaimRequestBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> CreateClaimRequest
+
+    func name(value: String)  -> CreateClaimRequestBuilder
+
+    func pool(value: Pool)  -> CreateClaimRequestBuilder
+
+    func spec(value: ClaimSpec)  -> CreateClaimRequestBuilder
+
+}
+open class CreateClaimRequestBuilder: CreateClaimRequestBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_createclaimrequestbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_createclaimrequestbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_createclaimrequestbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> CreateClaimRequest  {
+    return try  FfiConverterTypeCreateClaimRequest_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func name(value: String) -> CreateClaimRequestBuilder  {
+    return try!  FfiConverterTypeCreateClaimRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func pool(value: Pool) -> CreateClaimRequestBuilder  {
+    return try!  FfiConverterTypeCreateClaimRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
+            self.uniffiCloneHandle(),
+        FfiConverterTypePool_lower(value),$0
+    )
+})
+}
+
+open func spec(value: ClaimSpec) -> CreateClaimRequestBuilder  {
+    return try!  FfiConverterTypeCreateClaimRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeClaimSpec_lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateClaimRequestBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CreateClaimRequestBuilder
+
+    public static func lift(_ handle: UInt64) throws -> CreateClaimRequestBuilder {
+        return CreateClaimRequestBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CreateClaimRequestBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateClaimRequestBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CreateClaimRequestBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateClaimRequestBuilder_lift(_ handle: UInt64) throws -> CreateClaimRequestBuilder {
+    return try FfiConverterTypeCreateClaimRequestBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateClaimRequestBuilder_lower(_ value: CreateClaimRequestBuilder) -> UInt64 {
+    return FfiConverterTypeCreateClaimRequestBuilder.lower(value)
+}
+
+
+
+
+
+
+public protocol CreatePoolRequestBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> CreatePoolRequest
+
+    func namespace(value: String)  -> CreatePoolRequestBuilder
+
+    func spec(value: OsGymSandboxWarmPoolSpec)  -> CreatePoolRequestBuilder
+
+}
+open class CreatePoolRequestBuilder: CreatePoolRequestBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> CreatePoolRequest  {
+    return try  FfiConverterTypeCreatePoolRequest_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func namespace(value: String) -> CreatePoolRequestBuilder  {
+    return try!  FfiConverterTypeCreatePoolRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func spec(value: OsGymSandboxWarmPoolSpec) -> CreatePoolRequestBuilder  {
+    return try!  FfiConverterTypeCreatePoolRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeOSGymSandboxWarmPoolSpec_lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreatePoolRequestBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CreatePoolRequestBuilder
+
+    public static func lift(_ handle: UInt64) throws -> CreatePoolRequestBuilder {
+        return CreatePoolRequestBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CreatePoolRequestBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreatePoolRequestBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CreatePoolRequestBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreatePoolRequestBuilder_lift(_ handle: UInt64) throws -> CreatePoolRequestBuilder {
+    return try FfiConverterTypeCreatePoolRequestBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreatePoolRequestBuilder_lower(_ value: CreatePoolRequestBuilder) -> UInt64 {
+    return FfiConverterTypeCreatePoolRequestBuilder.lower(value)
+}
+
+
+
+
+
+
+public protocol CreateTemplateRequestBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> CreateTemplateRequest
+
+    func name(value: String)  -> CreateTemplateRequestBuilder
+
+    func namespace(value: String)  -> CreateTemplateRequestBuilder
+
+    func spec(value: OsGymSandboxTemplateSpec)  -> CreateTemplateRequestBuilder
+
+}
+open class CreateTemplateRequestBuilder: CreateTemplateRequestBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> CreateTemplateRequest  {
+    return try  FfiConverterTypeCreateTemplateRequest_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func name(value: String) -> CreateTemplateRequestBuilder  {
+    return try!  FfiConverterTypeCreateTemplateRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func namespace(value: String) -> CreateTemplateRequestBuilder  {
+    return try!  FfiConverterTypeCreateTemplateRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func spec(value: OsGymSandboxTemplateSpec) -> CreateTemplateRequestBuilder  {
+    return try!  FfiConverterTypeCreateTemplateRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeOSGymSandboxTemplateSpec_lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateTemplateRequestBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CreateTemplateRequestBuilder
+
+    public static func lift(_ handle: UInt64) throws -> CreateTemplateRequestBuilder {
+        return CreateTemplateRequestBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CreateTemplateRequestBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateTemplateRequestBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CreateTemplateRequestBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateTemplateRequestBuilder_lift(_ handle: UInt64) throws -> CreateTemplateRequestBuilder {
+    return try FfiConverterTypeCreateTemplateRequestBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateTemplateRequestBuilder_lower(_ value: CreateTemplateRequestBuilder) -> UInt64 {
+    return FfiConverterTypeCreateTemplateRequestBuilder.lower(value)
+}
+
+
+
+
+
+
+public protocol CreateUserApiKeyRequestBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> CreateUserApiKeyRequest
+
+    func name(value: String)  -> CreateUserApiKeyRequestBuilder
+
+    func scope(value: [String])  -> CreateUserApiKeyRequestBuilder
+
+}
+open class CreateUserApiKeyRequestBuilder: CreateUserApiKeyRequestBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_createuserapikeyrequestbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_createuserapikeyrequestbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_createuserapikeyrequestbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> CreateUserApiKeyRequest  {
+    return try  FfiConverterTypeCreateUserApiKeyRequest_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func name(value: String) -> CreateUserApiKeyRequestBuilder  {
+    return try!  FfiConverterTypeCreateUserApiKeyRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func scope(value: [String]) -> CreateUserApiKeyRequestBuilder  {
+    return try!  FfiConverterTypeCreateUserApiKeyRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_scope(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateUserApiKeyRequestBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CreateUserApiKeyRequestBuilder
+
+    public static func lift(_ handle: UInt64) throws -> CreateUserApiKeyRequestBuilder {
+        return CreateUserApiKeyRequestBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CreateUserApiKeyRequestBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateUserApiKeyRequestBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CreateUserApiKeyRequestBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateUserApiKeyRequestBuilder_lift(_ handle: UInt64) throws -> CreateUserApiKeyRequestBuilder {
+    return try FfiConverterTypeCreateUserApiKeyRequestBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateUserApiKeyRequestBuilder_lower(_ value: CreateUserApiKeyRequestBuilder) -> UInt64 {
+    return FfiConverterTypeCreateUserApiKeyRequestBuilder.lower(value)
+}
+
+
+
+
+
+
 public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func createClaim(request: CreateClaimRequest) async throws  -> Claim
@@ -780,7 +1382,25 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func listClaims(namespace: String) async throws  -> [Claim]
 
+    /**
+     * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+     * expiry is the only liveness input the pool operator's claim reaper
+     * honors, so a holder that outlives its current lease must renew before
+     * the deadline passes or the bound sandbox is deleted underneath it.
+     * Deliberately narrower than a claim update: nothing else on the claim
+     * can be mutated through the SDK.
+     */
+    func renewClaim(claim: Claim, shutdownTime: String) async throws  -> Claim
+
     func waitClaim(claim: Claim) async throws  -> Sandbox
+
+    func createNamespace(name: String) async throws  -> Namespace
+
+    func deleteNamespace(name: String) async throws
+
+    func getNamespace(name: String) async throws  -> Namespace
+
+    func listNamespaces() async throws  -> [Namespace]
 
     func createPool(request: CreatePoolRequest) async throws  -> Pool
 
@@ -807,6 +1427,12 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
     func reconcileTemplate(request: CreateTemplateRequest) async throws  -> Template
 
     func updateTemplate(template: Template) async throws  -> Template
+
+    func createUserApiKey(request: CreateUserApiKeyRequest) async throws  -> NewUserApiKey
+
+    func deleteUserApiKey(id: String) async throws
+
+    func listUserApiKeys() async throws  -> [UserApiKey]
 
 }
 open class CyclopsClient: CyclopsClientProtocol, @unchecked Sendable {
@@ -994,6 +1620,31 @@ open func listClaims(namespace: String)async throws  -> [Claim]  {
         )
 }
 
+    /**
+     * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+     * expiry is the only liveness input the pool operator's claim reaper
+     * honors, so a holder that outlives its current lease must renew before
+     * the deadline passes or the bound sandbox is deleted underneath it.
+     * Deliberately narrower than a claim update: nothing else on the claim
+     * can be mutated through the SDK.
+     */
+open func renewClaim(claim: Claim, shutdownTime: String)async throws  -> Claim  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeClaim_lower(claim),FfiConverterString.lower(shutdownTime)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClaim_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
 open func waitClaim(claim: Claim)async throws  -> Sandbox  {
     return
         try  await uniffiRustCallAsync(
@@ -1007,6 +1658,74 @@ open func waitClaim(claim: Claim)async throws  -> Sandbox  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSandbox_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func createNamespace(name: String)async throws  -> Namespace  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeNamespace_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func deleteNamespace(name: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_void,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_void,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func getNamespace(name: String)async throws  -> Namespace  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeNamespace_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func listNamespaces()async throws  -> [Namespace]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeNamespace.lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -1232,6 +1951,57 @@ open func updateTemplate(template: Template)async throws  -> Template  {
         )
 }
 
+open func createUserApiKey(request: CreateUserApiKeyRequest)async throws  -> NewUserApiKey  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeCreateUserApiKeyRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeNewUserApiKey_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func deleteUserApiKey(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_void,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_void,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func listUserApiKeys()async throws  -> [UserApiKey]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeUserApiKey.lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
 
 
 }
@@ -1390,6 +2160,184 @@ public func FfiConverterTypeCyclopsCredentials_lift(_ handle: UInt64) throws -> 
 #endif
 public func FfiConverterTypeCyclopsCredentials_lower(_ value: CyclopsCredentials) -> UInt64 {
     return FfiConverterTypeCyclopsCredentials.lower(value)
+}
+
+
+
+
+
+
+public protocol CyclopsTokenProviderConfigurationBuilderProtocol: AnyObject, Sendable {
+
+    func baseUrl(value: String)  -> CyclopsTokenProviderConfigurationBuilder
+
+    func build() throws  -> CyclopsTokenProviderConfiguration
+
+    func claimPollIntervalMs(value: UInt64)  -> CyclopsTokenProviderConfigurationBuilder
+
+    func claimPollLimit(value: UInt32)  -> CyclopsTokenProviderConfigurationBuilder
+
+    func poolPollIntervalMs(value: UInt64)  -> CyclopsTokenProviderConfigurationBuilder
+
+    func poolPollLimit(value: UInt32)  -> CyclopsTokenProviderConfigurationBuilder
+
+}
+open class CyclopsTokenProviderConfigurationBuilder: CyclopsTokenProviderConfigurationBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_cyclopstokenproviderconfigurationbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_cyclopstokenproviderconfigurationbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_cyclopstokenproviderconfigurationbuilder(handle, $0) }
+    }
+
+
+
+
+open func baseUrl(value: String) -> CyclopsTokenProviderConfigurationBuilder  {
+    return try!  FfiConverterTypeCyclopsTokenProviderConfigurationBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_base_url(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func build()throws  -> CyclopsTokenProviderConfiguration  {
+    return try  FfiConverterTypeCyclopsTokenProviderConfiguration_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func claimPollIntervalMs(value: UInt64) -> CyclopsTokenProviderConfigurationBuilder  {
+    return try!  FfiConverterTypeCyclopsTokenProviderConfigurationBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(value),$0
+    )
+})
+}
+
+open func claimPollLimit(value: UInt32) -> CyclopsTokenProviderConfigurationBuilder  {
+    return try!  FfiConverterTypeCyclopsTokenProviderConfigurationBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
+open func poolPollIntervalMs(value: UInt64) -> CyclopsTokenProviderConfigurationBuilder  {
+    return try!  FfiConverterTypeCyclopsTokenProviderConfigurationBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(value),$0
+    )
+})
+}
+
+open func poolPollLimit(value: UInt32) -> CyclopsTokenProviderConfigurationBuilder  {
+    return try!  FfiConverterTypeCyclopsTokenProviderConfigurationBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCyclopsTokenProviderConfigurationBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CyclopsTokenProviderConfigurationBuilder
+
+    public static func lift(_ handle: UInt64) throws -> CyclopsTokenProviderConfigurationBuilder {
+        return CyclopsTokenProviderConfigurationBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CyclopsTokenProviderConfigurationBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CyclopsTokenProviderConfigurationBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CyclopsTokenProviderConfigurationBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCyclopsTokenProviderConfigurationBuilder_lift(_ handle: UInt64) throws -> CyclopsTokenProviderConfigurationBuilder {
+    return try FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCyclopsTokenProviderConfigurationBuilder_lower(_ value: CyclopsTokenProviderConfigurationBuilder) -> UInt64 {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lower(value)
 }
 
 
@@ -1609,6 +2557,173 @@ public func FfiConverterTypeHttpClient_lower(_ value: HttpClient) -> UInt64 {
 
 
 
+
+
+public protocol TemplateBuilderProtocol: AnyObject, Sendable {
+
+    func apiVersion(value: String)  -> TemplateBuilder
+
+    func build() throws  -> Template
+
+    func kind(value: String)  -> TemplateBuilder
+
+    func metadata(value: ResourceMetadata)  -> TemplateBuilder
+
+    func spec(value: OsGymSandboxTemplateSpec)  -> TemplateBuilder
+
+}
+open class TemplateBuilder: TemplateBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_templatebuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_templatebuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_templatebuilder(handle, $0) }
+    }
+
+
+
+
+open func apiVersion(value: String) -> TemplateBuilder  {
+    return try!  FfiConverterTypeTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_templatebuilder_api_version(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func build()throws  -> Template  {
+    return try  FfiConverterTypeTemplate_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_templatebuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func kind(value: String) -> TemplateBuilder  {
+    return try!  FfiConverterTypeTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_templatebuilder_kind(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func metadata(value: ResourceMetadata) -> TemplateBuilder  {
+    return try!  FfiConverterTypeTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeResourceMetadata_lower(value),$0
+    )
+})
+}
+
+open func spec(value: OsGymSandboxTemplateSpec) -> TemplateBuilder  {
+    return try!  FfiConverterTypeTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_templatebuilder_spec(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeOSGymSandboxTemplateSpec_lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTemplateBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = TemplateBuilder
+
+    public static func lift(_ handle: UInt64) throws -> TemplateBuilder {
+        return TemplateBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: TemplateBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TemplateBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: TemplateBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTemplateBuilder_lift(_ handle: UInt64) throws -> TemplateBuilder {
+    return try FfiConverterTypeTemplateBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTemplateBuilder_lower(_ value: TemplateBuilder) -> UInt64 {
+    return FfiConverterTypeTemplateBuilder.lower(value)
+}
+
+
+
+
 public struct Claim: Equatable, Hashable {
     public var apiVersion: String
     public var kind: String
@@ -1678,12 +2793,24 @@ public func FfiConverterTypeClaim_lower(_ value: Claim) -> RustBuffer {
 public struct CreateClaimRequest: Equatable, Hashable {
     public var pool: Pool
     public var spec: ClaimSpec?
+    /**
+     * Explicit claim name. A client-supplied name is used verbatim (after
+     * DNS-label validation); left unset, the client generates a random
+     * `claim-<petname>` so concurrent leases and retries cannot collide.
+     */
+    public var name: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(pool: Pool, spec: ClaimSpec?) {
+    public init(pool: Pool, spec: ClaimSpec?,
+        /**
+         * Explicit claim name. A client-supplied name is used verbatim (after
+         * DNS-label validation); left unset, the client generates a random
+         * `claim-<petname>` so concurrent leases and retries cannot collide.
+         */name: String? = nil) {
         self.pool = pool
         self.spec = spec
+        self.name = name
     }
 
 
@@ -1703,13 +2830,15 @@ public struct FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer {
         return
             try CreateClaimRequest(
                 pool: FfiConverterTypePool.read(from: &buf),
-                spec: FfiConverterOptionTypeClaimSpec.read(from: &buf)
+                spec: FfiConverterOptionTypeClaimSpec.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf)
         )
     }
 
     public static func write(_ value: CreateClaimRequest, into buf: inout [UInt8]) {
         FfiConverterTypePool.write(value.pool, into: &buf)
         FfiConverterOptionTypeClaimSpec.write(value.spec, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
     }
 }
 
@@ -1838,6 +2967,60 @@ public func FfiConverterTypeCreateTemplateRequest_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeCreateTemplateRequest_lower(_ value: CreateTemplateRequest) -> RustBuffer {
     return FfiConverterTypeCreateTemplateRequest.lower(value)
+}
+
+
+public struct CreateUserApiKeyRequest: Equatable, Hashable {
+    public var name: String
+    public var scope: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, scope: [String]) {
+        self.name = name
+        self.scope = scope
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CreateUserApiKeyRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateUserApiKeyRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateUserApiKeyRequest {
+        return
+            try CreateUserApiKeyRequest(
+                name: FfiConverterString.read(from: &buf),
+                scope: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CreateUserApiKeyRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceString.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateUserApiKeyRequest_lift(_ buf: RustBuffer) throws -> CreateUserApiKeyRequest {
+    return try FfiConverterTypeCreateUserApiKeyRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateUserApiKeyRequest_lower(_ value: CreateUserApiKeyRequest) -> RustBuffer {
+    return FfiConverterTypeCreateUserApiKeyRequest.lower(value)
 }
 
 
@@ -2040,14 +3223,16 @@ public struct HttpRequest: Equatable, Hashable {
     public var url: String
     public var headers: [HttpHeader]
     public var body: Data?
+    public var timeoutSecs: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(method: String, url: String, headers: [HttpHeader], body: Data?) {
+    public init(method: String, url: String, headers: [HttpHeader], body: Data?, timeoutSecs: UInt64?) {
         self.method = method
         self.url = url
         self.headers = headers
         self.body = body
+        self.timeoutSecs = timeoutSecs
     }
 
 
@@ -2069,7 +3254,8 @@ public struct FfiConverterTypeHttpRequest: FfiConverterRustBuffer {
                 method: FfiConverterString.read(from: &buf),
                 url: FfiConverterString.read(from: &buf),
                 headers: FfiConverterSequenceTypeHttpHeader.read(from: &buf),
-                body: FfiConverterOptionData.read(from: &buf)
+                body: FfiConverterOptionData.read(from: &buf),
+                timeoutSecs: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
@@ -2078,6 +3264,7 @@ public struct FfiConverterTypeHttpRequest: FfiConverterRustBuffer {
         FfiConverterString.write(value.url, into: &buf)
         FfiConverterSequenceTypeHttpHeader.write(value.headers, into: &buf)
         FfiConverterOptionData.write(value.body, into: &buf)
+        FfiConverterOptionUInt64.write(value.timeoutSecs, into: &buf)
     }
 }
 
@@ -2152,6 +3339,134 @@ public func FfiConverterTypeHttpResponse_lift(_ buf: RustBuffer) throws -> HttpR
 #endif
 public func FfiConverterTypeHttpResponse_lower(_ value: HttpResponse) -> RustBuffer {
     return FfiConverterTypeHttpResponse.lower(value)
+}
+
+
+public struct Namespace: Equatable, Hashable {
+    public var name: String
+    public var status: String
+    public var createdAt: String
+    public var labels: [String: String]?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, status: String, createdAt: String, labels: [String: String]?) {
+        self.name = name
+        self.status = status
+        self.createdAt = createdAt
+        self.labels = labels
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension Namespace: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNamespace: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Namespace {
+        return
+            try Namespace(
+                name: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                createdAt: FfiConverterString.read(from: &buf),
+                labels: FfiConverterOptionDictionaryStringString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Namespace, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.createdAt, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.labels, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNamespace_lift(_ buf: RustBuffer) throws -> Namespace {
+    return try FfiConverterTypeNamespace.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNamespace_lower(_ value: Namespace) -> RustBuffer {
+    return FfiConverterTypeNamespace.lower(value)
+}
+
+
+public struct NewUserApiKey: Equatable, Hashable {
+    public var clientId: String
+    public var clientSecret: String
+    public var tokenUrl: String
+    public var name: String
+    public var scope: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(clientId: String, clientSecret: String, tokenUrl: String, name: String, scope: [String]) {
+        self.clientId = clientId
+        self.clientSecret = clientSecret
+        self.tokenUrl = tokenUrl
+        self.name = name
+        self.scope = scope
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NewUserApiKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNewUserApiKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NewUserApiKey {
+        return
+            try NewUserApiKey(
+                clientId: FfiConverterString.read(from: &buf),
+                clientSecret: FfiConverterString.read(from: &buf),
+                tokenUrl: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                scope: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NewUserApiKey, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.clientId, into: &buf)
+        FfiConverterString.write(value.clientSecret, into: &buf)
+        FfiConverterString.write(value.tokenUrl, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceString.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNewUserApiKey_lift(_ buf: RustBuffer) throws -> NewUserApiKey {
+    return try FfiConverterTypeNewUserApiKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNewUserApiKey_lower(_ value: NewUserApiKey) -> RustBuffer {
+    return FfiConverterTypeNewUserApiKey.lower(value)
 }
 
 
@@ -2234,13 +3549,15 @@ public struct ResourceMetadata: Equatable, Hashable {
     public var namespace: String
     public var name: String
     public var labels: [String: String]?
+    public var creationTimestamp: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(namespace: String, name: String, labels: [String: String]?) {
+    public init(namespace: String, name: String, labels: [String: String]?, creationTimestamp: String?) {
         self.namespace = namespace
         self.name = name
         self.labels = labels
+        self.creationTimestamp = creationTimestamp
     }
 
 
@@ -2261,7 +3578,8 @@ public struct FfiConverterTypeResourceMetadata: FfiConverterRustBuffer {
             try ResourceMetadata(
                 namespace: FfiConverterString.read(from: &buf),
                 name: FfiConverterString.read(from: &buf),
-                labels: FfiConverterOptionDictionaryStringString.read(from: &buf)
+                labels: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                creationTimestamp: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -2269,6 +3587,7 @@ public struct FfiConverterTypeResourceMetadata: FfiConverterRustBuffer {
         FfiConverterString.write(value.namespace, into: &buf)
         FfiConverterString.write(value.name, into: &buf)
         FfiConverterOptionDictionaryStringString.write(value.labels, into: &buf)
+        FfiConverterOptionString.write(value.creationTimestamp, into: &buf)
     }
 }
 
@@ -2413,6 +3732,68 @@ public func FfiConverterTypeTemplate_lift(_ buf: RustBuffer) throws -> Template 
 #endif
 public func FfiConverterTypeTemplate_lower(_ value: Template) -> RustBuffer {
     return FfiConverterTypeTemplate.lower(value)
+}
+
+
+public struct UserApiKey: Equatable, Hashable {
+    public var id: String
+    public var clientId: String
+    public var name: String
+    public var scope: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, clientId: String, name: String, scope: [String]) {
+        self.id = id
+        self.clientId = clientId
+        self.name = name
+        self.scope = scope
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension UserApiKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeUserApiKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UserApiKey {
+        return
+            try UserApiKey(
+                id: FfiConverterString.read(from: &buf),
+                clientId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                scope: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: UserApiKey, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.clientId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceString.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUserApiKey_lift(_ buf: RustBuffer) throws -> UserApiKey {
+    return try FfiConverterTypeUserApiKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeUserApiKey_lower(_ value: UserApiKey) -> RustBuffer {
+    return FfiConverterTypeUserApiKey.lower(value)
 }
 
 
@@ -2561,6 +3942,82 @@ public func FfiConverterTypeHttpError_lift(_ buf: RustBuffer) throws -> HttpErro
 #endif
 public func FfiConverterTypeHttpError_lower(_ value: HttpError) -> RustBuffer {
     return FfiConverterTypeHttpError.lower(value)
+}
+
+
+public enum SdkBuildError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    case MissingRequiredField(recordType: String, field: String
+    )
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension SdkBuildError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSdkBuildError: FfiConverterRustBuffer {
+    typealias SwiftType = SdkBuildError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SdkBuildError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .MissingRequiredField(
+            recordType: try FfiConverterString.read(from: &buf),
+            field: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SdkBuildError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case let .MissingRequiredField(recordType,field):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(recordType, into: &buf)
+            FfiConverterString.write(field, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSdkBuildError_lift(_ buf: RustBuffer) throws -> SdkBuildError {
+    return try FfiConverterTypeSdkBuildError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSdkBuildError_lower(_ value: SdkBuildError) -> RustBuffer {
+    return FfiConverterTypeSdkBuildError.lower(value)
 }
 
 
@@ -2733,6 +4190,54 @@ public func FfiConverterTypeSdkError_lift(_ buf: RustBuffer) throws -> SdkError 
 #endif
 public func FfiConverterTypeSdkError_lower(_ value: SdkError) -> RustBuffer {
     return FfiConverterTypeSdkError.lower(value)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = UInt64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
 }
 
 #if swift(>=5.8)
@@ -2933,6 +4438,31 @@ fileprivate struct FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeNamespace: FfiConverterRustBuffer {
+    typealias SwiftType = [Namespace]
+
+    public static func write(_ value: [Namespace], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNamespace.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Namespace] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Namespace]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNamespace.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePool: FfiConverterRustBuffer {
     typealias SwiftType = [Pool]
 
@@ -2975,6 +4505,31 @@ fileprivate struct FfiConverterSequenceTypeTemplate: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeTemplate.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeUserApiKey: FfiConverterRustBuffer {
+    typealias SwiftType = [UserApiKey]
+
+    public static func write(_ value: [UserApiKey], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeUserApiKey.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UserApiKey] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UserApiKey]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeUserApiKey.read(from: &buf))
         }
         return seq
     }
@@ -3171,7 +4726,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() != 7802) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() != 17505) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() != 38049) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() != 4545) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() != 184) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() != 65288) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() != 48557) {
@@ -3213,10 +4783,94 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() != 18704) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() != 9174) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key() != 1700) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() != 5949) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 38803) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() != 10518) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() != 19762) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() != 7405) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() != 28263) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build() != 60558) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace() != 18934) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() != 7566) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build() != 46749) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name() != 38970) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace() != 38181) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec() != 29902) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build() != 18677) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name() != 53365) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope() != 26616) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url() != 48016) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build() != 28182) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms() != 50054) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit() != 7533) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms() != 16373) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit() != 6865) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version() != 65471) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_templatebuilder_build() != 2046) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_templatebuilder_kind() != 14122) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata() != 25572) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_templatebuilder_spec() != 43128) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect() != 54404) {
@@ -3240,7 +4894,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() != 49301) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() != 10967) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new() != 33658) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new() != 6787) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new() != 47741) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() != 25746) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new() != 43069) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new() != 19815) {
         return InitializationResult.apiChecksumMismatch
     }
 

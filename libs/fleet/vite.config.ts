@@ -9,6 +9,7 @@ const ORCH_API = process.env.ORCH_API ?? "https://cyclops-cs.tail204509.ts.net"
 
 export default defineConfig({
   plugins: [react()],
+  assetsInclude: ["**/*.wasm"],
   // @novnc/novnc (1.7+) uses top-level await; es2020 (esbuild's default here)
   // rejects it. es2022 is supported by all evergreen browsers the app targets.
   build: { target: "es2022" },

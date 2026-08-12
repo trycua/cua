@@ -86,13 +86,16 @@ npm run codex -- \
   "Inspect the active app and summarize what is visible without changing it"
 ```
 
-Set `CODEX_MODEL` optionally. Both scripts create a unique Cua session outside
-the agent, configure `cua-driver mcp`, and end the session in `finally`.
+Set `CODEX_MODEL` optionally. Both scripts configure one long-lived
+`cua-driver mcp` transport. Its first admitted stateful call creates an
+implicit session, later unnamed calls reuse it, and transport shutdown runs
+the same cleanup as an explicit `end_session`.
 
 ## Environment and safety
 
 - Put `cua-driver` on `PATH`, or set `CUA_DRIVER_BIN` for MCP examples.
-- Set `CUA_CAPTURE_SCOPE` to `auto`, `window`, or `desktop` for MCP examples.
+- Select an exact window or desktop target on each action. Sessions do not
+  store capture modality.
 - Authenticate the chosen agent SDK using its normal local login or API key.
 - Run only trusted tasks. These examples remove interactive approval prompts.
 - Keep purchases, messages, deletion, credential entry, and other irreversible

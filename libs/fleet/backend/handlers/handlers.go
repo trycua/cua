@@ -12,17 +12,24 @@ import (
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/keycloak"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
 
 type Handlers struct {
-	Admin      *keycloak.Admin
-	GatewayCfg config.GatewayConfiguration
-	AuthCfg    config.AuthConfiguration
-	KC         config.KeycloakConfiguration
+	Admin           *keycloak.Admin
+	GatewayCfg      config.GatewayConfiguration
+	AuthCfg         config.AuthConfiguration
+	KC              config.KeycloakConfiguration
+	Stripe          config.StripeConfiguration
+	Billing         BillingService
+	WebhookVerifier WebhookVerifier
 
+	GitHubTrustPolicies githubtrust.Store
+
+	StateQueryExecutor StateQueryExecutor
 
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
@@ -40,6 +47,7 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		GatewayCfg: cfg.Gateway,
 		AuthCfg:    cfg.Auth,
 		KC:         cfg.Keycloak,
+		Stripe:     cfg.Stripe,
 	}
 }
 
@@ -61,6 +69,19 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 
 func currentUser(r *http.Request) *auth.User {
 	return auth.GetUser(r.Context())
+}
+
+func isGitHubPrincipal(user *auth.User) bool {
+	return user != nil && user.PrincipalType == auth.PrincipalTypeGitHubOIDC
+}
+
+func namespaceAllowed(user *auth.User, namespace string) bool {
+	for _, allowed := range user.AllowedNamespaces {
+		if allowed == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // statusCapture wraps http.ResponseWriter to capture the status code written

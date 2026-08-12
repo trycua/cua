@@ -180,7 +180,7 @@ pub struct EffectiveAuthorizationContext {
     public_session: Option<String>,
     transport_session: Option<String>,
     host_lease: Option<HostLeaseId>,
-    bounded_manifest: Option<Arc<SessionManifest>>,
+    capability_manifest: Option<Arc<SessionManifest>>,
     user_policy_sha256: Option<String>,
     managed_policy_sha256: Option<String>,
     expires_unix_ms: Option<u128>,
@@ -219,13 +219,21 @@ impl EffectiveAuthorizationContext {
     }
 
     pub fn bounded_manifest(&self) -> Option<&SessionManifest> {
-        self.bounded_manifest.as_deref()
+        self.capability_manifest.as_deref()
+    }
+
+    pub fn capability_manifest(&self) -> Option<&SessionManifest> {
+        self.capability_manifest.as_deref()
     }
 
     pub fn bounded_manifest_sha256(&self) -> Option<&str> {
-        self.bounded_manifest
+        self.capability_manifest
             .as_deref()
             .map(SessionManifest::sha256)
+    }
+
+    pub fn capability_manifest_sha256(&self) -> Option<&str> {
+        self.bounded_manifest_sha256()
     }
 
     pub fn public_session(&self) -> Option<&str> {
@@ -239,6 +247,15 @@ impl EffectiveAuthorizationContext {
     #[doc(hidden)]
     pub fn transport_session(&self) -> Option<&str> {
         self.transport_session.as_deref()
+    }
+
+    /// Lifecycle idle TTL selected by a trusted delegated-session host. An
+    /// ordinary compatibility context uses the product default instead.
+    #[doc(hidden)]
+    pub fn lifecycle_idle_ttl_override(&self) -> Option<Duration> {
+        (self.source == AuthorizationContextSource::TrustedHost)
+            .then_some(self.idle_ttl)
+            .flatten()
     }
 
     #[doc(hidden)]
@@ -278,7 +295,7 @@ impl EffectiveAuthorizationContext {
         false
     }
 
-    pub fn authorize_dispatch(&self) -> Result<(), String> {
+    fn commit_context_dispatch(&self) -> Result<(), String> {
         if self.revoked.load(Ordering::Acquire) {
             return Err("authorization context has been revoked".to_owned());
         }
@@ -301,6 +318,28 @@ impl EffectiveAuthorizationContext {
         *previous = now;
         Ok(())
     }
+
+    /// Commit one dispatch after tool admission and every typed-resource
+    /// check have succeeded. A rejected resource must not refresh either
+    /// lifetime lease.
+    pub fn commit_authorized_dispatch(&self) -> Result<(), String> {
+        if self.is_expired() {
+            return Err("authorization context expired".to_owned());
+        }
+        if let Some(manifest) = self.capability_manifest() {
+            manifest.check_lifetime()?;
+        }
+        self.commit_context_dispatch()?;
+        if let Some(manifest) = self.capability_manifest() {
+            manifest.commit_authorized_dispatch()?;
+        }
+        Ok(())
+    }
+
+    /// Compatibility alias for callers that commit a fully admitted dispatch.
+    pub fn authorize_dispatch(&self) -> Result<(), String> {
+        self.commit_authorized_dispatch()
+    }
 }
 
 pub struct DelegatedSessionRequest {
@@ -309,7 +348,7 @@ pub struct DelegatedSessionRequest {
     pub mode: PermissionMode,
     pub ttl: Duration,
     pub idle_ttl: Duration,
-    pub bounded_manifest: Option<Arc<SessionManifest>>,
+    pub capability_manifest: Option<Arc<SessionManifest>>,
 }
 
 impl std::fmt::Debug for AuthenticatedActionConnection {
@@ -338,7 +377,10 @@ impl std::fmt::Debug for EffectiveAuthorizationContext {
             .field("mode", &self.mode)
             .field("sessions", &"[redacted]")
             .field("host_lease", &self.host_lease.is_some())
-            .field("bounded_manifest_sha256", &self.bounded_manifest_sha256())
+            .field(
+                "capability_manifest_sha256",
+                &self.capability_manifest_sha256(),
+            )
             .field("user_policy_bound", &self.user_policy_sha256.is_some())
             .field(
                 "managed_policy_bound",
@@ -358,9 +400,9 @@ impl std::fmt::Debug for DelegatedSessionRequest {
             .field("ttl", &self.ttl)
             .field("idle_ttl", &self.idle_ttl)
             .field(
-                "bounded_manifest_sha256",
+                "capability_manifest_sha256",
                 &self
-                    .bounded_manifest
+                    .capability_manifest
                     .as_deref()
                     .map(SessionManifest::sha256),
             )
@@ -394,10 +436,13 @@ pub enum SessionAuthorizationError {
     Expired,
     #[error("session and idle TTLs must be non-zero and within the daemon ceiling")]
     InvalidTtl,
-    #[error("bounded mode requires an immutable per-session manifest")]
+    #[error("bounded mode requires an immutable capability manifest")]
     MissingBoundedManifest,
-    #[error("a bounded manifest is valid only for bounded mode")]
+    #[deprecated(note = "capability manifests are now valid in every permission profile")]
+    #[error("the capability manifest is unexpected")]
     UnexpectedBoundedManifest,
+    #[error("the capability manifest is invalid for the selected permission mode")]
+    InvalidManifest,
 }
 
 #[derive(Debug, Default)]
@@ -475,14 +520,10 @@ impl SessionAuthorizationRegistry {
 
     pub fn legacy_context(&self) -> Result<Arc<EffectiveAuthorizationContext>, String> {
         let mode = crate::authorization::configured_permission_mode()?;
-        let bounded_manifest = if mode == PermissionMode::Bounded {
-            crate::session_manifest::configured_session_manifest()?
-                .cloned()
-                .map(Arc::new)
-        } else {
-            None
-        };
-        self.compatibility_context(mode, bounded_manifest)
+        let capability_manifest = crate::session_manifest::configured_capability_manifest()?
+            .cloned()
+            .map(Arc::new);
+        self.compatibility_context(mode, capability_manifest)
     }
 
     /// Construct the compatibility action context from explicit trusted
@@ -490,21 +531,16 @@ impl SessionAuthorizationRegistry {
     pub fn compatibility_context(
         &self,
         mode: PermissionMode,
-        bounded_manifest: Option<Arc<SessionManifest>>,
+        capability_manifest: Option<Arc<SessionManifest>>,
     ) -> Result<Arc<EffectiveAuthorizationContext>, String> {
         if !self.ceiling.allows(mode) {
             return Err("compatibility permission mode is outside the runtime ceiling".to_owned());
         }
-        match (mode, bounded_manifest.as_ref()) {
-            (PermissionMode::Bounded, None) => {
-                return Err("bounded compatibility mode requires a session manifest".to_owned())
-            }
-            (PermissionMode::Standard | PermissionMode::Unrestricted, Some(_)) => {
-                return Err(
-                    "a compatibility session manifest is valid only for bounded mode".to_owned(),
-                )
-            }
-            _ => {}
+        if mode == PermissionMode::Bounded && capability_manifest.is_none() {
+            return Err("bounded compatibility mode requires a capability manifest".to_owned());
+        }
+        if let Some(manifest) = capability_manifest.as_ref() {
+            manifest.validate_for_mode(mode)?;
         }
         Ok(Arc::new(EffectiveAuthorizationContext {
             daemon_generation: self.daemon_generation,
@@ -513,7 +549,7 @@ impl SessionAuthorizationRegistry {
             public_session: None,
             transport_session: None,
             host_lease: None,
-            bounded_manifest,
+            capability_manifest,
             user_policy_sha256: self.ceiling.user_policy_sha256.clone(),
             managed_policy_sha256: self.ceiling.managed_policy_sha256.clone(),
             expires_unix_ms: None,
@@ -562,14 +598,15 @@ impl SessionAuthorizationRegistry {
         {
             return Err(SessionAuthorizationError::InvalidTtl);
         }
-        match (request.mode, request.bounded_manifest.as_ref()) {
-            (PermissionMode::Bounded, None) => {
-                return Err(SessionAuthorizationError::MissingBoundedManifest)
-            }
-            (PermissionMode::Standard | PermissionMode::Unrestricted, Some(_)) => {
-                return Err(SessionAuthorizationError::UnexpectedBoundedManifest)
-            }
-            _ => {}
+        if request.mode == PermissionMode::Bounded && request.capability_manifest.is_none() {
+            return Err(SessionAuthorizationError::MissingBoundedManifest);
+        }
+        if request
+            .capability_manifest
+            .as_ref()
+            .is_some_and(|manifest| manifest.validate_for_mode(request.mode).is_err())
+        {
+            return Err(SessionAuthorizationError::InvalidManifest);
         }
         let mut state = self.state.lock().unwrap();
         state.by_connection.retain(|_, context| {
@@ -595,7 +632,7 @@ impl SessionAuthorizationRegistry {
             public_session: Some(request.public_session),
             transport_session: Some(request.transport_session),
             host_lease: Some(host.id),
-            bounded_manifest: request.bounded_manifest,
+            capability_manifest: request.capability_manifest,
             user_policy_sha256: self.ceiling.user_policy_sha256.clone(),
             managed_policy_sha256: self.ceiling.managed_policy_sha256.clone(),
             expires_unix_ms: Some(now_unix_ms() + request.ttl.as_millis()),
@@ -791,7 +828,7 @@ mod tests {
             mode,
             ttl: Duration::from_secs(60),
             idle_ttl: Duration::from_secs(30),
-            bounded_manifest: None,
+            capability_manifest: None,
         }
     }
 
@@ -1088,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn bounded_manifests_are_stored_per_connection_context() {
+    fn capability_manifests_are_stored_per_connection_context() {
         let registry = SessionAuthorizationRegistry::delegated_for_test(
             SessionModeCeiling::delegated([PermissionMode::Bounded], false),
         );
@@ -1100,7 +1137,7 @@ mod tests {
         let hash_b = manifest_b.sha256().to_owned();
 
         let mut request_a = request(PermissionMode::Bounded);
-        request_a.bounded_manifest = Some(manifest_a);
+        request_a.capability_manifest = Some(manifest_a);
         registry
             .bind_delegated_session(&host, &connection_a, request_a)
             .unwrap();
@@ -1108,7 +1145,7 @@ mod tests {
         let mut request_b = request(PermissionMode::Bounded);
         request_b.public_session = "public-b".to_owned();
         request_b.transport_session = "transport-b".to_owned();
-        request_b.bounded_manifest = Some(manifest_b);
+        request_b.capability_manifest = Some(manifest_b);
         registry
             .bind_delegated_session(&host, &connection_b, request_b)
             .unwrap();
@@ -1118,24 +1155,28 @@ mod tests {
             registry
                 .resolve_delegated(&connection_a, "public-a", "transport-a")
                 .unwrap()
-                .bounded_manifest_sha256(),
+                .capability_manifest_sha256(),
             Some(hash_a.as_str())
         );
         assert_eq!(
             registry
                 .resolve_delegated(&connection_b, "public-b", "transport-b")
                 .unwrap()
-                .bounded_manifest_sha256(),
+                .capability_manifest_sha256(),
             Some(hash_b.as_str())
         );
     }
 
     #[test]
-    fn manifest_presence_matches_the_exact_mode() {
+    fn capability_manifest_is_optional_except_in_bounded_mode() {
         let registry =
             SessionAuthorizationRegistry::delegated_for_test(SessionModeCeiling::delegated(
-                [PermissionMode::Standard, PermissionMode::Bounded],
-                false,
+                [
+                    PermissionMode::Standard,
+                    PermissionMode::Bounded,
+                    PermissionMode::Unrestricted,
+                ],
+                true,
             ));
         let (host, bounded_connection) = registry.trusted_pair_for_test(None);
         assert_eq!(
@@ -1151,13 +1192,33 @@ mod tests {
 
         let (_, standard_connection) = registry.trusted_pair_for_test(Some(&host));
         let mut standard = request(PermissionMode::Standard);
-        standard.bounded_manifest = Some(manifest_with_allowed_tool("click"));
-        assert_eq!(
-            registry
-                .bind_delegated_session(&host, &standard_connection, standard)
-                .unwrap_err(),
-            SessionAuthorizationError::UnexpectedBoundedManifest
-        );
+        standard.capability_manifest = Some(manifest_with_allowed_tool("click"));
+        registry
+            .bind_delegated_session(&host, &standard_connection, standard)
+            .unwrap();
+        assert!(registry
+            .resolve_delegated(&standard_connection, "public-a", "transport-a")
+            .unwrap()
+            .capability_manifest()
+            .is_some());
+
+        let (_, unrestricted_connection) = registry.trusted_pair_for_test(Some(&host));
+        let mut unrestricted = request(PermissionMode::Unrestricted);
+        unrestricted.public_session = "public-unrestricted".to_owned();
+        unrestricted.transport_session = "transport-unrestricted".to_owned();
+        unrestricted.capability_manifest = Some(manifest_with_allowed_tool("click"));
+        registry
+            .bind_delegated_session(&host, &unrestricted_connection, unrestricted)
+            .unwrap();
+        assert!(registry
+            .resolve_delegated(
+                &unrestricted_connection,
+                "public-unrestricted",
+                "transport-unrestricted",
+            )
+            .unwrap()
+            .capability_manifest()
+            .is_some());
     }
 
     #[test]

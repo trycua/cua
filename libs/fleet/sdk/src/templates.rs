@@ -27,6 +27,7 @@ impl CyclopsClient {
                 namespace: request.namespace,
                 name: request.name,
                 labels: None,
+                creation_timestamp: None,
             },
             spec: request.spec,
         };
@@ -142,6 +143,7 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
             },
         ],
         body,
+        timeout_secs: None,
     }
 }
 

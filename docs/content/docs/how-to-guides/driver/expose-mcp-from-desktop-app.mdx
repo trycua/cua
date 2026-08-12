@@ -38,6 +38,29 @@ Screen Recording permission. A gateway, terminal, `open`, or `NSWorkspace`
 changes the TCC responsibility chain and cannot lend the app's grants to the
 child.
 
+## Pass MCP configuration to a backend
+
+If the desktop app has a separate Node backend, keep `EmbeddedCuaDriverHost` in
+the Electron main process. Pass the returned MCP configuration through the
+backend's existing bootstrap or IPC channel:
+
+```ts
+const connection = await host.start();
+
+backend.send({
+  type: 'bootstrap',
+  cuaMcp: connection.mcp,
+});
+```
+
+The backend must launch the exact `cuaMcp.command` with `cuaMcp.args` and
+`cuaMcp.environment`. It may pass those values to an agent runtime such as
+Codex. It must not start another embedded host.
+
+After `host.restart()`, send the replacement `connection.mcp` before accepting
+new agent work. Stop old MCP proxies because their private endpoint belongs to
+the previous generation.
+
 ## Shut down in dependency order
 
 Stop accepting new work, end active sessions, close MCP clients, then tear down

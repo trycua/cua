@@ -6,26 +6,63 @@ import pytest
 from cua_sandbox import (
     ClaimSpec,
     CreatePoolRequest,
+    CreatePoolRequestBuilder,
     CreateTemplateRequest,
+    CreateTemplateRequestBuilder,
     Firmware,
-    OsGymSandboxTemplateSpec,
-    OsGymSandboxWarmPoolSpec,
+    Image,
+    OsGymSandboxTemplateSpecBuilder,
+    OsGymSandboxWarmPoolSpecBuilder,
     Pool,
     RuntimeKind,
-    SandboxService,
-    SandboxTemplateRef,
+    SandboxServiceBuilder,
+    SandboxTemplateRefBuilder,
     ServiceProtocol,
     Template,
     VmTemplate,
+    VmTemplateBuilder,
 )
+from cua_sandbox.pool import _ClaimHandle
 from cua_sandbox.sync import Pool as SyncPool
 from cua_sandbox.sync import Template as SyncTemplate
 from cua_sandbox.transport.fleet_cloud import _FleetClient
 from fleet_sdk import Sandbox as FleetSandbox
+from fleet_sdk import SdkError
 
 
 def test_public_pool_schema_exports_runtime_kind() -> None:
     assert RuntimeKind.KUBEVIRT.value == 0
+
+
+def test_public_pool_schema_exports_generated_builders() -> None:
+    service = SandboxServiceBuilder().name("server").target_port(8000).build()
+    vm_template = (
+        VmTemplateBuilder()
+        .container_disk_image("registry.example/workspace:latest")
+        .services([service])
+        .build()
+    )
+    template_request = (
+        CreateTemplateRequestBuilder()
+        .namespace("default")
+        .name("workspace")
+        .spec(OsGymSandboxTemplateSpecBuilder().vm_template(vm_template).build())
+        .build()
+    )
+    pool_request = (
+        CreatePoolRequestBuilder()
+        .namespace("default")
+        .spec(
+            OsGymSandboxWarmPoolSpecBuilder()
+            .replicas(1)
+            .sandbox_template_ref(SandboxTemplateRefBuilder().name("workspace").build())
+            .build()
+        )
+        .build()
+    )
+
+    assert template_request.spec.vm_template.services == [service]
+    assert pool_request.spec.sandbox_template_ref.name == "workspace"
 
 
 def pool_request(
@@ -34,14 +71,14 @@ def pool_request(
     template_name: str | None = None,
     replicas: int = 1,
 ) -> CreatePoolRequest:
-    return CreatePoolRequest(
-        namespace=name,
-        spec=OsGymSandboxWarmPoolSpec(
-            replicas=replicas,
-            sandbox_template_ref=SandboxTemplateRef(name=template_name or name),
-            autoscaling=None,
-        ),
+    template_ref = SandboxTemplateRefBuilder().name(template_name or name).build()
+    spec = (
+        OsGymSandboxWarmPoolSpecBuilder()
+        .replicas(replicas)
+        .sandbox_template_ref(template_ref)
+        .build()
     )
+    return CreatePoolRequestBuilder().namespace(name).spec(spec).build()
 
 
 def template_request(
@@ -51,34 +88,25 @@ def template_request(
     services: dict[str, int] | None = None,
     vm_template: VmTemplate | None = None,
 ) -> CreateTemplateRequest:
-    return CreateTemplateRequest(
-        namespace=name,
-        name=name,
-        spec=OsGymSandboxTemplateSpec(
-            vm_template=vm_template
-            or VmTemplate(
-                container_disk_image=image,
-                command=None,
-                runtime=None,
-                runtime_class_name=None,
-                node_selector=None,
-                tolerations=None,
-                image_pull_policy=None,
-                image_pull_secret="ecr-credentials",
-                cpu_cores=None,
-                memory=None,
-                firmware=None,
-                probes=None,
-                services=[
-                    SandboxService(
-                        name=service_name, target_port=port, protocol=ServiceProtocol.TCP
-                    )
-                    for service_name, port in (services or {"server": 8000}).items()
-                ],
-                oidc=None,
-            ),
-        ),
-    )
+    if vm_template is None:
+        built_services = [
+            SandboxServiceBuilder()
+            .name(service_name)
+            .target_port(port)
+            .protocol(ServiceProtocol.TCP)
+            .build()
+            for service_name, port in (services or {"server": 8000}).items()
+        ]
+        vm_template = (
+            VmTemplateBuilder()
+            .container_disk_image(image)
+            .image_pull_secret("ecr-credentials")
+            .services(built_services)
+            .build()
+        )
+
+    spec = OsGymSandboxTemplateSpecBuilder().vm_template(vm_template).build()
+    return CreateTemplateRequestBuilder().namespace(name).name(name).spec(spec).build()
 
 
 def fleet_pool(name: str = "foo") -> SimpleNamespace:
@@ -100,6 +128,10 @@ def fleet_template(name: str = "foo") -> SimpleNamespace:
     )
 
 
+def fake_claim(namespace: str = "foo", name: str = "claim-1") -> SimpleNamespace:
+    return SimpleNamespace(metadata=SimpleNamespace(namespace=namespace, name=name))
+
+
 class FakeFleetClient:
     def __init__(
         self,
@@ -114,8 +146,12 @@ class FakeFleetClient:
         self.reconciled: list[object] = []
         self.reconciled_templates: list[object] = []
         self.claims: list[object] = []
-        self.released: list[object] = []
+        self.released: list[str] = []
+        self.deleted_pools: list[str] = []
+        self.deleted_templates: list[str] = []
+        self.renewed: list[tuple[str, str]] = []
         self.service_requests: list[object] = []
+        self.wait_calls = 0
         self.closed = False
 
     async def reconcile_pool(self, request: object) -> object:
@@ -130,12 +166,16 @@ class FakeFleetClient:
             raise self.reconcile_error
         return self.existing or fleet_template(request.name)
 
+    async def get_pool(self, name: str) -> object:
+        return self.existing or fleet_pool(name)
+
     async def create_claim(self, request: object) -> object:
         self.claims.append(request)
-        return "claim-1"
+        return fake_claim()
 
     async def wait_claim(self, claim: object) -> FleetSandbox:
-        assert claim == "claim-1"
+        assert claim.metadata.name == "claim-1"
+        self.wait_calls += 1
         return FleetSandbox(
             namespace="foo",
             claim="claim-1",
@@ -143,14 +183,27 @@ class FakeFleetClient:
             services=["server", "mcp"],
         )
 
+    async def wait_service_ready(self, sandbox, service, time_to_start=None) -> None:
+        return None
+
+    async def renew_claim(self, claim: object, shutdown_time: str) -> object:
+        self.renewed.append((claim.metadata.name, shutdown_time))
+        return claim
+
     async def service_request(self, sandbox, service, path, request):
         self.service_requests.append((sandbox, service, path, request))
         return SimpleNamespace(status=200, headers=[], body=b'{"result":"ok"}')
 
     async def delete_claim(self, claim: object) -> None:
-        self.released.append(claim)
+        self.released.append(claim.metadata.name)
         if self.release_error:
             raise self.release_error
+
+    async def delete_pool(self, pool: object) -> None:
+        self.deleted_pools.append(pool.metadata.name)
+
+    async def delete_template(self, template: object) -> None:
+        self.deleted_templates.append(template.metadata.name)
 
     async def close(self) -> None:
         self.closed = True
@@ -221,6 +274,17 @@ async def test_reconcile_creates_pool_referencing_a_template(monkeypatch):
     assert request.namespace == "foo"
     assert request.spec.sandbox_template_ref.name == "workspace"
     assert request.spec.replicas == 1
+
+
+@pytest.mark.asyncio
+async def test_pool_delete_deletes_resource_and_closes_client(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    await Pool(fleet_pool()).delete()
+
+    assert client.deleted_pools == ["foo"]
+    assert client.closed is True
 
 
 @pytest.mark.asyncio
@@ -356,6 +420,16 @@ async def test_reconcile_rejects_non_request(invalid_value):
         await Pool.reconcile(invalid_value)
 
 
+def test_sync_pool_delete_matches_async_facade(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    SyncPool(Pool(fleet_pool())).delete()
+
+    assert client.deleted_pools == ["foo"]
+    assert client.closed is True
+
+
 def test_sync_pool_matches_blocking_context_manager(monkeypatch):
     reconcile_client = FakeFleetClient()
     claim_client = FakeFleetClient()
@@ -364,7 +438,7 @@ def test_sync_pool_matches_blocking_context_manager(monkeypatch):
 
     pool = SyncPool.reconcile(pool_request())
     spec = ClaimSpec(
-        sandbox_template_ref=SandboxTemplateRef(name=pool.name),
+        sandbox_template_ref=SandboxTemplateRefBuilder().name(pool.name).build(),
         warmpool=None,
         bind_deadline=900,
         lifecycle=None,
@@ -424,23 +498,24 @@ async def test_template_reconcile_forwards_native_request_unchanged(monkeypatch)
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
     request = template_request(
-        vm_template=VmTemplate(
-            container_disk_image="registry.example/workspace:latest",
-            command=None,
-            runtime=RuntimeKind.KUBEVIRT,
-            runtime_class_name=None,
-            node_selector=None,
-            tolerations=None,
-            image_pull_policy=None,
-            image_pull_secret="workspace-pull",
-            cpu_cores=10,
-            memory="20Gi",
-            firmware=Firmware.EFI,
-            probes=None,
-            services=[
-                SandboxService(name="server", target_port=8000, protocol=ServiceProtocol.TCP)
-            ],
-            oidc=None,
+        vm_template=(
+            VmTemplateBuilder()
+            .container_disk_image("registry.example/workspace:latest")
+            .runtime(RuntimeKind.KUBEVIRT)
+            .image_pull_secret("workspace-pull")
+            .cpu_cores(10)
+            .memory("20Gi")
+            .firmware(Firmware.EFI)
+            .services(
+                [
+                    SandboxServiceBuilder()
+                    .name("server")
+                    .target_port(8000)
+                    .protocol(ServiceProtocol.TCP)
+                    .build()
+                ]
+            )
+            .build()
         ),
     )
 
@@ -480,7 +555,7 @@ async def test_claim_forwards_native_claim_spec_unchanged(monkeypatch):
     pool = await Pool.reconcile(pool_request())
 
     spec = ClaimSpec(
-        sandbox_template_ref=SandboxTemplateRef(name=pool.name),
+        sandbox_template_ref=SandboxTemplateRefBuilder().name(pool.name).build(),
         warmpool=None,
         bind_deadline=900,
         lifecycle=None,
@@ -510,3 +585,340 @@ async def test_claim_without_spec_uses_operator_default(monkeypatch):
     assert request.spec is None
     assert claim_client.released == ["claim-1"]
     assert claim_client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_pool_get_fetches_without_reconciling(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    pool = await Pool.get("foo")
+
+    assert pool.name == "foo"
+    assert client.reconciled == []
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_create_claim_returns_a_serializable_lease(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    lease = await pool.create_claim()
+
+    assert (lease.namespace, lease.name) == ("foo", "claim-1")
+    assert claim_client.claims[0].pool is pool.resource
+    assert claim_client.claims[0].spec is None
+    assert claim_client.released == []
+    assert claim_client.closed is True
+    assert lease.to_dict() == {
+        "version": 1,
+        "provider": "fleet",
+        "namespace": "foo",
+        "pool": "foo",
+        "claim": "claim-1",
+        "service": "server",
+    }
+    assert _ClaimHandle.from_dict(lease.to_dict()).to_dict() == lease.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_lease_wait_connects_to_the_named_service_and_caches_the_bind(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+    lease = _ClaimHandle(namespace="foo", name="claim-1", pool_name="foo")
+
+    sandbox = await lease.wait(service="mcp")
+
+    assert sandbox.name == "sandbox-1"
+    assert client.wait_calls == 1
+    assert lease.to_dict()["claim"] == "claim-1"
+    response = await sandbox.services.request(
+        "mcp", method="POST", path="/mcp", json={"jsonrpc": "2.0", "id": 1}
+    )
+    assert response.status_code == 200
+    assert client.closed is False
+    await sandbox.disconnect()
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_lease_reattaches_from_serialized_state_without_polling(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+    lease = _ClaimHandle.from_dict(
+        {
+            "version": 1,
+            "provider": "fleet",
+            "namespace": "foo",
+            "pool": "foo",
+            "claim": "claim-1",
+        }
+    )
+
+    sandbox = await lease.wait(service="mcp")
+
+    assert sandbox.name == "sandbox-1"
+    assert client.wait_calls == 1
+    await sandbox.disconnect()
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_lease_wait_closes_its_client_when_the_bind_fails(monkeypatch):
+    client = FakeFleetClient()
+
+    async def failing_wait(claim):
+        raise RuntimeError("bind failed")
+
+    client.wait_claim = failing_wait
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    with pytest.raises(RuntimeError, match="bind failed"):
+        await _ClaimHandle(namespace="foo", name="claim-1", pool_name="foo").wait()
+
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_lease_release_deletes_the_claim_by_reference(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    await _ClaimHandle(namespace="foo", name="claim-1", pool_name="foo").release()
+
+    assert client.released == ["claim-1"]
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_release_tolerates_claim_already_deleted_by_another_process(monkeypatch):
+    first_client = FakeFleetClient()
+    second_client = FakeFleetClient()
+
+    async def already_deleted(claim):
+        raise SdkError.Status("delete claim", 404, b"not found")
+
+    second_client.delete_claim = already_deleted
+    clients = iter([first_client, second_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+
+    await _ClaimHandle(namespace="foo", name="claim-1", pool_name="foo").release()
+    await _ClaimHandle(namespace="foo", name="claim-1", pool_name="foo").release()
+
+    assert first_client.released == ["claim-1"]
+    assert first_client.closed is True
+    assert second_client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_lease_renew_pushes_the_shutdown_time_forward(monkeypatch):
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    await _ClaimHandle(namespace="foo", name="claim-1", pool_name="foo").renew(
+        "2026-01-01T00:10:00Z"
+    )
+
+    assert client.renewed == [("claim-1", "2026-01-01T00:10:00Z")]
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_fleet_client_renew_claim_requires_a_release_with_renew_support():
+    client = object.__new__(_FleetClient)
+    client._client = object()
+
+    with pytest.raises(RuntimeError, match="renew_claim"):
+        await client.renew_claim(fake_claim(), "2026-01-01T00:10:00Z")
+
+
+@pytest.mark.asyncio
+async def test_fleet_client_renew_claim_delegates_when_supported():
+    calls = []
+
+    class GeneratedClient:
+        async def renew_claim(self, claim, shutdown_time):
+            calls.append((claim, shutdown_time))
+            return "renewed"
+
+    client = object.__new__(_FleetClient)
+    client._client = GeneratedClient()
+
+    assert await client.renew_claim("claim", "2026-01-01T00:10:00Z") == "renewed"
+    assert calls == [("claim", "2026-01-01T00:10:00Z")]
+
+
+@pytest.mark.asyncio
+async def test_named_claim_retry_reattaches_without_creating(monkeypatch):
+    client = FakeFleetClient()
+    client.existing_claims = [fake_claim()]
+
+    async def list_claims(namespace: str):
+        assert namespace == "foo"
+        return client.existing_claims
+
+    client.list_claims = list_claims
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    sandbox = await Pool(fleet_pool()).claim(name="claim-1")
+
+    assert client.claims == []
+    assert sandbox.claim_name == "claim-1"
+    assert sandbox.to_dict()["service"] == "server"
+    await sandbox.close()
+
+
+@pytest.mark.asyncio
+async def test_named_claim_reattach_failure_does_not_release_existing_claim(monkeypatch):
+    client = FakeFleetClient()
+    client.existing_claims = [fake_claim()]
+
+    async def list_claims(namespace: str):
+        assert namespace == "foo"
+        return client.existing_claims
+
+    async def failing_wait(claim):
+        raise RuntimeError("bind failed")
+
+    client.list_claims = list_claims
+    client.wait_claim = failing_wait
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    with pytest.raises(RuntimeError, match="bind failed"):
+        await Pool(fleet_pool()).claim(name="claim-1")
+
+    assert client.claims == []
+    assert client.released == []
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_new_claim_acquisition_failure_releases_created_claim(monkeypatch):
+    client = FakeFleetClient()
+
+    async def list_claims(namespace: str):
+        assert namespace == "foo"
+        return []
+
+    async def failing_wait(claim):
+        raise RuntimeError("bind failed")
+
+    client.list_claims = list_claims
+    client.wait_claim = failing_wait
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    with pytest.raises(RuntimeError, match="bind failed"):
+        await Pool(fleet_pool()).claim(name="claim-1")
+
+    assert len(client.claims) == 1
+    assert client.released == ["claim-1"]
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_delegates_to_template_and_pool_reconcile(monkeypatch):
+    template_requests = []
+    pool_requests = []
+    reconcile_order = []
+
+    async def reconcile_template(cls, request):
+        reconcile_order.append("template")
+        template_requests.append(request)
+        return Template(fleet_template(request.name))
+
+    async def reconcile_pool(cls, request):
+        reconcile_order.append("pool")
+        pool_requests.append(request)
+        return Pool(fleet_pool(request.namespace))
+
+    monkeypatch.setattr(Template, "reconcile", classmethod(reconcile_template))
+    monkeypatch.setattr(Pool, "reconcile", classmethod(reconcile_pool))
+
+    pool = await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        cpu=4,
+        memory_mb=4096,
+    )
+
+    assert reconcile_order == ["pool", "template"]
+    assert len(template_requests) == 1
+    assert len(pool_requests) == 1
+    assert pool.name == pool_requests[0].namespace == template_requests[0].name
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_delete_removes_owned_pool_and_template(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(3)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    pool = await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+    )
+    await pool.delete()
+
+    assert clients[2].deleted_pools == ["workspace"]
+    assert clients[2].deleted_templates == ["workspace"]
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_rolls_back_pool_when_template_reconcile_fails(monkeypatch):
+    clients = [
+        FakeFleetClient(),
+        FakeFleetClient(reconcile_error=RuntimeError("template failed")),
+        FakeFleetClient(),
+    ]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(RuntimeError, match="template failed"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
+
+    assert clients[2].deleted_pools == ["workspace"]
+    assert clients[2].deleted_templates == []
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_uses_stable_configuration_name(monkeypatch):
+    from cua_sandbox import Image
+
+    clients = [FakeFleetClient() for _ in range(6)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    image = Image.from_registry("registry.example/workspace:latest")
+
+    first = await Pool.apply(image, replicas=1, cpu=4, memory_mb=4096)
+    second = await Pool.apply(image, replicas=1, cpu=4, memory_mb=4096)
+    explicit_default = await Pool.apply(
+        image, replicas=1, cpu=4, memory_mb=4096, services={"server": 8000}
+    )
+
+    assert first.name == second.name == explicit_default.name
+    assert first.name.startswith("cua-")
+    assert clients[0].reconciled[0].namespace == first.name
+    assert clients[1].reconciled_templates[0].name == first.name
+
+
+@pytest.mark.asyncio
+async def test_close_after_disconnect_reopens_client_for_release(monkeypatch):
+    claim_client = FakeFleetClient()
+    release_client = FakeFleetClient()
+    clients = iter([claim_client, release_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+
+    sandbox = await Pool(fleet_pool()).claim()
+    await sandbox.disconnect()
+    await sandbox.close()
+
+    assert claim_client.closed is True
+    assert claim_client.released == []
+    assert release_client.released == ["claim-1"]
+    assert release_client.closed is True

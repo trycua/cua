@@ -33,7 +33,6 @@ test.describe("Pool creation", () => {
     // Services section has an "Add service" button
     await expect(page.getByRole("button", { name: "Add service" })).toBeVisible()
   })
-
 })
 
 test.describe("Pool duplication", () => {
@@ -52,28 +51,38 @@ test.describe("Pool duplication", () => {
     // Source pool with a NON-default resource spec (defaults are cpu 4,
     // ram 4Gi, the ECR image, replicas 1, no services).
     const sourcePool = {
-      metadata: { name: "demo-pool", namespace: "my-workspace" },
+      apiVersion: "osgym.cua.ai/v1alpha1",
+      kind: "OSGymSandboxWarmPool",
+      metadata: { name: "demo-pool", namespace: "demo-pool" },
       spec: {
         replicas: 3,
-        template: {
+        sandboxTemplateRef: { name: "demo-pool-template" },
+      },
+      status: { replicas: 3, readyReplicas: 3 },
+    }
+    const sourceTemplate = {
+      apiVersion: "osgym.cua.ai/v1alpha1",
+      kind: "OSGymSandboxTemplate",
+      metadata: { name: "demo-pool-template", namespace: "demo-pool" },
+      spec: {
+        vmTemplate: {
           containerDiskImage: "custom-image:v1",
           cpuCores: 8,
           memory: "16Gi",
+          services: [{ name: "api", targetPort: 8080, protocol: "TCP" }],
         },
-        services: [{ name: "api", targetPort: 8080, protocol: "TCP" }],
       },
-      status: { phase: "Ready", totalCount: 3, availableCount: 3, claimedCount: 0 },
     }
 
     // listPools() iterates the user's namespaces and lists pools in each.
     await page.route(
-      "**/api/k8s/apis/cua.ai/v1/namespaces/*/osgymworkspacepools",
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
       async (route) => {
         if (route.request().method() !== "GET") return route.continue()
         const ns = route.request().url().split("/namespaces/")[1].split("/")[0]
         await route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify({ items: ns === "my-workspace" ? [sourcePool] : [] }),
+          body: JSON.stringify({ items: ns === "demo-pool" ? [sourcePool] : [] }),
         })
       },
     )
@@ -81,11 +90,20 @@ test.describe("Pool duplication", () => {
     // Single-pool GET — where a correct duplicate flow would read the full
     // spec. Registered after the list route so it wins for this exact path.
     await page.route(
-      "**/api/k8s/apis/cua.ai/v1/namespaces/my-workspace/osgymworkspacepools/demo-pool",
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo-pool/osgymsandboxwarmpools/demo-pool",
       async (route) => {
         await route.fulfill({
           contentType: "application/json",
           body: JSON.stringify(sourcePool),
+        })
+      },
+    )
+    await page.route(
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo-pool/osgymsandboxtemplates/demo-pool-template",
+      async (route) => {
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(sourceTemplate),
         })
       },
     )
@@ -125,35 +143,7 @@ test.describe("Pool detail with claims", () => {
     await mockPoolsApi(page)
     await mockClaimsApi(page)
 
-    // Mock the getPool endpoint for a specific pool
-    await page.route(
-      "**/api/k8s/apis/cua.ai/v1/namespaces/my-workspace/osgymworkspacepools/demo-pool",
-      async (route) => {
-        await route.fulfill({
-          contentType: "application/json",
-          body: JSON.stringify({
-            metadata: { name: "demo-pool", namespace: "my-workspace" },
-            spec: {
-              replicas: 2,
-              template: {
-                containerDiskImage: "test-image:latest",
-                cpuCores: 4,
-                memory: "4Gi",
-              },
-              services: [],
-            },
-            status: {
-              phase: "Ready",
-              totalCount: 2,
-              availableCount: 1,
-              claimedCount: 1,
-            },
-          }),
-        })
-      },
-    )
-
-    await page.goto("/pools/my-workspace/demo-pool")
+    await page.goto("/pools/demo-pool/demo-pool")
 
     // The pool name should be shown
     await expect(page.getByRole("heading", { name: "demo-pool" })).toBeVisible()
@@ -167,7 +157,32 @@ test.describe("Pool detail with claims", () => {
     ).toBeVisible()
 
     // The existing mock claim should be listed
-    await expect(page.getByText("claim-abc123")).toBeVisible()
+    const claimRow = page.getByRole("row").filter({ hasText: "claim-abc123" })
+    await expect(claimRow).toBeVisible()
     await expect(page.getByText("Bound")).toBeVisible()
+    await expect(claimRow.getByRole("cell").nth(3)).not.toHaveText("-")
+  })
+})
+
+test.describe("Retired navigation", () => {
+  test("does not expose removed admin and runtime surfaces", async ({ page }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+
+    await page.goto("/pools")
+
+    await expect(page.getByRole("link", { name: "Nodes" })).toHaveCount(0)
+    await expect(page.getByRole("link", { name: "Operator events" })).toHaveCount(0)
+    await expect(page.getByRole("link", { name: "API keys", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("link", { name: "User API keys" })).toBeVisible()
+    await expect(page.getByRole("link", { name: "Settings" })).toBeVisible()
+
+    for (const route of ["/nodes", "/operator-events", "/operator-logs", "/api-keys"]) {
+      await page.goto(route)
+      await expect(
+        page.getByRole("heading", { name: /nodes|events|logs|api keys/i }),
+      ).toHaveCount(0)
+    }
   })
 })

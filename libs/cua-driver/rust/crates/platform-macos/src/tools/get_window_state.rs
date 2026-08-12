@@ -74,7 +74,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid", "window_id"],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values." },
@@ -643,7 +643,9 @@ impl Tool for GetWindowStateTool {
         }
         cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
             &mut structured,
-            chromium_browser_window(pid),
+            chromium_browser_window(pid).then_some(
+                cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::MayBeIncomplete,
+            ),
         );
         ToolResult {
             content,

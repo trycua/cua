@@ -61,6 +61,9 @@ jobs:
           echo "::error::Select cua-driver-rs or lume when forcing a bump type."
           exit 1
 
+      - name: Reject manifest tags outside main history
+        run: python3 .github/scripts/validate_release_please_tags.py --target HEAD
+
       - name: Resolve targeted release request
         id: request
         if: >-

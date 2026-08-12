@@ -169,13 +169,34 @@ handle automatically, but applications must still await `shutdown()`.
 | Python              | TypeScript        | Input                  |
 | ------------------- | ----------------- | ---------------------- |
 | `start_session`     | `startSession`    | `StartSessionInput`    |
-| `get_session_state` | `getSessionState` | `GetSessionStateInput` |
-| `escalate_session`  | `escalateSession` | `EscalateSessionInput` |
+| `get_session`       | `getSession`      | `GetSessionInput`      |
+| `list_sessions`     | `listSessions`    | `ListSessionsInput`    |
 | `end_session`       | `endSession`      | `EndSessionInput`      |
+| `get_session_state` | `getSessionState` | `GetSessionStateInput` (deprecated) |
+| `escalate_session`  | `escalateSession` | `EscalateSessionInput` (deprecated) |
 
-`StartSessionInput.capture_scope` / `captureScope` accepts `AUTO`, `WINDOW`, or
-`DESKTOP`. Capture scope is immutable for a live session. `AUTO` requires an
-explicit escalation before desktop tools are enabled.
+`start_session` is optional. The first ordinary call creates an implicit
+session owned by the SDK transport, and later calls on that transport reuse it.
+The default idle TTL is five minutes. Shutdown, explicit end, and transport
+close run the same cleanup hooks. A call that is still in flight cannot expire,
+and only completed calls refresh the idle timer.
+
+For multi-call work, prefer a short public `session` label and pass the same
+value on every call that accepts it. Passing it once is not sticky: a later call
+that omits the field uses the transport's implicit session instead. Use
+`start_session` to name or configure a run before acting, or to revive a public
+name after it has ended. For one-off or deliberately unlabeled work, omitting
+`session` is valid.
+`get_session` and `list_sessions` return content-free state only for sessions
+visible to that transport. The public label is a map key, never an
+authorization credential. A trusted host can inspect its wider runtime
+namespace through `list_host_sessions_json()` / `listHostSessionsJson()`; agent
+tools cannot use that operator view.
+
+`StartSessionInput.capture_scope` / `captureScope`, `get_session_state`, and
+`escalate_session` remain available for legacy capture-scope sessions during
+the compatibility window. New code selects a target on each action. There is
+no `deescalate_session` method.
 
 ## Typed desktop methods
 
@@ -192,6 +213,19 @@ explicit escalation before desktop tools are enabled.
 | `press_key`           | `pressKey`          | `PressKeyInput`          |
 | `hotkey`              | `hotkey`            | `HotkeyInput`            |
 
+`move_cursor`, `click`, `drag`, `scroll`, `type_text`, `press_key`, and
+`hotkey` accept an `ActionTarget` / `actionTarget` on each call:
+
+```text
+window:  { kind: "window",  pid, window_id }
+desktop: { kind: "desktop", display_id: "primary" }
+```
+
+The desktop target uses screen coordinates and foreground delivery. The window
+target uses coordinates from that window's screenshot and keeps the existing
+background or foreground delivery ladder. Legacy flat `scope`, `pid`, and
+`window_id` fields remain accepted but cannot be combined with `target`.
+
 ## Typed cursor methods
 
 | Python                     | TypeScript              | Input                        |
@@ -201,8 +235,10 @@ explicit escalation before desktop tools are enabled.
 | `set_agent_cursor_theme`   | `setAgentCursorTheme`   | `SetAgentCursorThemeInput`   |
 | `get_agent_cursor_state`   | `getAgentCursorState`   | `GetAgentCursorStateInput`   |
 
-Every cursor operation is bound to a declared session. `cua.default` is the
-only built-in theme. A trusted local operator may validate, compile, and install
+Cursor-bearing actions create or wake the transport's implicit session even
+when the caller does not supply a public session. Cursor configuration methods
+still take a public session label. `cua.default` is the only built-in theme. A
+trusted local operator may validate, compile, and install
 a custom theme with `cua-driver cursor-theme`; agent-facing tools may select an
 installed theme ID but cannot install source or compiled theme data. See
 [Agent cursor themes](/how-to-guides/driver/personalize-cursor) for the

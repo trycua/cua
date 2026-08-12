@@ -65,7 +65,7 @@ resource "fleets_pool" "linux" {
   name                 = "linux-pool"
   cpu_cores            = 4
   memory               = "8Gi"
-  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:main-38352d34"
+  container_disk_image = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-e5d853a9"
   runtime              = "kubevirt"
   firmware             = "bios"
 
@@ -117,7 +117,7 @@ resource "fleets_pool" "windows" {
   name                 = "windows-pool"
   cpu_cores            = 4
   memory               = "4Gi"
-  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest"
+  container_disk_image = "public.ecr.aws/k5j5w0x5/cua-windows-2022:latest"
   runtime              = "kubevirt"
   firmware             = "efi"
 

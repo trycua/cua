@@ -13,7 +13,7 @@
 - Schedule must remain `7/15 * * * *`, running at `:07`, `:22`, `:37`, and `:52` UTC.
 - Scheduled runs execute both `main-source` and `published-package`; relevant pushes to `main` execute only `main-source`.
 - Manual dispatch accepts `both`, `main-source`, or `published-package`; only manual dispatch may set `force_failure=true`.
-- Use image `296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180`.
+- Use image `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d`.
 - Provision with `cpu=4`, `memory_mb=4096`, `server_port=8000`, `time_to_start=900`, `request_timeout=60`, and `telemetry_enabled=False`.
 - Authenticate only with `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, `CUA_FLEET_BASE_URL=https://run.cua.ai`, and the default Cyclops token endpoint.
 - Do not use `CUA_API_KEY`, legacy `/api/keys`, namespace-scoped key creation, repository-private SDK helpers, or mutable image tags.
@@ -386,8 +386,8 @@ from tests.live.fleet_e2e_support import (
 )
 
 IMAGE = (
-    "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo"
-    "@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
+    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
 )
 
 

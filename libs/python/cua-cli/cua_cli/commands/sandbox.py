@@ -49,6 +49,7 @@ def _parse_image(image_str: str, vm: bool = False):
         "macos:sequoia"   -> Image.macos("sequoia")
         "ubuntu:24.04"    -> Image.linux("ubuntu", "24.04")
         "linux"           -> Image.linux("ubuntu", "24.04")
+        "windows"         -> Image.windows("2022")
         "windows:11"      -> Image.windows("11")
         "android:14"      -> Image.android("14")
         "ghcr.io/org/img" -> Image.from_registry("ghcr.io/org/img")
@@ -80,7 +81,7 @@ def _parse_image(image_str: str, vm: bool = False):
         return Image.linux(distro, version, kind=kind)
 
     if base in _WINDOWS_ALIASES:
-        version = tag or "11"
+        version = tag or "2022"
         return Image.windows(version)
 
     if base in _ANDROID_ALIASES:

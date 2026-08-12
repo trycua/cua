@@ -33,7 +33,7 @@
     "playwright": "^1.58.1",
     "posthog-node": "^5.24.9",
     "react": "^18.3.1",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.0",
     "tsx": "^4.19.0",
     "uuid": "^13.0.1",
     "ws": "^8.21.0",
@@ -48,10 +48,10 @@
   },
   "pnpm": {
     "overrides": {
-      "@hono/node-server": "1.19.13",
+      "@hono/node-server": "2.0.10",
       "@modelcontextprotocol/sdk": "1.26.0",
       "ajv": "8.18.0",
-      "brace-expansion": "5.0.8",
+      "brace-expansion": "5.0.9",
       "fast-uri": "3.1.5",
       "hono": "4.12.34",
       "ip-address": "10.3.1",

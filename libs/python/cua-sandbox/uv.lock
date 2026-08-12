@@ -133,15 +133,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asyncio"
-version = "4.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/71/ea/26c489a11f7ca862d5705db67683a7361ce11c23a7b98fc6c2deaeccede2/asyncio-4.0.0.tar.gz", hash = "sha256:570cd9e50db83bc1629152d4d0b7558d6451bb1bfd5dfc2e935d96fc2f40329b", size = 5371, upload-time = "2025-08-05T02:51:46.605Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/57/64/eff2564783bd650ca25e15938d1c5b459cda997574a510f7de69688cb0b4/asyncio-4.0.0-py3-none-any.whl", hash = "sha256:c1eddb0659231837046809e68103969b2bef8b0400d59cfa6363f6b5ed8cc88b", size = 5555, upload-time = "2025-08-05T02:51:45.767Z" },
-]
-
-[[package]]
 name = "attrs"
 version = "25.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -419,7 +410,6 @@ source = { editable = "../agent" }
 dependencies = [
     { name = "aiohttp" },
     { name = "anyio" },
-    { name = "asyncio" },
     { name = "certifi" },
     { name = "cua-core" },
     { name = "httpx" },
@@ -441,7 +431,6 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'uitars-hf'" },
     { name = "aiohttp", specifier = ">=3.9.3" },
     { name = "anyio", specifier = ">=4.4.1" },
-    { name = "asyncio" },
     { name = "blobfile", marker = "extra == 'all'", specifier = ">=3.0.0" },
     { name = "blobfile", marker = "extra == 'opencua-hf'", specifier = ">=3.0.0" },
     { name = "certifi", specifier = ">=2024.2.2" },
@@ -551,7 +540,7 @@ wheels = [
 
 [[package]]
 name = "cua-sandbox"
-version = "0.1.28"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "cua-auto" },

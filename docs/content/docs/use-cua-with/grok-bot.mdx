@@ -86,7 +86,7 @@ Cua Driver does not provide a managed public gateway or a Grok Bot connector pre
 
 ## Shared-state boundaries
 
-All Bots on one Grok Bot account share its cloud computer, browser sessions, files, and command-line credentials. The screens are separate work surfaces, not security boundaries. Grok Bot also installs connectors account-wide.
+All Bots on one Grok Bot account share its cloud computer, browser sessions, files, and command-line credentials. Each screen is a separate work surface within the same security boundary. Grok Bot also installs connectors account-wide.
 
 Cua Driver sessions isolate transient state such as element cursors. They do not isolate the underlying desktop account or the apps running in it. Use separate operating-system accounts or machines when tasks require separate trust boundaries.
 

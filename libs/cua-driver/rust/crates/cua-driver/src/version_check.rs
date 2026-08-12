@@ -61,6 +61,7 @@ const HTTP_TIMEOUT_SECONDS: u64 = 4;
 /// Releases tagged with anything else (e.g. the Swift port's
 /// `cua-driver-v*`) are filtered out so we never recommend the wrong binary.
 pub const RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v";
+pub const NIGHTLY_RELEASE_TAG_PREFIX: &str = "nightly-cua-driver-rs-v";
 
 /// GitHub releases API endpoint. Paginates newest-first; 40 entries is
 /// plenty of headroom past the most recent stable release even when
@@ -116,6 +117,8 @@ pub fn maybe_announce_update() {
 #[derive(serde::Serialize, Debug, Clone)]
 pub struct UpdateState {
     pub current_version: String,
+    pub current_channel: Option<&'static str>,
+    pub selected_channel: Option<&'static str>,
     /// `None` when the network fetch failed and no usable cache existed —
     /// the `error` field carries the human-readable reason.
     pub latest_version: Option<String>,
@@ -194,6 +197,28 @@ pub fn check_update_state(no_cache: bool) -> UpdateState {
     let now = unix_now();
     let checked_at = iso8601(now);
 
+    let current_channel = crate::release_channel::ReleaseChannel::from_version(&current);
+    let selected_channel = match crate::release_channel::selected() {
+        Ok(channel) => channel,
+        Err(error) => {
+            return UpdateState {
+                current_version: current,
+                current_channel: current_channel.map(|channel| channel.as_str()),
+                selected_channel: None,
+                latest_version: None,
+                update_available: false,
+                source: "github_releases",
+                checked_at,
+                cache_hit: false,
+                install_command: None,
+                release_notes_url: None,
+                error: Some(format!(
+                    "{error}; run `cua-driver channel set stable` or `cua-driver channel set nightly` to repair it"
+                )),
+            };
+        }
+    };
+
     let cached = read_cache().unwrap_or_default();
     let cache_fresh = cached
         .last_checked_unix
@@ -202,18 +227,22 @@ pub fn check_update_state(no_cache: bool) -> UpdateState {
 
     // Honour the cache unless caller explicitly asked us to bypass it.
     // Mirrors `npm outdated --no-cache` / `brew update --force` semantics.
-    let use_cache = !no_cache && cache_fresh && cached.latest_version.is_some();
+    let cache_channel_matches =
+        cached.channel.as_deref().unwrap_or("stable") == selected_channel.as_str();
+    let use_cache =
+        !no_cache && cache_fresh && cache_channel_matches && cached.latest_version.is_some();
 
     let (latest, cache_hit, fetch_error) = if use_cache {
         (cached.latest_version.clone(), true, None)
     } else {
-        match fetch_latest_version() {
+        match fetch_latest_version_for(selected_channel) {
             Ok(v) => {
                 // Persist on success so the next launch can reuse the answer.
                 let new_cache = VersionCache {
                     last_checked_unix: Some(now),
                     last_checked_at: Some(checked_at.clone()),
                     latest_version: Some(v.clone()),
+                    channel: Some(selected_channel.as_str().to_owned()),
                     dismissed_versions: cached.dismissed_versions.clone(),
                 };
                 if let Err(e) = write_cache(&new_cache) {
@@ -228,7 +257,11 @@ pub fn check_update_state(no_cache: bool) -> UpdateState {
                 // surfaces only when no cache is available.
                 tracing::debug!(target: "cua_driver::version_check",
                                 "fetch failed: {e}");
-                match cached.latest_version.clone() {
+                match cached
+                    .latest_version
+                    .clone()
+                    .filter(|_| cache_channel_matches)
+                {
                     Some(v) => (Some(v), true, None),
                     None => (None, false, Some(e)),
                 }
@@ -238,7 +271,12 @@ pub fn check_update_state(no_cache: bool) -> UpdateState {
 
     let update_available = latest
         .as_deref()
-        .map(|l| is_newer(l, &current))
+        .map(|latest| {
+            current_channel
+                .map(|channel| channel != selected_channel)
+                .unwrap_or(false)
+                || is_newer(latest, &current)
+        })
         .unwrap_or(false);
 
     let (install_command, release_notes_url) = if update_available {
@@ -246,7 +284,8 @@ pub fn check_update_state(no_cache: bool) -> UpdateState {
         (
             Some(install_one_liner()),
             Some(format!(
-                "https://github.com/trycua/cua/releases/tag/{RELEASE_TAG_PREFIX}{l}"
+                "https://github.com/trycua/cua/releases/tag/{}{l}",
+                tag_prefix(selected_channel)
             )),
         )
     } else {
@@ -255,6 +294,8 @@ pub fn check_update_state(no_cache: bool) -> UpdateState {
 
     UpdateState {
         current_version: current,
+        current_channel: current_channel.map(|channel| channel.as_str()),
+        selected_channel: Some(selected_channel.as_str()),
         latest_version: latest,
         update_available,
         source: "github_releases",
@@ -303,13 +344,19 @@ where
     W: std::io::Write,
 {
     let now = unix_now();
+    let Ok(selected_channel) = crate::release_channel::selected() else {
+        return;
+    };
 
     // Decide whether the cache is still fresh enough to skip the network.
     let cached = read_cache().unwrap_or_default();
+    let cache_channel_matches =
+        cached.channel.as_deref().unwrap_or("stable") == selected_channel.as_str();
     let needs_refresh = cached
         .last_checked_unix
         .map(|t| now.saturating_sub(t) >= CACHE_REFRESH_SECONDS)
-        .unwrap_or(true);
+        .unwrap_or(true)
+        || !cache_channel_matches;
 
     let (latest, cache_hit) = if needs_refresh {
         match fetch() {
@@ -319,6 +366,7 @@ where
                     last_checked_unix: Some(now),
                     last_checked_at: Some(iso8601(now)),
                     latest_version: Some(v.clone()),
+                    channel: Some(selected_channel.as_str().to_owned()),
                     dismissed_versions: cached.dismissed_versions.clone(),
                 };
                 if let Err(e) = write_cache(&new_cache) {
@@ -332,14 +380,22 @@ where
                                 "fetch failed: {e}");
                 // Fall back to the cached value if any — better an old
                 // banner than none on a brief network blip.
-                match cached.latest_version.clone() {
+                match cached
+                    .latest_version
+                    .clone()
+                    .filter(|_| cache_channel_matches)
+                {
                     Some(v) => (v, true),
                     None => return,
                 }
             }
         }
     } else {
-        match cached.latest_version.clone() {
+        match cached
+            .latest_version
+            .clone()
+            .filter(|_| cache_channel_matches)
+        {
             Some(v) => (v, true),
             None => return,
         }
@@ -351,7 +407,8 @@ where
         .map(|c| c.dismissed_versions)
         .unwrap_or(cached.dismissed_versions);
 
-    if !is_newer(&latest, current) {
+    let current_channel = crate::release_channel::ReleaseChannel::from_version(current);
+    if current_channel == Some(selected_channel) && !is_newer(&latest, current) {
         return;
     }
     if dismissed.iter().any(|v| v == &latest) {
@@ -371,7 +428,7 @@ where
         );
     }
 
-    let banner = format_banner(&latest, current);
+    let banner = format_banner(&latest, current, selected_channel);
     if let Err(e) = writer.write_all(banner.as_bytes()) {
         tracing::debug!(target: "cua_driver::version_check",
                         "failed to print banner: {e}");
@@ -381,12 +438,16 @@ where
 /// Format the two-line banner. Plain text, no ANSI colours — terminals
 /// without UTF-8 still see the `✨` byte sequence but the text is
 /// readable either way.
-fn format_banner(latest: &str, current: &str) -> String {
+fn format_banner(
+    latest: &str,
+    current: &str,
+    channel: crate::release_channel::ReleaseChannel,
+) -> String {
     format!(
         "\n\u{2728} cua-driver v{latest} is available (you have v{current}).\n   \
          Update with: cua-driver update\n   \
          Release notes: https://github.com/trycua/cua/releases/tag/{prefix}{latest}\n\n",
-        prefix = RELEASE_TAG_PREFIX,
+        prefix = tag_prefix(channel),
     )
 }
 
@@ -405,7 +466,10 @@ fn is_enabled() -> bool {
     if let Some(false) = read_config_flag() {
         return false;
     }
-    if is_prerelease(env!("CARGO_PKG_VERSION")) {
+    if is_prerelease(env!("CARGO_PKG_VERSION"))
+        && crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"))
+            != Some(crate::release_channel::ReleaseChannel::Nightly)
+    {
         return false;
     }
     true
@@ -478,6 +542,8 @@ pub(crate) struct VersionCache {
     pub last_checked_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
     #[serde(default)]
     pub dismissed_versions: Vec<String>,
 }
@@ -540,6 +606,13 @@ fn cache_path() -> Option<PathBuf> {
 /// human-readable error string on failure. The caller is expected to
 /// downgrade errors to `tracing::debug!`.
 pub fn fetch_latest_version() -> Result<String, String> {
+    let channel = crate::release_channel::selected()?;
+    fetch_latest_version_for(channel)
+}
+
+pub fn fetch_latest_version_for(
+    channel: crate::release_channel::ReleaseChannel,
+) -> Result<String, String> {
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(HTTP_TIMEOUT_SECONDS)))
         .build()
@@ -560,33 +633,63 @@ pub fn fetch_latest_version() -> Result<String, String> {
         .read_json()
         .map_err(|e| format!("JSON parse error: {e}"))?;
 
-    pick_latest_release(&body)
-        .ok_or_else(|| "no matching cua-driver-rs-v* release in response".to_owned())
+    pick_latest_release(&body, channel)
+        .ok_or_else(|| format!("no matching {}* release in response", tag_prefix(channel)))
 }
 
 /// Pull the highest non-draft `cua-driver-rs-v*` tag out of the parsed
 /// releases response. Split out so unit tests can feed in canned JSON
 /// without hitting the network. Pre-release flag is intentionally
 /// ignored — see `fetch_latest_version` doc-comment.
-pub(crate) fn pick_latest_release(body: &serde_json::Value) -> Option<String> {
+pub(crate) fn pick_latest_release(
+    body: &serde_json::Value,
+    channel: crate::release_channel::ReleaseChannel,
+) -> Option<String> {
     let releases = body.as_array()?;
     let mut versions: Vec<semver::Version> = releases
         .iter()
         .filter_map(|r| {
             let tag = r.get("tag_name")?.as_str()?;
-            let bare = tag.strip_prefix(RELEASE_TAG_PREFIX)?;
+            let bare = tag.strip_prefix(tag_prefix(channel))?;
             if r.get("draft").and_then(|d| d.as_bool()).unwrap_or(false) {
                 return None;
             }
             let version = semver::Version::parse(bare).ok()?;
-            if !version.pre.is_empty() || !version.build.is_empty() {
-                return None;
+            match channel {
+                crate::release_channel::ReleaseChannel::Stable
+                    if !version.pre.is_empty() || !version.build.is_empty() =>
+                {
+                    return None
+                }
+                crate::release_channel::ReleaseChannel::Nightly
+                    if !is_canonical_nightly(&version) =>
+                {
+                    return None
+                }
+                _ => {}
             }
             Some(version)
         })
         .collect();
     versions.sort();
     versions.last().map(|v| v.to_string())
+}
+
+fn tag_prefix(channel: crate::release_channel::ReleaseChannel) -> &'static str {
+    match channel {
+        crate::release_channel::ReleaseChannel::Stable => RELEASE_TAG_PREFIX,
+        crate::release_channel::ReleaseChannel::Nightly => NIGHTLY_RELEASE_TAG_PREFIX,
+    }
+}
+
+fn is_canonical_nightly(version: &semver::Version) -> bool {
+    let parts: Vec<&str> = version.pre.as_str().split('.').collect();
+    parts.len() == 3
+        && parts[0] == "nightly"
+        && parts[1].len() == 8
+        && parts[1].bytes().all(|byte| byte.is_ascii_digit())
+        && parts[2].parse::<u64>().map(|run| run > 0).unwrap_or(false)
+        && version.build.is_empty()
 }
 
 // ── Time helpers ─────────────────────────────────────────────────────────
@@ -745,6 +848,7 @@ mod tests {
                 last_checked_unix: Some(1_700_000_000),
                 last_checked_at: Some("2023-11-14T22:13:20Z".into()),
                 latest_version: Some("0.1.4".into()),
+                channel: Some("stable".into()),
                 dismissed_versions: vec!["0.1.3".into()],
             };
             write_cache(&original).expect("write_cache");
@@ -794,6 +898,7 @@ mod tests {
                 last_checked_unix: Some(now.saturating_sub(21 * 60 * 60)),
                 last_checked_at: Some(iso8601(now.saturating_sub(21 * 60 * 60))),
                 latest_version: Some("0.1.3".into()), // stale data
+                channel: Some("stable".into()),
                 dismissed_versions: vec![],
             };
             write_cache(&stale).unwrap();
@@ -831,6 +936,7 @@ mod tests {
                 last_checked_unix: Some(now.saturating_sub(60 * 60)),
                 last_checked_at: Some(iso8601(now.saturating_sub(60 * 60))),
                 latest_version: Some("0.1.4".into()),
+                channel: Some("stable".into()),
                 dismissed_versions: vec![],
             };
             write_cache(&fresh).unwrap();
@@ -869,6 +975,7 @@ mod tests {
                 last_checked_unix: Some(now),
                 last_checked_at: Some(iso8601(now)),
                 latest_version: Some("0.1.4".into()),
+                channel: Some("stable".into()),
                 dismissed_versions: vec!["0.1.4".into()],
             };
             write_cache(&cache).unwrap();
@@ -1001,7 +1108,11 @@ mod tests {
 
     #[test]
     fn banner_contains_required_lines() {
-        let banner = format_banner("0.1.4", "0.1.3");
+        let banner = format_banner(
+            "0.1.4",
+            "0.1.3",
+            crate::release_channel::ReleaseChannel::Stable,
+        );
         // Headline.
         assert!(
             banner.contains("cua-driver v0.1.4 is available"),
@@ -1032,7 +1143,10 @@ mod tests {
             {"tag_name": "cua-driver-rs-v0.1.3", "draft": false, "prerelease": false},
             {"tag_name": "cua-driver-v9.9.9", "draft": false, "prerelease": false},
         ]);
-        assert_eq!(pick_latest_release(&body).as_deref(), Some("0.1.4"));
+        assert_eq!(
+            pick_latest_release(&body, crate::release_channel::ReleaseChannel::Stable).as_deref(),
+            Some("0.1.4")
+        );
     }
 
     #[test]
@@ -1046,7 +1160,10 @@ mod tests {
             {"tag_name": "cua-driver-rs-v0.1.5", "draft": false, "prerelease": true},
             {"tag_name": "cua-driver-rs-v0.1.4", "draft": false, "prerelease": false},
         ]);
-        assert_eq!(pick_latest_release(&body).as_deref(), Some("0.1.5"));
+        assert_eq!(
+            pick_latest_release(&body, crate::release_channel::ReleaseChannel::Stable).as_deref(),
+            Some("0.1.5")
+        );
     }
 
     #[test]
@@ -1064,12 +1181,35 @@ mod tests {
             },
             {"tag_name": "cua-driver-rs-v0.2.0", "draft": false, "prerelease": true},
         ]);
-        assert_eq!(pick_latest_release(&body).as_deref(), Some("0.2.0"));
+        assert_eq!(
+            pick_latest_release(&body, crate::release_channel::ReleaseChannel::Stable).as_deref(),
+            Some("0.2.0")
+        );
+    }
+
+    #[test]
+    fn nightly_discovery_rejects_stable_and_wrong_prefix_tags() {
+        let body = serde_json::json!([
+            {"tag_name": "cua-driver-rs-v9.9.9", "draft": false},
+            {"tag_name": "cua-driver-rs-v0.20.0-nightly.20260812.99", "draft": false},
+            {"tag_name": "nightly-cua-driver-rs-v0.20.0-nightly.20260812.42", "draft": false},
+            {"tag_name": "nightly-cua-driver-rs-v0.20.0-nightly.20260812.7", "draft": false}
+        ]);
+        assert_eq!(
+            pick_latest_release(&body, crate::release_channel::ReleaseChannel::Nightly).as_deref(),
+            Some("0.20.0-nightly.20260812.42")
+        );
     }
 
     #[test]
     fn pick_latest_release_returns_none_for_empty_array() {
-        assert_eq!(pick_latest_release(&serde_json::json!([])), None);
+        assert_eq!(
+            pick_latest_release(
+                &serde_json::json!([]),
+                crate::release_channel::ReleaseChannel::Stable
+            ),
+            None
+        );
     }
 
     #[test]

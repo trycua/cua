@@ -275,6 +275,14 @@ The apply path delegates to the canonical platform installer scripts.
 | `--apply` | Download and install the latest release when one is available. |
 | `--json` | Emit the structured update-state payload. |
 
+### `cua-driver channel`
+
+Inspect or change the persistent release channel. Missing state means `stable`.
+Changing it does not install; run `cua-driver update --apply` afterward.
+
+- `cua-driver channel status [--json]`
+- `cua-driver channel set <stable|nightly> [--json]`
+
 ### `cua-driver doctor`
 
 Run platform-aware diagnostic probes.

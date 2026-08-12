@@ -25,6 +25,7 @@ mod doctor;
 mod mcp_http;
 mod private_worker;
 mod proxy;
+mod release_channel;
 mod responsibility;
 mod sdk_adapter;
 mod serve;
@@ -725,6 +726,13 @@ fn main() {
         cli::Command::CheckUpdate { json, no_cache } => {
             cli::run_check_update_cmd(json, no_cache);
         }
+        cli::Command::Channel {
+            subcommand,
+            value,
+            json,
+        } => {
+            cli::run_channel_cmd(&subcommand, value.as_deref(), json);
+        }
         cli::Command::Doctor { json } => {
             // Long-running interactive entry point — kick off the
             // background "new version available?" check so the banner
@@ -986,6 +994,14 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::CheckUpdate { json, no_cache } => {
             cli::run_check_update_cmd(json, no_cache);
+            return Ok(());
+        }
+        cli::Command::Channel {
+            subcommand,
+            value,
+            json,
+        } => {
+            cli::run_channel_cmd(&subcommand, value.as_deref(), json);
             return Ok(());
         }
         cli::Command::Doctor { json } => {

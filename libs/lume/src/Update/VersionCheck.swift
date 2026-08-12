@@ -2,6 +2,7 @@ import Foundation
 
 enum LumeVersionCheck {
     static let releaseTagPrefix = "lume-v"
+    static let nightlyReleaseTagPrefix = "nightly-lume-v"
     static let releasesURL = URL(string: "https://api.github.com/repos/trycua/cua/releases?per_page=40")!
     static let defaultInstallScriptURL =
         "https://cua.ai/lume/install.sh"
@@ -12,6 +13,8 @@ enum LumeVersionCheck {
 
     struct State: Codable {
         let currentVersion: String
+        let currentChannel: String?
+        let selectedChannel: String?
         let latestVersion: String?
         let updateAvailable: Bool
         let source: String
@@ -23,6 +26,8 @@ enum LumeVersionCheck {
 
         enum CodingKeys: String, CodingKey {
             case currentVersion
+            case currentChannel
+            case selectedChannel
             case latestVersion
             case updateAvailable
             case source
@@ -36,6 +41,8 @@ enum LumeVersionCheck {
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(currentVersion, forKey: .currentVersion)
+            try encodeOptional(currentChannel, into: &container, forKey: .currentChannel)
+            try encodeOptional(selectedChannel, into: &container, forKey: .selectedChannel)
             try encodeOptional(latestVersion, into: &container, forKey: .latestVersion)
             try container.encode(updateAvailable, forKey: .updateAvailable)
             try container.encode(source, forKey: .source)
@@ -62,6 +69,7 @@ enum LumeVersionCheck {
     struct Cache: Codable {
         var lastCheckedUnix: TimeInterval?
         var latestVersion: String?
+        var channel: String?
     }
 
     static func checkUpdateState(noCache: Bool = false) async -> State {
@@ -72,11 +80,31 @@ enum LumeVersionCheck {
         let current = Lume.Version.current
         let now = Date()
         let checkedAt = ISO8601DateFormatter().string(from: now)
-        let cached = (try? readCache()) ?? Cache(lastCheckedUnix: nil, latestVersion: nil)
+        let currentChannel = LumeReleaseChannel.current(for: current)
+        let selectedChannel: LumeReleaseChannel
+        do {
+            selectedChannel = try LumeReleaseChannel.selected()
+        } catch {
+            return State(
+                currentVersion: current,
+                currentChannel: currentChannel?.rawValue,
+                selectedChannel: nil,
+                latestVersion: nil,
+                updateAvailable: false,
+                source: "github_releases",
+                checkedAt: checkedAt,
+                cacheHit: false,
+                installCommand: nil,
+                releaseNotesURL: nil,
+                error: error.localizedDescription
+            )
+        }
+        let cached = (try? readCache()) ?? Cache(lastCheckedUnix: nil, latestVersion: nil, channel: nil)
         let cacheFresh =
             cached.lastCheckedUnix
             .map { now.timeIntervalSince1970 - $0 < cacheRefreshSeconds } ?? false
-        let useCache = !noCache && cacheFresh && cached.latestVersion != nil
+        let cacheChannelMatches = (cached.channel ?? "stable") == selectedChannel.rawValue
+        let useCache = !noCache && cacheFresh && cacheChannelMatches && cached.latestVersion != nil
 
         let latest: String?
         let cacheHit: Bool
@@ -88,13 +116,17 @@ enum LumeVersionCheck {
             fetchError = nil
         } else {
             do {
-                let fetched = try await fetchLatestVersion()
+                let fetched = try await fetchLatestVersion(channel: selectedChannel)
                 latest = fetched
                 cacheHit = false
                 fetchError = nil
-                try? writeCache(Cache(lastCheckedUnix: now.timeIntervalSince1970, latestVersion: fetched))
+                try? writeCache(Cache(
+                    lastCheckedUnix: now.timeIntervalSince1970,
+                    latestVersion: fetched,
+                    channel: selectedChannel.rawValue
+                ))
             } catch {
-                if let cachedLatest = cached.latestVersion {
+                if cacheChannelMatches, let cachedLatest = cached.latestVersion {
                     latest = cachedLatest
                     cacheHit = true
                     fetchError = nil
@@ -106,14 +138,19 @@ enum LumeVersionCheck {
             }
         }
 
-        let updateAvailable = latest.map { isNewer($0, than: current) } ?? false
+        let updateAvailable = latest.map {
+            currentChannel.map { $0 != selectedChannel } ?? false || isNewer($0, than: current)
+        } ?? false
+        let prefix = selectedChannel == .nightly ? nightlyReleaseTagPrefix : releaseTagPrefix
         let releaseNotesURL =
             updateAvailable
-            ? "https://github.com/trycua/cua/releases/tag/\(releaseTagPrefix)\(latest ?? "")"
+            ? "https://github.com/trycua/cua/releases/tag/\(prefix)\(latest ?? "")"
             : nil
 
         return State(
             currentVersion: current,
+            currentChannel: currentChannel?.rawValue,
+            selectedChannel: selectedChannel.rawValue,
             latestVersion: latest,
             updateAvailable: updateAvailable,
             source: "github_releases",
@@ -135,6 +172,8 @@ enum LumeVersionCheck {
     static func disabledState() -> State {
         State(
             currentVersion: Lume.Version.current,
+            currentChannel: LumeReleaseChannel.current(for: Lume.Version.current)?.rawValue,
+            selectedChannel: (try? LumeReleaseChannel.selected())?.rawValue,
             latestVersion: nil,
             updateAvailable: false,
             source: "github_releases",
@@ -192,7 +231,7 @@ enum LumeVersionCheck {
         return .orderedSame
     }
 
-    private static func fetchLatestVersion() async throws -> String {
+    private static func fetchLatestVersion(channel: LumeReleaseChannel) async throws -> String {
         var versions: [String] = []
 
         for page in 1...5 {
@@ -220,7 +259,7 @@ enum LumeVersionCheck {
                 throw VersionCheckError.invalidResponse
             }
 
-            versions.append(contentsOf: publishedStableVersions(from: releases))
+            versions.append(contentsOf: publishedVersions(from: releases, channel: channel))
 
             if releases.count < 100 {
                 break
@@ -236,28 +275,33 @@ enum LumeVersionCheck {
     }
 
     private static func parseVersion(_ version: String) -> [Int] {
-        version
-            .split(separator: "-", maxSplits: 1, omittingEmptySubsequences: true)
-            .first?
-            .split(separator: ".")
-            .map { Int($0) ?? 0 } ?? []
+        LumeReleaseChannel.plainVersion(version)
+            ?? LumeReleaseChannel.nightlyVersion(version)
+            ?? []
     }
 
     static func publishedStableVersions(from releases: [[String: Any]]) -> [String] {
-        releases.compactMap { release in
-            if release["draft"] as? Bool == true { return nil }
-            guard let tag = release["tag_name"] as? String,
-                tag.hasPrefix(releaseTagPrefix)
-            else { return nil }
-            let version = String(tag.dropFirst(releaseTagPrefix.count))
-            return isPlainSemver(version) ? version : nil
-        }
+        publishedVersions(from: releases, channel: .stable)
     }
 
-    private static func isPlainSemver(_ version: String) -> Bool {
-        let parts = version.split(separator: ".")
-        guard parts.count == 3 else { return false }
-        return parts.allSatisfy { Int($0) != nil }
+    static func publishedVersions(
+        from releases: [[String: Any]],
+        channel: LumeReleaseChannel
+    ) -> [String] {
+        let prefix = channel == .nightly ? nightlyReleaseTagPrefix : releaseTagPrefix
+        return releases.compactMap { release -> String? in
+            if release["draft"] as? Bool == true { return nil }
+            guard let tag = release["tag_name"] as? String,
+                tag.hasPrefix(prefix)
+            else { return nil }
+            let version = String(tag.dropFirst(prefix.count))
+            switch channel {
+            case .stable:
+                return LumeReleaseChannel.plainVersion(version) != nil ? version : nil
+            case .nightly:
+                return LumeReleaseChannel.nightlyVersion(version) != nil ? version : nil
+            }
+        }
     }
 
     private static func cacheFileURL() -> URL {

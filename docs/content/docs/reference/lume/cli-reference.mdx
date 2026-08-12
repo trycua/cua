@@ -495,6 +495,14 @@ Check for a Lume update and optionally apply it
 | `--apply` | false | Apply the update by re-running the official installer |
 | `--json` | false | Emit the structured update-state payload as JSON |
 
+### lume channel
+
+Inspect or change the persistent release channel. Missing state means `stable`;
+selection does not install by itself.
+
+- `lume channel status [--json]`
+- `lume channel set <stable|nightly> [--json]`
+
 ## Developer Tools
 
 ### lume dump-docs

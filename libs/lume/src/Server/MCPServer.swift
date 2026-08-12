@@ -319,7 +319,7 @@ final class LumeMCPServer {
         [
             Tool(
                 name: "check_for_update",
-                description: "Check whether a newer Lume release is available on GitHub. Read-only; never installs. Mirrors `lume check-update --json`.",
+                description: "Check the saved stable/nightly Lume channel for a release on GitHub. Returns current and selected channels. Read-only; never installs. Mirrors `lume check-update --json`.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])

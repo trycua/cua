@@ -220,13 +220,7 @@ enum LumeVersionCheck {
                 throw VersionCheckError.invalidResponse
             }
 
-            versions.append(
-                contentsOf: releases
-                    .compactMap { $0["tag_name"] as? String }
-                    .filter { $0.hasPrefix(releaseTagPrefix) }
-                    .map { String($0.dropFirst(releaseTagPrefix.count)) }
-                    .filter { isPlainSemver($0) }
-            )
+            versions.append(contentsOf: publishedStableVersions(from: releases))
 
             if releases.count < 100 {
                 break
@@ -247,6 +241,17 @@ enum LumeVersionCheck {
             .first?
             .split(separator: ".")
             .map { Int($0) ?? 0 } ?? []
+    }
+
+    static func publishedStableVersions(from releases: [[String: Any]]) -> [String] {
+        releases.compactMap { release in
+            if release["draft"] as? Bool == true { return nil }
+            guard let tag = release["tag_name"] as? String,
+                tag.hasPrefix(releaseTagPrefix)
+            else { return nil }
+            let version = String(tag.dropFirst(releaseTagPrefix.count))
+            return isPlainSemver(version) ? version : nil
+        }
     }
 
     private static func isPlainSemver(_ version: String) -> Bool {

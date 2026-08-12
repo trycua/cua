@@ -92,6 +92,37 @@ cua-driver doctor
 
 `doctor` checks the version, install layout, and telemetry setup on every platform. It also runs platform probes for TCC on macOS, the interactive session on Windows, and AT-SPI plus the display server on Linux.
 
+## Install an exact nightly
+
+Nightlies are immutable builds of exact `main` commits. They are opt-in and do
+not replace stable update discovery. Copy the full
+`nightly-cua-driver-rs-v…` tag from the component's GitHub release, then pin
+that tag during installation:
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash
+CUA_DRIVER_RS_VERSION=nightly-cua-driver-rs-v0.19.4-nightly.20260812.123456789 \
+  /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+$env:CUA_DRIVER_RS_VERSION = "nightly-cua-driver-rs-v0.19.4-nightly.20260812.123456789"
+irm https://cua.ai/driver/install.ps1 | iex
+Remove-Item Env:CUA_DRIVER_RS_VERSION
+```
+
+  </Tab>
+</Tabs>
+
+The pin is one-shot: later runs of the ordinary installer return to the baked
+stable release. Exact pins never fall back to another release when an asset is
+missing.
+
 ## Choose a permission mode
 
 Cua Driver authorizes every agent action inside the native runtime, and the mode is fixed when that runtime starts. An agent cannot change it, and neither can you change it on a running daemon — you restart the daemon with different flags. Decide which mode you want before starting the daemon below.

@@ -578,7 +578,11 @@ pub(crate) fn pick_latest_release(body: &serde_json::Value) -> Option<String> {
             if r.get("draft").and_then(|d| d.as_bool()).unwrap_or(false) {
                 return None;
             }
-            semver::Version::parse(bare).ok()
+            let version = semver::Version::parse(bare).ok()?;
+            if !version.pre.is_empty() || !version.build.is_empty() {
+                return None;
+            }
+            Some(version)
         })
         .collect();
     versions.sort();
@@ -1043,6 +1047,24 @@ mod tests {
             {"tag_name": "cua-driver-rs-v0.1.4", "draft": false, "prerelease": false},
         ]);
         assert_eq!(pick_latest_release(&body).as_deref(), Some("0.1.5"));
+    }
+
+    #[test]
+    fn pick_latest_release_rejects_every_nightly_shape() {
+        let body = serde_json::json!([
+            {
+                "tag_name": "nightly-cua-driver-rs-v0.2.1-nightly.20260812.42",
+                "draft": false,
+                "prerelease": true
+            },
+            {
+                "tag_name": "cua-driver-rs-v0.2.1-nightly.20260812.42",
+                "draft": false,
+                "prerelease": true
+            },
+            {"tag_name": "cua-driver-rs-v0.2.0", "draft": false, "prerelease": true},
+        ]);
+        assert_eq!(pick_latest_release(&body).as_deref(), Some("0.2.0"));
     }
 
     #[test]

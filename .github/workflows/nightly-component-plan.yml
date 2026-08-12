@@ -1,0 +1,100 @@
+name: "Nightly: component plan"
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        description: "Registered component name"
+        required: true
+        type: string
+      source_sha:
+        description: "Exact source commit"
+        required: true
+        type: string
+      force:
+        description: "Build even when no relevant paths changed"
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      should_build:
+        value: ${{ jobs.plan.outputs.should_build }}
+      version:
+        value: ${{ jobs.plan.outputs.version }}
+      bundle_version:
+        value: ${{ jobs.plan.outputs.bundle_version }}
+      tag:
+        value: ${{ jobs.plan.outputs.tag }}
+      previous_tag:
+        value: ${{ jobs.plan.outputs.previous_tag }}
+      attribution_base_tag:
+        value: ${{ jobs.plan.outputs.attribution_base_tag }}
+      reason:
+        value: ${{ jobs.plan.outputs.reason }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.plan.outputs.shouldBuild }}
+      version: ${{ steps.plan.outputs.version }}
+      bundle_version: ${{ steps.plan.outputs.bundleVersion }}
+      tag: ${{ steps.plan.outputs.tag }}
+      previous_tag: ${{ steps.plan.outputs.previousTag }}
+      attribution_base_tag: ${{ steps.plan.outputs.attributionBaseTag }}
+      reason: ${{ steps.plan.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify source is an exact main commit
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+
+      - name: Fetch published release inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/${{ github.repository }}/releases?per_page=100" \
+            | jq 'add' > "$RUNNER_TEMP/releases.json"
+
+      - name: Plan immutable nightly
+        id: plan
+        env:
+          COMPONENT: ${{ inputs.component }}
+          FORCE_REQUESTED: ${{ inputs.force }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          FORCE=()
+          if [[ "$FORCE_REQUESTED" == "true" ]]; then FORCE+=(--force); fi
+          python3 .github/scripts/release_channels.py plan \
+            --component "$COMPONENT" \
+            --source-sha "$SOURCE_SHA" \
+            --date "$(date -u +%Y%m%d)" \
+            --run "${{ github.run_id }}" \
+            --releases "$RUNNER_TEMP/releases.json" \
+            --output "$RUNNER_TEMP/nightly-plan.json" \
+            --github-output "$GITHUB_OUTPUT" \
+            "${FORCE[@]}"
+          cat "$RUNNER_TEMP/nightly-plan.json"
+
+      - name: Preserve plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-plan-${{ inputs.component }}
+          path: ${{ runner.temp }}/nightly-plan.json
+          if-no-files-found: error
+          retention-days: 30

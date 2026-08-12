@@ -119,6 +119,11 @@ testpaths = ["tests"]
 [tool.uv.sources]
 cua-sandbox = { path = "../cua-sandbox", editable = true }
 
+[tool.uv]
+constraint-dependencies = [
+    "click>=8.3.3",
+]
+
 [[tool.uv.index]]
 name = "cua-wheels"
 url = "https://wheels.cua.ai/simple"

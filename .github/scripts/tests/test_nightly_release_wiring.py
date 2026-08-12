@@ -46,6 +46,7 @@ def test_driver_nightly_reuses_builder_without_stable_state_mutation():
 
 def test_lume_nightly_reuses_notarized_builder_and_never_becomes_latest():
     nightly = source("nightly-lume.yml")
+    builder = source("cd-swift-lume.yml")
     assert "uses: ./.github/workflows/cd-swift-lume.yml" in nightly
     assert "bundle_version: ${{ needs.plan.outputs.bundle_version }}" in nightly
     assert "--create-if-missing" in nightly
@@ -56,6 +57,17 @@ def test_lume_nightly_reuses_notarized_builder_and_never_becomes_latest():
     assert "needs.plan.outputs.attribution_base_tag" in nightly
     assert "issues: read" in nightly
     assert "pull-requests: read" in nightly
+    assert builder.index("- name: Set version") < builder.index(
+        "- name: Stage nightly artifact version"
+    )
+    set_version = builder[
+        builder.index("- name: Set version") : builder.index(
+            "- name: Stage nightly artifact version"
+        )
+    ]
+    assert set_version.index('inputs.channel }}" == "nightly"') < set_version.index(
+        "SOURCE_VERSION=$(tr -d"
+    )
 
 
 def test_planner_requires_main_ancestry_and_preserves_immutable_evidence():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 import shutil
@@ -25,6 +26,25 @@ from release_channels import (
 
 ROOT = Path(__file__).resolve().parents[3]
 REGISTRY = ROOT / ".github/releases/components.json"
+
+
+def test_release_channel_repository_io_is_explicitly_utf8():
+    source_path = ROOT / ".github/scripts/release_channels.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"read_text", "write_text", "open"}
+    ]
+    assert calls
+    for call in calls:
+        encoding = next(
+            (keyword.value for keyword in call.keywords if keyword.arg == "encoding"), None
+        )
+        assert isinstance(encoding, ast.Constant), ast.unparse(call)
+        assert encoding.value == "utf-8", ast.unparse(call)
 
 
 def git(root: Path, *args: str) -> str:

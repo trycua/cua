@@ -99,6 +99,7 @@ enum CommandDocExtractor {
             logsDoc,
             checkUpdateDoc,
             updateDoc,
+            channelDoc,
             setupDoc,
             dumpDocsDoc,
         ]
@@ -703,6 +704,36 @@ enum CommandDocExtractor {
                 FlagDoc(name: "json", shortName: nil, help: "Emit the structured update-state payload as JSON", defaultValue: false),
             ],
             subcommands: []
+        )
+    }
+
+    private static var channelDoc: CommandDoc {
+        CommandDoc(
+            name: "channel",
+            abstract: "Inspect or change the stable/nightly update channel; selection does not install",
+            discussion: "Selection is persistent but never installs by itself; use lume update --apply after changing it.",
+            arguments: [],
+            options: [],
+            flags: [],
+            subcommands: [
+                CommandDoc(
+                    name: "status",
+                    abstract: "Show selected and current release channels",
+                    discussion: nil,
+                    arguments: [], options: [],
+                    flags: [FlagDoc(name: "json", shortName: nil, help: "Emit machine-readable channel state as JSON", defaultValue: false)],
+                    subcommands: []
+                ),
+                CommandDoc(
+                    name: "set",
+                    abstract: "Save stable or nightly as the update channel",
+                    discussion: nil,
+                    arguments: [ArgumentDoc(name: "channel", help: "Release channel: stable or nightly", type: "String", isOptional: false)],
+                    options: [],
+                    flags: [FlagDoc(name: "json", shortName: nil, help: "Emit machine-readable channel state as JSON", defaultValue: false)],
+                    subcommands: []
+                ),
+            ]
         )
     }
 

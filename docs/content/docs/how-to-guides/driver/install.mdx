@@ -92,10 +92,40 @@ cua-driver doctor
 
 `doctor` checks the version, install layout, and telemetry setup on every platform. It also runs platform probes for TCC on macOS, the interactive session on Windows, and AT-SPI plus the display server on Linux.
 
+## Follow the nightly channel
+
+Stable is the default. To install the newest nightly and save that preference:
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash
+curl -fsSL https://cua.ai/driver/install.sh | bash -s -- --channel nightly
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+& ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -Channel nightly
+```
+
+  </Tab>
+</Tabs>
+
+Later `cua-driver check-update` and `cua-driver update --apply` stay on nightly.
+Switch back without reinstalling immediately with:
+
+```bash
+cua-driver channel set stable
+cua-driver update --apply
+```
+
+`channel set` saves intent only; `update --apply` performs the binary change.
+
 ## Install an exact nightly
 
-Nightlies are immutable builds of exact `main` commits. They are opt-in and do
-not replace stable update discovery. Copy the full
+Nightlies are immutable builds of exact `main` commits. Copy the full
 `nightly-cua-driver-rs-v…` tag from the component's GitHub release, then pin
 that tag during installation:
 
@@ -119,9 +149,10 @@ Remove-Item Env:CUA_DRIVER_RS_VERSION
   </Tab>
 </Tabs>
 
-The pin is one-shot: later runs of the ordinary installer return to the baked
-stable release. Exact pins never fall back to another release when an asset is
-missing.
+The pin is one-shot: it does not change the saved update channel. A machine
+without a saved preference therefore remains on stable; a machine following
+nightly keeps following nightly. Exact pins never fall back to another release
+when an asset is missing, and cannot be combined with `--channel`.
 
 ## Choose a permission mode
 

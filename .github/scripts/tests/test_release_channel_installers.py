@@ -38,6 +38,8 @@ def run_lume_resolver(tmp_path: Path, version: str, baked: str = "") -> subproce
             GITHUB_REPO="trycua/cua"
             LUME_VERSION="{version}"
             LUME_BAKED_VERSION="{baked}"
+            LUME_CHANNEL="stable"
+            LUME_TAG_PREFIX="lume-v"
             {shell_function(source, "get_latest_lume_tag")}
             get_latest_lume_tag
             """
@@ -86,11 +88,37 @@ def test_lume_exact_pin_rejects_cross_component_and_malformed_tags(
     assert "exact x.y.z stable version or canonical nightly tag" in result.stderr
 
 
-def test_lume_stable_api_filter_is_exact_draft_aware_and_nightly_blind():
+def test_lume_api_filter_is_exact_draft_aware_and_channel_scoped():
     body = shell_function(LUME_INSTALLER.read_text(), "get_latest_lume_tag")
-    assert "tag ~ /^lume-v[0-9]+\\.[0-9]+\\.[0-9]+$/" in body
+    assert 'awk -v prefix="$LUME_TAG_PREFIX" -v channel="$LUME_CHANNEL"' in body
+    assert 'channel == "stable"' in body
+    assert 'channel == "nightly"' in body
     assert '"draft"[[:space:]]*:[[:space:]]*false' in body
-    assert "nightly-lume" not in body.split('if [ -n "$LUME_BAKED_VERSION" ]', 1)[1]
+
+
+def test_installers_make_channel_persistent_but_keep_exact_pins_one_shot():
+    lume = LUME_INSTALLER.read_text()
+    driver = (ROOT / "libs/cua-driver/scripts/_install-rust.sh").read_text()
+    windows = (ROOT / "libs/cua-driver/scripts/install.ps1").read_text(encoding="utf-8-sig")
+
+    assert 'RELEASE_CHANNEL_PATH="$LUME_HOME/release-channel"' in lume
+    assert 'if [ "$LUME_CHANNEL_EXPLICIT" = true ]' in lume
+    assert "--channel cannot be combined with LUME_VERSION" in lume
+    assert 'if [ -n "$LUME_VERSION" ]; then' in lume
+    assert lume.index('if [ -n "$LUME_VERSION" ]; then') < lume.index(
+        'elif [ -f "$RELEASE_CHANNEL_PATH" ]; then'
+    )
+    assert 'CHANNEL_STATE_FILE="$HOME_DIR/release-channel"' in driver
+    assert 'if [[ "$CHANNEL_EXPLICIT" == "1" ]]' in driver
+    assert "--channel cannot be combined with CUA_DRIVER_RS_VERSION" in driver
+    assert 'elif [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then' in driver
+    assert '$ReleaseChannelPath = Join-Path $HomeDir "release-channel"' in windows
+    assert "if ($ChannelWasExplicit)" in windows
+    assert "-Channel cannot be combined with an exact release pin" in windows
+    pin_precedence = "if ($env:CUA_DRIVER_RS_VERSION -or $Release -ne 'latest')"
+    assert windows.index(pin_precedence) < windows.index(
+        "if (Test-Path -LiteralPath $ReleaseChannelPath)"
+    )
 
 
 def test_driver_download_uses_the_resolved_tag_not_the_stable_prefix():

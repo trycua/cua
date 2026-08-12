@@ -115,6 +115,12 @@ pub enum Command {
         json: bool,
         no_cache: bool,
     },
+    /// Persist or inspect the stable/nightly release preference.
+    Channel {
+        subcommand: String,
+        value: Option<String>,
+        json: bool,
+    },
     Doctor {
         json: bool,
     },
@@ -308,6 +314,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("dump-docs") => Some("dump_docs"),
         Some("update") => Some("update"),
         Some("check-update") => Some("check_update"),
+        Some("channel") => Some("channel"),
         Some("doctor") => Some("doctor"),
         Some("diagnose") => Some("diagnose"),
         Some("permissions") => Some("permissions"),
@@ -402,6 +409,11 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
         },
         Some("update") if args.iter().any(|arg| arg == "--apply") => "apply",
         Some("update") => "check_only",
+        Some("channel") => match subcommand.unwrap_or("status") {
+            "status" => "status",
+            "set" => "set",
+            _ => "other",
+        },
         _ => "not_applicable",
     }
 }
@@ -471,7 +483,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, cursor-theme, sessions");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, channel, cursor-theme, sessions");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -492,6 +504,9 @@ pub fn parse_command() -> Command {
         println!("  cua-driver update               Same check as above, then suggest --apply if outdated.");
         println!("    --apply                       Download + install the latest release via the canonical installer.");
         println!("    --json                        Emit the structured check payload (does not change --apply behaviour).");
+        println!("  cua-driver channel status      Show the saved stable/nightly update channel.");
+        println!("  cua-driver channel set <name>  Save stable or nightly; run update --apply to switch binaries.");
+        println!("    --json                        Emit machine-readable channel state.");
         println!();
         println!("autostart options (Windows-only today):");
         println!("  cua-driver autostart enable     Register a logon Scheduled Task so serve starts at every interactive logon.");
@@ -811,6 +826,23 @@ pub fn parse_command() -> Command {
             let json = args.iter().any(|a| a == "--json");
             let no_cache = args.iter().any(|a| a == "--no-cache");
             Command::CheckUpdate { json, no_cache }
+        }
+        Some("channel") => {
+            let subcommand = pos.next().unwrap_or("status").to_owned();
+            let value = pos.next().map(str::to_owned);
+            if !matches!(subcommand.as_str(), "status" | "set") {
+                eprintln!("Unknown channel subcommand '{subcommand}'. Valid: status, set");
+                process::exit(64);
+            }
+            if subcommand == "set" && value.is_none() {
+                eprintln!("Usage: cua-driver channel set <stable|nightly>");
+                process::exit(64);
+            }
+            Command::Channel {
+                subcommand,
+                value,
+                json: args.iter().any(|arg| arg == "--json"),
+            }
         }
         Some("doctor") => {
             // `--json` switches to machine-readable output for scripting.
@@ -1631,6 +1663,13 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--json", "type": "flag", "description": "Emit the structured check payload." },
                   { "name": "--no-cache", "type": "flag", "description": "Force a fresh GitHub round-trip." }
               ] },
+            { "name": "channel",
+              "description": "Inspect or persist the stable/nightly release channel.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "status | set. Default: status." },
+                  { "name": "channel", "type": "positional-string", "description": "stable | nightly (required for set)." },
+                  { "name": "--json", "type": "flag", "description": "Emit machine-readable channel state." }
+              ] },
             { "name": "doctor",
               "description": "Self-diagnose probes for runtime prerequisites (permissions, accessibility, capture, etc.).",
               "args": [ { "name": "--json", "type": "flag", "description": "Machine-readable doctor report." } ] },
@@ -2412,6 +2451,14 @@ pub fn run_update_cmd(apply: bool, json: bool) {
     }
 
     let current = env!("CARGO_PKG_VERSION");
+    let selected_channel = crate::release_channel::selected().unwrap_or_else(|error| {
+        eprintln!("Cannot read release channel: {error}");
+        eprintln!(
+            "Repair it with `cua-driver channel set stable` or `cua-driver channel set nightly`."
+        );
+        process::exit(1);
+    });
+    let current_channel = crate::release_channel::ReleaseChannel::from_version(current);
     if !json {
         println!("Current version: {current}");
         println!("Checking for updates…");
@@ -2444,7 +2491,14 @@ pub fn run_update_cmd(apply: bool, json: bool) {
             }
             process::exit(1);
         }
-        Ok(v) if !crate::version_check::is_newer(&v, current) => {
+        Ok(v)
+            if !crate::version_check::update_is_available(
+                &v,
+                current,
+                current_channel,
+                selected_channel,
+            ) =>
+        {
             crate::telemetry::capture_update_checked(
                 crate::telemetry::UpdateCheckSource::Cli,
                 crate::telemetry::UpdateCheckOutcome::UpToDate,
@@ -3092,6 +3146,58 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
     }
 }
 
+/// Inspect or persist the release channel. Selection never installs by itself;
+/// replacement remains explicit through `cua-driver update --apply`.
+pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
+    let result = match subcommand {
+        "status" => crate::release_channel::selected(),
+        "set" => {
+            let channel = value
+                .unwrap_or_default()
+                .parse::<crate::release_channel::ReleaseChannel>()
+                .unwrap_or_else(|error| {
+                    eprintln!("{error}");
+                    process::exit(64);
+                });
+            if let Err(error) = crate::release_channel::set(channel) {
+                eprintln!("Failed to save release channel: {error}");
+                process::exit(1);
+            }
+            Ok(channel)
+        }
+        _ => unreachable!("validated by parse_command"),
+    };
+
+    let selected = result.unwrap_or_else(|error| {
+        eprintln!("Failed to read release channel: {error}");
+        eprintln!(
+            "Repair it with `cua-driver channel set stable` or `cua-driver channel set nightly`."
+        );
+        process::exit(1);
+    });
+    let current = crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"));
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "selected_channel": selected.as_str(),
+                "current_channel": current.map(|channel| channel.as_str()),
+                "current_version": env!("CARGO_PKG_VERSION"),
+            })
+        );
+    } else {
+        println!("Selected channel: {selected}");
+        match current {
+            Some(channel) => println!("Current channel:  {channel}"),
+            None => println!("Current channel:  development"),
+        }
+        if subcommand == "set" && current != Some(selected) {
+            println!("Run `cua-driver update --apply` to install the latest {selected} release.");
+        }
+    }
+}
+
 fn cli_docs_json() -> serde_json::Value {
     let no_args: Vec<serde_json::Value> = Vec::new();
     let no_options: Vec<serde_json::Value> = Vec::new();
@@ -3325,6 +3431,18 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"json","short_name":null,"help":"Emit the structured update-state payload.","default_value":false}
                 ],
                 "subcommands": no_subcommands
+            },
+            {
+                "name": "channel",
+                "abstract": "Inspect or change the stable/nightly update channel.",
+                "discussion": "Selection is persistent but never installs by itself; use cua-driver update --apply after changing it.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"status","abstract":"Show selected and current release channels.","discussion":"","arguments":[],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable channel state.","default_value":false}],"subcommands":[]},
+                    {"name":"set","abstract":"Save stable or nightly as the update channel.","discussion":"","arguments":[{"name":"channel","help":"stable or nightly","type":"String","is_optional":false}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable channel state.","default_value":false}],"subcommands":[]}
+                ]
             },
             {
                 "name": "doctor",
@@ -4075,6 +4193,11 @@ mod tests {
             "apply"
         );
         assert_eq!(finite_operation_from_args(&args(&["update"])), "check_only");
+        assert_eq!(finite_operation_from_args(&args(&["channel"])), "status");
+        assert_eq!(
+            finite_operation_from_args(&args(&["channel", "set", "private-value"])),
+            "set"
+        );
         assert_eq!(
             finite_operation_from_args(&args(&["doctor", "private-value"])),
             "not_applicable"

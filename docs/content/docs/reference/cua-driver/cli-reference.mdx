@@ -362,6 +362,38 @@ The distinct ID is replaced with a redacted placeholder.
 | ---- | ----------- |
 | `--json` | Emit JSON. |
 
+### `cua-driver channel`
+
+Inspect or change the stable/nightly update channel.
+
+Selection is persistent but never installs by itself; use cua-driver update --apply after changing it.
+
+#### `cua-driver channel status`
+
+Show selected and current release channels.
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable channel state. |
+
+#### `cua-driver channel set`
+
+Save stable or nightly as the update channel.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<channel>` | String | Yes | stable or nightly |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable channel state. |
+
 ### `cua-driver autostart`
 
 Manage platform-native daemon autostart.

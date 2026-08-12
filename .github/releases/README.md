@@ -22,3 +22,26 @@ Nightly release notes reuse the repository's PR-first attribution collector.
 The first nightly is bounded by the component's current stable tag; later
 nightlies are bounded by the previous published nightly. A component therefore
 needs a reachable stable tag before its nightly channel is enabled.
+
+## Persistent consumer selection
+
+Components that let users follow a channel should reuse the same consumer
+contract while keeping product-specific installers and updaters:
+
+- `stable` is the default when no preference exists;
+- `channel set stable|nightly` persists intent without replacing the binary;
+- installer `--channel stable|nightly` persists intent and installs that channel;
+- exact immutable pins outrank saved state, are one-shot, and cannot be combined
+  with an explicit channel;
+- stable and nightly discovery use disjoint prefixes and strict version grammars;
+- update caches include the selected channel, and structured status reports both
+  the selected and current channel; and
+- a channel mismatch is offered as an explicit transition even when ordinary
+  SemVer ordering would point the other way.
+
+Store the preference as a validated one-line `release-channel` file in the
+component's existing product home. A missing file means stable; invalid or
+unreadable state fails closed with a repair command. Product-home overrides must
+relocate the file so installer and updater tests remain isolated. Cua Driver and
+Lume are the reference implementations; [RFC 3101](../../rfcs/3101-persistent-release-channel-selection.md)
+records the full rationale and acceptance matrix.

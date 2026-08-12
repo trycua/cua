@@ -55,6 +55,8 @@
 #   -Release    release to install ("latest", a bare stable version, or a
 #               canonical nightly-cua-driver-rs-v* tag).
 #               Overridden by $env:CUA_DRIVER_RS_VERSION when set.
+#   -Channel    persist and install the latest "stable" or "nightly" release.
+#               Cannot be combined with an exact release pin.
 #   -AutoStart  register a Scheduled Task that runs `cua-driver serve` at
 #               every logon (Windows-native equivalent of macOS LaunchAgent).
 #               The task runs with LogonType=Interactive so it lands in
@@ -77,6 +79,8 @@
 [CmdletBinding()]
 param(
     [string]$Release = "latest",
+    [ValidateSet("stable", "nightly")]
+    [string]$Channel,
     # Default-on: cua-driver-serve is what makes the agent flow work
     # across logon / reboot. Without the scheduled task the user has
     # to remember to run `cua-driver autostart kick` every time, and
@@ -154,6 +158,8 @@ $LegacyHomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
 $PackagesDir = Join-Path $HomeDir   "packages"
 $ReleasesDir = Join-Path $PackagesDir "releases"
 $CurrentDir  = Join-Path $PackagesDir "current"
+$ReleaseChannelPath = Join-Path $HomeDir "release-channel"
+$ChannelWasExplicit = $PSBoundParameters.ContainsKey('Channel')
 
 # Post-install GC: how many per-version release dirs to retain. Validated
 # in Resolve-KeepVersions below; 0 means "never GC".
@@ -908,7 +914,8 @@ function Get-LatestVersionFromApi {
     # the API is unreachable or has no matching tag. Never exits: callers
     # decide whether a miss is fatal, because this runs both as the primary
     # resolver (fatal) and as a recovery step (advisory).
-    Write-Step "resolving latest $TagPrefix* release via GitHub API"
+    $selectedPrefix = if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') { $NightlyTagPrefix } else { $TagPrefix }
+    Write-Step "resolving latest $($Script:CuaDriverRsSelectedChannel) release via GitHub API"
     # Paginate the /releases endpoint until we've seen every release or
     # collected enough $TagPrefix* matches to be confident the latest is
     # in hand. A single page (even at per_page=100) is not guaranteed to
@@ -931,8 +938,11 @@ function Get-LatestVersionFromApi {
             $batch = Invoke-RestMethod -Uri $uri -Headers (Get-GitHubApiHeaders) -UseBasicParsing
             if (-not $batch -or $batch.Count -eq 0) { break }
             $releaseMatches += @($batch | Where-Object {
-                (-not $_.draft) -and
-                ($_.tag_name -match "^$([regex]::Escape($TagPrefix))([0-9]+\.[0-9]+\.[0-9]+)$")
+                if ($_.draft) { return $false }
+                if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') {
+                    return $_.tag_name -match "^$([regex]::Escape($selectedPrefix))([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$"
+                }
+                return $_.tag_name -match "^$([regex]::Escape($selectedPrefix))([0-9]+\.[0-9]+\.[0-9]+)$"
             })
             if ($batch.Count -lt 100) { break }
         }
@@ -944,13 +954,51 @@ function Get-LatestVersionFromApi {
     if (-not $releaseMatches -or $releaseMatches.Count -eq 0) {
         return $null
     }
-    # Sort by SemVer descending. [version] correctly orders dotted triples.
-    $latest = $releaseMatches | Sort-Object {
-        $v = $_.tag_name.Substring($TagPrefix.Length)
-        try { [version]$v } catch { [version]"0.0.0" }
-    } -Descending | Select-Object -First 1
+    if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') {
+        $latest = $releaseMatches | Sort-Object {
+            $v = $_.tag_name.Substring($selectedPrefix.Length)
+            if ($v -match '^([0-9]+\.[0-9]+\.[0-9]+)-nightly\.([0-9]{8})\.([1-9][0-9]*)$') {
+                $base = [version]$Matches[1]
+                return '{0:D10}.{1:D10}.{2:D10}.{3:D10}.{4:D20}' -f $base.Major, $base.Minor, $base.Build, [long]$Matches[2], [long]$Matches[3]
+            }
+            return '0'
+        } -Descending | Select-Object -First 1
+    }
+    else {
+        $latest = $releaseMatches | Sort-Object {
+            $v = $_.tag_name.Substring($selectedPrefix.Length)
+            try { [version]$v } catch { [version]'0.0.0' }
+        } -Descending | Select-Object -First 1
+    }
     Write-Step "latest release: $($latest.tag_name)"
-    return $latest.tag_name.Substring($TagPrefix.Length)
+    return $latest.tag_name.Substring($selectedPrefix.Length)
+}
+
+function Resolve-SelectedChannel {
+    if ($ChannelWasExplicit -and ($env:CUA_DRIVER_RS_VERSION -or $Release -ne 'latest')) {
+        Write-ErrorStep "-Channel cannot be combined with an exact release pin; pins do not change saved channel state"
+        exit 2
+    }
+    if ($ChannelWasExplicit) { return $Channel }
+    if ($env:CUA_DRIVER_RS_VERSION -or $Release -ne 'latest') {
+        # Exact pins are one-shot and outrank persisted preference. This also
+        # preserves a recovery path when the preference file is malformed.
+        return 'stable'
+    }
+    if (Test-Path -LiteralPath $ReleaseChannelPath) {
+        try { $saved = (Get-Content -LiteralPath $ReleaseChannelPath -Raw).Trim() }
+        catch {
+            Write-ErrorStep "cannot read release channel at ${ReleaseChannelPath}: $($_.Exception.Message)"
+            exit 1
+        }
+        if ($saved -notin @('stable', 'nightly')) {
+            Write-ErrorStep "invalid release channel '$saved' in $ReleaseChannelPath; expected stable or nightly"
+            Write-ErrorStep "  repair with: cua-driver channel set stable"
+            exit 1
+        }
+        return $saved
+    }
+    return 'stable'
 }
 
 function Resolve-Version {
@@ -973,7 +1021,7 @@ function Resolve-Version {
     # Baked-version fallback — set by the CD workflow after each release
     # so the default `irm | iex` install path doesn't hit the GitHub API.
     # See the BAKED_VERSION sentinel-block near the top of this file.
-    if ($Script:CuaDriverRsBakedVersion) {
+    if ($Script:CuaDriverRsSelectedChannel -eq 'stable' -and $Script:CuaDriverRsBakedVersion) {
         $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
         Assert-StableVersion $v 'baked release'
         Write-Step "using baked release: $TagPrefix$v"
@@ -983,11 +1031,13 @@ function Resolve-Version {
     }
     $v = Get-LatestVersionFromApi
     if (-not $v) {
-        Write-ErrorStep "no release matching $TagPrefix* found on $Repo"
+        $selectedPrefix = if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') { $NightlyTagPrefix } else { $TagPrefix }
+        Write-ErrorStep "no release matching $selectedPrefix* found on $Repo"
         exit 1
     }
     $Script:CuaDriverRsVersionSource = 'api'
-    $Script:CuaDriverRsReleaseTag = "$TagPrefix$v"
+    $selectedPrefix = if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') { $NightlyTagPrefix } else { $TagPrefix }
+    $Script:CuaDriverRsReleaseTag = "$selectedPrefix$v"
     return $v
 }
 
@@ -1076,10 +1126,10 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
 
     if ($download.ErrorMessage) {
         if (Test-TransientDownloadFailure $download.StatusCode) {
-            Write-ErrorStep "download failed after $($download.Attempts) attempts for $TagPrefix$resolvedVersion ($archLabel): $($download.ErrorMessage)"
+            Write-ErrorStep "download failed after $($download.Attempts) attempts for $Script:CuaDriverRsReleaseTag ($archLabel): $($download.ErrorMessage)"
         }
         else {
-            Write-ErrorStep "download failed for $TagPrefix$resolvedVersion ($archLabel) with HTTP $($download.StatusCode): $($download.ErrorMessage)"
+            Write-ErrorStep "download failed for $Script:CuaDriverRsReleaseTag ($archLabel) with HTTP $($download.StatusCode): $($download.ErrorMessage)"
         }
         Write-ErrorStep "  The requested version was not changed. Check network access and GitHub credentials, then retry."
         exit 1
@@ -1117,7 +1167,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
     }
 
     if ($download.Missing) {
-        $message = "release asset for $TagPrefix$resolvedVersion ($archLabel) was not found (HTTP 404)"
+        $message = "release asset for $Script:CuaDriverRsReleaseTag ($archLabel) was not found (HTTP 404)"
         if ($missingDetail) { $message += "; $missingDetail" }
         Write-ErrorStep "$message."
         if ($Script:CuaDriverRsVersionSource -in @('env', 'release-arg')) {
@@ -1329,6 +1379,7 @@ $target    = Get-TargetTriple
 $archLabel = Get-AssetArchLabel $target
 Write-Step "  target      : $target"
 
+$Script:CuaDriverRsSelectedChannel = Resolve-SelectedChannel
 $version = Resolve-Version
 $versionedDir = Join-Path $ReleasesDir "$version-$target"
 
@@ -1449,6 +1500,13 @@ else {
 # Wire up the junction chain. The inner junction (current → releases\<v>)
 # is what makes the upgrade atomic; the outer junction (bin → current)
 # is what gives users a stable PATH entry.
+if ($ChannelWasExplicit) {
+    New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
+    $channelTempPath = Join-Path $HomeDir (".release-channel." + $PID)
+    Set-Content -LiteralPath $channelTempPath -Value $Script:CuaDriverRsSelectedChannel -Encoding Ascii -NoNewline
+    Move-Item -LiteralPath $channelTempPath -Destination $ReleaseChannelPath -Force
+    Write-Step "saved release channel: $($Script:CuaDriverRsSelectedChannel)"
+}
 Ensure-Junction $CurrentDir    $versionedDir
 Ensure-Junction $VisibleBinDir $CurrentDir
 

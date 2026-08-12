@@ -43,7 +43,26 @@ lume update --apply
 The installer no longer creates scheduled auto-updaters. Older `lume-update` cron jobs and
 LaunchAgents are removed the next time the installer runs.
 
-## Install an exact nightly
+## Choose a release channel
+
+To select nightlies for future checks and explicit updates, install the newest
+nightly and persist the channel in one command:
+
+```bash
+curl -fsSL https://cua.ai/lume/install.sh | bash -s -- --channel nightly
+```
+
+Later checks and explicit updates stay on nightly. Switch back with:
+
+```bash
+lume channel set stable
+lume update --apply
+```
+
+`channel set` never replaces the running binary by itself. Stable remains the
+default on machines without saved channel state.
+
+### Pin one exact nightly
 
 Nightlies are immutable builds of exact `main` commits. Copy the full
 `nightly-lume-v…` tag from the component's GitHub release and pass it as an
@@ -54,9 +73,9 @@ curl -fsSL https://cua.ai/lume/install.sh | \
   LUME_VERSION=nightly-lume-v0.5.4-nightly.20260812.123456789 bash
 ```
 
-Nightlies do not participate in `lume check-update` or stable installer
-discovery. Run the ordinary installer again to return to the baked stable
-release.
+The pin does not change the saved channel and cannot be combined with
+`--channel`. Stable discovery remains blind to nightly tags, and nightly
+discovery remains blind to stable tags.
 
 ## Manual installation
 

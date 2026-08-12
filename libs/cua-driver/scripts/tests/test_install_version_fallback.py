@@ -215,7 +215,7 @@ def test_windows_api_resolver_accepts_published_stable_tags_marked_prerelease() 
             "function Resolve-Version"
         )
     ]
-    assert "(-not $_.draft)" in body
+    assert "if ($_.draft) { return $false }" in body
     assert "(-not $_.prerelease)" not in body
     assert "[0-9]+\\.[0-9]+\\.[0-9]+" in body
 

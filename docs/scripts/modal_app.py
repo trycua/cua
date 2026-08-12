@@ -43,11 +43,23 @@ image = (
     .apt_install("git")
     .pip_install(
         "playwright>=1.40.0",
-        "lancedb>=0.4.0",
-        "sentence-transformers>=2.2.0",
-        "pyarrow>=14.0.1",
+        # Pinned exactly, and kept in step with docs-mcp-server/uv.lock.
+        #
+        # This job writes docs.lance; docs-mcp-server reads it. Both also build
+        # embeddings through lancedb.embeddings.get_registry(). These specs used
+        # to be ">=" on both sides, which looks symmetric but is not: this image
+        # re-resolves on every run while the server's versions froze at whenever
+        # its Docker image was last built. The two drifted apart, the writer
+        # started emitting newer-format Lance manifests, and the server could no
+        # longer open the table -- reporting it as a missing database.
+        #
+        # If you change these, relock docs-mcp-server and rebuild its image in
+        # the same change, so reader and writer move together.
+        "lancedb==0.37.1",
+        "sentence-transformers==5.7.0",
+        "pyarrow==25.0.1",
         "fastapi>=0.100.0",
-        "fastmcp>=2.14.0",
+        "fastmcp>=2.14.0,<3",
         "pydantic>=2.0.0",
         "pandas>=2.0.0",
         "markdown-it-py>=3.0.0",

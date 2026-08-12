@@ -7,7 +7,15 @@ authors = [
     {name = "TryCua", email = "gh@trycua.com"}
 ]
 dependencies = [
-    "fastmcp>=2.14.0",
+    # Held on the 2.x line: main.py is written against the fastmcp 2 API
+    # (FastMCP(...), @mcp.tool(), mcp.http_app()). Moving to 3.x is a
+    # deliberate upgrade, not something a rebuild should pick up silently.
+    "fastmcp>=2.14.0,<3",
+    # lancedb and sentence-transformers must stay in step with the indexer in
+    # ../modal_app.py. Both sides open the same table and build embeddings via
+    # lancedb.embeddings.get_registry(), so a version split between reader and
+    # writer silently breaks vector search. Exact versions come from uv.lock;
+    # when you relock, update the pins in modal_app.py to match.
     "lancedb>=0.4.0",
     "sentence-transformers>=2.2.0",
     "pyarrow>=14.0.1",

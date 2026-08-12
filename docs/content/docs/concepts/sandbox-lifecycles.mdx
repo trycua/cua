@@ -1,0 +1,62 @@
+---
+title: "Sandbox lifecycles"
+description: "How sandboxes begin, persist, and end: machine lifetime versus connection lifetime, suspension, names, pool leases, and snapshot lineage."
+---
+
+A sandbox is a machine with a beginning and an end. Between those two points it can run work, be parked and woken again, outlive the process that created it, and lend its disk state to new images. Most lifecycle mistakes come from conflating three different lifetimes:
+
+- the **machine lifetime**, from provisioning to deletion;
+- the **connection lifetime**, from connect to disconnect; and
+- the **image lineage**, the immutable starting states that sandboxes are created from and can contribute back to.
+
+This page explains how the three interact. For the corresponding code patterns, use [Manage sandbox lifecycle](/how-to-guides/sandbox/lifecycle); for exact signatures, use the [Sandbox SDK reference](/reference/sandbox-sdk).
+
+## Machine lifetime is not connection lifetime
+
+A connection is a transport between your process and a running sandbox. Dropping it with `disconnect` changes nothing inside the machine: processes keep running, files stay in place, and another process can attach later. Deleting the sandbox — `destroy` on a connected instance, or `Sandbox.delete` by name — ends the machine itself and discards its state.
+
+`Sandbox.connect` lives entirely on the connection side. It attaches to a sandbox that already exists, and it never creates, starts, stops, or deletes one. Its context manager therefore only disconnects on exit. `Sandbox.ephemeral` is the opposite: its context manager owns the machine lifetime, so exiting the block deletes the sandbox.
+
+Keeping the two lifetimes separate is what makes long-lived sandboxes useful. One sandbox can accumulate hours of state while many short-lived processes connect, act, and disconnect.
+
+## The states a sandbox moves through
+
+```text
+provisioning → running ⇄ suspended
+```
+
+A sandbox is **provisioning** while its machine is created and booted, **running** while it can execute work, and **suspended** while it is parked. Deletion is terminal and can happen from either side of the last arrow; there is no way back, because deletion is precisely the operation that discards the machine's state. `Sandbox.list` and `Sandbox.get_info` report these statuses, and a sandbox that ended without being deleted — for example a container whose processes exited — reports **stopped**.
+
+Suspending parks the machine without ending it. The disk always survives suspension; whether memory survives depends on the runtime. A local QEMU VM saves its memory image and restores it on resume, a Docker container is paused in place, and Lume and cloud sandboxes stop the machine while keeping its disk. Resuming returns the sandbox to running and hands back a connected instance. Restarting cycles the machine through suspend and resume, which reboots it without losing its disk.
+
+## Three ways a lifecycle begins
+
+An **ephemeral** sandbox scopes the machine lifetime to one block of work. It is created on entry, destroyed on exit, and registered nowhere, so there is nothing to clean up and nothing to leak. This is the right default for tests, CI, and one-shot tasks, and many ephemeral lifecycles can run side by side — see [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out).
+
+A **persistent** sandbox is created once with `Sandbox.create` and keeps running after the creating process exits. Its lifetime ends only when something deletes it deliberately.
+
+A **claimed** sandbox is not created at all. It is leased from a pool of machines that were provisioned ahead of time, so acquisition is fast because booting already happened. The trade is that the pool, not your process, owns the machine — see the section on leases below.
+
+## Names make lifecycles outlive processes
+
+Every sandbox has a name; if you do not supply one, the SDK generates a throwaway one. A persistent sandbox deserves a name you choose, because the name is the durable handle to its lifecycle. A later process uses it to reconnect, inspect status, suspend, resume, restart, or delete — and the by-name operations need no connection at all.
+
+On your own machine, the SDK records each named sandbox it creates so that a later process can route the name to the right local runtime. Ephemeral sandboxes are deliberately never recorded: nothing should be able to find them after their block of work ends.
+
+## Leases: when the platform owns the ending
+
+A pooled sandbox's lifetime is governed by its claim rather than by explicit create and delete calls. The claim carries a shutdown time that the platform enforces. Renewing the claim pushes that time forward; if renewal stops — because an orchestrator crashed, or simply finished — the platform reclaims the machine on its own. Expiry-unless-renewed is what makes abandonment safe at fleet scale: a lost process cannot leak machines forever.
+
+Releasing a claim is not deletion. The machine returns to its pool and is recycled to a clean state for the next claim. The corollary is that state inside a pooled sandbox does not survive the claim: anything worth keeping must be copied out before the claim ends. To create pools and claims, start with [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python).
+
+## Snapshots branch a lifecycle into new ones
+
+A snapshot captures a sandbox's disk at one point in its life and returns a new `Image`. That image can start any number of fresh sandboxes — forks — each beginning exactly where the source left off, each owning its own writable disk from then on. The lineage runs image → sandbox → snapshot → image → more sandboxes, so expensive setup performed once early in one lifecycle can be amortized across many later ones.
+
+A snapshot can share storage with the sandbox it was taken from, so a source sandbox that has produced snapshots should not be casually destroyed. An ephemeral sandbox that has been snapshotted is suspended rather than deleted when its block exits, so the images taken from it keep working. [How sandboxes work](/concepts/how-sandboxes-work) covers images and forks in the broader sandbox model.
+
+## The contract is the same locally and in the cloud
+
+With `local=True` the machine runs on your own hardware, but ephemeral, persistent, connect, suspend, and delete keep the same meanings. What differs is the mechanism underneath: which runtime backs the machine, how suspension is implemented, and the fact that local sandboxes draw on your machine's CPU, memory, and disk.
+
+To watch an ephemeral lifecycle end to end, run [Your first local sandbox](/tutorials/your-first-local-sandbox). To manage persistent sandboxes and reconnection in code, use [Manage sandbox lifecycle](/how-to-guides/sandbox/lifecycle).

@@ -1,0 +1,41 @@
+---
+title: Create a persistent sandbox
+description: Create a sandbox that outlives the current script, then disconnect from or permanently delete it.
+---
+
+Use `Sandbox.create` when the sandbox **must outlive the script**. Call `await sb.disconnect()` to drop the connection while the sandbox keeps running.
+
+```python
+import asyncio
+from cua import Image, Sandbox
+
+async def main():
+    sb = await Sandbox.create(
+        Image.linux(),
+        name='my-dev-sandbox',
+        local=True,
+    )
+    await sb.shell.run('apt-get install -y vim')
+    await sb.disconnect()  # sandbox keeps running
+
+asyncio.run(main())
+```
+
+Delete the sandbox when you are done with it.
+
+```python
+import asyncio
+from cua import Sandbox
+
+async def main():
+    async with Sandbox.connect('my-dev-sandbox', local=True) as sb:
+        await sb.destroy()
+
+asyncio.run(main())
+```
+
+| Method                       | Effect                                            | When            |
+| ---------------------------- | ------------------------------------------------- | --------------- |
+| `await sb.disconnect()`      | keeps running                                     | reconnect later |
+| `await sb.destroy()`         | permanently destroyed                             | done with it    |
+| `await Sandbox.delete(name)` | permanently destroyed by name, without connecting | done with it    |

@@ -1,0 +1,40 @@
+---
+title: Reconnect to a running sandbox
+description: Attach to an existing sandbox by name without starting or stopping it.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use `Sandbox.connect` to attach to an already-running sandbox.
+
+<Callout type="info">
+  `Sandbox.connect` never starts or stops the sandbox. It only manages the network connection.
+</Callout>
+
+Reconnect by name.
+
+```python
+import asyncio
+from cua import Sandbox
+
+async def main():
+    async with Sandbox.connect('my-dev-sandbox', local=True) as sb:
+        result = await sb.shell.run('vim --version')
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+`Sandbox.connect` supports both `await` and `async with`. Its context manager calls `disconnect()` automatically, so the sandbox keeps running after the connection closes.
+
+```python
+import asyncio
+from cua import Sandbox
+
+async def main():
+    async with Sandbox.connect('my-sandbox', local=True) as sb:
+        await sb.shell.run('echo reconnected')
+    # connection dropped, sandbox keeps running
+
+asyncio.run(main())
+```

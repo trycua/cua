@@ -1,0 +1,20 @@
+---
+title: List sandboxes
+description: List existing local or cloud sandboxes and inspect their names, operating systems, and statuses.
+---
+
+List available sandboxes, then filter to local runtimes when needed.
+
+```python
+import asyncio
+from cua import Sandbox
+
+async def main():
+    sandboxes = await Sandbox.list(local=True)
+    for info in sandboxes:
+        print(info.name, info.os_type, info.status)
+
+asyncio.run(main())
+```
+
+Pass `local=True` to list sandboxes on your machine. Omit it to list cloud sandboxes.

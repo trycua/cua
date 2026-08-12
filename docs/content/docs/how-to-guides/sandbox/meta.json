@@ -2,6 +2,11 @@
   "title": "Sandbox",
   "pages": [
     "lifecycle",
+    "create-auto-destroy-sandbox",
+    "create-persistent-sandbox",
+    "reconnect-running-sandbox",
+    "list-sandboxes",
+    "choose-local-runtime",
     "configure-pool-with-terraform",
     "create-pool-with-python",
     "secrets",

@@ -1,7 +1,6 @@
-from pathlib import Path
 import subprocess
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PRIVATE_REGISTRY = "296062593712.dkr.ecr.us-west-2.amazonaws.com"
@@ -13,12 +12,16 @@ PRIVATE_REPOSITORIES = (
 
 class PublicContainerDiskReferenceTests(unittest.TestCase):
     def test_tracked_files_do_not_reference_private_containerdisk_repositories(self) -> None:
-        tracked_files = subprocess.run(
-            ["git", "ls-files", "-z"],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-        ).stdout.decode().split("\0")
+        tracked_files = (
+            subprocess.run(
+                ["git", "ls-files", "-z"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .split("\0")
+        )
         violations = []
         for relative_path in tracked_files:
             if not relative_path:

@@ -60,6 +60,11 @@ VERIFIED_IDENTITY_PR_RE = re.compile(
 )
 TRAILING_PR_RE = re.compile(r"\s+\(#(?P<number>\d+)\)\s*$")
 LEGACY_RELEASE_BUMP_RE = re.compile(r"^Bump (?:cua-driver-rs|lume) to v\S+$", re.IGNORECASE)
+PUBLISHED_INSTALLER_BUMP_RE = re.compile(
+    r"^chore\(cua-driver\): advance published installer version to "
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*) \[skip ci\]$",
+    re.IGNORECASE,
+)
 NOREPLY_RE = re.compile(
     r"^(?:\d+\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?)@users\.noreply\.github\.com$",
     re.IGNORECASE,
@@ -870,9 +875,11 @@ def build_manifest(
     visual_requested = False
 
     for commit in commits_in_range(repo_root, previous_tag, current_ref, paths, exclude_paths):
-        if re.match(
-            r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE
-        ) or LEGACY_RELEASE_BUMP_RE.match(commit.subject):
+        if (
+            re.match(r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE)
+            or LEGACY_RELEASE_BUMP_RE.match(commit.subject)
+            or PUBLISHED_INSTALLER_BUMP_RE.match(commit.subject)
+        ):
             continue
         parsed_subject = parse_conventional_line(commit.subject)
         included_types = ALLOWED_TITLE_TYPES if channel == "nightly" else RELEASING_TYPES

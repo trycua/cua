@@ -18,10 +18,13 @@
 // with a fresh local binding and break the match. Mirrors overlay.rs:12.
 #![allow(non_upper_case_globals)]
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[cfg(test)]
+use std::time::Instant;
 
 use anyhow::{bail, Context};
 use windows::core::{Interface, BSTR};
@@ -57,7 +60,8 @@ const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
 const DESKTOP_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Subtree scans: keep the pre-existing interactive operation budget.
 const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
-const UIA_RECOVERY_COOLDOWN: Duration = Duration::from_secs(30);
+/// Health probes can tolerate the same budget without delaying window listing.
+const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
 
 enum UiaDeadlineError {
     Timeout,
@@ -69,20 +73,16 @@ enum UiaDeadlineError {
 ///
 /// Windows offers no safe way to cancel a COM provider call in another thread.
 /// The gate therefore remains owned by a timed-out worker until that worker
-/// actually returns. Retries fail fast instead of stranding more threads. Once
-/// the provider recovers, the worker releases the gate after a short cooldown.
+/// actually returns. Retries fail fast instead of stranding more threads, then
+/// resume as soon as the provider call returns.
 struct UiaSingleFlight {
     in_flight: AtomicBool,
-    cooldown_until_ms: AtomicU64,
-    cooldown_ms: u64,
 }
 
 impl UiaSingleFlight {
-    const fn new(cooldown_ms: u64) -> Self {
+    const fn new() -> Self {
         Self {
             in_flight: AtomicBool::new(false),
-            cooldown_until_ms: AtomicU64::new(0),
-            cooldown_ms,
         }
     }
 
@@ -97,16 +97,14 @@ impl UiaSingleFlight {
         T: Send + 'static,
         F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
     {
-        let now = now_ms();
-        if now < self.cooldown_until_ms.load(Ordering::Acquire)
-            || self
-                .in_flight
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
+        if self
+            .in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
         {
             tracing::debug!(
                 target: "uia_windows_enum",
-                "UIA {stage} skipped while another provider call is in flight or cooling down"
+                "UIA {stage} skipped while another provider call is in flight"
             );
             return Err(UiaDeadlineError::Busy);
         }
@@ -118,10 +116,7 @@ impl UiaSingleFlight {
         let spawn = thread::Builder::new()
             .name(format!("cua-uia-{stage}"))
             .spawn(move || {
-                let _guard = InFlightGuard {
-                    gate: worker_gate,
-                    cancelled: Arc::clone(&worker_cancelled),
-                };
+                let _guard = InFlightGuard { gate: worker_gate };
                 let result = f(worker_cancelled);
                 let _ = tx.send(result);
             });
@@ -153,39 +148,17 @@ impl UiaSingleFlight {
 
 struct InFlightGuard {
     gate: Arc<UiaSingleFlight>,
-    cancelled: Arc<AtomicBool>,
 }
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
-        if self.cancelled.load(Ordering::Acquire) {
-            self.gate.cooldown_until_ms.store(
-                now_ms().saturating_add(self.gate.cooldown_ms),
-                Ordering::Release,
-            );
-            tracing::warn!(
-                target: "uia_windows_enum",
-                "timed-out UIA provider call returned; cooling down for {}ms before recovery probe",
-                self.gate.cooldown_ms
-            );
-        }
         self.gate.in_flight.store(false, Ordering::Release);
     }
 }
 
 fn uia_single_flight() -> &'static Arc<UiaSingleFlight> {
     static GATE: OnceLock<Arc<UiaSingleFlight>> = OnceLock::new();
-    GATE.get_or_init(|| {
-        Arc::new(UiaSingleFlight::new(
-            UIA_RECOVERY_COOLDOWN.as_millis() as u64
-        ))
-    })
-}
-
-fn now_ms() -> u64 {
-    // Monotonic: cooldown must not depend on wall-clock jumps.
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+    GATE.get_or_init(|| Arc::new(UiaSingleFlight::new()))
 }
 
 fn run_uia_with_deadline<T, F>(
@@ -324,14 +297,14 @@ fn enumerate_top_level_windows_unbounded() -> Vec<WindowInfo> {
 pub(crate) fn probe_desktop_availability() -> Result<(), String> {
     match run_uia_with_deadline(
         "health probe",
-        DESKTOP_CALL_TIMEOUT,
+        HEALTH_PROBE_TIMEOUT,
         "Win32-only window tools",
         probe_desktop_availability_unbounded,
     ) {
         Ok(result) => result,
         Err(UiaDeadlineError::Timeout) => Err(format!(
             "UI Automation desktop enumeration exceeded {}ms; a UIA provider may be hung. Window tools will fall back to Win32-only enumeration until it recovers.",
-            DESKTOP_CALL_TIMEOUT.as_millis()
+            HEALTH_PROBE_TIMEOUT.as_millis()
         )),
         Err(UiaDeadlineError::Busy) => Err(
             "UI Automation is busy with an earlier timed-out provider call; window tools are temporarily using Win32-only enumeration."
@@ -1122,8 +1095,8 @@ mod tests {
     }
 
     #[test]
-    fn wedged_provider_has_bounded_worker_growth_and_recovers() {
-        let gate = Arc::new(UiaSingleFlight::new(40));
+    fn wedged_provider_has_bounded_worker_growth_and_recovers_immediately() {
+        let gate = Arc::new(UiaSingleFlight::new());
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let starts = Arc::new(AtomicUsize::new(0));
@@ -1172,15 +1145,6 @@ mod tests {
         }
         assert!(!gate.in_flight.load(Ordering::Acquire));
         assert_eq!(side_effects.load(Ordering::Acquire), 0);
-
-        let during_cooldown = gate.run("test cooldown", Duration::from_secs(1), "test", |_| 1);
-        assert!(matches!(during_cooldown, Err(UiaDeadlineError::Busy)));
-        let cooldown_deadline = Instant::now() + Duration::from_secs(1);
-        while now_ms() < gate.cooldown_until_ms.load(Ordering::Acquire)
-            && Instant::now() < cooldown_deadline
-        {
-            thread::yield_now();
-        }
 
         let recovered = gate.run("test recovery", Duration::from_secs(1), "test", {
             let starts = Arc::clone(&starts);

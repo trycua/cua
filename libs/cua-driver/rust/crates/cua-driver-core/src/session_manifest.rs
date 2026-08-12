@@ -1816,7 +1816,11 @@ allow:
     #[cfg(feature = "yaml")]
     #[test]
     fn manifest_file_resources_reject_filesystem_roots() {
-        let root = std::path::Path::new(std::path::MAIN_SEPARATOR_STR)
+        let current_dir = std::env::current_dir().unwrap();
+        let root = current_dir
+            .ancestors()
+            .last()
+            .expect("an absolute current directory has a filesystem root")
             .to_string_lossy()
             .into_owned();
         let error = validate_manifest_paths("files.write", vec![root]).unwrap_err();

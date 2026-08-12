@@ -1,14 +1,15 @@
 ---
-title: Configure Fleets with Terraform
-description: Create Linux and Windows run.cua.ai fleets with Terraform and the public Cua Fleets provider.
+title: Configure a sandbox pool with Terraform
+description: Configure reusable Linux and Windows sandbox pools on run.cua.ai with Terraform.
 ---
 
-Use this guide to create a run.cua.ai fleet backed by the public Cua Fleets
-provider. Terraform represents each fleet as a `fleets_pool` resource.
+Use this guide to configure a reusable sandbox pool on run.cua.ai with the
+public Cua Fleets provider. Terraform represents each pool as a `fleets_pool`
+resource.
 
 ## Prerequisites
 
-- A run.cua.ai user key or access token with permission to manage Fleet pools.
+- A run.cua.ai user key or access token with permission to manage sandbox pools.
   Keep credentials in environment variables or a secret manager, not in source
   control.
 - Terraform or OpenTofu.
@@ -41,7 +42,7 @@ In autoscaling mode, do not configure `replicas`; after apply and refresh it
 reports the current pool target. If you later switch to static mode, review the
 plan because the pool will use the `replicas` value you configure.
 
-## Create a Linux fleet
+## Configure a Linux pool
 
 Create a new directory, save this as `main.tf`, and choose a unique lowercase
 DNS-label pool name. This example creates a KubeVirt Linux pool and exposes SSH.
@@ -61,7 +62,7 @@ provider "fleets" {
 }
 
 resource "fleets_pool" "linux" {
-  name                 = "linux-fleet"
+  name                 = "linux-pool"
   cpu_cores            = 4
   memory               = "8Gi"
   container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:main-38352d34"
@@ -81,7 +82,7 @@ resource "fleets_pool" "linux" {
   }
 }
 
-output "linux_fleet" {
+output "linux_pool" {
   value = {
     name             = fleets_pool.linux.name
     namespace        = fleets_pool.linux.namespace
@@ -92,7 +93,7 @@ output "linux_fleet" {
 }
 ```
 
-## Create a Windows fleet
+## Configure a Windows pool
 
 Use a distinct name for Windows. The Windows computer-server image requires
 UEFI, so this example sets `firmware = "efi"` and waits for the service on port
@@ -113,7 +114,7 @@ provider "fleets" {
 }
 
 resource "fleets_pool" "windows" {
-  name                 = "windows-fleet"
+  name                 = "windows-pool"
   cpu_cores            = 4
   memory               = "4Gi"
   container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest"
@@ -141,7 +142,7 @@ resource "fleets_pool" "windows" {
   }
 }
 
-output "windows_fleet" {
+output "windows_pool" {
   value = {
     name             = fleets_pool.windows.name
     namespace        = fleets_pool.windows.namespace
@@ -172,7 +173,7 @@ status visible in the plan and outputs.
 
 The provider returns the backing `namespace` and template name, the live
 `replicas` target, and the `current_replicas` and `ready_replicas` status counts.
-A ready fleet has at least one ready sandbox after its warm pool provisions.
+A ready pool has at least one ready sandbox after its warm capacity provisions.
 
 Destroy the pool when finished. This deletes both the pool and its same-named
 namespace:

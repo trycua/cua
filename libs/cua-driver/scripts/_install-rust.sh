@@ -545,7 +545,11 @@ github_api_curl() {
 # considering it. GitHub's REST response renders those top-level fields on
 # separate lines in that order; nested author/assets objects have no tag_name.
 extract_published_release_versions() {
-    awk -v prefix="$SELECTED_TAG_PREFIX" -v channel="$SELECTED_CHANNEL" '
+    # Keep this helper usable by stable-only callers and extracted test
+    # harnesses that predate persistent channel selection.
+    local selected_channel="${SELECTED_CHANNEL:-stable}"
+    local selected_tag_prefix="${SELECTED_TAG_PREFIX:-$TAG_PREFIX}"
+    awk -v prefix="$selected_tag_prefix" -v channel="$selected_channel" '
         /"tag_name"[[:space:]]*:/ {
             tag = $0
             sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
@@ -583,9 +587,9 @@ resolve_latest_version_from_api() {
         page_json="$(github_api_curl -fsSL \
             "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page")" || return 1
 
-        # Extract only published exact stable x.y.z tags. Cua Driver's stable
-        # tags are marked prerelease in GitHub metadata, so the tag syntax —
-        # not the prerelease flag — decides semantic stability.
+        # Extract only published tags matching the selected channel's strict
+        # grammar. Cua Driver's stable tags are marked prerelease in GitHub
+        # metadata, so tag syntax—not the prerelease flag—defines the channel.
         page_versions="$(printf '%s' "$page_json" | extract_published_release_versions)" || true
         if [[ -n "$page_versions" ]]; then
             versions="${versions}${versions:+$'\n'}${page_versions}"

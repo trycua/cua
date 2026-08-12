@@ -164,7 +164,7 @@ func evalPoolAdmission(t *testing.T, input map[string]any) bool {
 }
 
 func TestPoolAdmissionImagePullSecret(t *testing.T) {
-	const allowedImage = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:latest"
+	const allowedImage = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
 	cases := []struct {
 		name     string
 		method   string
@@ -431,7 +431,7 @@ func TestK8sAllow_GitHubExactScope(t *testing.T) {
 }
 
 func TestPoolAdmissionRequestPolicy(t *testing.T) {
-	const allowedImage = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:latest"
+	const allowedImage = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
 	input := func(method, path, body, sub string, admin bool) map[string]any {
 		return map[string]any{
 			"method": method,

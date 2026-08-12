@@ -3,5 +3,5 @@ resource "fleets_pool" "example" {
   replicas             = 1
   cpu_cores            = 4
   memory               = "8Gi"
-  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:main-38352d34"
+  container_disk_image = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-e5d853a9"
 }

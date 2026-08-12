@@ -6,7 +6,7 @@ legacy_path := "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools"
 
 native_path := "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxtemplates"
 
-allowed_image := "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:latest"
+allowed_image := "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
 
 osworld_v2_digest := "296062593712.dkr.ecr.us-west-2.amazonaws.com/osworld-v2-ubuntu-x86@sha256:6f981825c5970027df510006fcfc1ef7a502d2911f69ed9884f7f217007931dd"
 

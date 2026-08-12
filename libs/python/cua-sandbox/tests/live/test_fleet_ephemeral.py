@@ -20,8 +20,8 @@ from tests.live.fleet_e2e_support import (
 )
 
 IMAGE = (
-    "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo"
-    "@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
+    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
 )
 
 

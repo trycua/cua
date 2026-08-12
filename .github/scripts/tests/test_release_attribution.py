@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator
 from release_attribution import (
     CommitRecord,
     LEGACY_RELEASE_BUMP_RE,
+    PUBLISHED_INSTALLER_BUMP_RE,
     ReleaseError,
     _change_contributors,
     build_manifest,
@@ -331,6 +332,18 @@ def test_legacy_release_bump_subject_is_recognized():
     assert LEGACY_RELEASE_BUMP_RE.match("Bump cua-driver-rs to v0.8.3")
     assert LEGACY_RELEASE_BUMP_RE.match("Bump lume to v0.3.16")
     assert not LEGACY_RELEASE_BUMP_RE.match("feat(driver): bump reconnect retries")
+
+
+def test_published_installer_bump_subject_is_recognized_narrowly():
+    assert PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to nightly [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "feat(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
 
 
 def test_changelog_accepts_verified_commit_link_when_pr_suffix_is_missing():

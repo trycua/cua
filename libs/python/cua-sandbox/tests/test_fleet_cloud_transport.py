@@ -6,6 +6,7 @@ from cua_sandbox import Sandbox as CuaSandbox
 from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 from fleet_sdk import (
+    Firmware,
     OsGymSandboxWarmPoolSpecBuilder,
     OsGymSandboxWarmPoolStatus,
     Pool,
@@ -86,6 +87,18 @@ def test_default_windows_image_becomes_typed_template_request():
     assert request.spec.vm_template.container_disk_image == (
         "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
     )
+
+
+def test_windows_image_boots_uefi():
+    request = FleetCloudTransport(image=Image.windows(), name="demo")._template_request()
+
+    assert request.spec.vm_template.firmware == Firmware.EFI
+
+
+def test_linux_image_leaves_firmware_at_the_schema_default():
+    request = FleetCloudTransport(image=Image.linux(), name="demo")._template_request()
+
+    assert request.spec.vm_template.firmware is None
 
 
 def test_pool_request_uses_the_single_sandbox_name_and_requested_replicas():

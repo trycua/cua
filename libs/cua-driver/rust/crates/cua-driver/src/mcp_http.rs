@@ -22,7 +22,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use cua_driver_core::protocol::{Request, Response};
-use cua_driver_core::server::{handle_request, tool_observation_timer, StdioExecutionPath};
+use cua_driver_core::server::{
+    handle_request_with_transport_session, tool_observation_timer, StdioExecutionPath,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
@@ -178,7 +180,8 @@ async fn dispatch(
     });
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
     let timer = http_tool_observation_timer(&req, |name| sdk.is_known_tool(name));
-    let response = handle_request(req, id, sdk.as_ref()).await;
+    let response =
+        handle_request_with_transport_session(req, id, sdk.as_ref(), transport_session).await;
     if let Some(timer) = timer {
         let outcome = timer.finish(&response);
         if let Some(context) = session_context {

@@ -21,8 +21,8 @@ use std::sync::Arc;
 use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
-    handle_request, observe_proxy_session_started, observe_proxy_tool_completed,
-    tool_observation_timer, StdioExecutionPath,
+    observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
+    StdioExecutionPath,
 };
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
@@ -97,7 +97,13 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
                     StdioExecutionPath::DirectDaemon,
                 );
                 let id = request.id.clone().unwrap_or(serde_json::Value::Null);
-                let response = handle_request(request, id, sdk.as_ref()).await;
+                let response = cua_driver_core::server::handle_request_with_transport_session(
+                    request,
+                    id,
+                    sdk.as_ref(),
+                    &transport_session,
+                )
+                .await;
                 if let Some(metadata) = initialize_metadata {
                     observe_proxy_session_started(metadata);
                     session_observed = true;

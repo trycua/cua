@@ -50,7 +50,12 @@ def repository_path(root: Path, value: str) -> Path:
     return resolved
 
 
-def load_registry(path: Path = DEFAULT_REGISTRY, *, root: Path = ROOT) -> dict[str, Any]:
+def load_registry(
+    path: Path = DEFAULT_REGISTRY,
+    *,
+    root: Path = ROOT,
+    require_stable_state: bool = True,
+) -> dict[str, Any]:
     registry = read_json(path)
     if registry.get("schemaVersion") != 1:
         raise ChannelError("component registry schemaVersion must be 1")
@@ -122,25 +127,36 @@ def load_registry(path: Path = DEFAULT_REGISTRY, *, root: Path = ROOT) -> dict[s
             raise ChannelError(
                 f"component {name} stable prefix must match Release Please: {expected_prefix}"
             )
-        authority = (
-            repository_path(root, component["versionAuthorityFile"])
-            .read_text(encoding="utf-8")
-            .strip()
-        )
-        if not SEMVER_RE.fullmatch(authority):
-            raise ChannelError(f"component {name} authority is not a stable version: {authority!r}")
-        if release_manifest.get(package_path) != authority:
-            raise ChannelError(
-                f"component {name} authority {authority} differs from Release Please manifest "
-                f"{release_manifest.get(package_path)!r}"
+        if require_stable_state:
+            authority = (
+                repository_path(root, component["versionAuthorityFile"])
+                .read_text(encoding="utf-8")
+                .strip()
             )
+            if not SEMVER_RE.fullmatch(authority):
+                raise ChannelError(
+                    f"component {name} authority is not a stable version: {authority!r}"
+                )
+            if release_manifest.get(package_path) != authority:
+                raise ChannelError(
+                    f"component {name} authority {authority} differs from Release Please manifest "
+                    f"{release_manifest.get(package_path)!r}"
+                )
     return registry
 
 
 def component_descriptor(
-    name: str, path: Path = DEFAULT_REGISTRY, *, root: Path = ROOT
+    name: str,
+    path: Path = DEFAULT_REGISTRY,
+    *,
+    root: Path = ROOT,
+    require_stable_state: bool = True,
 ) -> dict[str, Any]:
-    registry = load_registry(path, root=root)
+    registry = load_registry(
+        path,
+        root=root,
+        require_stable_state=require_stable_state,
+    )
     try:
         return dict(registry["components"][name])
     except KeyError as error:
@@ -391,7 +407,12 @@ def build_manifest(
     attribution_config_path: Path | None = None,
     github: release_attribution.GitHubClient | None = None,
 ) -> dict[str, Any]:
-    component = component_descriptor(name, registry_path, root=root)
+    component = component_descriptor(
+        name,
+        registry_path,
+        root=root,
+        require_stable_state=False,
+    )
     parsed = parse_tag(component, "nightly", tag)
     if parsed != version:
         raise ChannelError(f"tag version {parsed} differs from requested version {version}")
@@ -405,7 +426,11 @@ def build_manifest(
     if not base_sha:
         raise ChannelError(f"nightly attribution base has no commit: {previous_tag}")
     _git(root, "merge-base", "--is-ancestor", base_sha, source_sha)
-    registry = load_registry(registry_path, root=root)
+    registry = load_registry(
+        registry_path,
+        root=root,
+        require_stable_state=False,
+    )
     paths = sorted(
         {
             *(str(path) for path in component["changeDetectionPaths"]),

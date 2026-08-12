@@ -265,6 +265,50 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
     assert plan["attributionBaseTag"] == plan["previousNightlyTag"]
 
 
+def test_manifest_accepts_an_artifact_tree_with_staged_nightly_versions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    registry, root = copy_version_fixture(tmp_path, "cua-driver-rs")
+    git(root, "init")
+    git(root, "config", "user.name", "Release Test")
+    git(root, "config", "user.email", "release@example.com")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "chore: seed fixture")
+    git(root, "tag", "cua-driver-rs-v0.19.3")
+    source_sha = git(root, "rev-parse", "HEAD")
+    version = "0.19.4-nightly.20260812.42"
+    apply_version("cua-driver-rs", version, registry_path=registry, root=root)
+
+    with pytest.raises(ChannelError, match="authority is not a stable version"):
+        load_registry(registry, root=root)
+
+    assets = root / "release-upload"
+    assets.mkdir()
+    (assets / "cua-driver.tar.gz").write_bytes(b"nightly")
+
+    def fake_build_manifest(**kwargs):
+        return {"version": kwargs["version"], "tag": kwargs["tag"]}
+
+    monkeypatch.setattr(release_channels.release_attribution, "build_manifest", fake_build_manifest)
+    manifest = build_manifest(
+        "cua-driver-rs",
+        version,
+        f"nightly-cua-driver-rs-v{version}",
+        source_sha,
+        "cua-driver-rs-v0.19.3",
+        assets,
+        repository="trycua/cua",
+        registry_path=registry,
+        root=root,
+        attribution_config_path=ROOT / ".github/release-attribution-config.json",
+        github=object(),
+    )
+    assert manifest == {
+        "version": version,
+        "tag": f"nightly-cua-driver-rs-v{version}",
+    }
+
+
 def test_nightly_manifest_reuses_pr_attribution_and_renders_contributors(tmp_path: Path):
     registry, root = copy_version_fixture(tmp_path, "lume")
     git(root, "init")

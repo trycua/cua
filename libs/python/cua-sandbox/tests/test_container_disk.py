@@ -6,8 +6,35 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+import requests
 from cua_sandbox.image import DEFAULT_LINUX_REGISTRY_IMAGE, Image
-from cua_sandbox.registry.container_disk import _LOCK_POLL_INTERVAL_SECONDS, pull_container_disk
+from cua_sandbox.registry import container_disk
+from cua_sandbox.registry.container_disk import (
+    _LOCK_POLL_INTERVAL_SECONDS,
+    _detect_auth_backend,
+    pull_container_disk,
+)
+
+BEARER_CHALLENGE = 'Bearer realm="https://public.ecr.aws/token/",service="public.ecr.aws"'
+BASIC_CHALLENGE = 'Basic realm="https://296062593712.dkr.ecr.us-west-2.amazonaws.com/"'
+
+
+def _fake_ping(monkeypatch, challenge, *, probes=None):
+    """Stub the /v2/ auth-challenge probe."""
+
+    def fake_get(url, timeout=None):
+        if probes is not None:
+            probes.append(url)
+        return SimpleNamespace(headers={"WWW-Authenticate": challenge} if challenge else {})
+
+    monkeypatch.setattr(container_disk.requests, "get", fake_get)
+
+
+@pytest.fixture(autouse=True)
+def _never_probe_a_real_registry(monkeypatch):
+    """Keep the auth-challenge probe off the network unless a test opts in."""
+    _fake_ping(monkeypatch, BEARER_CHALLENGE)
+
 
 # The real ECR image is a multi-arch index whose children are the per-platform manifests
 # plus a buildx attestation manifest.
@@ -44,7 +71,79 @@ def _layer_with_disk(contents: bytes, *, path: str = "disk/disk.img") -> bytes:
     return gzip.compress(raw.getvalue())
 
 
-def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path):
+@pytest.mark.parametrize(
+    ("ref", "challenge", "expected"),
+    [
+        # public.ecr.aws is anonymously readable but still uses the Bearer token flow.
+        ("public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-e5d853a9", BEARER_CHALLENGE, "token"),
+        # Private ECR answers with Basic and rejects oras' token backend.
+        ("296062593712.dkr.ecr.us-west-2.amazonaws.com/duo:main", BASIC_CHALLENGE, "basic"),
+        ("ghcr.io/trycua/workspace:latest", BEARER_CHALLENGE, "token"),
+        # No challenge at all (open registry) — assume the OCI-standard bearer flow.
+        ("registry.example/workspace:latest", "", "token"),
+    ],
+)
+def test_auth_backend_follows_the_registry_challenge(monkeypatch, ref, challenge, expected):
+    probes = []
+    _fake_ping(monkeypatch, challenge, probes=probes)
+
+    assert _detect_auth_backend(ref) == expected
+    assert probes == [f"https://{ref.split('/', 1)[0]}/v2/"]
+
+
+def test_auth_backend_defaults_to_token_when_the_probe_fails(monkeypatch):
+    def boom(url, timeout=None):
+        raise requests.ConnectionError("no route to host")
+
+    monkeypatch.setattr(container_disk.requests, "get", boom)
+
+    assert _detect_auth_backend("registry.example/workspace:latest") == "token"
+
+
+def test_auth_backend_skips_the_probe_for_a_hostless_ref(monkeypatch):
+    def boom(url, timeout=None):
+        raise AssertionError("a ref without a registry host must not be probed")
+
+    monkeypatch.setattr(container_disk.requests, "get", boom)
+
+    assert _detect_auth_backend("workspace:latest") == "token"
+
+
+def test_explicit_auth_backend_overrides_detection(tmp_path, monkeypatch):
+    calls = []
+
+    def boom(url, timeout=None):
+        raise AssertionError("an explicit auth_backend must not trigger a probe")
+
+    monkeypatch.setattr(container_disk.requests, "get", boom)
+
+    class Registry:
+        def __init__(self, *, auth_backend):
+            calls.append(("init", auth_backend))
+            self.auth = SimpleNamespace(load_configs=lambda container: None)
+
+        def get_container(self, ref):
+            return "container"
+
+        def get_manifest(self, ref):
+            return {"layers": [{"digest": "sha256:layer"}]}
+
+        def get_blob(self, container, digest, *, stream):
+            return SimpleNamespace(raw=io.BytesIO(_layer_with_disk(b"qcow2")))
+
+    disk = pull_container_disk(
+        "registry.example/workspace:latest",
+        cache_root=tmp_path,
+        auth_backend="basic",
+        registry_factory=Registry,
+    )
+
+    assert disk.read_bytes() == b"qcow2"
+    assert calls == [("init", "basic")]
+
+
+def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path, monkeypatch):
+    _fake_ping(monkeypatch, BEARER_CHALLENGE)
     calls = []
     manifest = {
         "layers": [
@@ -82,10 +181,10 @@ def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path):
 
     assert disk.name == "disk.qcow2"
     assert disk.read_bytes() == b"qcow2"
-    # ECR rejects oras' token backend ("This endpoint requires a token. Please use basic
-    # auth with a username or password."), so the pull must use basic auth.
+    # The backend comes from the registry's challenge — hardcoding either one breaks
+    # half the registries (see test_auth_backend_follows_the_registry_challenge).
     assert calls == [
-        ("init", "basic"),
+        ("init", "token"),
         ("container", DEFAULT_LINUX_REGISTRY_IMAGE),
         ("auth", "container"),
         ("manifest", DEFAULT_LINUX_REGISTRY_IMAGE),

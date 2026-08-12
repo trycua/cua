@@ -11,6 +11,24 @@ import pytest
 INSTALL_LOCAL = Path(__file__).resolve().parents[1] / "_install-local-rust.sh"
 LOCAL_SIGNING = INSTALL_LOCAL.with_name("_local-signing.sh")
 DISPATCHER = INSTALL_LOCAL.with_name("install-local.sh")
+WINDOWS_INSTALL_LOCAL = INSTALL_LOCAL.with_name("install-local.ps1")
+SKILL_PACK = INSTALL_LOCAL.parents[1] / "rust/Skills/cua-driver"
+
+
+def test_local_installers_stage_the_canonical_skill_pack() -> None:
+    windows = WINDOWS_INSTALL_LOCAL.read_text(encoding="utf-8")
+
+    assert 'Join-Path $RepoRoot "Skills\\cua-driver"' in windows
+    assert 'Join-Path $VersionedDir "Skills\\cua-driver"' in windows
+    assert "Skills\\cua-driver-rs" not in windows
+    assert "Skills/cua-driver-rs" not in INSTALL_LOCAL.read_text(encoding="utf-8")
+    assert {path.name for path in SKILL_PACK.iterdir()} >= {
+        "SKILL.md",
+        "BROWSER.md",
+        "MACOS.md",
+        "WINDOWS.md",
+        "LINUX.md",
+    }
 
 
 def _write_executable(path: Path, body: str) -> None:

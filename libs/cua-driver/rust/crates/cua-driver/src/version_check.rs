@@ -271,12 +271,7 @@ pub fn check_update_state(no_cache: bool) -> UpdateState {
 
     let update_available = latest
         .as_deref()
-        .map(|latest| {
-            current_channel
-                .map(|channel| channel != selected_channel)
-                .unwrap_or(false)
-                || is_newer(latest, &current)
-        })
+        .map(|latest| update_is_available(latest, &current, current_channel, selected_channel))
         .unwrap_or(false);
 
     let (install_command, release_notes_url) = if update_available {
@@ -408,7 +403,7 @@ where
         .unwrap_or(cached.dismissed_versions);
 
     let current_channel = crate::release_channel::ReleaseChannel::from_version(current);
-    if current_channel == Some(selected_channel) && !is_newer(&latest, current) {
+    if !update_is_available(&latest, current, current_channel, selected_channel) {
         return;
     }
     if dismissed.iter().any(|v| v == &latest) {
@@ -524,6 +519,18 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
         return false;
     };
     l > c
+}
+
+pub fn update_is_available(
+    latest: &str,
+    current: &str,
+    current_channel: Option<crate::release_channel::ReleaseChannel>,
+    selected_channel: crate::release_channel::ReleaseChannel,
+) -> bool {
+    current_channel
+        .map(|channel| channel != selected_channel)
+        .unwrap_or(false)
+        || is_newer(latest, current)
 }
 
 // ── On-disk cache ────────────────────────────────────────────────────────
@@ -794,6 +801,23 @@ mod tests {
     fn is_newer_treats_pre_release_as_lower_than_release() {
         // 0.1.3 > 0.1.3-dev — semver rule: release > pre-release of same triple.
         assert!(is_newer("0.1.3", "0.1.3-dev"));
+    }
+
+    #[test]
+    fn channel_mismatch_is_available_even_when_target_version_is_lower() {
+        use crate::release_channel::ReleaseChannel::{Nightly, Stable};
+        assert!(update_is_available(
+            "0.19.3",
+            "0.19.4-nightly.20260812.42",
+            Some(Nightly),
+            Stable,
+        ));
+        assert!(!update_is_available(
+            "0.19.3",
+            "0.19.4",
+            Some(Stable),
+            Stable,
+        ));
     }
 
     #[test]

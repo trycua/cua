@@ -13,7 +13,10 @@ enum LumeReleaseChannel: String, Codable, CaseIterable {
     }
 
     static func selected() throws -> LumeReleaseChannel {
-        let url = stateFileURL()
+        try selected(at: stateFileURL())
+    }
+
+    static func selected(at url: URL) throws -> LumeReleaseChannel {
         guard FileManager.default.fileExists(atPath: url.path) else { return .stable }
         let value = try String(contentsOf: url, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -24,7 +27,10 @@ enum LumeReleaseChannel: String, Codable, CaseIterable {
     }
 
     static func set(_ channel: LumeReleaseChannel) throws {
-        let url = stateFileURL()
+        try set(channel, at: stateFileURL())
+    }
+
+    static func set(_ channel: LumeReleaseChannel, at url: URL) throws {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true

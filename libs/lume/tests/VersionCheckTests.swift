@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import Testing
 @testable import lume
 
@@ -52,5 +53,34 @@ struct VersionCheckTests {
         #expect(LumeReleaseChannel.current(for: "0.5.4-rc.1") == nil)
         #expect(LumeReleaseChannel.nightlyVersion("0.5.4-nightly.20260812.0") == nil)
         #expect(LumeReleaseChannel.nightlyVersion("0.5.4-nightly.20260812.01") == nil)
+    }
+
+    @Test func releaseChannelStateRoundTripsAndFailsClosed() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent(LumeReleaseChannel.fileName)
+        #expect(try LumeReleaseChannel.selected(at: path) == .stable)
+        try LumeReleaseChannel.set(.nightly, at: path)
+        #expect(try LumeReleaseChannel.selected(at: path) == .nightly)
+        try Data("broken\n".utf8).write(to: path)
+        #expect(throws: LumeReleaseChannelError.self) {
+            try LumeReleaseChannel.selected(at: path)
+        }
+    }
+
+    @Test func channelMismatchIsAnUpdateEvenWhenTheTargetVersionIsLower() {
+        #expect(LumeVersionCheck.updateIsAvailable(
+            latest: "0.5.3",
+            current: "0.5.4-nightly.20260812.42",
+            currentChannel: .nightly,
+            selectedChannel: .stable
+        ))
+        #expect(!LumeVersionCheck.updateIsAvailable(
+            latest: "0.5.3",
+            current: "0.5.4",
+            currentChannel: .stable,
+            selectedChannel: .stable
+        ))
     }
 }

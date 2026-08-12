@@ -139,7 +139,12 @@ enum LumeVersionCheck {
         }
 
         let updateAvailable = latest.map {
-            currentChannel.map { $0 != selectedChannel } ?? false || isNewer($0, than: current)
+            updateIsAvailable(
+                latest: $0,
+                current: current,
+                currentChannel: currentChannel,
+                selectedChannel: selectedChannel
+            )
         } ?? false
         let prefix = selectedChannel == .nightly ? nightlyReleaseTagPrefix : releaseTagPrefix
         let releaseNotesURL =
@@ -217,6 +222,15 @@ enum LumeVersionCheck {
 
     static func isNewer(_ lhs: String, than rhs: String) -> Bool {
         compare(lhs, rhs) == .orderedDescending
+    }
+
+    static func updateIsAvailable(
+        latest: String,
+        current: String,
+        currentChannel: LumeReleaseChannel?,
+        selectedChannel: LumeReleaseChannel
+    ) -> Bool {
+        currentChannel.map { $0 != selectedChannel } ?? false || isNewer(latest, than: current)
     }
 
     static func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {

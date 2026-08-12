@@ -2492,8 +2492,12 @@ pub fn run_update_cmd(apply: bool, json: bool) {
             process::exit(1);
         }
         Ok(v)
-            if current_channel == Some(selected_channel)
-                && !crate::version_check::is_newer(&v, current) =>
+            if !crate::version_check::update_is_available(
+                &v,
+                current,
+                current_channel,
+                selected_channel,
+            ) =>
         {
             crate::telemetry::capture_update_checked(
                 crate::telemetry::UpdateCheckSource::Cli,

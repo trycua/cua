@@ -1,6 +1,6 @@
 """Run a local Windows VM in Python with the Cua Sandbox SDK.
 
-    async with Sandbox.ephemeral(Image.windows("11"), local=True) as sb:
+    async with Sandbox.ephemeral(Image.windows(), local=True) as sb:
         await sb.shell.run("ver")
         screenshot = await sb.screenshot()
 
@@ -9,8 +9,11 @@ or QEMURuntime (bare-metal) as a fallback. Use local=True to run on your machine
 drop it to run on the Cua cloud instead.
 
 Contrast:
-    Image.windows("11")  + local=True  -> Hyper-V or QEMU VM (this file)
-    Image.windows("11")  + local=False -> Cua cloud Windows VM
+    Image.windows()  + local=True  -> Hyper-V or QEMU VM (this file)
+    Image.windows()  + local=False -> Cua cloud Windows VM
+
+Image.windows() is Windows Server 2022 and boots the pinned containerDisk.
+Image.windows("11") is client Windows 11 and installs from an evaluation ISO.
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ def _has_qemu() -> bool:
 @pytest.mark.skipif(not _has_qemu(), reason="QEMU not available")
 async def test_windows_local_vm():
     async with Sandbox.ephemeral(
-        Image.windows("11"),
+        Image.windows(),
         local=True,
         name="example-windows-local-vm",
     ) as sb:
@@ -53,7 +56,7 @@ async def test_windows_local_vm():
 
 async def main():
     async with Sandbox.ephemeral(
-        Image.windows("11"),
+        Image.windows(),
         local=True,
         name="example-windows-local-vm",
     ) as sb:

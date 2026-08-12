@@ -11,8 +11,10 @@ import asyncio
 import json as _json
 import logging
 import platform as _plat
+import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -152,6 +154,42 @@ class QEMUDockerRuntime(DockerRuntime):
         return info
 
 
+# UEFI firmware for Windows guests, as (code, vars-template) pairs. The two halves
+# are sized to match each other, so they are always taken from the same entry — a
+# 4 MB OVMF build paired with a 2 MB varstore leaves the guest unable to boot.
+# Paths are relative to the bundled QEMU directory, or absolute for system installs.
+_UEFI_FIRMWARE_CANDIDATES: list[tuple[str, str]] = [
+    ("share/edk2-x86_64-code.fd", "share/edk2-i386-vars.fd"),
+    ("/usr/share/OVMF/OVMF_CODE_4M.fd", "/usr/share/OVMF/OVMF_VARS_4M.fd"),
+    ("/usr/share/OVMF/OVMF_CODE.fd", "/usr/share/OVMF/OVMF_VARS.fd"),
+    ("/usr/share/qemu/edk2-x86_64-code.fd", "/usr/share/qemu/edk2-i386-vars.fd"),
+]
+
+
+def _locate_uefi_firmware(qemu_dir: Path) -> tuple[Optional[Path], Optional[Path]]:
+    """Return the first (OVMF code, matching vars template) pair present on this host."""
+    for code_name, vars_name in _UEFI_FIRMWARE_CANDIDATES:
+        code = Path(code_name) if code_name.startswith("/") else qemu_dir / code_name
+        if not code.exists():
+            continue
+        template = Path(vars_name) if vars_name.startswith("/") else qemu_dir / vars_name
+        return code, template if template.exists() else None
+    return None, None
+
+
+def _locate_uefi_firmware_in(exists: Callable[[str], bool]) -> tuple[Optional[str], Optional[str]]:
+    """Same lookup as :func:`_locate_uefi_firmware`, for a guest filesystem like WSL.
+
+    Only the absolute candidates apply — a WSL distro has its own /usr/share, and the
+    Windows-side bundled QEMU directory is not on its path.
+    """
+    for code_name, vars_name in _UEFI_FIRMWARE_CANDIDATES:
+        if not code_name.startswith("/") or not exists(code_name):
+            continue
+        return code_name, vars_name if exists(vars_name) else None
+    return None, None
+
+
 class QEMUBaremetalRuntime(Runtime):
     """Bare-metal QEMU — launches qemu-system-* directly on the host.
 
@@ -258,24 +296,16 @@ class QEMUBaremetalRuntime(Runtime):
 
         # Locate OVMF UEFI firmware for Windows VMs
         qemu_dir = Path(self._qemu_bin()).parent
-        ovmf_code = None
-        if image.os_type == "windows":
-            for candidate in [
-                qemu_dir / "share" / "edk2-x86_64-code.fd",
-                Path("/usr/share/OVMF/OVMF_CODE.fd"),
-                Path("/usr/share/qemu/edk2-x86_64-code.fd"),
-            ]:
-                if candidate.exists():
-                    ovmf_code = candidate
-                    break
+        ovmf_code, vars_template = (
+            _locate_uefi_firmware(qemu_dir) if image.os_type == "windows" else (None, None)
+        )
 
-        # EFI vars — look next to disk or copy template
+        # EFI vars — look next to disk or copy the template that matches the firmware
         efivars = Path(disk_path).parent / "efivars.fd"
         if ovmf_code and not efivars.exists():
             import shutil as _shutil
 
-            vars_template = qemu_dir / "share" / "edk2-i386-vars.fd"
-            if vars_template.exists():
+            if vars_template is not None:
                 _shutil.copy2(vars_template, efivars)
             else:
                 efivars.write_bytes(b"\x00" * (256 * 1024))
@@ -769,6 +799,11 @@ class QEMUBaremetalRuntime(Runtime):
         raise TimeoutError(f"Bare-metal QEMU VM {info.name} QMP not ready after {timeout}s")
 
 
+# A drive-letter path such as C:\\Users\\... or C:/Users/..., which QEMU running
+# inside WSL would otherwise parse as a URI with scheme "C".
+_WINDOWS_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+
+
 def _win_to_wsl(p: Path | str) -> str:
     """Convert a Windows path to WSL /mnt/... path."""
     s = str(p).replace("\\", "/")
@@ -820,6 +855,40 @@ class QEMUWSL2Runtime(Runtime):
             raise RuntimeError(f"WSL command failed: {r.stderr.strip()}")
         return r.stdout.strip()
 
+    def _wsl_file_exists(self, path: str) -> bool:
+        """True when `path` is a regular file inside the WSL distribution."""
+        try:
+            self._wsl(f"test -f {path}")
+            return True
+        except (RuntimeError, subprocess.SubprocessError, OSError):
+            return False
+
+    def _rebase_backing_file(self, wsl_disk: str) -> None:
+        """Rewrite a session overlay's backing path into WSL's view of the filesystem.
+
+        The overlay is created by the Windows-side builder, so its recorded backing
+        file is a Windows path. QEMU inside WSL reads the drive letter as a URI scheme
+        and refuses the drive with ``Could not open backing file: Unknown protocol 'C'``.
+        The rebase is metadata-only (``-u``): it repoints the overlay without touching
+        a byte of either image.
+        """
+        try:
+            info = _json.loads(self._wsl(f"qemu-img info --output=json '{wsl_disk}'"))
+        except (RuntimeError, ValueError) as exc:
+            logger.debug("Could not inspect %s for a backing file: %s", wsl_disk, exc)
+            return
+
+        backing = info.get("backing-filename")
+        if not backing or not _WINDOWS_DRIVE_PATH.match(backing):
+            return
+
+        wsl_backing = _win_to_wsl(backing)
+        logger.info("Rebasing %s onto its WSL backing path %s", wsl_disk, wsl_backing)
+        self._wsl(
+            f"qemu-img rebase -u -f qcow2 -F qcow2 -b '{wsl_backing}' '{wsl_disk}'",
+            timeout=120,
+        )
+
     @staticmethod
     def available() -> bool:
         """Check if WSL2 + QEMU + KVM are available."""
@@ -864,44 +933,31 @@ class QEMUWSL2Runtime(Runtime):
 
         # Convert Windows paths to WSL paths
         wsl_disk = _win_to_wsl(disk_path)
+        self._rebase_backing_file(wsl_disk)
         disk_ext = Path(disk_path).suffix.lower()
         disk_fmt = {".qcow2": "qcow2", ".vhdx": "vhdx", ".raw": "raw", ".img": "raw"}.get(
             disk_ext, "raw"
         )
 
-        # Locate OVMF inside WSL
-        ovmf_code = None
-        if image.os_type == "windows":
-            for candidate in [
-                "/usr/share/OVMF/OVMF_CODE_4M.fd",
-                "/usr/share/OVMF/OVMF_CODE.fd",
-                "/usr/share/qemu/edk2-x86_64-code.fd",
-            ]:
-                try:
-                    self._wsl(f"test -f {candidate}")
-                    ovmf_code = candidate
-                    break
-                except RuntimeError:
-                    pass
+        # Locate OVMF inside WSL — code and vars must come from the same entry, or a
+        # 4 MB firmware ends up backed by a 2 MB varstore and the guest cannot boot.
+        ovmf_code, vars_template = (
+            _locate_uefi_firmware_in(self._wsl_file_exists)
+            if image.os_type == "windows"
+            else (None, None)
+        )
 
         # EFI vars — create in same dir as disk (WSL path)
         efivars_win = Path(disk_path).parent / "efivars.fd"
         wsl_efivars = _win_to_wsl(efivars_win)
         if ovmf_code and not efivars_win.exists():
-            # Copy OVMF vars template via WSL
-            for vars_candidate in [
-                "/usr/share/OVMF/OVMF_VARS_4M.fd",
-                "/usr/share/OVMF/OVMF_VARS.fd",
-                "/usr/share/qemu/edk2-i386-vars.fd",
-            ]:
-                try:
-                    self._wsl(f"test -f {vars_candidate} && cp {vars_candidate} '{wsl_efivars}'")
-                    break
-                except RuntimeError:
-                    continue
-            else:
-                # Create empty vars file
-                efivars_win.write_bytes(b"\x00" * (256 * 1024))
+            if vars_template is None:
+                raise RuntimeError(
+                    f"WSL has UEFI firmware at {ovmf_code} but no matching variable store. "
+                    "Install the OVMF package inside the WSL distribution "
+                    "(apt install ovmf) so the two halves match."
+                )
+            self._wsl(f"cp {vars_template} '{wsl_efivars}'")
 
         # Build QEMU command (runs inside WSL)
         parts = [

@@ -3,6 +3,7 @@
 import pytest
 from cua_sandbox.image import (
     DEFAULT_LINUX_REGISTRY_IMAGE,
+    DEFAULT_WINDOWS_REGISTRY_IMAGE,
     Image,
     cloud_registry_image,
 )
@@ -14,24 +15,6 @@ class TestImageBuilder:
         assert img.os_type == "linux"
         assert img.distro == "ubuntu"
         assert img.version == "24.04"
-        assert cloud_registry_image(img) == DEFAULT_LINUX_REGISTRY_IMAGE
-
-    @pytest.mark.parametrize(
-        "image",
-        [
-            Image.linux("debian", "12"),
-            Image.linux("ubuntu", "22.04"),
-            Image.linux("ubuntu", "24.04", kind="container"),
-            Image.windows(),
-        ],
-    )
-    def test_non_default_images_have_no_cloud_registry_default(self, image):
-        assert cloud_registry_image(image) is None
-
-    def test_explicit_registry_is_cloud_override(self):
-        image = Image.linux()._with(_registry="registry.example/custom:latest")
-
-        assert cloud_registry_image(image) == "registry.example/custom:latest"
 
     def test_macos(self):
         img = Image.macos("15")
@@ -40,6 +23,56 @@ class TestImageBuilder:
     def test_windows(self):
         img = Image.windows("11")
         assert img.os_type == "windows"
+        assert img.distro == "windows"
+        assert img.version == "11"
+
+    def test_windows_defaults_to_the_version_with_a_pinned_disk(self):
+        assert Image.windows().version == "2022"
+
+
+class TestBuiltinRegistryImages:
+    """Built-in descriptors resolve to the pinned containerDisks the cloud boots."""
+
+    @pytest.mark.parametrize(
+        "image, expected",
+        [
+            (Image.linux(), DEFAULT_LINUX_REGISTRY_IMAGE),
+            (Image.linux("ubuntu", "24.04"), DEFAULT_LINUX_REGISTRY_IMAGE),
+            (Image.windows(), DEFAULT_WINDOWS_REGISTRY_IMAGE),
+            (Image.windows("2022"), DEFAULT_WINDOWS_REGISTRY_IMAGE),
+        ],
+    )
+    def test_builtin_descriptors_resolve_to_a_pinned_disk(self, image, expected):
+        assert cloud_registry_image(image) == expected
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            Image.linux("debian", "12"),
+            Image.linux("ubuntu", "22.04"),
+            Image.linux("ubuntu", "24.04", kind="container"),
+            # Client Windows has no containerDisk; it installs from an ISO locally.
+            Image.windows("11"),
+            Image.windows("10"),
+            Image.windows("2022", kind="container"),
+            Image.macos("15"),
+            Image.android("14"),
+        ],
+    )
+    def test_other_descriptors_have_no_pinned_disk(self, image):
+        assert cloud_registry_image(image) is None
+
+    @pytest.mark.parametrize("image", [Image.linux(), Image.windows()])
+    def test_explicit_registry_overrides_the_builtin_pin(self, image):
+        override = image._with(_registry="registry.example/custom:latest")
+
+        assert cloud_registry_image(override) == "registry.example/custom:latest"
+
+    def test_pinned_refs_are_immutable_tags(self):
+        """A moving tag would break the promise that local and cloud boot the same bytes."""
+        for ref in (DEFAULT_LINUX_REGISTRY_IMAGE, DEFAULT_WINDOWS_REGISTRY_IMAGE):
+            tag = ref.rsplit(":", 1)[1]
+            assert tag not in ("latest", "main"), ref
 
     def test_chaining_is_immutable(self):
         base = Image.linux()

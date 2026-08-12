@@ -592,9 +592,11 @@ class Sandbox:
                 await _save_fleet_claim_or_close(sandbox, claim_name, pool_name)
             return sandbox
 
+        from cua_sandbox.image import cloud_registry_image
+
         fleet_image = (
             image is not None
-            and image._registry is not None
+            and cloud_registry_image(image) is not None
             and cls._uses_fleet(api_key)
             and not local
             and runtime is None
@@ -739,11 +741,12 @@ class Sandbox:
         server_port: int = 8000,
         telemetry_enabled: bool = True,
     ) -> AsyncIterator["Sandbox"]:
+        from cua_sandbox.image import cloud_registry_image
         from cua_sandbox.pool import Pool
 
         fleet_image = (
             image is not None
-            and image._registry is not None
+            and cloud_registry_image(image) is not None
             and cls._uses_fleet(api_key)
             and not local
             and runtime is None

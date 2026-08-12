@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any, Callable, Coroutine, Generic, TypeVar, cast
 
-from cua_sandbox.image import Image
+from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.fleet import FleetTransport
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport, _FleetClient
@@ -244,7 +244,7 @@ class Pool:
         if name is None:
             identity = json.dumps(
                 {
-                    "image": image._registry,
+                    "image": cloud_registry_image(image),
                     "replicas": replicas,
                     "cpu": cpu,
                     "memory_mb": memory_mb,

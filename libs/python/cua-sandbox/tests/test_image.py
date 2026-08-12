@@ -1,7 +1,11 @@
 """Unit tests for the Image builder (no runtime needed)."""
 
 import pytest
-from cua_sandbox.image import Image
+from cua_sandbox.image import (
+    DEFAULT_LINUX_REGISTRY_IMAGE,
+    Image,
+    cloud_registry_image,
+)
 
 
 class TestImageBuilder:
@@ -10,6 +14,24 @@ class TestImageBuilder:
         assert img.os_type == "linux"
         assert img.distro == "ubuntu"
         assert img.version == "24.04"
+        assert cloud_registry_image(img) == DEFAULT_LINUX_REGISTRY_IMAGE
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            Image.linux("debian", "12"),
+            Image.linux("ubuntu", "22.04"),
+            Image.linux("ubuntu", "24.04", kind="container"),
+            Image.windows(),
+        ],
+    )
+    def test_non_default_images_have_no_cloud_registry_default(self, image):
+        assert cloud_registry_image(image) is None
+
+    def test_explicit_registry_is_cloud_override(self):
+        image = Image.linux()._with(_registry="registry.example/custom:latest")
+
+        assert cloud_registry_image(image) == "registry.example/custom:latest"
 
     def test_macos(self):
         img = Image.macos("15")

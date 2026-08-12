@@ -28,6 +28,8 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_LINUX_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34"
+
 _IMAGE_CACHE = Path.home() / ".cua" / "cua-sandbox" / "image-cache"
 
 
@@ -477,3 +479,17 @@ class Image:
             f"Image({self.os_type}/{self.distro}:{self.version}, "
             f"kind={self.kind}, {len(self._layers)} layers{reg})"
         )
+
+
+def cloud_registry_image(image: Image) -> Optional[str]:
+    """Return the explicit or built-in registry image used by Fleet cloud."""
+    if image._registry is not None:
+        return image._registry
+    if (
+        image.os_type == "linux"
+        and image.distro == "ubuntu"
+        and image.version == "24.04"
+        and image.kind == "vm"
+    ):
+        return DEFAULT_LINUX_REGISTRY_IMAGE
+    return None

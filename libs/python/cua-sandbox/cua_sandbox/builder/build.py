@@ -317,6 +317,31 @@ async def build_user_image(
     return user_path
 
 
+async def resolve_backing_disk(image: Image) -> Path:
+    """Resolve the disk a local session overlays, preferring the registry containerDisk.
+
+    Built-in images (and explicit ``Image.from_registry(...)`` refs) map to a
+    KubeVirt containerDisk in the registry — the very image Fleet cloud boots. Pulling
+    it keeps local QEMU runs on the same disk as the cloud instead of a separately
+    built base. Images with no registry counterpart fall back to the local base build.
+    """
+    from cua_sandbox.image import cloud_registry_image
+
+    ref = cloud_registry_image(image)
+    if ref is not None:
+        from cua_sandbox.registry.container_disk import pull_container_disk
+
+        logger.info(f"Resolving containerDisk {ref} for local session...")
+        try:
+            # Network + multi-GB extraction: keep it off the event loop.
+            return await asyncio.to_thread(pull_container_disk, ref)
+        except FileNotFoundError as exc:
+            # Not a containerDisk (e.g. a lume/tart/qemu-format VM image) — fall back.
+            logger.info(f"{ref} is not a containerDisk ({exc}); falling back to base image")
+
+    return await ensure_base_image(image.os_type, image.version)
+
+
 async def create_session_disk(
     image: Image,
     name: str,
@@ -326,8 +351,9 @@ async def create_session_disk(
     """Create a session overlay for a sandbox run.
 
     If the image has layers and a cached user image exists, overlay on that.
-    Otherwise overlay on the base image. If no base exists, returns the
-    image's _disk_path directly (no overlay).
+    Otherwise overlay on the registry containerDisk (the same disk Fleet cloud
+    boots) or on a locally built base image. If the image carries a direct disk
+    path and no layers, that disk is returned as-is (no overlay).
 
     Returns the disk path to boot.
     """
@@ -341,7 +367,7 @@ async def create_session_disk(
     elif image._disk_path:
         backing = Path(image._disk_path)
     else:
-        backing = await ensure_base_image(image.os_type, image.version)
+        backing = await resolve_backing_disk(image)
 
     # If there are user layers, check for cached user image
     if image._layers:

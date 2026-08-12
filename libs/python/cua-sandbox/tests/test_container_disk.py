@@ -2,10 +2,37 @@ import gzip
 import hashlib
 import io
 import tarfile
+import threading
 from types import SimpleNamespace
 
+import pytest
 from cua_sandbox.image import DEFAULT_LINUX_REGISTRY_IMAGE, Image
 from cua_sandbox.registry.container_disk import _LOCK_POLL_INTERVAL_SECONDS, pull_container_disk
+
+# The real ECR image is a multi-arch index whose children are the per-platform manifests
+# plus a buildx attestation manifest.
+INDEX_MANIFEST = {
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "manifests": [
+        {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:arm64child",
+            "platform": {"architecture": "arm64", "os": "linux"},
+        },
+        {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:amd64child",
+            "platform": {"architecture": "amd64", "os": "linux"},
+        },
+        {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:attestation",
+            "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
+            "platform": {"architecture": "unknown", "os": "unknown"},
+        },
+    ],
+}
 
 
 def _layer_with_disk(contents: bytes, *, path: str = "disk/disk.img") -> bytes:
@@ -55,8 +82,10 @@ def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path):
 
     assert disk.name == "disk.qcow2"
     assert disk.read_bytes() == b"qcow2"
+    # ECR rejects oras' token backend ("This endpoint requires a token. Please use basic
+    # auth with a username or password."), so the pull must use basic auth.
     assert calls == [
-        ("init", "token"),
+        ("init", "basic"),
         ("container", DEFAULT_LINUX_REGISTRY_IMAGE),
         ("auth", "container"),
         ("manifest", DEFAULT_LINUX_REGISTRY_IMAGE),
@@ -73,6 +102,108 @@ def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path):
         == disk
     )
     assert calls == []
+
+
+def test_pull_container_disk_resolves_platform_manifest_from_index(tmp_path):
+    """A multi-arch index has no ``layers`` — the platform child must be followed."""
+    requested = []
+    child = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "layers": [
+            {
+                "digest": "sha256:amd64layer",
+                "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            }
+        ],
+    }
+
+    class Registry:
+        def __init__(self, *, auth_backend):
+            self.auth = SimpleNamespace(load_configs=lambda container: None)
+
+        def get_container(self, ref):
+            return "container"
+
+        def get_manifest(self, ref):
+            requested.append(ref)
+            return INDEX_MANIFEST if ref == DEFAULT_LINUX_REGISTRY_IMAGE else child
+
+        def get_blob(self, container, digest, *, stream):
+            assert digest == "sha256:amd64layer"
+            return SimpleNamespace(raw=io.BytesIO(_layer_with_disk(b"qcow2")))
+
+    disk = pull_container_disk(
+        DEFAULT_LINUX_REGISTRY_IMAGE,
+        cache_root=tmp_path,
+        architecture="amd64",
+        registry_factory=Registry,
+    )
+
+    assert disk.read_bytes() == b"qcow2"
+    repository = DEFAULT_LINUX_REGISTRY_IMAGE.rsplit(":", 1)[0]
+    assert requested == [DEFAULT_LINUX_REGISTRY_IMAGE, f"{repository}@sha256:amd64child"]
+
+
+def test_pull_container_disk_rejects_index_without_matching_platform(tmp_path):
+    class Registry:
+        def __init__(self, *, auth_backend):
+            self.auth = SimpleNamespace(load_configs=lambda container: None)
+
+        def get_container(self, ref):
+            return "container"
+
+        def get_manifest(self, ref):
+            return {
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [
+                    {
+                        "digest": "sha256:amd64child",
+                        "platform": {"architecture": "amd64", "os": "linux"},
+                    }
+                ],
+            }
+
+        def get_blob(self, container, digest, *, stream):
+            raise AssertionError("no blob should be fetched without a platform match")
+
+    with pytest.raises(FileNotFoundError, match="no linux/arm64 manifest"):
+        pull_container_disk(
+            DEFAULT_LINUX_REGISTRY_IMAGE,
+            cache_root=tmp_path,
+            architecture="arm64",
+            registry_factory=Registry,
+        )
+
+
+def test_pull_container_disk_skips_vm_disk_layers(tmp_path):
+    """Chunked VM images (lume/tart/qemu) are not containerDisks — don't stream them."""
+
+    class Registry:
+        def __init__(self, *, auth_backend):
+            self.auth = SimpleNamespace(load_configs=lambda container: None)
+
+        def get_container(self, ref):
+            return "container"
+
+        def get_manifest(self, ref):
+            return {
+                "layers": [
+                    {
+                        "digest": "sha256:chunk",
+                        "mediaType": "application/vnd.trycua.lume.disk.chunk.lz4",
+                    }
+                ]
+            }
+
+        def get_blob(self, container, digest, *, stream):
+            raise AssertionError("VM disk chunks must not be downloaded")
+
+    with pytest.raises(FileNotFoundError, match="does not contain /disk/disk.img"):
+        pull_container_disk(
+            "registry.example/lume-vm:latest",
+            cache_root=tmp_path,
+            registry_factory=Registry,
+        )
 
 
 def test_pull_container_disk_searches_all_layers(tmp_path):
@@ -107,9 +238,7 @@ def test_pull_container_disk_searches_all_layers(tmp_path):
 
 def test_pull_container_disk_waits_for_existing_lock(tmp_path, monkeypatch):
     destination = (
-        tmp_path
-        / hashlib.sha256(DEFAULT_LINUX_REGISTRY_IMAGE.encode()).hexdigest()
-        / "disk.qcow2"
+        tmp_path / hashlib.sha256(DEFAULT_LINUX_REGISTRY_IMAGE.encode()).hexdigest() / "disk.qcow2"
     )
     lock_path = destination.with_suffix(".lock")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -139,23 +268,25 @@ def test_pull_container_disk_waits_for_existing_lock(tmp_path, monkeypatch):
     assert sleeps == [_LOCK_POLL_INTERVAL_SECONDS]
 
 
-async def test_default_linux_session_uses_standard_base_image_backing(tmp_path, monkeypatch):
+async def test_default_linux_session_overlays_pulled_container_disk(tmp_path, monkeypatch):
+    """Local Image.linux() must boot the same containerDisk Fleet cloud boots."""
     from cua_sandbox.builder import build
+    from cua_sandbox.registry import container_disk
 
-    base_disk = tmp_path / "base.qcow2"
-    base_disk.write_bytes(b"base")
+    pulled = tmp_path / "container-disk.qcow2"
+    pulled.write_bytes(b"containerdisk")
     session_disk = tmp_path / "session.qcow2"
     calls = []
 
-    async def ensure_base_image(os_type, version):
-        calls.append(("base", os_type, version))
-        return base_disk
+    def fake_pull(ref):
+        calls.append(("pull", ref, threading.get_ident()))
+        return pulled
 
-    monkeypatch.setattr(
-        build,
-        "ensure_base_image",
-        ensure_base_image,
-    )
+    async def ensure_base_image(os_type, version):
+        raise AssertionError("built-in Linux must not fall back to a locally built base")
+
+    monkeypatch.setattr(container_disk, "pull_container_disk", fake_pull)
+    monkeypatch.setattr(build, "ensure_base_image", ensure_base_image)
     monkeypatch.setattr(build, "session_overlay_path", lambda name: session_disk)
     monkeypatch.setattr(
         build,
@@ -166,7 +297,43 @@ async def test_default_linux_session_uses_standard_base_image_backing(tmp_path, 
     result = await build.create_session_disk(Image.linux(), "demo")
 
     assert result == session_disk
+    assert [call[0] for call in calls] == ["pull", "overlay"]
+    assert calls[0][1] == DEFAULT_LINUX_REGISTRY_IMAGE
+    # The pull does network + multi-GB I/O, so it must not run on the event loop thread.
+    assert calls[0][2] != threading.get_ident()
+    assert calls[1][1:] == (pulled, session_disk)
+
+
+async def test_non_container_disk_registry_image_falls_back_to_base(tmp_path, monkeypatch):
+    from cua_sandbox.builder import build
+    from cua_sandbox.registry import container_disk
+
+    base_disk = tmp_path / "base.qcow2"
+    base_disk.write_bytes(b"base")
+    session_disk = tmp_path / "session.qcow2"
+    calls = []
+
+    def fake_pull(ref):
+        raise FileNotFoundError(f"OCI image {ref!r} does not contain /disk/disk.img")
+
+    async def ensure_base_image(os_type, version):
+        calls.append(("base", os_type, version))
+        return base_disk
+
+    monkeypatch.setattr(container_disk, "pull_container_disk", fake_pull)
+    monkeypatch.setattr(build, "ensure_base_image", ensure_base_image)
+    monkeypatch.setattr(build, "session_overlay_path", lambda name: session_disk)
+    monkeypatch.setattr(
+        build,
+        "create_overlay",
+        lambda backing, destination: calls.append(("overlay", backing, destination)),
+    )
+
+    image = Image.from_registry("registry.example/lume-vm:latest")
+    result = await build.create_session_disk(image, "demo")
+
+    assert result == session_disk
     assert calls == [
-        ("base", "linux", "24.04"),
+        ("base", "linux", "latest"),
         ("overlay", base_disk, session_disk),
     ]

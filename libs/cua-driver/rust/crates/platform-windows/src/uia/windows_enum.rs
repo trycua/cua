@@ -23,9 +23,6 @@ use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
-#[cfg(test)]
-use std::time::Instant;
-
 use anyhow::{bail, Context};
 use windows::core::{Interface, BSTR};
 use windows::Win32::Foundation::{HWND, RECT};
@@ -1058,6 +1055,7 @@ fn window_bounds(hwnd: HWND, prefer_win32: bool) -> Option<(i32, i32, i32, i32)>
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
     use windows::Win32::Foundation::RECT;
 
     fn rect() -> RECT {

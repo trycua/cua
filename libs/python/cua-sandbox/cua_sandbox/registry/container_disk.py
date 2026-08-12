@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import oras.provider
-
 from cua_sandbox.registry.cache import CACHE_ROOT
 
 _CONTAINER_DISK_PATHS = {"disk/disk.img", "./disk/disk.img"}

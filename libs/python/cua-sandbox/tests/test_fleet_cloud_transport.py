@@ -76,8 +76,7 @@ def test_default_linux_image_becomes_typed_template_request():
     request = FleetCloudTransport(image=Image.linux(), name="demo")._template_request()
 
     assert request.spec.vm_template.container_disk_image == (
-        "296062593712.dkr.ecr.us-west-2.amazonaws.com/"
-        "desktop-workspace-duo:main-38352d34"
+        "296062593712.dkr.ecr.us-west-2.amazonaws.com/" "desktop-workspace-duo:main-38352d34"
     )
 
 
@@ -143,7 +142,7 @@ async def test_fleet_client_lookup_uses_bounded_deterministic_claim_name():
 
 @pytest.mark.parametrize(
     "image",
-    [Image.linux("debian", "12"), Image.from_registry("example:latest").apt_install("curl")]
+    [Image.linux("debian", "12"), Image.from_registry("example:latest").apt_install("curl")],
 )
 def test_rejects_unsupported_images(image):
     with pytest.raises(NotImplementedError):

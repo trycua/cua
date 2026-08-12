@@ -30,7 +30,9 @@ def test_pull_container_disk_uses_oras_credentials_and_caches_qcow2(tmp_path):
     class Registry:
         def __init__(self, *, auth_backend):
             calls.append(("init", auth_backend))
-            self.auth = SimpleNamespace(load_configs=lambda container: calls.append(("auth", container)))
+            self.auth = SimpleNamespace(
+                load_configs=lambda container: calls.append(("auth", container))
+            )
 
         def get_container(self, ref):
             calls.append(("container", ref))
@@ -95,7 +97,9 @@ def test_pull_container_disk_searches_all_layers(tmp_path):
             payload = empty_layer if digest == "sha256:empty" else disk_layer
             return SimpleNamespace(raw=io.BytesIO(payload))
 
-    disk = pull_container_disk("registry.example/workspace:latest", cache_root=tmp_path, registry_factory=Registry)
+    disk = pull_container_disk(
+        "registry.example/workspace:latest", cache_root=tmp_path, registry_factory=Registry
+    )
 
     assert disk.read_bytes() == b"qcow2"
 

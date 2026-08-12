@@ -43,7 +43,9 @@ INSTALL_AUTO_UPDATER=false
 UPDATE_ON_LOGIN=false
 
 # Release selection:
-#   LUME_VERSION=0.3.10 pins a specific `lume-v0.3.10` release.
+#   LUME_VERSION=0.3.10 pins a specific stable `lume-v0.3.10` release.
+#   LUME_VERSION=nightly-lume-v0.3.11-nightly.20260812.42 pins an exact
+#   immutable nightly release. Stable discovery never selects nightlies.
 #   LUME_BAKED_VERSION is updated in the release PR so the default
 #   installer path does not need a GitHub API call.
 LUME_VERSION="${LUME_VERSION:-}"
@@ -176,15 +178,28 @@ create_temp_dir() {
 # Get the latest lume release tag
 get_latest_lume_tag() {
   if [ -n "$LUME_VERSION" ]; then
-    local pinned="${LUME_VERSION#lume-v}"
-    pinned="${pinned#v}"
-    echo "Using Lume release from LUME_VERSION: ${BOLD}lume-v$pinned${NORMAL}" >&2
-    echo "lume-v$pinned"
+    local selected=""
+    if [[ "$LUME_VERSION" =~ ^(lume-v|v)?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+      selected="lume-v${BASH_REMATCH[2]}"
+    elif [[ "$LUME_VERSION" =~ ^nightly-lume-v([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+      selected="nightly-lume-v${BASH_REMATCH[1]}"
+    elif [[ "$LUME_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+      selected="nightly-lume-v${BASH_REMATCH[1]}"
+    else
+      echo "${RED}Error: LUME_VERSION must be an exact x.y.z stable version or canonical nightly tag.${NORMAL}" >&2
+      return 1
+    fi
+    echo "Using Lume release from LUME_VERSION: ${BOLD}$selected${NORMAL}" >&2
+    echo "$selected"
     return 0
   fi
 
   if [ -n "$LUME_BAKED_VERSION" ]; then
     local baked="${LUME_BAKED_VERSION#v}"
+    if ! [[ "$baked" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "${RED}Error: baked Lume version must be an exact stable x.y.z version.${NORMAL}" >&2
+      return 1
+    fi
     echo "Using baked Lume release: ${BOLD}lume-v$baked${NORMAL}" >&2
     echo "lume-v$baked"
     return 0
@@ -196,6 +211,7 @@ get_latest_lume_tag() {
   local per_page=100
   local max_pages=10  # Safety limit (1000 tags max)
   local LUME_TAG=""
+  local versions=""
 
   while [ $page -le $max_pages ]; do
     echo "Checking page $page..." >&2
@@ -212,22 +228,45 @@ get_latest_lume_tag() {
       fi
     fi
 
-    LUME_TAG=$(echo "$response" \
-      | grep -oE '"tag_name":\s*"lume-[^"]*"' \
-      | head -n 1 \
-      | cut -d '"' -f 4)
+    local page_versions
+    page_versions=$(printf '%s' "$response" | awk '
+      /"tag_name"[[:space:]]*:/ {
+        tag = $0
+        sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
+        sub(/".*$/, "", tag)
+        next
+      }
+      tag != "" && /"draft"[[:space:]]*:/ {
+        if ($0 ~ /"draft"[[:space:]]*:[[:space:]]*false/ &&
+            tag ~ /^lume-v[0-9]+\.[0-9]+\.[0-9]+$/) {
+          sub(/^lume-v/, "", tag)
+          print tag
+        }
+        tag = ""
+      }
+    ')
+    if [ -n "$page_versions" ]; then
+      versions="${versions}${versions:+$'\n'}${page_versions}"
+    fi
 
-    if [ -n "$LUME_TAG" ]; then
-      echo "Found latest Lume release: ${BOLD}$LUME_TAG${NORMAL}" >&2
-      echo "$LUME_TAG"
-      return 0
+    local page_count
+    page_count=$(printf '%s' "$response" | awk '{ count += gsub(/"tag_name"[[:space:]]*:/, "&") } END { print count + 0 }')
+    if [ "$page_count" -lt "$per_page" ]; then
+      break
     fi
 
     page=$((page + 1))
   done
 
-  echo "${RED}Error: Could not find any lume tags after checking $max_pages pages.${NORMAL}" >&2
-  exit 1
+  local latest
+  latest=$(printf '%s\n' "$versions" | sed '/^$/d' | sort -t. -k1,1nr -k2,2nr -k3,3nr | head -n 1)
+  if [ -z "$latest" ]; then
+    echo "${RED}Error: Could not find any published stable lume tags after checking $max_pages pages.${NORMAL}" >&2
+    return 1
+  fi
+  LUME_TAG="lume-v$latest"
+  echo "Found latest Lume release: ${BOLD}$LUME_TAG${NORMAL}" >&2
+  echo "$LUME_TAG"
 }
 
 # Download the latest release

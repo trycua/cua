@@ -28,6 +28,7 @@
     "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
     "product": { "type": "string", "minLength": 1 },
     "displayName": { "type": "string", "minLength": 1 },
+    "channel": { "enum": ["stable", "nightly"] },
     "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
     "bump": { "enum": ["patch", "minor", "major"] },
     "tag": { "type": "string", "minLength": 1 },
@@ -46,7 +47,6 @@
     "visualRequested": { "type": "boolean" },
     "changes": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -80,6 +80,17 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["channel"],
+        "properties": { "channel": { "const": "nightly" } }
+      },
+      "else": {
+        "properties": { "changes": { "minItems": 1 } }
+      }
+    }
+  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "changeContributor": {

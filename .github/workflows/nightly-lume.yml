@@ -1,0 +1,128 @@
+name: "Nightly: Lume"
+
+on:
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Exact main SHA (defaults to the workflow revision)"
+        required: false
+        type: string
+      force:
+        description: "Build even when relevant paths are unchanged"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-lume
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    uses: ./.github/workflows/nightly-component-plan.yml
+    with:
+      component: lume
+      source_sha: ${{ inputs.source_sha || github.sha }}
+      force: ${{ inputs.force || false }}
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.should_build == 'true'
+    uses: ./.github/workflows/cd-swift-lume.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      channel: nightly
+      source_ref: ${{ inputs.source_sha || github.sha }}
+      bundle_version: ${{ needs.plan.outputs.bundle_version }}
+    secrets: inherit
+
+  publish:
+    needs: [plan, build]
+    if: needs.plan.outputs.should_build == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download notarized candidate assets
+        uses: actions/download-artifact@v4
+        with:
+          name: lume-release-assets
+          path: release-upload
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          mkdir -p release-metadata
+          (
+            cd release-upload
+            shasum -a 256 * | sort > checksums.txt
+          )
+
+      - name: Generate channel manifest and release body
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          PREVIOUS=()
+          if [[ -n "${{ needs.plan.outputs.previous_tag }}" ]]; then
+            PREVIOUS+=(--previous-tag "${{ needs.plan.outputs.previous_tag }}")
+          fi
+          python3 .github/scripts/release_channels.py manifest \
+            --component lume \
+            --version "${{ needs.plan.outputs.version }}" \
+            --tag "${{ needs.plan.outputs.tag }}" \
+            --source-sha "$SOURCE_SHA" \
+            --asset-dir release-upload \
+            --repository "${{ github.repository }}" \
+            --output release-metadata/release-manifest.json \
+            "${PREVIOUS[@]}"
+          python3 .github/scripts/release_channels.py render-nightly \
+            --manifest release-metadata/release-manifest.json \
+            --body release-metadata/release-body.md
+          cp release-metadata/release-manifest.json release-upload/
+
+      - name: Preserve nightly evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: lume-nightly-metadata-${{ needs.plan.outputs.version }}
+          path: release-metadata/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish immutable nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          python3 .github/scripts/github_release.py \
+            --repository "${{ github.repository }}" \
+            --tag "${{ needs.plan.outputs.tag }}" \
+            --sha "$SOURCE_SHA" \
+            --body release-metadata/release-body.md \
+            --asset-dir release-upload \
+            --channel nightly \
+            --create-if-missing \
+            --prerelease
+
+      - name: Verify release visibility and exact assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          python3 .github/scripts/github_release.py \
+            --repository "${{ github.repository }}" \
+            --tag "${{ needs.plan.outputs.tag }}" \
+            --sha "$SOURCE_SHA" \
+            --body release-metadata/release-body.md \
+            --asset-dir release-upload \
+            --channel nightly \
+            --prerelease

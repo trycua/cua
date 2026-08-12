@@ -20,4 +20,14 @@ struct VersionCheckTests {
                 == "curl -fsSL file:///tmp/lume-install.sh | LUME_VERSION=0.3.10 bash"
         )
     }
+
+    @Test func stableDiscoveryRejectsDraftAndNightlyTags() {
+        let releases: [[String: Any]] = [
+            ["tag_name": "lume-v0.6.0", "draft": true],
+            ["tag_name": "nightly-lume-v0.5.4-nightly.20260812.42", "draft": false],
+            ["tag_name": "lume-v0.5.4-nightly.20260812.42", "draft": false],
+            ["tag_name": "lume-v0.5.3", "draft": false],
+        ]
+        #expect(LumeVersionCheck.publishedStableVersions(from: releases) == ["0.5.3"])
+    }
 }

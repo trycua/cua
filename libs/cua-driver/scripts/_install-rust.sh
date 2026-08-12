@@ -23,7 +23,9 @@
 #   --no-modify-path     skip auto-appending an `export PATH=...` line
 #
 # Env overrides:
-#   CUA_DRIVER_RS_VERSION=0.1.2          pin a specific release tag
+#   CUA_DRIVER_RS_VERSION=0.1.2          pin a stable release
+#   CUA_DRIVER_RS_VERSION=nightly-cua-driver-rs-v0.1.3-nightly.20260812.42
+#                                        pin an exact nightly release
 #   CUA_DRIVER_RS_INSTALL_DIR=PATH       same as --bin-dir; sets the visible
 #                                        binary location
 #   CUA_DRIVER_RS_BIN_DIR=PATH           legacy alias for INSTALL_DIR
@@ -112,6 +114,7 @@ fi
 REPO="trycua/cua"
 BINARY_NAME="cua-driver"
 TAG_PREFIX="cua-driver-rs-v"
+NIGHTLY_TAG_PREFIX="nightly-cua-driver-rs-v"
 # CUA_DRIVER_RS_INSTALL_DIR is the documented name; CUA_DRIVER_RS_BIN_DIR is
 # the legacy alias kept for users with the old env in their shell rc.
 BIN_DIR="${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}"
@@ -606,12 +609,39 @@ resolve_latest_version_from_api() {
 # CD path advances it only after every staged release asset is public; fallback
 # remains defense in depth for manual edits, asset removal, or an interrupted
 # legacy release flow.
+resolve_explicit_release_tag() {
+    local value="$1" stable_version nightly_version
+    if [[ "$value" =~ ^(cua-driver-rs-v|v)?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+        stable_version="${BASH_REMATCH[2]}"
+        printf '%s%s' "$TAG_PREFIX" "$stable_version"
+        return 0
+    fi
+    if [[ "$value" =~ ^nightly-cua-driver-rs-v([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+        nightly_version="${BASH_REMATCH[1]}"
+        printf '%s%s' "$NIGHTLY_TAG_PREFIX" "$nightly_version"
+        return 0
+    fi
+    if [[ "$value" =~ ^([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+        nightly_version="${BASH_REMATCH[1]}"
+        printf '%s%s' "$NIGHTLY_TAG_PREFIX" "$nightly_version"
+        return 0
+    fi
+    return 1
+}
+
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
     VERSION_SOURCE="pin"
-    TAG="${TAG_PREFIX}${CUA_DRIVER_RS_VERSION#v}"
+    if ! TAG="$(resolve_explicit_release_tag "$CUA_DRIVER_RS_VERSION")"; then
+        err "CUA_DRIVER_RS_VERSION must be an exact x.y.z stable version or canonical nightly tag"
+        exit 1
+    fi
     log "using version from CUA_DRIVER_RS_VERSION: $TAG"
 elif [[ -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
     VERSION_SOURCE="baked"
+    if ! [[ "$CUA_DRIVER_RS_BAKED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        err "baked Cua Driver version must be an exact stable x.y.z version"
+        exit 1
+    fi
     TAG="${TAG_PREFIX}${CUA_DRIVER_RS_BAKED_VERSION#v}"
     log "using baked release: $TAG"
 else
@@ -626,7 +656,11 @@ else
     log "latest release: $TAG"
 fi
 
-VERSION="${TAG#${TAG_PREFIX}}"
+if [[ "$TAG" == "$NIGHTLY_TAG_PREFIX"* ]]; then
+    VERSION="${TAG#${NIGHTLY_TAG_PREFIX}}"
+else
+    VERSION="${TAG#${TAG_PREFIX}}"
+fi
 
 # Releases through 0.12.6 predate semantic cursor themes.
 # Newer releases must contain both packaged copies.
@@ -634,6 +668,7 @@ CURSOR_THEME_REQUIRED_FROM="0.12.7"
 version_is_at_least() {
     local version="$1" minimum="$2"
     local v_major v_minor v_patch m_major m_minor m_patch
+    version="${version%%-*}"
     IFS=. read -r v_major v_minor v_patch <<< "$version"
     IFS=. read -r m_major m_minor m_patch <<< "$minimum"
     if (( v_major != m_major )); then (( v_major > m_major )); return; fi
@@ -671,7 +706,7 @@ release_tarball_name() {
 download_release_tarball() {
     local version="$1" tarball url partial http_code curl_status attempt retryable
     tarball="$(release_tarball_name "$version")"
-    url="https://github.com/$REPO/releases/download/${TAG_PREFIX}${version}/$tarball"
+    url="https://github.com/$REPO/releases/download/${TAG}/$tarball"
     partial="$TMP_DIR/$tarball.partial"
     log "downloading $url"
     for attempt in 1 2 3; do

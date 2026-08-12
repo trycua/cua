@@ -491,8 +491,19 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "libs/cua-driver/rust/crates/cua-driver/src/skills.rs"
         )
         self.assertIn(
-            "releases/download/cua-driver-rs-v{version}/"
-            "cua-driver-rs-v{version}-skills.tar.gz",
+            'const STABLE_RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v"',
+            skill_installer,
+        )
+        self.assertIn(
+            'const NIGHTLY_RELEASE_TAG_PREFIX: &str = "nightly-cua-driver-rs-v"',
+            skill_installer,
+        )
+        self.assertIn(
+            "releases/download/{tag_prefix}{version}/",
+            skill_installer,
+        )
+        self.assertIn(
+            "{STABLE_RELEASE_TAG_PREFIX}{version}-skills.tar.gz",
             skill_installer,
         )
         self.assertIn(

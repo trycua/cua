@@ -16,6 +16,21 @@ on:
         description: "Version to notarize"
         required: true
         type: string
+      channel:
+        description: "Release channel"
+        required: false
+        default: stable
+        type: string
+      source_ref:
+        description: "Exact source SHA or immutable ref to build"
+        required: false
+        default: ""
+        type: string
+      bundle_version:
+        description: "Numeric Apple bundle/package version"
+        required: false
+        default: ""
+        type: string
     secrets:
       APPLICATION_CERT_BASE64:
         required: true
@@ -60,6 +75,12 @@ jobs:
       version: ${{ steps.set_version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+
+      - name: Stage nightly artifact version
+        if: inputs.channel == 'nightly'
+        run: python3 .github/scripts/release_channels.py apply-version --component lume --version "${{ inputs.version }}"
 
       - name: Select Xcode 16.3
         run: |
@@ -93,7 +114,14 @@ jobs:
             echo "Tag/input version $VERSION does not match libs/lume/VERSION ($SOURCE_VERSION)"
             exit 1
           fi
-          python3 .github/scripts/validate_release_versions.py --product lume
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            python3 .github/scripts/release_channels.py parse-tag \
+              --component lume \
+              --channel nightly \
+              --tag "nightly-lume-v${VERSION}" >/dev/null
+          else
+            python3 .github/scripts/validate_release_versions.py --product lume
+          fi
 
           # Set output for later steps
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -163,6 +191,7 @@ jobs:
           CERT_APPLICATION_NAME: "Developer ID Application: ${{ secrets.DEVELOPER_NAME }} (${{ secrets.TEAM_ID }})"
           CERT_INSTALLER_NAME: "Developer ID Installer: ${{ secrets.DEVELOPER_NAME }} (${{ secrets.TEAM_ID }})"
           VERSION: ${{ steps.set_version.outputs.version }}
+          BUNDLE_VERSION: ${{ inputs.bundle_version || steps.set_version.outputs.version }}
         working-directory: ./libs/lume
         run: |
           # Minimal debug information

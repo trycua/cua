@@ -11,6 +11,43 @@ name: "CD: Cua Driver (cross-platform)"
 # without needing to unpack a directory structure first.
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Exact artifact version"
+        required: true
+        type: string
+      channel:
+        description: "Release channel"
+        required: false
+        default: stable
+        type: string
+      source_ref:
+        description: "Exact source SHA or immutable ref to build"
+        required: true
+        type: string
+      notarize:
+        description: "Codesign and notarize macOS artifacts"
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      APPLICATION_CERT_BASE64:
+        required: false
+      CERT_PASSWORD:
+        required: false
+      APPLE_ID:
+        required: false
+      APP_SPECIFIC_PASSWORD:
+        required: false
+      DEVELOPER_NAME:
+        required: false
+      TEAM_ID:
+        required: false
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
   push:
     tags:
       - "cua-driver-rs-v*"
@@ -52,7 +89,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
 
       - name: Check out release control tooling
         uses: actions/checkout@v4
@@ -142,12 +179,15 @@ jobs:
           # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
           # in these portable release binaries.
           apt-get install -y --no-install-recommends \
-            git ca-certificates curl build-essential pkg-config \
+            git ca-certificates curl python3 build-essential pkg-config \
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
             libxkbcommon-dev
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - name: Stage nightly artifact version
+        if: inputs.channel == 'nightly'
+        run: python3 .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -157,7 +197,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -232,7 +274,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - name: Stage nightly artifact version
+        if: inputs.channel == 'nightly'
+        shell: bash
+        run: python .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -242,7 +288,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -367,7 +415,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -435,7 +483,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - name: Stage nightly artifact version
+        if: inputs.channel == 'nightly'
+        run: python3 .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -445,7 +496,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -593,9 +646,10 @@ jobs:
           # checked in. Without this the in-tree Info.plist's
           # CFBundleShortVersionString drifts from the release tag on
           # every cut. CodeRabbit #4.
-          plutil -replace CFBundleShortVersionString -string "$VERSION" \
+          BUNDLE_VERSION="${VERSION%%-*}"
+          plutil -replace CFBundleShortVersionString -string "$BUNDLE_VERSION" \
             release/CuaDriver.app/Contents/Info.plist
-          plutil -replace CFBundleVersion -string "$VERSION" \
+          plutil -replace CFBundleVersion -string "$BUNDLE_VERSION" \
             release/CuaDriver.app/Contents/Info.plist
           # Remove the .gitkeep we use in source control — it's not
           # part of the runtime bundle.
@@ -689,12 +743,14 @@ jobs:
           # immutable tag that predates this script. Candidate artifacts still
           # come from that exact tag; the release control comes from the commit
           # that defined this workflow run.
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.source_ref || github.workflow_sha }}
 
       - name: Determine version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -724,7 +780,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.source_ref || github.workflow_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -734,7 +790,9 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"

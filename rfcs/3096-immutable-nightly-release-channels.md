@@ -6,9 +6,9 @@ created: 2026-08-12
 last_updated: 2026-08-12
 status: accepted
 discussion: https://github.com/trycua/cua/issues/3096
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/3097
 implementation:
-  - https://github.com/trycua/cua/issues/3096
+  - https://github.com/trycua/cua/pull/3097
 supersedes:
 superseded_by:
 ---
@@ -272,7 +272,7 @@ evidence. The component descriptor contains no secrets.
 
 - Which retention policy should apply after observing 60 to 90 days of release
   volume?
-- When should one-shot and persistent nightly channel selection ship?
+- When should newest-nightly resolution and persistent channel selection ship?
 - When do registry channels or an object-store pointer become justified?
 - Should Driver's existing GitHub prerelease metadata convention change in
   separate work?

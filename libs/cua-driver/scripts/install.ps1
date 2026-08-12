@@ -39,7 +39,7 @@
 # privileges or Developer Mode. So the whole installer stays sudo-free.
 #
 # Env overrides:
-#   $env:CUA_DRIVER_RS_VERSION       pin a specific release (e.g. "0.2.0")
+#   $env:CUA_DRIVER_RS_VERSION       pin an exact stable version or nightly tag
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   override the visible PATH-entry dir
 #                                    (default %LOCALAPPDATA%\Programs\Cua\cua-driver\bin)
 #   $env:CUA_DRIVER_RS_HOME          override the package home
@@ -52,7 +52,8 @@
 #                                    independently of each other.
 #
 # Params:
-#   -Release    release tag to install ("latest" or a bare version like "0.2.0").
+#   -Release    release to install ("latest", a bare stable version, or a
+#               canonical nightly-cua-driver-rs-v* tag).
 #               Overridden by $env:CUA_DRIVER_RS_VERSION when set.
 #   -AutoStart  register a Scheduled Task that runs `cua-driver serve` at
 #               every logon (Windows-native equivalent of macOS LaunchAgent).
@@ -99,6 +100,7 @@ $ProgressPreference = "SilentlyContinue"
 
 $Repo       = "trycua/cua"
 $TagPrefix  = "cua-driver-rs-v"
+$NightlyTagPrefix = "nightly-cua-driver-rs-v"
 $BinaryName = "cua-driver.exe"
 $ThemeBinaryName = "cua-cursor-theme.exe"
 
@@ -861,6 +863,7 @@ function Invoke-OldReleasesGc {
 #   'api'                 — already the API's answer; nothing left to fall
 #       back to.
 $Script:CuaDriverRsVersionSource = $null
+$Script:CuaDriverRsReleaseTag = $null
 
 function Get-GitHubApiHeaders {
     # GH_TOKEN matches the GitHub CLI's precedence. Keep the token in a header
@@ -883,6 +886,21 @@ function Assert-StableVersion([string]$version, [string]$source) {
         Write-ErrorStep "$source must be an exact stable x.y.z version (got '$version')"
         exit 1
     }
+}
+
+function Resolve-ExplicitRelease([string]$value, [string]$source) {
+    if ($value -match '^(?:cua-driver-rs-v|v)?([0-9]+\.[0-9]+\.[0-9]+)$') {
+        $version = $Matches[1]
+        return @{ Version = $version; Tag = "$TagPrefix$version" }
+    }
+    if ($value -match '^nightly-cua-driver-rs-v([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$') {
+        return @{ Version = $Matches[1]; Tag = $value }
+    }
+    if ($value -match '^([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$') {
+        return @{ Version = $Matches[1]; Tag = "$NightlyTagPrefix$($Matches[1])" }
+    }
+    Write-ErrorStep "$source must be an exact x.y.z stable version or canonical nightly tag (got '$value')"
+    exit 1
 }
 
 function Get-LatestVersionFromApi {
@@ -937,16 +955,18 @@ function Get-LatestVersionFromApi {
 
 function Resolve-Version {
     if ($env:CUA_DRIVER_RS_VERSION) {
-        $v = $env:CUA_DRIVER_RS_VERSION -replace '^v', ''
-        Assert-StableVersion $v 'CUA_DRIVER_RS_VERSION'
-        Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $v"
+        $release = Resolve-ExplicitRelease $env:CUA_DRIVER_RS_VERSION 'CUA_DRIVER_RS_VERSION'
+        $v = $release.Version
+        $Script:CuaDriverRsReleaseTag = $release.Tag
+        Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $($release.Tag)"
         $Script:CuaDriverRsVersionSource = 'env'
         return $v
     }
     if ($Release -ne "latest") {
-        $v = $Release -replace '^v', ''
-        Assert-StableVersion $v '-Release'
-        Write-Step "using -Release $v"
+        $release = Resolve-ExplicitRelease $Release '-Release'
+        $v = $release.Version
+        $Script:CuaDriverRsReleaseTag = $release.Tag
+        Write-Step "using -Release $($release.Tag)"
         $Script:CuaDriverRsVersionSource = 'release-arg'
         return $v
     }
@@ -957,6 +977,7 @@ function Resolve-Version {
         $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
         Assert-StableVersion $v 'baked release'
         Write-Step "using baked release: $TagPrefix$v"
+        $Script:CuaDriverRsReleaseTag = "$TagPrefix$v"
         $Script:CuaDriverRsVersionSource = 'baked'
         return $v
     }
@@ -966,6 +987,7 @@ function Resolve-Version {
         exit 1
     }
     $Script:CuaDriverRsVersionSource = 'api'
+    $Script:CuaDriverRsReleaseTag = "$TagPrefix$v"
     return $v
 }
 
@@ -997,7 +1019,7 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
     # never confused with a transient network, server, or authentication
     # failure. Only the former may activate baked-version fallback.
     $zipName = "cua-driver-rs-$version-$archLabel.zip"
-    $url     = "https://github.com/$Repo/releases/download/$TagPrefix$version/$zipName"
+    $url     = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$zipName"
     $zipPath = Join-Path $destDir $zipName
     $maxAttempts = 3
 
@@ -1079,6 +1101,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
         else {
             Write-WarningStep "temporary fallback: baked release $TagPrefix$resolvedVersion is missing its $archLabel asset (HTTP 404); installing latest published release $TagPrefix$apiVersion instead"
             $resolvedVersion = $apiVersion
+            $Script:CuaDriverRsReleaseTag = "$TagPrefix$resolvedVersion"
             $download = Get-ReleaseZip $resolvedVersion $archLabel $destDir
             if ($download.ErrorMessage) {
                 if (Test-TransientDownloadFailure $download.StatusCode) {

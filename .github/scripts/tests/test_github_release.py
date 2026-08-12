@@ -9,6 +9,7 @@ import pytest
 
 import github_release
 from github_release import (
+    ensure_release,
     GitHubApi,
     ReleaseError,
     finalize_release,
@@ -23,6 +24,7 @@ class FakeApi:
         self.deleted: list[str] = []
         self.uploaded: list[tuple[str, str]] = []
         self.patches: list[tuple[str, dict]] = []
+        self.posts: list[tuple[str, dict]] = []
         self.assets = [{"id": 21, "name": "old.zip", "state": "starter", "size": 0}]
         self.release = {
             "id": 7,
@@ -37,14 +39,18 @@ class FakeApi:
     def get(self, path: str):
         if path.endswith("/git/ref/tags/lume-v0.4.0"):
             return {"object": {"type": "tag", "sha": "annotated"}}
+        if "/git/ref/tags/nightly-" in path:
+            return {"object": {"type": "commit", "sha": self.expected_sha}}
         if path.endswith("/git/tags/annotated"):
             return {"object": {"type": "commit", "sha": self.expected_sha}}
         if "/releases?" in path:
             return [self.release] if self.release else []
-        if path.endswith("/releases/7/assets?per_page=100&page=1"):
+        if path.endswith("/assets?per_page=100&page=1"):
             return list(self.assets)
         if path.endswith("/releases/latest"):
             return self.release
+        if "/commits/" in path:
+            return {"sha": path.rsplit("/", 1)[1]}
         raise AssertionError(path)
 
     def delete(self, path: str):
@@ -56,6 +62,20 @@ class FakeApi:
     def patch(self, path: str, body: dict):
         self.patches.append((path, body))
         self.release.update(body)
+        return self.release
+
+    def post(self, path: str, body: dict):
+        self.posts.append((path, body))
+        self.release = {
+            "id": 8,
+            "tag_name": body["tag_name"],
+            "draft": body["draft"],
+            "prerelease": body["prerelease"],
+            "body": body["body"],
+            "target_commitish": body["target_commitish"],
+            "upload_url": "https://uploads.example/releases/8/assets{?name,label}",
+            "html_url": f"https://github.com/trycua/cua/releases/tag/{body['tag_name']}",
+        }
         return self.release
 
 
@@ -171,3 +191,129 @@ def test_github_api_retries_transient_server_error(monkeypatch: pytest.MonkeyPat
     api = GitHubApi("token", max_attempts=3, retry_base_seconds=0.1)
     assert api.get("repos/trycua/cua/releases") == {"ok": True}
     assert sleeps == [0.25]
+
+
+def test_nightly_can_create_a_private_draft_at_the_exact_sha():
+    sha = "a" * 40
+    tag = "nightly-lume-v0.5.4-nightly.20260812.42"
+    api = FakeApi(sha)
+    api.release = None
+
+    release = ensure_release(
+        api,
+        "trycua/cua",
+        tag,
+        sha,
+        channel="nightly",
+        create_if_missing=True,
+    )
+
+    assert release["draft"] is True
+    assert api.posts == [
+        (
+            "repos/trycua/cua/releases",
+            {
+                "tag_name": tag,
+                "target_commitish": sha,
+                "name": tag,
+                "body": "",
+                "draft": True,
+                "prerelease": True,
+                "make_latest": "false",
+            },
+        )
+    ]
+
+
+def test_stable_and_unregistered_tags_cannot_create_drafts():
+    api = FakeApi("a" * 40)
+    api.release = None
+    with pytest.raises(ReleaseError, match="only for the nightly channel"):
+        ensure_release(
+            api,
+            "trycua/cua",
+            "lume-v0.5.4",
+            "a" * 40,
+            channel="stable",
+            create_if_missing=True,
+        )
+    with pytest.raises(ReleaseError, match="exactly one registered component"):
+        ensure_release(
+            api,
+            "trycua/cua",
+            "nightly-other-v0.5.4-nightly.20260812.42",
+            "a" * 40,
+            channel="nightly",
+            create_if_missing=True,
+        )
+    assert api.posts == []
+
+
+def test_nightly_draft_requires_an_exact_commit_sha_before_creation():
+    api = FakeApi("a" * 40)
+    api.release = None
+    with pytest.raises(ReleaseError, match="exact lowercase commit SHA"):
+        ensure_release(
+            api,
+            "trycua/cua",
+            "nightly-lume-v0.5.4-nightly.20260812.42",
+            "main",
+            channel="nightly",
+            create_if_missing=True,
+        )
+    assert api.posts == []
+
+
+def test_nightly_publication_flags_fail_closed_before_mutation(tmp_path: Path):
+    api = FakeApi("a" * 40)
+    with pytest.raises(ReleaseError, match="must be prereleases"):
+        finalize_release(
+            api=api,
+            repository="trycua/cua",
+            tag="nightly-lume-v0.5.4-nightly.20260812.42",
+            expected_sha="a" * 40,
+            body="body",
+            asset_dir=tmp_path,
+            prerelease=False,
+            make_latest=True,
+            channel="nightly",
+            create_if_missing=True,
+        )
+    assert api.posts == []
+
+
+def test_nightly_creation_upload_and_publish_is_one_idempotent_transaction(tmp_path: Path):
+    artifact = tmp_path / "lume.tar.gz"
+    artifact.write_bytes(b"nightly archive")
+    sha = "a" * 40
+    tag = "nightly-lume-v0.5.4-nightly.20260812.42"
+    api = FakeApi(sha)
+    api.release = None
+    api.assets = []
+
+    release = finalize_release(
+        api=api,
+        repository="trycua/cua",
+        tag=tag,
+        expected_sha=sha,
+        body="nightly body",
+        asset_dir=tmp_path,
+        prerelease=True,
+        make_latest=False,
+        channel="nightly",
+        create_if_missing=True,
+    )
+
+    assert release["draft"] is False
+    assert [name for _, name in api.uploaded] == ["lume.tar.gz"]
+    assert api.patches == [
+        (
+            "repos/trycua/cua/releases/8",
+            {
+                "body": "nightly body",
+                "draft": False,
+                "prerelease": True,
+                "make_latest": "false",
+            },
+        )
+    ]

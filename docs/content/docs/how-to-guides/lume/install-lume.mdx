@@ -43,6 +43,21 @@ lume update --apply
 The installer no longer creates scheduled auto-updaters. Older `lume-update` cron jobs and
 LaunchAgents are removed the next time the installer runs.
 
+## Install an exact nightly
+
+Nightlies are immutable builds of exact `main` commits. Copy the full
+`nightly-lume-v…` tag from the component's GitHub release and pass it as an
+explicit, one-shot pin:
+
+```bash
+curl -fsSL https://cua.ai/lume/install.sh | \
+  LUME_VERSION=nightly-lume-v0.5.4-nightly.20260812.123456789 bash
+```
+
+Nightlies do not participate in `lume check-update` or stable installer
+discovery. Run the ordinary installer again to return to the baked stable
+release.
+
 ## Manual installation
 
 You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.

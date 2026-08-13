@@ -1543,7 +1543,7 @@ class Sandbox:
             runtime = _auto_runtime(image)
         if image and runtime:
             sb_name = name or _random_name()
-            rt_info = await runtime.start(image, sb_name)
+            rt_info = await runtime.start(image, sb_name, ephemeral=bool(ephemeral))
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:
                     from cua_sandbox.transport.grpc_emulator import (

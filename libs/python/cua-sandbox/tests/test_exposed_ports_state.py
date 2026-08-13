@@ -95,3 +95,30 @@ def _subclasses(cls):
     for sub in cls.__subclasses__():
         yield sub
         yield from _subclasses(sub)
+
+
+class TestPersistentLocalSandboxesAreNotTreatedAsEphemeral:
+    """`Sandbox.create` reached `runtime.start` without `ephemeral=`, and the
+    runtime defaults it to True. A persistent local sandbox was therefore
+    ephemeral to the runtime: no state written, and `_session_disk` set so the
+    overlay is deleted on stop. It also made the bad `save(..., exposed_ports=)`
+    call unreachable, which is why the TypeError never surfaced in practice."""
+
+    def test_create_passes_ephemeral_through_to_the_runtime(self):
+        import inspect
+
+        from cua_sandbox.sandbox import Sandbox
+
+        src = inspect.getsource(Sandbox._create)
+        assert "runtime.start(image, sb_name, ephemeral=" in src, (
+            "runtime.start must be told whether the sandbox is ephemeral; "
+            "without it the runtime defaults to ephemeral=True"
+        )
+
+    def test_runtime_still_defaults_to_ephemeral_when_unspecified(self):
+        """Callers that genuinely omit it keep the old behaviour."""
+        import inspect
+
+        from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
+
+        assert 'opts.pop("ephemeral", True)' in inspect.getsource(QEMUBaremetalRuntime.start)

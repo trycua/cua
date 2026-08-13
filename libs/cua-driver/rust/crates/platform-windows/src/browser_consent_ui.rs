@@ -1,6 +1,5 @@
 //! Exact Windows UIA handling for Chromium's browser-owned debugging consent.
 
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use cua_driver_core::browser::{
@@ -94,28 +93,56 @@ fn has_matching_pane_ancestor(nodes: &[UiaNode], window_index: usize, name: &str
     false
 }
 
+fn has_pane_rooted_title_binding(nodes: &[UiaNode], pane_index: usize, name: &str) -> bool {
+    let pane = &nodes[pane_index];
+    let end = subtree_end(nodes, pane_index);
+    let descendants = &nodes[(pane_index + 1)..end];
+    let has_direct_title = descendants.iter().any(|node| {
+        is_trusted_prompt_node(nodes, node)
+            && node.depth == pane.depth + 1
+            && node.control_type == "Text"
+            && node_name(node) == Some(name)
+    });
+    let has_nested_title = descendants.iter().any(|node| {
+        is_trusted_prompt_node(nodes, node)
+            && node.depth > pane.depth + 1
+            && node.control_type == "Text"
+            && node_name(node) == Some(name)
+    });
+    let has_nested_window = descendants
+        .iter()
+        .any(|node| is_trusted_prompt_node(nodes, node) && node.control_type == "Window");
+    has_direct_title && has_nested_title && !has_nested_window
+}
+
 fn native_prompt_surfaces(nodes: &[UiaNode]) -> Vec<(usize, usize)> {
     nodes
         .iter()
         .enumerate()
-        .filter_map(|(window_index, window)| {
-            if !is_trusted_prompt_node(nodes, window)
-                || window.depth == 0
-                || window.control_type != "Window"
-            {
+        .filter_map(|(root_index, root)| {
+            if !is_trusted_prompt_node(nodes, root) || root.depth == 0 {
                 return None;
             }
-            let name = node_name(window)?;
-            if !has_matching_pane_ancestor(nodes, window_index, name) {
-                return None;
+            let name = node_name(root)?;
+            let end = subtree_end(nodes, root_index);
+            match root.control_type.as_str() {
+                "Window" => {
+                    if !has_matching_pane_ancestor(nodes, root_index, name) {
+                        return None;
+                    }
+                    nodes[(root_index + 1)..end]
+                        .iter()
+                        .any(|node| {
+                            is_trusted_prompt_node(nodes, node)
+                                && node.control_type == "Text"
+                                && node_name(node) == Some(name)
+                        })
+                        .then_some((root_index, end))
+                }
+                "Pane" if root.depth > 1 => has_pane_rooted_title_binding(nodes, root_index, name)
+                    .then_some((root_index, end)),
+                _ => None,
             }
-            let end = subtree_end(nodes, window_index);
-            let has_bound_title = nodes[(window_index + 1)..end].iter().any(|node| {
-                is_trusted_prompt_node(nodes, node)
-                    && node.control_type == "Text"
-                    && node_name(node) == Some(name)
-            });
-            has_bound_title.then_some((window_index, end))
         })
         .collect()
 }
@@ -140,61 +167,6 @@ fn native_button_properties(element_ptr: usize) -> Result<(String, bool), Browse
             format!("could not prove a native Chromium consent button: {error}"),
         )
     })
-}
-
-fn redacted_native_structure_with<F>(nodes: &[UiaNode], mut properties: F) -> String
-where
-    F: FnMut(usize) -> Result<(String, bool), BrowserRefusal>,
-{
-    const MAX_ROWS: usize = 64;
-    let relevant = nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| {
-            is_trusted_prompt_node(nodes, node)
-                && matches!(
-                    node.control_type.as_str(),
-                    "Pane" | "Window" | "Text" | "Button" | "Group" | "CheckBox"
-                )
-        })
-        .collect::<Vec<_>>();
-    let start = relevant.len().saturating_sub(MAX_ROWS);
-    let mut name_groups = HashMap::<String, usize>::new();
-    let mut next_name_group = 1usize;
-    let mut rows = Vec::new();
-    for (tree_index, node) in relevant.into_iter().skip(start) {
-        let name_group = node_name(node).map(|name| {
-            *name_groups.entry(name.to_owned()).or_insert_with(|| {
-                let group = next_name_group;
-                next_name_group += 1;
-                group
-            })
-        });
-        let native = (node.control_type == "Button" && node.element_ptr != 0)
-            .then(|| properties(node.element_ptr).ok())
-            .flatten();
-        rows.push(format!(
-            "i={tree_index},type={},depth={},parent={:?},name_group={:?},rect={:?},actions={:?},class={:?},focused={:?}",
-            node.control_type,
-            node.depth,
-            node.parent_element_index,
-            name_group,
-            node.rect,
-            node.actions,
-            native.as_ref().map(|(class_name, _)| class_name),
-            native.as_ref().map(|(_, focused)| focused),
-        ));
-    }
-    format!(
-        "surfaces={},relevant={},sample=[{}]",
-        native_prompt_surfaces(nodes).len(),
-        start + rows.len(),
-        rows.join(";")
-    )
-}
-
-fn redacted_native_structure(nodes: &[UiaNode]) -> String {
-    redacted_native_structure_with(nodes, native_button_properties)
 }
 
 fn edge_gap(first: (i32, i32, i32, i32), second: (i32, i32, i32, i32)) -> Option<i64> {
@@ -404,8 +376,6 @@ pub async fn handle(
     prove_window_owner(request.window_id, pid)?;
     let deadline = Instant::now() + Duration::from_secs(4);
     let mut saw_prompt = false;
-    let diagnostics_enabled = std::env::var_os("CUA_DRIVER_BROWSER_CONSENT_DIAGNOSTICS").is_some();
-    let mut last_structure = None;
     loop {
         prove_window_owner(request.window_id, pid)?;
         let hwnd = request.window_id;
@@ -419,9 +389,6 @@ pub async fn handle(
             })?;
         let prompt_present = native_prompt_surface_present(&tree.nodes);
         saw_prompt |= prompt_present;
-        if diagnostics_enabled {
-            last_structure = Some(redacted_native_structure(&tree.nodes));
-        }
         match exact_allow_button(&tree.nodes) {
             Ok(Some(element)) => {
                 let invoked = unsafe { invoke(element) };
@@ -444,16 +411,10 @@ pub async fn handle(
         if Instant::now() >= deadline {
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
-                match last_structure {
-                    Some(structure) => format!(
-                        "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}; redacted native structure: {structure}",
-                        request.attempt
-                    ),
-                    None => format!(
-                        "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}",
-                        request.attempt
-                    ),
-                },
+                format!(
+                    "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}",
+                    request.attempt
+                ),
             ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -512,6 +473,18 @@ mod tests {
         ]
     }
 
+    fn pane_rooted_prompt(title: &str, labels: [&str; 3]) -> Vec<UiaNode> {
+        vec![
+            dialog_node("Pane", title, 2),
+            dialog_node("Text", title, 3),
+            dialog_node("Text", title, 7),
+            dialog_node("Text", "opaque explanatory surface", 10),
+            button(labels[0], 11, (282, 293, 419, 325)),
+            button(labels[1], 12, (574, 293, 629, 325)),
+            button(labels[2], 13, (637, 293, 698, 325)),
+        ]
+    }
+
     fn properties(element_ptr: usize) -> Result<(String, bool), BrowserRefusal> {
         Ok((CHROMIUM_DIALOG_BUTTON_CLASS.to_owned(), element_ptr == 13))
     }
@@ -541,6 +514,65 @@ mod tests {
                 Some(12)
             );
         }
+    }
+
+    #[test]
+    fn matcher_supports_pane_rooted_native_edge_prompt() {
+        assert_eq!(
+            exact_allow_button_with(
+                &pane_rooted_prompt(
+                    "¿Permitir la depuración remota?",
+                    ["Desactivar", "Permitir", "Cancelar"],
+                ),
+                properties,
+            )
+            .unwrap(),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn pane_rooted_prompt_requires_both_title_bindings_and_no_nested_window() {
+        let mut missing_direct = pane_rooted_prompt("opaque title", ["A", "B", "C"]);
+        missing_direct[1].name = Some("different direct title".to_owned());
+        assert_eq!(
+            exact_allow_button_with(&missing_direct, properties).unwrap(),
+            None
+        );
+
+        let mut missing_nested = pane_rooted_prompt("opaque title", ["A", "B", "C"]);
+        missing_nested[2].name = Some("different nested title".to_owned());
+        assert_eq!(
+            exact_allow_button_with(&missing_nested, properties).unwrap(),
+            None
+        );
+
+        let mut nested_window = pane_rooted_prompt("opaque title", ["A", "B", "C"]);
+        nested_window.insert(2, dialog_node("Window", "unrelated native window", 3));
+        assert_eq!(
+            exact_allow_button_with(&nested_window, properties).unwrap(),
+            None
+        );
+
+        let mut browser_root = pane_rooted_prompt("opaque title", ["A", "B", "C"]);
+        browser_root[0].depth = 1;
+        assert_eq!(
+            exact_allow_button_with(&browser_root, properties).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn matcher_refuses_multiple_pane_rooted_native_prompts() {
+        let mut nodes = pane_rooted_prompt("first opaque title", ["A", "B", "C"]);
+        nodes.extend(pane_rooted_prompt("second opaque title", ["D", "E", "F"]));
+
+        assert_eq!(
+            exact_allow_button_with(&nodes, properties)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
     }
 
     #[test]
@@ -703,22 +735,5 @@ mod tests {
             .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
-    }
-
-    #[test]
-    fn diagnostics_preserve_structure_without_exposing_localized_names() {
-        let title = "秘密のリモートデバッグ許可";
-        let labels = ["設定でオフ", "許可", "キャンセル"];
-        let nodes = prompt(title, labels);
-
-        let diagnostic = redacted_native_structure_with(&nodes, properties);
-
-        assert!(diagnostic.contains("surfaces=1"));
-        assert!(diagnostic.contains("type=Button"));
-        assert!(diagnostic.contains("name_group=Some"));
-        assert!(!diagnostic.contains(title));
-        for label in labels {
-            assert!(!diagnostic.contains(label));
-        }
     }
 }

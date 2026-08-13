@@ -137,12 +137,6 @@ $tests = @(
     "standalone_browser_upload",
     "standalone_browser_window_collision"
 )
-if (-not [string]::IsNullOrWhiteSpace($env:CUA_E2E_TEST_FILTER)) {
-    if ($tests -notcontains $env:CUA_E2E_TEST_FILTER) {
-        throw "Unknown CUA_E2E_TEST_FILTER: $($env:CUA_E2E_TEST_FILTER)"
-    }
-    $tests = @($env:CUA_E2E_TEST_FILTER)
-}
 $failureCount = 0
 foreach ($testName in $tests) {
     $testExit = Invoke-CargoStep -Name $testName -Arguments @(

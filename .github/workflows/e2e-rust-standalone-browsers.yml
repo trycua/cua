@@ -7,10 +7,6 @@ on:
         description: "Optional full 40-character commit SHA; defaults to dispatch SHA"
         required: false
         default: ""
-      test_filter:
-        description: "Optional exact standalone browser test name for diagnostics"
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -61,8 +57,6 @@ jobs:
       CUA_TEST_DRIVER_STDERR: "1"
       CUA_E2E_BROWSER_STDERR: "1"
       CUA_E2E_BROWSER_PRODUCTS: ${{ matrix.products }}
-      CUA_E2E_TEST_FILTER: ${{ inputs.test_filter }}
-      CUA_DRIVER_BROWSER_CONSENT_DIAGNOSTICS: ${{ inputs.test_filter != '' && '1' || '' }}
       RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

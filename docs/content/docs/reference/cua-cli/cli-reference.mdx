@@ -191,15 +191,18 @@ The `SOURCE` column names the runtime backing each sandbox — `docker`,
 `qemu-baremetal`, `lume`, or `cloud`.
 
 <Callout type="warn">
-  `cua sb ls` reports `No sandboxes found.` both when the account genuinely has
-  no sandboxes and when the cloud listing call fails — the error is swallowed.
-  Since the cloud listing goes through the retired VM API described above, an
-  empty cloud list currently tells you nothing about your account. `--local` is
-  unaffected.
+  **There is no way to list cloud sandboxes, and no configuration that enables
+  it.** Fleet has no list operation at all — with `FLEETS_TOKEN` set, `cua sb ls`
+  refuses outright with `Listing Fleet sandboxes is not supported; use 'cua sb
+  info NAME'.` Without it, the listing falls to the retired VM API described
+  above and cannot succeed either. Address cloud sandboxes by name with
+  `cua sb info`. `--local` is unaffected and lists normally.
 </Callout>
 
-Fleet sandboxes cannot be listed. When `FLEETS_TOKEN` is set, `cua sb ls` exits
-with `Listing Fleet sandboxes is not supported; use 'cua sb info NAME'.`
+Older versions report this as `No sandboxes found.` rather than as an error,
+because the cloud listing swallowed its exception — so on those versions an
+empty cloud list is indistinguishable from a failure. Either way, an empty cloud
+list is not evidence that the account has no sandboxes.
 
 ### `cua sb info`
 

@@ -71,10 +71,53 @@ device flow completes — so the approval is wasted and has to be repeated. And 
 is not limited to `login`: `cua auth status` and every authenticated command
 raise the same error, because reading the vault fails the same way writing does.
 
-### Option 1: a file-backed keyring
+<Callout type="warn">
+  **What is at stake is a refresh token, not just an access token.** The stored
+  credential re-mints access tokens on demand, so it stays useful long after any
+  access token it produced has expired, and automatic refresh keeps rewriting it
+  so it never goes stale on its own. Whoever reads it holds your Cua session
+  until it is revoked. Choose the storage backend accordingly, and prefer an
+  encrypted one wherever the host outlives the job.
+</Callout>
 
-Install a backend that writes to a file instead of a system vault. `keyrings.alt`
-provides one:
+### Option 1: an encrypted file keyring
+
+The best fit for most headless hosts. `keyrings.cryptfile` writes to a file like
+the other file-backed backends but encrypts the store with a passphrase (Argon2
+key derivation, AES-GCM):
+
+```bash
+pip install keyrings.cryptfile
+export PYTHON_KEYRING_BACKEND=keyrings.cryptfile.cryptfile.CryptFileKeyring
+cua auth login --no-browser
+```
+
+The store lives at `~/.local/share/python_keyring/cryptfile_pass.cfg`, mode
+`600`. Every command that touches credentials prompts once for the passphrase:
+
+```console
+$ cua auth status
+Please enter password for encrypted keyring:
+Logged in to run.cua.ai. Access token expires 2026-08-12T22:36:31.604247+00:00.
+```
+
+That prompt is the tradeoff: fine for a host you log into and work on,
+unworkable for an unattended job.
+
+`keyrings.alt` also ships an `EncryptedKeyring`, which stores to
+`crypted_pass.cfg` at mode `600` and prompts the same way. It needs a crypto
+library that `keyrings.alt` does not itself install, so add it explicitly or the
+backend fails to load with `ModuleNotFoundError: No module named 'Crypto'`:
+
+```bash
+pip install keyrings.alt pycryptodome
+export PYTHON_KEYRING_BACKEND=keyrings.alt.file.EncryptedKeyring
+```
+
+### Option 2: a plaintext file keyring, for hosts that are thrown away
+
+Use this only where the machine is destroyed after the job — a CI runner, an
+ephemeral VM — and never on anything that persists.
 
 ```bash
 pip install keyrings.alt
@@ -88,8 +131,10 @@ Or install it alongside the CLI in one step:
 uv tool install cua-cli --with keyrings.alt --index https://wheels.cua.ai/simple
 ```
 
-Credentials then land in `~/.local/share/python_keyring/keyring_pass.cfg`,
-created with mode `600`.
+Credentials then land in **`~/.local/share/python_keyring/keyring_pass.cfg`**,
+created with mode `600`. That is the file to protect, and the file to delete
+when you are finished with a host that outlived its purpose — removing it, or
+running `cua auth logout`, is what actually gets the credential off the disk.
 
 Setting `PYTHON_KEYRING_BACKEND` is not strictly required — `PlaintextKeyring`
 registers at a higher priority than the failing backend, so `keyring` selects it
@@ -97,38 +142,12 @@ on its own once installed. Set it anyway: it pins the choice, so installing
 another backend later cannot silently move where your tokens are kept.
 
 <Callout type="warn">
-  **`PlaintextKeyring` stores the OAuth access and refresh tokens unencrypted on
-  disk.** File permissions are the only protection, and automatic token refresh
-  rewrites the file, so the credential stays current rather than expiring out of
-  usefulness. Anyone who can read that file — including anything that can read
-  the host's disk or a backup of it — holds your Cua session. Use it for
-  ephemeral and CI hosts that are destroyed after the job. For a machine that
-  persists, use one of the options below.
+  **`PlaintextKeyring` does not encrypt anything.** Values are base64-encoded,
+  which is an encoding and not a protection — anyone who can read the file can
+  recover the token with one command. File permissions are the only real barrier,
+  and they do not survive a backup, a snapshot, a stray `tar`, or another user
+  with root. Prefer Option 1 whenever the host persists.
 </Callout>
-
-### Option 2: an encrypted file keyring
-
-`keyrings.cryptfile` keeps the same file-backed approach but encrypts the store
-with a passphrase (Argon2 key derivation, AES-GCM):
-
-```bash
-pip install keyrings.cryptfile
-export PYTHON_KEYRING_BACKEND=keyrings.cryptfile.cryptfile.CryptFileKeyring
-cua auth login --no-browser
-```
-
-The store lives at `~/.local/share/python_keyring/cryptfile_pass.cfg`, also mode
-`600`. Every command that touches credentials prompts once for the passphrase:
-
-```console
-$ cua auth status
-Please enter password for encrypted keyring:
-Logged in to run.cua.ai. Access token expires 2026-08-12T22:36:31.604247+00:00.
-```
-
-That prompt is the tradeoff. It is fine for a host you log into and work on, and
-unworkable for an unattended job, which is exactly the split between this option
-and the previous one.
 
 ### Option 3: a real keyring
 
@@ -180,7 +199,17 @@ Fleet requests — the `--pool` path and everything `cua wif-token` feeds — go
 cloud API. `CUA_BASE_URL` addresses the older VM API instead, and its default
 host is retired.
 
-`CUA_API_KEY` is likewise not a way to authenticate the CLI: `cua` passes its
+<Callout type="warn">
+  **`CUA_API_KEY` is not a way to skip logging in, and setting it makes things
+  worse rather than better.** The SDK picks its transport with
+  `_uses_fleet(api_key)`, which is true only when **no** API key is supplied. So
+  providing one routes the call away from Fleet and onto the older VM API —
+  whose host is retired — and it will fail there no matter how valid the key is.
+  `FLEETS_TOKEN` is the environment variable that actually reaches a working
+  API.
+</Callout>
+
+`CUA_API_KEY` is not an authentication path for the CLI either: `cua` passes its
 own session token explicitly on every cloud call, and an explicitly passed key
 takes precedence over the environment.
 

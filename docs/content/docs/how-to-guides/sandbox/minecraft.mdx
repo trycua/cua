@@ -9,7 +9,7 @@ Minecraft exercises almost everything a Windows sandbox can do: it needs interne
 
 ## Before you start
 
-- **cua-sandbox 0.3.2 or newer.** Windows on Fleet needs 0.3.0, `Image.expose()` on the local QEMU runtime landed in 0.3.1, and the `sb.exposed_ports` this guide reads the forwarded port from landed in 0.3.2.
+- **cua-sandbox 0.3.3 or newer.** Windows on Fleet needs 0.3.0, `Image.expose()` on the local QEMU runtime landed in 0.3.1, the `sb.exposed_ports` this guide reads the forwarded port from landed in 0.3.2, and 0.3.3 brought both `Image.from_registry(..., os_type=...)` and the pull-secret fix that lets Fleet boot an image from a registry outside its own allowlist — which the containerDisk section below needs.
 - **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright. The Fleet path runs there instead, including the game, with the one extra environment variable described in the Fleet section below.
 - **A Microsoft account that owns Minecraft Java Edition.** Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
 - **A vision-capable LLM endpoint** for the agent loop.
@@ -405,14 +405,13 @@ That took **6 min 28 s** here — 3 min 48 s exporting the layer and 1 min 57 s 
 
 ### Boot the published image
 
-`Image.from_registry()` is the constructor for a registry reference, but it hardcodes `os_type="linux"` — and `os_type` is what selects firmware on both paths. The local runtime only looks for OVMF when it is `"windows"`, and the Fleet transport only sets `Firmware.EFI` for it, so a Windows containerDisk taken straight from `from_registry()` boots SeaBIOS against a GPT/ESP disk and never reaches the readiness probe. `Image` is a frozen dataclass, so override the field:
+`os_type` is what selects firmware on both paths: the local runtime only looks for OVMF when it is `"windows"`, and the Fleet transport only sets `Firmware.EFI` for it. A Windows containerDisk that claims to be Linux boots SeaBIOS against a GPT/ESP disk and never reaches the readiness probe, so say which one it is:
 
 ```python
-from dataclasses import replace
 from cua import Image, QEMURuntime, Sandbox
 
 REF = 'ghcr.io/<you>/minecraft-workspace:1.20.1'
-IMAGE = replace(Image.from_registry(REF), os_type='windows', kind='vm').expose(3000)
+IMAGE = Image.from_registry(REF, os_type='windows', kind='vm').expose(3000)
 ```
 
 `IMAGE` is then a drop-in replacement for `Image.windows().expose(3000)` in both snippets earlier in this guide — the local `Sandbox.create(..., local=True, runtime=QEMURuntime(...))` call and the Fleet one. Nothing else changes: the same `EXTRA_ARGS` locally, the same agent loop, and on Fleet the same `GALLIUM_DRIVER=softpipe`.
@@ -428,7 +427,7 @@ Booted locally, that image printed `Image(windows/registry:latest, kind=vm, ...)
 
   Expect the first Fleet boot on a given node to be slow: it has to pull the whole image before the sandbox can start, and Fleet enforces a **300-second bind deadline** that `time_to_start=` does not extend, so a cold pull can surface as `BindDeadlineExceeded: no adoptable Sandbox within 300s`.
 
-  **Retry under a new sandbox name, not the same one.** A template can be created but never updated: both branches of the gateway's image policy are guarded by `input.method != "PATCH"`, so reusing the name makes the SDK patch the existing template and the request is refused with `403 k8s request is not allowed` — the same opaque message you get for a disallowed image, saying nothing about why. A fresh name creates a fresh template and pulls against the now-warm cache. Measured here: a cold attempt hit the deadline, the same name then returned 403, and a new name reached `READY` in 157 s.
+  A second failure to expect is `403 k8s request is not allowed` on `update template`. A template can be **created but never updated**: both branches of the gateway's image policy are guarded by `input.method != "PATCH"`, so any request that takes the update path is refused, with the same opaque message you get for a disallowed image. Reusing the sandbox name guarantees it. A fresh name usually avoids it but **not reliably** — of four boots of the same image, one reused name and one fresh name both returned 403, while two other fresh names reached `READY` in 157 s and 187 s. Retry; it is intermittent, and nothing about your image changes the outcome.
 </Callout>
 
 The reader's remaining work is the part that has to be theirs: open Prism, *Accounts → Add Microsoft*, approve the device code, and click Launch.
@@ -496,7 +495,7 @@ What that crash is *not*, since each obvious explanation was tested and eliminat
 | Game exits during resource loading with `exitcode -2147024809`, **Fleet** | Mesa's default llvmpipe renderer | set `GALLIUM_DRIVER=softpipe` in the process that starts the launcher, and restart the launcher if it is already running |
 | `Permission denied: user policy: tool 'X' is not allowed` | cua-driver's YAML policy refuses that tool, which `list_tools()` advertises anyway on every driver released so far | use an allowed tool — `get_desktop_state` instead of `get_screen_size`, `list_windows` instead of `get_accessibility_tree` |
 | Model replies with empty output on the first call | endpoint is streaming-only | issue `stream=True` and rebuild with `litellm.stream_chunk_builder` |
-| Sandbox from `Image.from_registry()` never becomes ready | `from_registry` hardcodes `os_type="linux"`, so a Windows disk gets BIOS instead of UEFI | `dataclasses.replace(Image.from_registry(ref), os_type="windows", kind="vm")` |
+| Sandbox from `Image.from_registry()` never becomes ready | `os_type` defaults to `"linux"`, so a Windows disk gets BIOS instead of UEFI | pass `os_type="windows", kind="vm"` (needs cua-sandbox 0.3.3; before that, `dataclasses.replace()` on the result) |
 | `SSLError(1, '[SSL: WRONG_VERSION_NUMBER] wrong version number')` while pulling | the registry speaks plain HTTP; `oras` only speaks HTTPS | give the registry a certificate, and set `REQUESTS_CA_BUNDLE` for a self-signed one |
 | `denied: permission_denied: The token provided does not match expected scopes` at the end of a push | the `gh` OAuth token carries no `write:packages` | `gh auth refresh -h github.com -s write:packages`, or use a PAT that has it |
 | Fleet cannot pull the image you just published | GHCR packages are private on first push, and Fleet pulls anonymously | make the package public |

@@ -58,6 +58,13 @@ use cursor_overlay::{
     CursorConfig, CursorKey, KeyedOverlayCommand, OverlayCommand, OverlayMsg, RenderStateCore,
 };
 
+/// WM_NAME prefix for the X11 override-redirect overlay window.
+///
+/// Desktop capture looks up mapped windows with this prefix and composites
+/// their shaped pixels onto the root screenshot. Keep this in lockstep with
+/// [`crate::capture`].
+pub const AGENT_CURSOR_OVERLAY_WM_NAME_PREFIX: &str = "Cua.AgentCursorOverlay.";
+
 // ── Global channel ────────────────────────────────────────────────────────
 
 static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new();
@@ -1140,7 +1147,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // Set window title (identifies our overlay, matches Windows convention).
     // `Cua.` namespace mirrors the Windows class-name + install-path
     // convention; was `TropeCUA.` (leaked codename from an early C# ref).
-    let title = format!("Cua.AgentCursorOverlay.{}", cfg.cursor_id);
+    let title = format!("{AGENT_CURSOR_OVERLAY_WM_NAME_PREFIX}{}", cfg.cursor_id);
     conn.change_property8(
         PropMode::REPLACE,
         win,
@@ -2897,7 +2904,7 @@ mod tests {
         init(cfg);
         run_on_thread();
 
-        let title = format!("Cua.AgentCursorOverlay.{cursor_id}");
+        let title = format!("{AGENT_CURSOR_OVERLAY_WM_NAME_PREFIX}{cursor_id}");
         let overlay = find_named_window(&conn, root, title.as_bytes())?;
         wait_for_bounding_shape(&conn, overlay, true, "daemon startup")?;
         assert_click_through(&conn, root, overlay, target, "daemon startup")?;

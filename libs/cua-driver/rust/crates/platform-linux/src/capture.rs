@@ -848,7 +848,11 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 ///   owns the complete GNOME helper → wlroots screencopy →
 ///   ext-image-copy-capture-v1 → portal Screenshot → X11 cascade. An
 ///   available GNOME helper's capture failure is terminal.
-/// - X11 / Wayland-disabled: ImageMagick `import` → x11rb `XGetImage`.
+/// - X11 / Wayland-disabled: ImageMagick `import` → x11rb `XGetImage` on
+///   the root, then a second pass that composites any mapped
+///   `Cua.AgentCursorOverlay.*` window. Root-only `XGetImage` cannot see
+///   that override-redirect pixmap (picom / xorgxrdp / some Xvfb hosts),
+///   so the overlay's own shaped pixels are blended on afterwards.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     screenshot_display_bytes_with_dispatch(
         crate::wayland::is_wayland(),
@@ -873,7 +877,18 @@ fn screenshot_display_bytes_with_dispatch(
 /// [`crate::wayland::screenshot_display_dispatch`] can call it as a final
 /// fallback without re-entering [`screenshot_display_bytes`] (which would
 /// loop forever once we're on Wayland).
+///
+/// Root capture is not the final buffer when the agent-cursor overlay is
+/// mapped: those pixels live on a shaped override-redirect window that
+/// `import -window root` and root `XGetImage` omit. The overlay pixmap is
+/// composited on afterwards. Disabled or unmapped overlays leave the root
+/// capture unchanged.
 pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
+    let png = screenshot_root_window_bytes_x11()?;
+    Ok(composite_mapped_agent_cursor_overlays(png))
+}
+
+fn screenshot_root_window_bytes_x11() -> Result<Vec<u8>> {
     // Try `import -window root png:-` (ImageMagick).
     let out = Command::new("import")
         .args(["-window", "root", "png:-"])
@@ -921,6 +936,213 @@ pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
     cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
 }
 
+/// One shaped rect of a mapped `Cua.AgentCursorOverlay.*` window, in root
+/// coordinates, with premultiplied RGBA pixels from the overlay pixmap.
+#[derive(Debug, Clone)]
+struct OverlayCaptureTile {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+fn composite_mapped_agent_cursor_overlays(png: Vec<u8>) -> Vec<u8> {
+    match capture_mapped_agent_cursor_overlay_tiles() {
+        Ok(tiles) if !tiles.is_empty() => match apply_overlay_tiles_to_png(&png, &tiles) {
+            Ok(out) => out,
+            Err(error) => {
+                tracing::debug!("X11 overlay composite encode failed: {error:#}");
+                png
+            }
+        },
+        Ok(_) => png,
+        Err(error) => {
+            tracing::debug!("X11 overlay composite skipped: {error:#}");
+            png
+        }
+    }
+}
+
+fn apply_overlay_tiles_to_png(png: &[u8], tiles: &[OverlayCaptureTile]) -> Result<Vec<u8>> {
+    if tiles.is_empty() {
+        return Ok(png.to_vec());
+    }
+    let (mut rgba, width, height) = decode_png_rgba_owned(png)?;
+    for tile in tiles {
+        blend_premultiplied_rgba_over(
+            &mut rgba,
+            width,
+            height,
+            &tile.rgba,
+            tile.x,
+            tile.y,
+            tile.width,
+            tile.height,
+        );
+    }
+    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, width, height)
+}
+
+fn decode_png_rgba_owned(png: &[u8]) -> Result<(Vec<u8>, u32, u32)> {
+    let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .map_err(|error| anyhow!("decode root PNG for overlay composite: {error}"))?
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    Ok((image.into_raw(), width, height))
+}
+
+/// Premultiplied `src` over an opaque destination. Tiles that miss the
+/// destination (disabled / unmapped overlay, or a rect off-screen) are a
+/// no-op.
+fn blend_premultiplied_rgba_over(
+    dest: &mut [u8],
+    dest_w: u32,
+    dest_h: u32,
+    src: &[u8],
+    dest_x: i32,
+    dest_y: i32,
+    src_w: u32,
+    src_h: u32,
+) {
+    if src_w == 0 || src_h == 0 {
+        return;
+    }
+    let expected = (src_w as usize)
+        .saturating_mul(src_h as usize)
+        .saturating_mul(4);
+    if src.len() != expected || dest.len() != (dest_w as usize) * (dest_h as usize) * 4 {
+        return;
+    }
+    for row in 0..src_h {
+        let dest_row = dest_y.saturating_add_unsigned(row);
+        if dest_row < 0 || dest_row as u32 >= dest_h {
+            continue;
+        }
+        for col in 0..src_w {
+            let dest_col = dest_x.saturating_add_unsigned(col);
+            if dest_col < 0 || dest_col as u32 >= dest_w {
+                continue;
+            }
+            let src_i = ((row as usize) * (src_w as usize) + col as usize) * 4;
+            let dest_i = ((dest_row as usize) * (dest_w as usize) + dest_col as usize) * 4;
+            let src_a = src[src_i + 3];
+            if src_a == 0 {
+                continue;
+            }
+            if src_a == 255 {
+                dest[dest_i..dest_i + 4].copy_from_slice(&src[src_i..src_i + 4]);
+                dest[dest_i + 3] = 255;
+                continue;
+            }
+            let inv = 255 - src_a;
+            for channel in 0..3 {
+                let blended = u16::from(src[src_i + channel])
+                    + (u16::from(dest[dest_i + channel]) * u16::from(inv) + 127) / 255;
+                dest[dest_i + channel] = blended.min(255) as u8;
+            }
+            dest[dest_i + 3] = 255;
+        }
+    }
+}
+
+fn capture_mapped_agent_cursor_overlay_tiles() -> Result<Vec<OverlayCaptureTile>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK};
+    use x11rb::protocol::xproto::{
+        AtomEnum, ConnectionExt as XprotoConnectionExt, ImageFormat, MapState,
+    };
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, screen_num) = RustConnection::connect(None)
+        .map_err(|error| anyhow!("{error}{}", crate::no_display_hint()))?;
+    let root = conn.setup().roots[screen_num].root;
+    let prefix = crate::overlay::AGENT_CURSOR_OVERLAY_WM_NAME_PREFIX.as_bytes();
+    let children = conn.query_tree(root)?.reply()?.children;
+    let mut tiles = Vec::new();
+    for window in children {
+        let name = conn
+            .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)?
+            .reply()?;
+        if !name.value.starts_with(prefix) {
+            continue;
+        }
+        let attrs = conn.get_window_attributes(window)?.reply()?;
+        if attrs.map_state != MapState::VIEWABLE {
+            continue;
+        }
+        let geom = conn.get_geometry(window)?.reply()?;
+        let shape = conn
+            .shape_get_rectangles(window, SK::BOUNDING)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok());
+        let Some(shape) = shape else {
+            continue;
+        };
+        if shape.rectangles.is_empty() {
+            continue;
+        }
+        for rect in shape.rectangles {
+            if rect.width == 0 || rect.height == 0 {
+                continue;
+            }
+            let Ok(cookie) = conn.get_image(
+                ImageFormat::Z_PIXMAP,
+                window,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                !0u32,
+            ) else {
+                continue;
+            };
+            let Ok(img) = cookie.reply() else {
+                continue;
+            };
+            let Some(rgba) = overlay_zpixmap_to_premultiplied_rgba(
+                &img.data,
+                rect.width,
+                rect.height,
+                img.depth,
+            ) else {
+                continue;
+            };
+            tiles.push(OverlayCaptureTile {
+                x: i32::from(geom.x) + i32::from(rect.x),
+                y: i32::from(geom.y) + i32::from(rect.y),
+                width: u32::from(rect.width),
+                height: u32::from(rect.height),
+                rgba,
+            });
+        }
+    }
+    Ok(tiles)
+}
+
+fn overlay_zpixmap_to_premultiplied_rgba(
+    data: &[u8],
+    width: u16,
+    height: u16,
+    depth: u8,
+) -> Option<Vec<u8>> {
+    let bpp = match depth {
+        32 | 24 => 4usize,
+        _ => return None,
+    };
+    let pixels = usize::from(width) * usize::from(height);
+    if data.len() < pixels * bpp {
+        return None;
+    }
+    let mut rgba = Vec::with_capacity(pixels * 4);
+    for chunk in data.chunks_exact(bpp).take(pixels) {
+        let (b, g, r) = (chunk[0], chunk[1], chunk[2]);
+        let a = if depth == 32 { chunk[3] } else { 255 };
+        rgba.extend_from_slice(&[r, g, b, a]);
+    }
+    Some(rgba)
+}
+
 /// Capture the primary display, returning (base64_png, width, height).
 pub fn screenshot_display() -> Result<(String, u32, u32)> {
     let png_bytes = screenshot_display_bytes()?;
@@ -964,6 +1186,70 @@ mod tests {
             .expect("decode PNG")
             .to_rgba8()
             .into_raw()
+    }
+
+    fn solid_png(r: u8, g: u8, b: u8, w: u32, h: u32) -> Vec<u8> {
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..(w * h) {
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+        cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h).expect("solid PNG")
+    }
+
+    #[test]
+    fn overlay_tiles_leave_root_capture_unchanged_when_unmapped() {
+        let root = solid_png(0, 0, 255, 4, 2);
+        let out = apply_overlay_tiles_to_png(&root, &[]).expect("empty tiles");
+        assert_eq!(decode_png_rgba(&out), decode_png_rgba(&root));
+    }
+
+    #[test]
+    fn overlay_tiles_paint_premultiplied_cursor_pixels_onto_the_root() {
+        let root = solid_png(0, 0, 255, 4, 2);
+        let tiles = [OverlayCaptureTile {
+            x: 1,
+            y: 0,
+            width: 2,
+            height: 1,
+            // Opaque lime, then 50% premultiplied red (127,0,0,128).
+            rgba: vec![0, 255, 0, 255, 127, 0, 0, 128],
+        }];
+        let out = apply_overlay_tiles_to_png(&root, &tiles).expect("composite");
+        let rgba = decode_png_rgba(&out);
+        assert_eq!(&rgba[0..4], &[0, 0, 255, 255], "untouched dest pixel");
+        assert_eq!(&rgba[4..8], &[0, 255, 0, 255], "opaque overlay pixel");
+        let blended_red = rgba[8];
+        let blended_blue = rgba[10];
+        assert!(
+            blended_red > 100 && blended_blue > 100,
+            "50% red over blue should keep both channels: {rgba:?}"
+        );
+        assert_eq!(rgba[11], 255);
+        assert_eq!(&rgba[12..16], &[0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn transparent_overlay_pixels_do_not_replace_the_root() {
+        let root = solid_png(9, 8, 7, 1, 1);
+        let tiles = [OverlayCaptureTile {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 0],
+        }];
+        let out = apply_overlay_tiles_to_png(&root, &tiles).expect("composite");
+        assert_eq!(decode_png_rgba(&out), vec![9, 8, 7, 255]);
+    }
+
+    #[test]
+    fn overlay_zpixmap_keeps_argb_alpha_for_compositing() {
+        let rgba = overlay_zpixmap_to_premultiplied_rgba(&[10, 20, 30, 40], 1, 1, 32)
+            .expect("32-bit overlay");
+        assert_eq!(rgba, vec![30, 20, 10, 40]);
+        let opaque = overlay_zpixmap_to_premultiplied_rgba(&[1, 2, 3, 99], 1, 1, 24)
+            .expect("24-bit overlay");
+        assert_eq!(opaque, vec![3, 2, 1, 255]);
     }
 
     #[test]

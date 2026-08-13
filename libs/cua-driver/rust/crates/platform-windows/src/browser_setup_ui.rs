@@ -168,6 +168,19 @@ fn force_setup_foreground(target: windows::Win32::Foundation::HWND) -> (bool, bo
     unsafe { crate::input::force_foreground_assisted(target) }
 }
 
+fn require_temporary_tab_foreground(
+    foregrounded: bool,
+    injected_global_input: bool,
+) -> Result<(bool, bool), BrowserRefusal> {
+    if !foregrounded {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "Windows refused the bounded foreground assist before temporary-tab creation",
+        ));
+    }
+    Ok((foregrounded, injected_global_input))
+}
+
 fn confirm_setup_navigation(
     hwnd: u64,
     element_ptr: usize,
@@ -449,6 +462,15 @@ pub fn enable(
                 injected_global_input: false,
                 enable_attempted: false,
             };
+            let target = windows::Win32::Foundation::HWND(hwnd as *mut _);
+            let foreground_proof = force_setup_foreground(target);
+            let (foregrounded, foreground_injected) =
+                match require_temporary_tab_foreground(foreground_proof.0, foreground_proof.1) {
+                    Ok(result) => result,
+                    Err(error) => return Err(handle.abort(error)),
+                };
+            handle.foregrounded_window = foregrounded;
+            handle.injected_global_input |= foreground_injected;
             handle.injected_global_input = true;
             if let Err(error) = crate::input::keyboard::send_key_synthesized(hwnd, "t", &["ctrl"]) {
                 return Err(handle.abort(refusal(
@@ -459,7 +481,6 @@ pub fn enable(
                     ),
                 )));
             }
-            handle.foregrounded_window = true;
             handle.opened_setup_page = true;
 
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -813,6 +834,17 @@ mod tests {
         assert_eq!(
             native_tab_count(&[first, duplicate, second, renderer_spoof, invalid]),
             2
+        );
+    }
+
+    #[test]
+    fn temporary_tab_bootstrap_requires_proven_foreground_activation() {
+        let error = require_temporary_tab_foreground(false, true).unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+
+        assert_eq!(
+            require_temporary_tab_foreground(true, true).unwrap(),
+            (true, true)
         );
     }
 }

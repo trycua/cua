@@ -430,6 +430,7 @@ mod tests {
             ("हिन्दी", ["ไทย", "עברית", "فارسی"]),
             ("日本語", ["한국어", "简体中文", "繁體中文"]),
             ("\u{2067}العربية\u{2069}", ["\u{2066}A\u{2069}", "👩🏽‍💻", "𐐷"]),
+            ("Հայերեն", ["ქართული", "አማርኛ", "বাংলা"]),
             ("A\u{200d}B", ["無", "⠿", "✅"]),
         ] {
             assert_eq!(
@@ -437,6 +438,16 @@ mod tests {
                 Some(12)
             );
         }
+    }
+
+    #[test]
+    fn matcher_refuses_when_accessible_names_cannot_bind_the_native_surface() {
+        let mut nodes = prompt("placeholder", ["A", "B", "C"]);
+        for node in &mut nodes {
+            node.name = None;
+        }
+
+        assert_eq!(exact_allow_button_with(&nodes, properties).unwrap(), None);
     }
 
     #[test]

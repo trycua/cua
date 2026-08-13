@@ -670,7 +670,9 @@ mod tests {
             ("हिन्दी", "ไทย", "עברית"),
             ("日本語", "한국어", "简体中文"),
             ("\u{2067}العربية\u{2069}", "فارسی", "اردو"),
+            ("Հայերեն", "ქართული", "አማርኛ"),
             ("👩🏽‍💻", "A\u{200d}B", "𐐷"),
+            ("", "", ""),
         ];
         for (document_name, heading_name, checkbox_name) in samples {
             let mut checkbox = node("CheckBox", checkbox_name, None, &["toggle"]);
@@ -688,6 +690,25 @@ mod tests {
             ];
             assert_eq!(exact_setup_checkbox(&nodes, descriptor()).unwrap(), Some(7));
         }
+    }
+
+    #[test]
+    fn setup_page_does_not_require_accessible_names() {
+        let mut checkbox = node("CheckBox", "placeholder", None, &["toggle"]);
+        checkbox.name = None;
+        checkbox.in_web_content = true;
+        let mut address = node(
+            "Edit",
+            "placeholder",
+            Some(descriptor().setup_url),
+            &["set_value"],
+        );
+        address.name = None;
+        let mut document = node("Document", "placeholder", None, &[]);
+        document.name = None;
+        let nodes = vec![address, document, checkbox];
+
+        assert_eq!(exact_setup_checkbox(&nodes, descriptor()).unwrap(), Some(7));
     }
 
     #[test]

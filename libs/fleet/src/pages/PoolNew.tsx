@@ -20,7 +20,7 @@ const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 const DEFAULTS = {
   cpu: 4,
   ram: "4Gi",
-  ociImage: "296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace:latest",
+  ociImage: "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest",
   replicas: 1,
 }
 

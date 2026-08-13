@@ -317,14 +317,18 @@ pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), Authorization
 /// unconditionally denied).  Tools that are conditionally allowed via
 /// `allow.rules` are still listed so that callers can attempt a constrained
 /// invocation.  When no policy is configured, all tools are listable.
+///
+/// On a policy loading error, this returns `true` (fail-open for listing).
+/// The error will surface at invocation time through [`authorize_tool_call`],
+/// and [`validate_configured_policy`] is expected to have caught it at startup.
 pub fn is_tool_listable(tool: &str) -> bool {
     let managed = match configured_managed_policy() {
         Ok(policy) => policy,
-        Err(_) => return false,
+        Err(_) => return true,
     };
     let user = match configured_policy() {
         Ok(policy) => policy,
-        Err(_) => return false,
+        Err(_) => return true,
     };
     for policy in [managed, user].into_iter().flatten() {
         if !policy.is_potentially_listable(tool) {

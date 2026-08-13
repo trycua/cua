@@ -55,6 +55,13 @@
 //!   version-controlled). Hermes' own `computer-use` skill teaches its wrapper
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
+//! Grok Bot is a cua-driver host (local CLI, or the bot's own Linux cloud
+//! computer) but has **no documented agent skills directory**. `skills
+//! install` never auto-links it. Do not invent a `~/.grok/skills` path.
+//! `skills status` still names Grok Bot so agents load `SKILL.md` from
+//! `cua-driver skills path` / the installed pack, or save a private Grok
+//! Bot skill / workflow that points at that pack.
+//!
 //! Only acts on a given agent when its parent skills dir already
 //! exists (i.e. the agent itself is installed). Never clobbers an
 //! existing `<agent_skills>/cua-driver` link — preserves dev users'
@@ -240,6 +247,25 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".hermes/skills"),
     },
 ];
+
+/// Hosts that run cua-driver but have no documented agent skills
+/// directory. `skills install` never auto-links these. Status still
+/// names them so agents stop inventing a symlink path.
+#[derive(Debug, Clone, Copy)]
+struct NonAutoLinkedHost {
+    label: &'static str,
+    /// Printed after the em dash. Must not invent a skills-dir path.
+    note: &'static str,
+}
+
+const NON_AUTO_LINKED_HOSTS: &[NonAutoLinkedHost] = &[NonAutoLinkedHost {
+    label: "Grok Bot",
+    note: "not auto-linked (no agent skills dir; load SKILL.md from `cua-driver skills path` / the installed pack)",
+}];
+
+fn non_auto_linked_status_line(host: &NonAutoLinkedHost) -> String {
+    format!("  {} — {}", host.label, host.note)
+}
 
 impl Agent {
     fn parent_path(&self) -> Result<PathBuf> {
@@ -797,6 +823,9 @@ fn status() -> Result<()> {
             );
         }
     }
+    for host in NON_AUTO_LINKED_HOSTS {
+        println!("{}", non_auto_linked_status_line(host));
+    }
     Ok(())
 }
 
@@ -808,9 +837,104 @@ fn print_path() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_tar_gz, skill_release_url, AgentParent, AGENTS, SKILL_FILES};
+    use super::{
+        extract_tar_gz, non_auto_linked_status_line, skill_release_url, AgentParent, AGENTS,
+        NON_AUTO_LINKED_HOSTS, SKILL_FILES,
+    };
     use std::path::PathBuf;
     use tempfile::tempdir;
+
+    #[test]
+    fn grok_bot_is_not_an_auto_link_target() {
+        assert!(
+            AGENTS.iter().all(|agent| agent.label != "Grok Bot"),
+            "Grok Bot has no agent skills dir; do not invent a path in AGENTS"
+        );
+        assert!(
+            !NON_AUTO_LINKED_HOSTS
+                .iter()
+                .any(|host| host.note.contains("/.grok/") || host.note.contains("~/.grok")),
+            "must not invent a Grok Bot skills directory"
+        );
+    }
+
+    #[test]
+    fn skills_status_names_grok_bot_as_not_auto_linked() {
+        let grok = NON_AUTO_LINKED_HOSTS
+            .iter()
+            .find(|host| host.label == "Grok Bot")
+            .expect("Grok Bot must remain a named non-auto-linked host");
+        let line = non_auto_linked_status_line(grok);
+        assert!(
+            line.contains("Grok Bot — not auto-linked (no agent skills dir; load SKILL.md from `cua-driver skills path` / the installed pack)"),
+            "skills status must name Grok Bot without implying a symlink: {line}"
+        );
+    }
+
+    #[test]
+    fn linux_skill_keeps_headless_cloud_bot_guidance() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let linux = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/LINUX.md"))
+            .expect("canonical Linux skill must be readable");
+
+        for required in [
+            "Headless / cloud bot / Xvfb",
+            "Xvfb",
+            "/dev/uinput",
+            "at-spi2-core",
+            "degraded",
+            "delivery_mode:\"foreground\"",
+            "One-shot CLI",
+            "get_desktop_state",
+            "Pixel `click` already glides",
+        ] {
+            assert!(
+                linux.contains(required),
+                "LINUX.md lost required headless/cloud-bot guidance: {required}"
+            );
+        }
+        assert!(
+            !linux.contains("~/.grok/skills"),
+            "LINUX.md must not invent a Grok Bot skills directory"
+        );
+    }
+
+    #[test]
+    fn skill_readme_names_grok_bot_without_inventing_a_skills_dir() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let readme = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/README.md"))
+            .expect("canonical skill README must be readable");
+
+        for required in ["Grok Bot", "not auto-linked", "cua-driver skills path"] {
+            assert!(
+                readme.contains(required),
+                "skill README lost required Grok Bot host guidance: {required}"
+            );
+        }
+        assert!(
+            !readme.contains("~/.grok/skills"),
+            "skill README must not invent a Grok Bot skills directory"
+        );
+    }
+
+    #[test]
+    fn bundled_skill_keeps_overlay_click_already_glides() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+
+        for required in [
+            "Pixel `click` already glides the overlay.",
+            "Do not call `move_cursor`",
+            "immediately before `click` on the same target",
+            "that plays two glides",
+        ] {
+            assert!(
+                skill.contains(required),
+                "skill lost the overlay pairing footnote: {required}"
+            );
+        }
+    }
 
     #[test]
     fn prime_agent_target_matches_its_native_global_skill_directory() {

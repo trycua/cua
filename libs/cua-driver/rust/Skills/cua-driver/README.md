@@ -51,6 +51,20 @@ directories:
 cua-driver skills install
 ```
 
+`skills install` auto-links only when that agent's skills directory already
+exists: Claude Code (`~/.claude/skills/`), Codex (`~/.agents/skills/`),
+Prime Agent (`~/.prime/agent/skills/`), OpenClaw (`~/.openclaw/skills/`),
+OpenCode (`~/.config/opencode/skills/` on macOS/Linux,
+`%APPDATA%\opencode\skills\` on Windows), Antigravity (`~/.gemini/skills/`),
+and Hermes (`~/.hermes/skills/`).
+
+**Grok Bot is a cua-driver host but is not auto-linked.** It has no agent
+skills directory. After install, run `cua-driver skills path` and load
+`SKILL.md` (plus `LINUX.md` on a Linux / Xvfb cloud computer) from that
+pack, or save a private Grok Bot skill / workflow that points at it.
+`cua-driver skills status` reports this explicitly so you do not look for
+a missing symlink.
+
 The direct installer keeps only the current host's platform guide by default.
 Use `--all-platforms` when the agent assists users across operating systems.
 `cua-driver skills update` refreshes the pack to match a later driver release.

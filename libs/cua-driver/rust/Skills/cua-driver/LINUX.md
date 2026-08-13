@@ -179,6 +179,30 @@ An empty AT-SPI walk is now surfaced honestly: `get_window_state` sets
 caller can tell "this window genuinely has no controls" apart from "the a11y
 bridge isn't up / the daemon isn't on the session bus".
 
+## Headless / cloud bot / Xvfb
+
+Grok Bot cloud computers and similar headless Linux desktops often run
+cua-driver under Xvfb + x11vnc, as a non-root user, without AT-SPI or
+`/dev/uinput`. Treat that as a first-class host, not a broken install.
+
+- **AT-SPI.** `get_window_state` needs `at-spi2-core` and a session bus
+  (`DBUS_SESSION_BUS_ADDRESS` or the auto-discovery above). Without them
+  the walk is empty and the response is `degraded:true`.
+- **`/dev/uinput`.** Background pixel (PX) delivery on X11 uses an MPX
+  virtual pointer that needs a real Xorg + `/dev/uinput`. Xvfb typically
+  has neither. Escalate those clicks with `delivery_mode:"foreground"`.
+- **Overlay session.** One-shot CLI calls (`cua-driver call …`) end the
+  transport session when the process exits, so the agent-cursor overlay
+  is invisible. Hold an MCP connection, or pass the same public `session`
+  label on every call that accepts it.
+- **Screenshot gap.** `get_desktop_state` root captures on compositor-less
+  X11 (including Xvfb) may omit the overlay window. That is not proof the
+  overlay is off; use a persistent session and do not treat a missing
+  overlay in a root screenshot as a cursor failure.
+- **Do not pair `move_cursor` with `click`.** Pixel `click` already glides
+  the overlay. Do not call `move_cursor` immediately before `click` on the
+  same target; that plays two glides. See `SKILL.md` → Agent cursor overlay.
+
 ## The validated modality matrix (X11 / XFCE)
 
 Each input rung and its stable public route:

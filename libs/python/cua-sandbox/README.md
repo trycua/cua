@@ -173,3 +173,4 @@ The image must run the CUA computer-server `/cmd` API on the configured `server_
 Windows computer-server images continue to use the default port `8000`.
 
 Fleet currently supports registry images, CPU, memory, replica count, and named TCP services. Local image builds, layers, injected files or environment, snapshots, custom disks, unsupported regions, and provider-crossing serialization raise `NotImplementedError`.
+

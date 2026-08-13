@@ -813,8 +813,9 @@ impl ToolRegistry {
         let list: Vec<Value> = self
             .order
             .iter()
-            .filter_map(|n| self.tools.get(n))
-            .map(|t| t.def().to_list_entry())
+            .filter(|name| crate::policy::is_tool_listable(name))
+            .filter_map(|name| self.tools.get(name))
+            .map(|tool| tool.def().to_list_entry())
             .collect();
         // `capability_version` is the contract version for the
         // capability tokens claimed by each tool entry. Bumped on

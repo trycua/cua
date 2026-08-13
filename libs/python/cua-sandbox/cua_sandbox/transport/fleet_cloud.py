@@ -325,6 +325,23 @@ class _FleetClient:
         return f"{self._base_url}/api/svc/{sandbox.namespace}/{sandbox.name}-{service}/"
 
 
+_ECR_HOST_SUFFIX = ".amazonaws.com"
+_ECR_HOST_MARKER = ".dkr.ecr."
+
+
+def _needs_ecr_pull_secret(image: "str | None") -> bool:
+    """True only for the account's private ECR, which the secret authenticates.
+
+    Public registries (public.ecr.aws, ghcr.io, quay.io, Docker Hub) are pulled
+    anonymously; attaching a credential for them makes the gateway enforce its
+    private-registry allowlist against an image that never needed one.
+    """
+    if not image:
+        return False
+    host = image.split("/", 1)[0]
+    return _ECR_HOST_MARKER in host and host.endswith(_ECR_HOST_SUFFIX)
+
+
 class FleetCloudTransport(FleetTransport):
     """Provision image-backed pools or claim pre-created pools through Fleet."""
 
@@ -564,10 +581,10 @@ class FleetCloudTransport(FleetTransport):
             .build()
             for name, port in service_ports.items()
         ]
+        container_disk_image = cloud_registry_image(self._image)
         vm_template_builder = (
             VmTemplateBuilder()
-            .container_disk_image(cloud_registry_image(self._image))
-            .image_pull_secret("ecr-credentials")
+            .container_disk_image(container_disk_image)
             .probes(
                 PreservedJson.from_json(
                     json.dumps({"readinessProbe": {"tcpSocket": {"port": self._server_port}}})
@@ -575,6 +592,13 @@ class FleetCloudTransport(FleetTransport):
             )
             .services(services)
         )
+        # The pull secret authenticates the account's private ECR and nothing else.
+        # Attaching it to a public image is not merely redundant: the gateway's
+        # admission policy reads its presence as "enforce the ECR allowlist", so a
+        # public image the cluster can pull anonymously was refused outright.
+        if _needs_ecr_pull_secret(container_disk_image):
+            vm_template_builder = vm_template_builder.image_pull_secret("ecr-credentials")
+
         # Windows guest disks are built UEFI-only (see registry/qemu_builder.py), and the
         # Fleet schema defaults firmware to BIOS, so a Windows image left at the default
         # boots SeaBIOS against a GPT/ESP disk and never reaches the readiness probe.

@@ -19,6 +19,13 @@ use windows::Win32::UI::Accessibility::{
 
 use crate::uia::UiaNode;
 
+// Chromium exposes localized UIA names for its native browser chrome while
+// chrome://inspect remains an English, renderer-owned resource. Keep this list
+// bounded to labels observed in supported Windows browser chrome rather than
+// accepting fuzzy or structural guesses.
+const NEW_TAB_LABELS: &[&str] = &["New Tab", "新标签页"];
+const ADDRESS_BAR_LABELS: &[&str] = &["Address and search bar", "地址和搜索栏"];
+
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
 }
@@ -33,6 +40,10 @@ fn field_equals(node: &UiaNode, expected: &str) -> bool {
     .into_iter()
     .flatten()
     .any(|value| value.trim().eq_ignore_ascii_case(expected))
+}
+
+fn field_equals_any(node: &UiaNode, expected: &[&str]) -> bool {
+    expected.iter().any(|value| field_equals(node, value))
 }
 
 fn release_nodes(nodes: &[UiaNode]) {
@@ -66,10 +77,37 @@ fn unique_actionable(
     }
 }
 
+fn unique_native_actionable(
+    nodes: &[UiaNode],
+    control_type: &str,
+    labels: &[&str],
+    action: &str,
+) -> Result<Option<usize>, BrowserRefusal> {
+    let matches = nodes
+        .iter()
+        .filter(|node| {
+            !node.in_web_content
+                && node.control_type == control_type
+                && field_equals_any(node, labels)
+                && node.actions.iter().any(|value| value == action)
+        })
+        .map(|node| node.element_ptr)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [element] => Ok(Some(*element)),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!("multiple exact native {control_type} controls matched supported labels"),
+        )),
+    }
+}
+
 fn setup_page_proven(nodes: &[UiaNode], descriptor: &BrowserSetupDescriptor) -> bool {
     let exact_url = nodes.iter().any(|node| {
-        node.control_type == "Edit"
-            && field_equals(node, "Address and search bar")
+        !node.in_web_content
+            && node.control_type == "Edit"
+            && field_equals_any(node, ADDRESS_BAR_LABELS)
             && node
                 .value
                 .as_deref()
@@ -405,7 +443,12 @@ pub fn enable(
                 .iter()
                 .filter(|node| node.control_type == "TabItem")
                 .count();
-            let new_tab = match unique_actionable(&initial.nodes, "Button", "New Tab", "invoke") {
+            let new_tab = match unique_native_actionable(
+                &initial.nodes,
+                "Button",
+                NEW_TAB_LABELS,
+                "invoke",
+            ) {
                 Ok(Some(element)) => element,
                 Ok(None) => {
                     release_nodes(&initial.nodes);
@@ -460,21 +503,17 @@ pub fn enable(
                 }
                 std::thread::sleep(Duration::from_millis(100));
             };
-            let omnibox = unique_actionable(
-                &created.nodes,
-                "Edit",
-                "Address and search bar",
-                "set_value",
-            )?
-            .ok_or_else(|| {
-                refusal(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    format!(
-                        "the approved {} window has no exact address-and-search field",
-                        descriptor.product_name
-                    ),
-                )
-            });
+            let omnibox =
+                unique_native_actionable(&created.nodes, "Edit", ADDRESS_BAR_LABELS, "set_value")?
+                    .ok_or_else(|| {
+                        refusal(
+                            BrowserRefusalCode::BrowserWrongTargetRefused,
+                            format!(
+                                "the approved {} window has no exact address-and-search field",
+                                descriptor.product_name
+                            ),
+                        )
+                    });
             let omnibox = match omnibox {
                 Ok(element) => element,
                 Err(error) => {
@@ -492,8 +531,9 @@ pub fn enable(
                 .nodes
                 .iter()
                 .find(|node| {
-                    node.control_type == "Edit"
-                        && field_equals(node, "Address and search bar")
+                    !node.in_web_content
+                        && node.control_type == "Edit"
+                        && field_equals_any(node, ADDRESS_BAR_LABELS)
                         && node.value.as_deref().is_some_and(|value| {
                             value.trim().eq_ignore_ascii_case(descriptor.setup_url)
                         })
@@ -620,11 +660,63 @@ mod tests {
         ];
         assert_eq!(exact_setup_checkbox(&nodes, descriptor()).unwrap(), Some(7));
 
+        let mut localized_address = nodes.clone();
+        localized_address[0].name = Some("地址和搜索栏".to_owned());
+        assert_eq!(
+            exact_setup_checkbox(&localized_address, descriptor()).unwrap(),
+            Some(7)
+        );
+
         let mut wrong_url = nodes.clone();
         wrong_url[0].value = Some("https://example.test/".to_owned());
         assert_eq!(
             exact_setup_checkbox(&wrong_url, descriptor()).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn native_browser_controls_accept_simplified_chinese_without_trusting_web_content() {
+        let mut native_new_tab = node("Button", "新标签页", None, &["invoke"]);
+        native_new_tab.element_ptr = 11;
+        let mut renderer_spoof = node("Button", "新标签页", None, &["invoke"]);
+        renderer_spoof.element_ptr = 12;
+        renderer_spoof.in_web_content = true;
+
+        assert_eq!(
+            unique_native_actionable(
+                &[native_new_tab, renderer_spoof],
+                "Button",
+                NEW_TAB_LABELS,
+                "invoke",
+            )
+            .unwrap(),
+            Some(11)
+        );
+
+        let mut native_address = node(
+            "Edit",
+            "地址和搜索栏",
+            Some("chrome://inspect/#remote-debugging"),
+            &["set_value"],
+        );
+        native_address.element_ptr = 21;
+        assert_eq!(
+            unique_native_actionable(&[native_address], "Edit", ADDRESS_BAR_LABELS, "set_value",)
+                .unwrap(),
+            Some(21)
+        );
+    }
+
+    #[test]
+    fn native_browser_controls_still_refuse_ambiguous_localized_matches() {
+        let mut first = node("Button", "新标签页", None, &["invoke"]);
+        first.element_ptr = 31;
+        let mut second = node("Button", "新标签页", None, &["invoke"]);
+        second.element_ptr = 32;
+
+        let error = unique_native_actionable(&[first, second], "Button", NEW_TAB_LABELS, "invoke")
+            .unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
     }
 }

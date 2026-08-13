@@ -307,7 +307,7 @@ A full run — launcher to standing in a new world — took 52 steps and about t
 
 The image and the agent loop are identical on Fleet. Two things change: there is no `local=True` and no `runtime=`, and the MCP endpoint is reached through Fleet's service proxy rather than a forwarded localhost port.
 
-`.expose(3000)` becomes a Fleet **service** named `port-3000`, and `sb.tunnel.forward()` hands you its URL — the same call documented in [Forward a port from a sandbox](/docs/how-to-guides/sandbox/tunneling), so there is nothing Fleet-specific to hand-assemble.
+`.expose(3000)` becomes a Fleet **service** named `port-3000`, and `sb.tunnel.forward()` hands you its URL — the same call documented in [Forward a port from a sandbox](/how-to-guides/sandbox/tunneling), so there is nothing Fleet-specific to hand-assemble.
 
 ```python
 import httpx

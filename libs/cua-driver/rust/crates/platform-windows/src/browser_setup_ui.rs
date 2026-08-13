@@ -95,6 +95,37 @@ fn unique_native_actionable(
     }
 }
 
+fn native_tab_count(nodes: &[UiaNode]) -> usize {
+    nodes
+        .iter()
+        .filter(|node| !node.in_web_content && node.control_type == "TabItem")
+        .filter_map(|node| node.rect)
+        .filter(|(left, top, right, bottom)| left < right && top < bottom)
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+fn stable_native_tab_count(hwnd: u64, initial_count: usize) -> Result<usize, BrowserRefusal> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut previous = initial_count;
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+        let tree = crate::uia::walk_tree(hwnd, None);
+        let current = native_tab_count(&tree.nodes);
+        release_nodes(&tree.nodes);
+        if current > 0 && current == previous {
+            return Ok(current);
+        }
+        previous = current;
+        if Instant::now() >= deadline {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved Chromium window did not expose a stable native tab topology",
+            ));
+        }
+    }
+}
+
 fn setup_page_proven(nodes: &[UiaNode], descriptor: &BrowserSetupDescriptor) -> bool {
     let exact_url_count = nodes
         .iter()
@@ -418,12 +449,9 @@ pub fn enable(
             enable_attempted: false,
         },
         Ok(None) => {
-            let tab_count_before = initial
-                .nodes
-                .iter()
-                .filter(|node| !node.in_web_content && node.control_type == "TabItem")
-                .count();
+            let initial_tab_count = native_tab_count(&initial.nodes);
             release_nodes(&initial.nodes);
+            let tab_count_before = stable_native_tab_count(hwnd, initial_tab_count)?;
 
             let mut handle = SetupUiHandle {
                 hwnd,
@@ -451,11 +479,7 @@ pub fn enable(
             let deadline = Instant::now() + Duration::from_secs(3);
             let mut created = loop {
                 let tree = crate::uia::walk_tree(hwnd, None);
-                let tab_count_after = tree
-                    .nodes
-                    .iter()
-                    .filter(|node| !node.in_web_content && node.control_type == "TabItem")
-                    .count();
+                let tab_count_after = native_tab_count(&tree.nodes);
                 if tab_count_after == tab_count_before + 1 {
                     break tree;
                 }
@@ -705,5 +729,24 @@ mod tests {
         nodes.push(duplicate);
 
         assert!(!setup_page_proven(&nodes, descriptor()));
+    }
+
+    #[test]
+    fn native_tab_count_is_structural_and_deduplicates_repeated_uia_rows() {
+        let mut first = node("TabItem", "新标签页", None, &[]);
+        first.rect = Some((10, 10, 110, 40));
+        let duplicate = first.clone();
+        let mut second = node("TabItem", "Neue Registerkarte", None, &[]);
+        second.rect = Some((120, 10, 220, 40));
+        let mut renderer_spoof = node("TabItem", "Tab", None, &[]);
+        renderer_spoof.rect = Some((230, 10, 330, 40));
+        renderer_spoof.in_web_content = true;
+        let mut invalid = node("TabItem", "Onglet", None, &[]);
+        invalid.rect = Some((0, 0, 0, 0));
+
+        assert_eq!(
+            native_tab_count(&[first, duplicate, second, renderer_spoof, invalid]),
+            2
+        );
     }
 }

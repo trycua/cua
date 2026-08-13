@@ -2037,7 +2037,19 @@ pub fn run_call(
             .clone()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
         cua_driver_core::tool_args::sanitize_reserved_args(&mut args_for_daemon);
-        let transport_session = format!("cli-{}", uuid::Uuid::new_v4());
+        let named_session = args_for_daemon
+            .get("session")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|session| !session.is_empty() && session != "default");
+        // One-shot CLI processes share one daemon-scoped ownership namespace
+        // for explicit public labels. The daemon adds its runtime prefix, so
+        // this cannot attach to another daemon generation or transport kind.
+        // Anonymous calls keep their disposable per-process lease below.
+        let transport_session = if named_session {
+            "cli-explicit".to_owned()
+        } else {
+            format!("cli-{}", uuid::Uuid::new_v4())
+        };
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some(tool.to_owned()),
@@ -2050,17 +2062,19 @@ pub fn run_call(
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
         let response = crate::serve::send_request(&socket_path, &req);
-        let cleanup = crate::serve::DaemonRequest {
-            method: "session_end".into(),
-            name: None,
-            args: None,
-            session_id: Some(transport_session),
-            observation_origin: None,
-            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
-        };
-        let cleanup_result = crate::serve::send_request(&socket_path, &cleanup);
-        if let Err(error) = cleanup_result {
-            eprintln!("warning: disposable session cleanup failed: {error}");
+        if !named_session {
+            let cleanup = crate::serve::DaemonRequest {
+                method: "session_end".into(),
+                name: None,
+                args: None,
+                session_id: Some(transport_session),
+                observation_origin: None,
+                client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
+            };
+            let cleanup_result = crate::serve::send_request(&socket_path, &cleanup);
+            if let Err(error) = cleanup_result {
+                eprintln!("warning: disposable session cleanup failed: {error}");
+            }
         }
         match response {
             Ok(resp) => {

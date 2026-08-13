@@ -150,6 +150,68 @@ fn cli_call_succeeds_through_test_owned_daemon() {
 }
 
 #[test]
+fn named_session_survives_across_one_shot_cli_calls() {
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let session = format!("synthetic-cli-lifecycle-{}", std::process::id());
+
+    let started = driver.call(
+        "start_session",
+        serde_json::json!({"session": session, "capture_scope": "window"}),
+    );
+    assert!(!started.is_error(), "start failed: {}", started.text());
+
+    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    assert!(
+        !state.is_error(),
+        "named session did not survive the next CLI process: {}",
+        state.text()
+    );
+    assert_eq!(state.structured()["session"], session);
+
+    let sessions = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args([
+            "sessions",
+            "list",
+            "--json",
+            "--socket",
+            driver.daemon_socket().expect("test daemon socket"),
+        ])
+        .output()
+        .expect("list live sessions");
+    assert!(
+        sessions.status.success(),
+        "session list failed: {}",
+        String::from_utf8_lossy(&sessions.stderr)
+    );
+    let sessions: serde_json::Value =
+        serde_json::from_slice(&sessions.stdout).expect("session list JSON");
+    assert_eq!(sessions["count"], 1);
+
+    let ended = driver.call("end_session", serde_json::json!({"session": session}));
+    assert!(!ended.is_error(), "end failed: {}", ended.text());
+
+    let sessions = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args([
+            "sessions",
+            "list",
+            "--json",
+            "--socket",
+            driver.daemon_socket().expect("test daemon socket"),
+        ])
+        .output()
+        .expect("list ended sessions");
+    assert!(
+        sessions.status.success(),
+        "session list failed: {}",
+        String::from_utf8_lossy(&sessions.stderr)
+    );
+    let sessions: serde_json::Value =
+        serde_json::from_slice(&sessions.stdout).expect("session list JSON");
+    assert_eq!(sessions["count"], 0);
+}
+
+#[test]
 fn revoke_cli_ends_the_exact_live_session() {
     let mut driver = CliDriver::new();
     assert!(driver.available(), "test daemon failed to start");

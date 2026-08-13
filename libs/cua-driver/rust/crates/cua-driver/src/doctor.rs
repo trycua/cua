@@ -17,8 +17,9 @@
 //!   telemetry state.
 //! - **Windows**: interactive desktop session detection (Session 0 warning),
 //!   UI Automation COM availability, top-level window enumeration count.
-//! - **Linux**: `DISPLAY` / `WAYLAND_DISPLAY` presence, X11 connection
-//!   reachability, AT-SPI bus availability hint.
+//! - **Linux**: display server (X11 / Xvfb / Xorg / Wayland), compositor,
+//!   `/dev/uinput`, session bus / `XDG_RUNTIME_DIR`, AT-SPI, and whether
+//!   background MPX is available. Xvfb and missing uinput are warnings.
 //! - **macOS**: existing legacy-cleanup steps (LaunchAgent plist + update
 //!   script), plus a hint to run `cua-driver diagnose` for a full
 //!   TCC / cdhash / install layout dump.
@@ -369,108 +370,32 @@ fn append_platform_probes(report: &mut Report) {
     report.push(probe);
 }
 
-/// Run `gdbus introspect` against the AT-SPI accessibility bus and report
-/// whether it returned success within `timeout`. Any of: spawn failure,
-/// timeout elapsed, non-zero exit — all collapse to `false` (the caller
-/// only cares about reachability, not the failure mode).
-///
-/// Kept separate from `append_platform_probes` so it's straightforward to
-/// unit-test the timeout path without invoking the full doctor run.
-#[cfg(target_os = "linux")]
-fn probe_at_spi_bus_via_gdbus(timeout: std::time::Duration) -> bool {
-    use std::process::{Command, Stdio};
-
-    let mut child = match Command::new("gdbus")
-        .args([
-            "introspect",
-            "--session",
-            "--dest",
-            "org.a11y.Bus",
-            "--object-path",
-            "/org/a11y/bus",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    match wait_for_child(&mut child, timeout) {
-        Ok(Some(status)) => status.success(),
-        Ok(None) | Err(_) => {
-            // Timed out or failed — kill the stuck child so we don't leave a
-            // gdbus process hanging around after `doctor` exits.
-            let _ = child.kill();
-            let _ = child.wait();
-            false
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn wait_for_child(
-    child: &mut std::process::Child,
-    timeout: std::time::Duration,
-) -> std::io::Result<Option<std::process::ExitStatus>> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status));
-        }
-
-        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
-            return Ok(None);
-        };
-        if remaining.is_zero() {
-            return Ok(None);
-        }
-        std::thread::sleep(remaining.min(std::time::Duration::from_millis(15)));
-    }
-}
-
 #[cfg(target_os = "linux")]
 fn append_platform_probes(report: &mut Report) {
-    // Display server probe. Order matters: Wayland wins when both are set
-    // (XWayland leaves DISPLAY pointing at the X server XWayland exposes,
-    // but the actual session is still Wayland).
-    let display = std::env::var("DISPLAY").ok().filter(|v| !v.is_empty());
-    let wayland = std::env::var("WAYLAND_DISPLAY")
-        .ok()
-        .filter(|v| !v.is_empty());
-    match (display.as_deref(), wayland.as_deref()) {
-        (None, None) => report.push(
-            Probe::warn(
-                "display server",
-                "neither DISPLAY nor WAYLAND_DISPLAY set — window-driving tools will fail",
-            )
-            .with_detail(
-                "run from an interactive desktop session (X11 / Wayland with XWayland) or set DISPLAY explicitly.",
-            ),
-        ),
-        (Some(d), None) => report.push(Probe::ok(
-            "display server",
-            format!("X11 (DISPLAY={d})"),
-        )),
-        (None, Some(w)) => report.push(
-            Probe::warn(
-                "display server",
-                format!("Wayland only (WAYLAND_DISPLAY={w}, DISPLAY unset)"),
-            )
-            .with_detail(
-                "X11 tools (list_windows, screenshot) need XWayland — start your session with XWayland enabled.",
-            ),
-        ),
-        (Some(d), Some(w)) => report.push(Probe::ok(
-            "display server",
-            format!("Wayland+XWayland (WAYLAND_DISPLAY={w}, DISPLAY={d})"),
-        )),
+    let snapshot = platform_linux::diagnostics::LinuxHostSnapshot::collect();
+    for host in platform_linux::diagnostics::doctor_host_probes(&snapshot) {
+        let probe = if host.warn {
+            Probe::warn(host.label, host.message)
+        } else {
+            Probe::ok(host.label, host.message)
+        };
+        report.push(match host.detail {
+            Some(detail) => probe.with_detail(detail),
+            None => probe,
+        });
+        // Keep the live X11 connection probe next to the display-server
+        // classification so a disconnected DISPLAY is visible beside "Xvfb".
+        if host.label == "compositor" {
+            push_x11_connection_probe(report);
+        }
     }
+}
 
-    // X11 window enumeration probe. An empty result could mean either an
-    // unreachable display or a healthy display with no top-level windows
-    // open — `list_windows` doesn't distinguish the two — so the warning
-    // hedges instead of asserting a connection failure.
+#[cfg(target_os = "linux")]
+fn push_x11_connection_probe(report: &mut Report) {
+    // An empty result could mean either an unreachable display or a healthy
+    // display with no top-level windows — `list_windows` doesn't distinguish
+    // the two — so the warning hedges instead of asserting a connection failure.
     match platform_linux::x11::list_windows(None) {
         v if v.is_empty() => report.push(Probe::warn(
             "X11 connection",
@@ -484,39 +409,6 @@ fn append_platform_probes(report: &mut Report) {
                 if v.len() == 1 { "" } else { "s" }
             ),
         )),
-    }
-
-    // AT-SPI bus probe. We don't link D-Bus directly — instead, check for
-    // the AT_SPI_BUS env var which the at-spi daemon advertises when
-    // running, and fall back to checking gdbus's view of the
-    // org.a11y.Bus name.
-    let at_spi_env = std::env::var("AT_SPI_BUS").ok().filter(|v| !v.is_empty());
-    match at_spi_env {
-        Some(addr) => report.push(Probe::ok(
-            "AT-SPI",
-            format!("bus address present (AT_SPI_BUS={addr})"),
-        )),
-        None => {
-            // Bounded wait — a hung session bus daemon would otherwise
-            // block `doctor` indefinitely. 3s is enough for a healthy
-            // gdbus introspect to complete (single round-trip on the
-            // session bus) and short enough that a stuck bus surfaces
-            // as a warning instead of looking like the binary froze.
-            let bus_ok = probe_at_spi_bus_via_gdbus(std::time::Duration::from_secs(3));
-            if bus_ok {
-                report.push(Probe::ok(
-                    "AT-SPI",
-                    "org.a11y.Bus reachable via session bus",
-                ));
-            } else {
-                report.push(
-                    Probe::warn("AT-SPI", "accessibility bus not reachable")
-                        .with_detail(
-                            "install at-spi2-core and ensure the user session has D-Bus running for get_window_state to work.",
-                        ),
-                );
-            }
-        }
     }
 }
 
@@ -635,25 +527,25 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn wait_for_child_reports_exit() {
-        let mut child = std::process::Command::new("true").spawn().unwrap();
-        let status = wait_for_child(&mut child, std::time::Duration::from_secs(1))
-            .unwrap()
-            .unwrap();
-        assert!(status.success());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn wait_for_child_times_out() {
-        let mut child = std::process::Command::new("sleep")
-            .arg("5")
-            .spawn()
-            .unwrap();
-        let status = wait_for_child(&mut child, std::time::Duration::from_millis(10)).unwrap();
-        assert!(status.is_none());
-        child.kill().unwrap();
-        child.wait().unwrap();
+    fn linux_doctor_emits_pointer_capability_probes() {
+        let report = run();
+        let labels: Vec<&str> = report.probes.iter().map(|p| p.label.as_str()).collect();
+        for need in [
+            "display server",
+            "compositor",
+            "X11 connection",
+            "uinput",
+            "session bus",
+            "AT-SPI",
+            "background MPX",
+        ] {
+            assert!(labels.contains(&need), "missing {need} in {labels:?}");
+        }
+        assert!(
+            !report.to_text().contains("/Applications/CuaDriver.app"),
+            "{}",
+            report.to_text()
+        );
     }
 
     #[test]

@@ -71,6 +71,9 @@ pub mod xauth;
 #[cfg(target_os = "linux")]
 pub mod session_bus;
 
+#[cfg(target_os = "linux")]
+pub mod diagnostics;
+
 /// Pure WSL-detection predicate, split out from [`is_wsl`] so both branches
 /// are unit-testable without the process-global env / `OnceLock` cache.
 /// `wsl_env` mirrors `$WSL_DISTRO_NAME`/`$WSL_INTEROP` being set; `osrelease`

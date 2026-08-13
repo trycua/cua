@@ -692,6 +692,7 @@ export type VmTemplate = {
     cpuCores?: number,
     memory?: string,
     firmware?: Firmware,
+    nestedVirtualization?: boolean,
     probes?: PreservedJsonLike,
     services?: Array<SandboxService>,
     oidc?: OidcConfig
@@ -728,9 +729,10 @@ const FfiConverterTypeVmTemplate = (() => {
                 imagePullSecret: FfiConverterOptionalString.read(from), 
                 cpuCores: FfiConverterOptionalUInt32.read(from), 
                 memory: FfiConverterOptionalString.read(from), 
-                firmware: FfiConverterOptionalTypeFirmware.read(from), 
-                probes: FfiConverterOptionalTypePreservedJson.read(from), 
-                services: FfiConverterOptionalSequenceTypeSandboxService.read(from), 
+                firmware: FfiConverterOptionalTypeFirmware.read(from),
+                nestedVirtualization: FfiConverterOptionalBoolean.read(from),
+                probes: FfiConverterOptionalTypePreservedJson.read(from),
+                services: FfiConverterOptionalSequenceTypeSandboxService.read(from),
                 oidc: FfiConverterOptionalTypeOidcConfig.read(from)
             };
         }
@@ -746,6 +748,7 @@ const FfiConverterTypeVmTemplate = (() => {
             FfiConverterOptionalUInt32.write(value.cpuCores, into);
             FfiConverterOptionalString.write(value.memory, into);
             FfiConverterOptionalTypeFirmware.write(value.firmware, into);
+            FfiConverterOptionalBoolean.write(value.nestedVirtualization, into);
             FfiConverterOptionalTypePreservedJson.write(value.probes, into);
             FfiConverterOptionalSequenceTypeSandboxService.write(value.services, into);
             FfiConverterOptionalTypeOidcConfig.write(value.oidc, into);
@@ -762,6 +765,7 @@ const FfiConverterTypeVmTemplate = (() => {
              FfiConverterOptionalUInt32.allocationSize(value.cpuCores) +
              FfiConverterOptionalString.allocationSize(value.memory) +
              FfiConverterOptionalTypeFirmware.allocationSize(value.firmware) +
+             FfiConverterOptionalBoolean.allocationSize(value.nestedVirtualization) +
              FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
              FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.services) +
              FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc);

@@ -167,3 +167,43 @@ test_macos_allowed_for_admin {
 		"flags": admin_flags,
 	}
 }
+
+test_nested_virt_denied_for_non_admin {
+	not pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": `{"spec":{"vmTemplate":{"nestedVirtualization":true}}}`,
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+test_nested_virt_patch_denied_for_non_admin {
+	not pool_admission.allow with input as {
+		"method": "PATCH",
+		"params": {"path": sprintf("%s/template-a", [native_path])},
+		"body": `{"spec":{"vmTemplate":{"nestedVirtualization":true}}}`,
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+test_nested_virt_allowed_for_admin {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": `{"spec":{"vmTemplate":{"nestedVirtualization":true}}}`,
+		"user": admin,
+		"flags": admin_flags,
+	}
+}
+
+test_nested_virt_false_allowed_for_non_admin {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": `{"spec":{"vmTemplate":{"nestedVirtualization":false}}}`,
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}

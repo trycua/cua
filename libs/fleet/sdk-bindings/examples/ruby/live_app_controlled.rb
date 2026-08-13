@@ -25,7 +25,7 @@ def pool_spec(template_name)
 end
 
 def template_spec
-  FleetSdk::OSGymSandboxTemplateSpec.new(vm_template: FleetSdk::VmTemplate.new(container_disk_image: required('CUA_IMAGE'), command: nil, runtime: nil, runtime_class_name: nil, node_selector: nil, tolerations: nil, image_pull_policy: nil, image_pull_secret: required('CUA_IMAGE_PULL_SECRET'), cpu_cores: 4, memory: '4Gi', firmware: nil, probes: nil, services: [FleetSdk::SandboxService.new(name: 'mcp', target_port: 3000, protocol: nil)], oidc: nil))
+  FleetSdk::OSGymSandboxTemplateSpec.new(vm_template: FleetSdk::VmTemplate.new(container_disk_image: required('CUA_IMAGE'), command: nil, runtime: nil, runtime_class_name: nil, node_selector: nil, tolerations: nil, image_pull_policy: nil, image_pull_secret: required('CUA_IMAGE_PULL_SECRET'), cpu_cores: 4, memory: '4Gi', firmware: nil, nested_virtualization: nil, probes: nil, services: [FleetSdk::SandboxService.new(name: 'mcp', target_port: 3000, protocol: nil)], oidc: nil))
 end
 
 def initialize_mcp(client, sandbox)

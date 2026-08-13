@@ -1310,20 +1310,21 @@ func (_ FfiDestroyerSandboxTemplateRef) Destroy(value SandboxTemplateRef) {
 }
 
 type VmTemplate struct {
-	ContainerDiskImage string
-	Command            *[]string
-	Runtime            *RuntimeKind
-	RuntimeClassName   *string
-	NodeSelector       *map[string]string
-	Tolerations        *[]*PreservedJson
-	ImagePullPolicy    *ImagePullPolicy
-	ImagePullSecret    *string
-	CpuCores           *uint32
-	Memory             *string
-	Firmware           *Firmware
-	Probes             **PreservedJson
-	Services           *[]SandboxService
-	Oidc               *OidcConfig
+	ContainerDiskImage   string
+	Command              *[]string
+	Runtime              *RuntimeKind
+	RuntimeClassName     *string
+	NodeSelector         *map[string]string
+	Tolerations          *[]*PreservedJson
+	ImagePullPolicy      *ImagePullPolicy
+	ImagePullSecret      *string
+	CpuCores             *uint32
+	Memory               *string
+	Firmware             *Firmware
+	NestedVirtualization *bool
+	Probes               **PreservedJson
+	Services             *[]SandboxService
+	Oidc                 *OidcConfig
 }
 
 func (r *VmTemplate) Destroy() {
@@ -1338,6 +1339,7 @@ func (r *VmTemplate) Destroy() {
 	FfiDestroyerOptionalUint32{}.Destroy(r.CpuCores)
 	FfiDestroyerOptionalString{}.Destroy(r.Memory)
 	FfiDestroyerOptionalFirmware{}.Destroy(r.Firmware)
+	FfiDestroyerOptionalBool{}.Destroy(r.NestedVirtualization)
 	FfiDestroyerOptionalPreservedJson{}.Destroy(r.Probes)
 	FfiDestroyerOptionalSequenceSandboxService{}.Destroy(r.Services)
 	FfiDestroyerOptionalOidcConfig{}.Destroy(r.Oidc)
@@ -1364,6 +1366,7 @@ func (c FfiConverterVmTemplate) Read(reader io.Reader) VmTemplate {
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalFirmwareINSTANCE.Read(reader),
+		FfiConverterOptionalBoolINSTANCE.Read(reader),
 		FfiConverterOptionalPreservedJsonINSTANCE.Read(reader),
 		FfiConverterOptionalSequenceSandboxServiceINSTANCE.Read(reader),
 		FfiConverterOptionalOidcConfigINSTANCE.Read(reader),
@@ -1390,6 +1393,7 @@ func (c FfiConverterVmTemplate) Write(writer io.Writer, value VmTemplate) {
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.CpuCores)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Memory)
 	FfiConverterOptionalFirmwareINSTANCE.Write(writer, value.Firmware)
+	FfiConverterOptionalBoolINSTANCE.Write(writer, value.NestedVirtualization)
 	FfiConverterOptionalPreservedJsonINSTANCE.Write(writer, value.Probes)
 	FfiConverterOptionalSequenceSandboxServiceINSTANCE.Write(writer, value.Services)
 	FfiConverterOptionalOidcConfigINSTANCE.Write(writer, value.Oidc)

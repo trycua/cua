@@ -532,6 +532,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory() != 55615:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization() != 23834:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector() != 45280:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc() != 27280:
@@ -1034,6 +1036,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory.argtypes
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1187,6 +1195,9 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pul
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector.restype = ctypes.c_uint16
@@ -2447,7 +2458,7 @@ class _UniffiFfiConverterOptionalTypeOidcConfig(_UniffiConverterRustBuffer):
 
 @dataclass
 class VmTemplate:
-    def __init__(self, *, container_disk_image:str, command:typing.Optional[typing.List[str]], runtime:typing.Optional[RuntimeKind], runtime_class_name:typing.Optional[str], node_selector:typing.Optional[dict[str, str]], tolerations:typing.Optional[typing.List[PreservedJson]], image_pull_policy:typing.Optional[ImagePullPolicy], image_pull_secret:typing.Optional[str], cpu_cores:typing.Optional[int], memory:typing.Optional[str], firmware:typing.Optional[Firmware], probes:typing.Optional[PreservedJson], services:typing.Optional[typing.List[SandboxService]], oidc:typing.Optional[OidcConfig]):
+    def __init__(self, *, container_disk_image:str, command:typing.Optional[typing.List[str]], runtime:typing.Optional[RuntimeKind], runtime_class_name:typing.Optional[str], node_selector:typing.Optional[dict[str, str]], tolerations:typing.Optional[typing.List[PreservedJson]], image_pull_policy:typing.Optional[ImagePullPolicy], image_pull_secret:typing.Optional[str], cpu_cores:typing.Optional[int], memory:typing.Optional[str], firmware:typing.Optional[Firmware], nested_virtualization:typing.Optional[bool], probes:typing.Optional[PreservedJson], services:typing.Optional[typing.List[SandboxService]], oidc:typing.Optional[OidcConfig]):
         self.container_disk_image = container_disk_image
         self.command = command
         self.runtime = runtime
@@ -2459,6 +2470,7 @@ class VmTemplate:
         self.cpu_cores = cpu_cores
         self.memory = memory
         self.firmware = firmware
+        self.nested_virtualization = nested_virtualization
         self.probes = probes
         self.services = services
         self.oidc = oidc
@@ -2467,7 +2479,7 @@ class VmTemplate:
 
 
     def __str__(self):
-        return "VmTemplate(container_disk_image={}, command={}, runtime={}, runtime_class_name={}, node_selector={}, tolerations={}, image_pull_policy={}, image_pull_secret={}, cpu_cores={}, memory={}, firmware={}, probes={}, services={}, oidc={})".format(self.container_disk_image, self.command, self.runtime, self.runtime_class_name, self.node_selector, self.tolerations, self.image_pull_policy, self.image_pull_secret, self.cpu_cores, self.memory, self.firmware, self.probes, self.services, self.oidc)
+        return "VmTemplate(container_disk_image={}, command={}, runtime={}, runtime_class_name={}, node_selector={}, tolerations={}, image_pull_policy={}, image_pull_secret={}, cpu_cores={}, memory={}, firmware={}, nested_virtualization={}, probes={}, services={}, oidc={})".format(self.container_disk_image, self.command, self.runtime, self.runtime_class_name, self.node_selector, self.tolerations, self.image_pull_policy, self.image_pull_secret, self.cpu_cores, self.memory, self.firmware, self.nested_virtualization, self.probes, self.services, self.oidc)
     def __eq__(self, other):
         if self.container_disk_image != other.container_disk_image:
             return False
@@ -2490,6 +2502,8 @@ class VmTemplate:
         if self.memory != other.memory:
             return False
         if self.firmware != other.firmware:
+            return False
+        if self.nested_virtualization != other.nested_virtualization:
             return False
         if self.probes != other.probes:
             return False
@@ -2514,6 +2528,7 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
             cpu_cores=_UniffiFfiConverterOptionalUInt32.read(buf),
             memory=_UniffiFfiConverterOptionalString.read(buf),
             firmware=_UniffiFfiConverterOptionalTypeFirmware.read(buf),
+            nested_virtualization=_UniffiFfiConverterOptionalBoolean.read(buf),
             probes=_UniffiFfiConverterOptionalTypePreservedJson.read(buf),
             services=_UniffiFfiConverterOptionalSequenceTypeSandboxService.read(buf),
             oidc=_UniffiFfiConverterOptionalTypeOidcConfig.read(buf),
@@ -2532,6 +2547,7 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.check_lower(value.cpu_cores)
         _UniffiFfiConverterOptionalString.check_lower(value.memory)
         _UniffiFfiConverterOptionalTypeFirmware.check_lower(value.firmware)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.nested_virtualization)
         _UniffiFfiConverterOptionalTypePreservedJson.check_lower(value.probes)
         _UniffiFfiConverterOptionalSequenceTypeSandboxService.check_lower(value.services)
         _UniffiFfiConverterOptionalTypeOidcConfig.check_lower(value.oidc)
@@ -2549,6 +2565,7 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.write(value.cpu_cores, buf)
         _UniffiFfiConverterOptionalString.write(value.memory, buf)
         _UniffiFfiConverterOptionalTypeFirmware.write(value.firmware, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.nested_virtualization, buf)
         _UniffiFfiConverterOptionalTypePreservedJson.write(value.probes, buf)
         _UniffiFfiConverterOptionalSequenceTypeSandboxService.write(value.services, buf)
         _UniffiFfiConverterOptionalTypeOidcConfig.write(value.oidc, buf)
@@ -3422,6 +3439,8 @@ class VmTemplateBuilderProtocol(typing.Protocol):
         raise NotImplementedError
     def memory(self, value: str) -> VmTemplateBuilder:
         raise NotImplementedError
+    def nested_virtualization(self, value: bool) -> VmTemplateBuilder:
+        raise NotImplementedError
     def node_selector(self, value: dict[str, str]) -> VmTemplateBuilder:
         raise NotImplementedError
     def oidc(self, value: OidcConfig) -> VmTemplateBuilder:
@@ -3583,6 +3602,21 @@ class VmTemplateBuilder(VmTemplateBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def nested_virtualization(self, value: bool) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterBoolean.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)

@@ -103,6 +103,16 @@ headless-host workaround, and the environment variables the SDK reads.
 
 Create and control sandboxes, cloud or local. Aliased as `cua sb`.
 
+<Callout type="warn">
+  **There are two different cloud paths behind these commands, and only one of
+  them is current.** Passing `--pool` claims a sandbox from a Fleet pool, which
+  is the supported cloud path. Passing an image without `--pool` goes through
+  the older VM API, whose host `api.cua.ai` has been retired; those routes now
+  live elsewhere and the CLI has not been repointed at them, so image-based
+  cloud launches do not work today. Use `--pool` for cloud work, or `--local`
+  for a sandbox on your own machine.
+</Callout>
+
 ### `cua sb launch`
 
 Launch a new sandbox. Exactly one of the positional image or `--pool` is
@@ -166,9 +176,10 @@ The `SOURCE` column names the runtime backing each sandbox — `docker`,
 
 <Callout type="warn">
   `cua sb ls` reports `No sandboxes found.` both when the account genuinely has
-  no sandboxes and when the cloud listing call fails — the error is swallowed. If
-  you expect sandboxes and see an empty list, confirm your session with
-  `cua auth status` before concluding the account is empty.
+  no sandboxes and when the cloud listing call fails — the error is swallowed.
+  Since the cloud listing goes through the retired VM API described above, an
+  empty cloud list currently tells you nothing about your account. `--local` is
+  unaffected.
 </Callout>
 
 Fleet sandboxes cannot be listed. When `FLEETS_TOKEN` is set, `cua sb ls` exits
@@ -545,8 +556,21 @@ workflow snippet.
 | `~/.cua/skills/` | `cua skills record` |
 | `~/.cua/trajectories/` | `cua do` |
 | `~/.cua/sandboxes/` | local sandbox state, written when a local launch completes |
+| `~/.cua/cua-sandbox/` | disk images and overlays for local sandboxes |
 | `~/.local/share/cua/images/` | `cua image create`, `cua image pull` |
 | `~/.local/state/cua/images.json` | the local image registry |
 
-The two `~/.local` paths follow the XDG base directory spec and move with
-`XDG_DATA_HOME` and `XDG_STATE_HOME`.
+Local sandboxes and local images are stored in two separate trees, which is
+worth knowing when you are reclaiming disk space. `cua sb launch --local` works
+under `~/.cua/cua-sandbox/`:
+
+| Path | Contents |
+|------|----------|
+| `images/container-disks/<digest>/disk.qcow2` | pulled container disks, content-addressed, reused across launches |
+| `images/<name>-<hash>/disk.qcow2` | built base images |
+| `images/sessions/<sandbox>.qcow2` | per-sandbox overlay for a running sandbox, plus `<sandbox>.efivars.fd` for EFI guests |
+| `image-cache/` | downloaded image files, keyed by hash and original filename |
+
+`cua image create` and `cua image pull` write to `~/.local/share/cua/images/`
+instead. That path and `~/.local/state/cua/` follow the XDG base directory spec
+and move with `XDG_DATA_HOME` and `XDG_STATE_HOME`; `~/.cua/` does not.

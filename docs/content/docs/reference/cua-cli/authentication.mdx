@@ -163,7 +163,7 @@ in your own code:
 | Variable | Effect |
 |----------|--------|
 | `CUA_API_KEY` | API key for cloud sandboxes. |
-| `CUA_BASE_URL` | Base URL for the cloud VM API. Defaults to `https://api.cua.ai`. |
+| `CUA_BASE_URL` | Base URL for the older VM API. Its default, `https://api.cua.ai`, is a retired host — set this explicitly if you use that API. |
 | `CUA_FLEET_BASE_URL` | Base URL for the Fleet API. Defaults to `https://run.cua.ai`. |
 | `CUA_TOKEN_URL` | OAuth token endpoint for client-credentials auth. |
 | `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET` | OAuth client credentials for Fleet. |
@@ -174,6 +174,11 @@ in your own code:
   startup so that cloud requests always go to `https://run.cua.ai`, whatever the
   environment says. Set it only for direct SDK use.
 </Callout>
+
+Fleet requests — the `--pool` path and everything `cua wif-token` feeds — go to
+`CUA_FLEET_BASE_URL`, which defaults to `https://run.cua.ai` and is the current
+cloud API. `CUA_BASE_URL` addresses the older VM API instead, and its default
+host is retired.
 
 `CUA_API_KEY` is likewise not a way to authenticate the CLI: `cua` passes its
 own session token explicitly on every cloud call, and an explicitly passed key

@@ -15,20 +15,12 @@ from pathlib import Path
 import pytest
 from cua_sandbox import Image, Sandbox
 
+from tests.conftest import requires_runtime_optin
+
 pytestmark = pytest.mark.asyncio
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
-
-# Every async test in this module boots a real sandbox: it pulls a multi-gigabyte
-# image and then waits for a full desktop or VM to come up. Having Docker
-# installed is not enough to make that a sane thing to do on a shared CI runner,
-# where the pull alone outlives the job, so provisioning tests are opt-in.
-RUNTIME_TESTS_ENABLED = os.environ.get("CUA_TEST_RUNTIME", "").lower() in ("1", "true", "yes")
-requires_runtime_optin = pytest.mark.skipif(
-    not RUNTIME_TESTS_ENABLED,
-    reason="provisions a real sandbox (multi-GB pull + boot); set CUA_TEST_RUNTIME=1 to run",
-)
 
 
 def _has_cua_api_key() -> bool:

@@ -91,6 +91,16 @@ def _local_enabled() -> bool:
 
 LOCAL_ENABLED = _local_enabled()
 LOCAL_SKIP_REASON = "no controllable local desktop (set CUA_TEST_LOCAL=1 to force, 0 to silence)"
+
+# Tests that provision a real sandbox — pull a multi-gigabyte image, boot a VM or
+# an emulator, then wait for it to answer — are opt-in. Whether the tooling is
+# installed is not the question: a GitHub runner ships the Android SDK and Docker
+# and still cannot boot either in the time a PR check is allowed to take.
+RUNTIME_TESTS_ENABLED = _env_bool("CUA_TEST_RUNTIME")
+RUNTIME_SKIP_REASON = (
+    "provisions a real sandbox (multi-GB pull + boot); set CUA_TEST_RUNTIME=1 to run"
+)
+requires_runtime_optin = pytest.mark.skipif(not RUNTIME_TESTS_ENABLED, reason=RUNTIME_SKIP_REASON)
 WS_URL = os.environ.get("CUA_TEST_WS_URL")
 HTTP_URL = os.environ.get("CUA_TEST_HTTP_URL")
 API_KEY = os.environ.get("CUA_TEST_API_KEY")

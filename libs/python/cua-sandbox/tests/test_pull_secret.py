@@ -14,7 +14,7 @@ from cua_sandbox.transport.fleet_cloud import (
     _needs_ecr_pull_secret,
 )
 
-PRIVATE = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:main-bac7daa3"
+PRIVATE = "123456789012.dkr.ecr.us-west-2.amazonaws.com/example-workspace:main-bac7daa3"
 PUBLIC_ECR = "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
 
 

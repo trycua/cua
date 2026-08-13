@@ -1,0 +1,218 @@
+---
+title: Authentication
+description: 'How the cua CLI logs in, where it stores tokens, how to authenticate on a headless host, and which environment variables take effect.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua` authenticates with OAuth device authorization. Endpoints are discovered
+from the issuer `https://auth.cua.ai/realms/cyclops-cs`; authenticated cloud
+requests then go to `https://run.cua.ai`.
+
+## Logging in
+
+```bash
+cua auth login
+```
+
+The CLI prints a verification URL and a user code, tries to open a browser, and
+then polls until you approve. Because the code is printed, the flow works over
+SSH and in terminals with no browser at all — pass `--no-browser` to skip the
+browser attempt entirely:
+
+```console
+$ cua auth login --no-browser
+Open this URL in any browser:
+https://auth.cua.ai/realms/cyclops-cs/device?user_code=QYNE-RIGM
+Enter this code if prompted: QYNE-RIGM
+```
+
+Approve in any browser, on any machine, then return to the terminal. Check the
+result at any time:
+
+```console
+$ cua auth status
+Logged in to run.cua.ai. Access token expires 2026-08-12T22:36:31.604247+00:00.
+```
+
+Access tokens are refreshed automatically before authenticated requests, so the
+expiry shown by `cua auth status` moves forward on its own. `cua auth logout`
+asks the issuer to revoke the refresh token and removes the local credentials
+either way, even if the network is unavailable. The CLI never prints access or
+refresh tokens.
+
+## Where credentials are stored
+
+Tokens go into the operating system credential vault through the `keyring`
+library, under service `run.cua.ai` and account `cua-cli`. The CLI does not read
+an API key from the environment and does not write one to a `.env` file.
+
+That vault is macOS Keychain, Windows Credential Manager, or — on Linux — a
+Secret Service provider such as `gnome-keyring` or KWallet. A server typically
+has none of these.
+
+## Headless hosts
+
+On a Linux host with no keyring backend, `keyring` falls back to
+`keyring.backends.fail.Keyring` and every credential operation raises:
+
+```console
+$ cua auth login --no-browser
+Open this URL in any browser:
+https://auth.cua.ai/realms/cyclops-cs/device?user_code=BCOP-JOSP
+Enter this code if prompted: BCOP-JOSP
+Error: Login failed: No secure credential store is available.
+Configure an OS keyring before logging in.
+```
+
+Two things are worth knowing about this failure. It happens **after** you have
+already approved in the browser, because the store is only written once the
+device flow completes — so the approval is wasted and has to be repeated. And it
+is not limited to `login`: `cua auth status` and every authenticated command
+raise the same error, because reading the vault fails the same way writing does.
+
+### Option 1: a file-backed keyring
+
+Install a backend that writes to a file instead of a system vault. `keyrings.alt`
+provides one:
+
+```bash
+pip install keyrings.alt
+export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring
+cua auth login --no-browser
+```
+
+Or install it alongside the CLI in one step:
+
+```bash
+uv tool install cua-cli --with keyrings.alt --index https://wheels.cua.ai/simple
+```
+
+Credentials then land in `~/.local/share/python_keyring/keyring_pass.cfg`,
+created with mode `600`.
+
+Setting `PYTHON_KEYRING_BACKEND` is not strictly required — `PlaintextKeyring`
+registers at a higher priority than the failing backend, so `keyring` selects it
+on its own once installed. Set it anyway: it pins the choice, so installing
+another backend later cannot silently move where your tokens are kept.
+
+<Callout type="warn">
+  **`PlaintextKeyring` stores the OAuth access and refresh tokens unencrypted on
+  disk.** File permissions are the only protection, and automatic token refresh
+  rewrites the file, so the credential stays current rather than expiring out of
+  usefulness. Anyone who can read that file — including anything that can read
+  the host's disk or a backup of it — holds your Cua session. Use it for
+  ephemeral and CI hosts that are destroyed after the job. For a machine that
+  persists, use one of the options below.
+</Callout>
+
+### Option 2: an encrypted file keyring
+
+`keyrings.cryptfile` keeps the same file-backed approach but encrypts the store
+with a passphrase (Argon2 key derivation, AES-GCM):
+
+```bash
+pip install keyrings.cryptfile
+export PYTHON_KEYRING_BACKEND=keyrings.cryptfile.cryptfile.CryptFileKeyring
+cua auth login --no-browser
+```
+
+The store lives at `~/.local/share/python_keyring/cryptfile_pass.cfg`, also mode
+`600`. Every command that touches credentials prompts once for the passphrase:
+
+```console
+$ cua auth status
+Please enter password for encrypted keyring:
+Logged in to run.cua.ai. Access token expires 2026-08-12T22:36:31.604247+00:00.
+```
+
+That prompt is the tradeoff. It is fine for a host you log into and work on, and
+unworkable for an unattended job, which is exactly the split between this option
+and the previous one.
+
+### Option 3: a real keyring
+
+On a persistent Linux server, install and unlock a Secret Service provider such
+as `gnome-keyring` and let the default backend find it. This keeps the CLI on
+the same storage path it uses on a desktop, at the cost of having to unlock the
+keyring for each session — with `dbus-run-session` or a PAM module, depending on
+how the host is administered.
+
+### Option 4: do not log in at all
+
+For CI, skip the interactive session and hand the CLI a workload token instead.
+See [GitHub Actions](#github-actions) below.
+
+## Environment variables
+
+The CLI itself reads only these:
+
+| Variable | Effect |
+|----------|--------|
+| `FLEETS_TOKEN` | Fleet workload token. When set, it takes precedence over the interactive session for Fleet operations. |
+| `CUA_MCP_PERMISSIONS` | Default permission list for `cua serve-mcp`, overridden by `--permissions`. |
+| `CUA_SANDBOX` | Default sandbox for MCP computer tools, overridden by `--sandbox`. |
+| `ANTHROPIC_API_KEY` | Used by `cua do snapshot` and by `cua skills record --provider anthropic`. |
+| `OPENAI_API_KEY` | Used by `cua skills record --provider openai`. |
+| `PYTHON_KEYRING_BACKEND` | Read by the `keyring` library to select where credentials are stored. |
+| `XDG_DATA_HOME`, `XDG_STATE_HOME` | Move `~/.local/share/cua` and `~/.local/state/cua`. |
+
+The Sandbox SDK reads a further set. These apply when you import `cua_sandbox`
+in your own code:
+
+| Variable | Effect |
+|----------|--------|
+| `CUA_API_KEY` | API key for cloud sandboxes. |
+| `CUA_BASE_URL` | Base URL for the cloud VM API. Defaults to `https://api.cua.ai`. |
+| `CUA_FLEET_BASE_URL` | Base URL for the Fleet API. Defaults to `https://run.cua.ai`. |
+| `CUA_TOKEN_URL` | OAuth token endpoint for client-credentials auth. |
+| `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET` | OAuth client credentials for Fleet. |
+| `FLEETS_TOKEN` | Static Fleet workload token, checked before client credentials. |
+
+<Callout type="info">
+  `CUA_BASE_URL` has no effect on `cua` commands. The CLI overwrites it at
+  startup so that cloud requests always go to `https://run.cua.ai`, whatever the
+  environment says. Set it only for direct SDK use.
+</Callout>
+
+`CUA_API_KEY` is likewise not a way to authenticate the CLI: `cua` passes its
+own session token explicitly on every cloud call, and an explicitly passed key
+takes precedence over the environment.
+
+## GitHub Actions
+
+`cua wif-token github` exchanges the job's GitHub OIDC identity for a Fleets
+token. It runs only inside GitHub Actions, requests the `fleets` audience, and
+prints nothing but the raw token:
+
+```console
+$ cua wif-token github
+Error: ACTIONS_ID_TOKEN_REQUEST_URL is missing; run in GitHub Actions with permissions: id-token: write.
+```
+
+The job needs `id-token: write`. `FLEETS_TOKEN` is process-scoped and ephemeral;
+while it is set, it takes precedence over any interactive session:
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+
+steps:
+  - name: Run a non-interactive Fleets sandbox
+    run: |
+      export FLEETS_TOKEN="$(cua wif-token github)"
+      cua sb launch ghcr.io/trycua/mini-swe:latest --name sandbox
+      cua sb exec sandbox -- pwd
+      cua sb delete sandbox --force
+```
+
+Use the GitHub-authorized sandbox name `sandbox`. `cua sb delete sandbox --force`
+releases the claim while preserving the reconciled one-replica pool, template,
+and namespace for the next claim.
+
+<Callout type="info">
+  Under `FLEETS_TOKEN`, `cua sb ls` exits with
+  `Listing Fleet sandboxes is not supported; use 'cua sb info NAME'.` Address
+  Fleet sandboxes by name.
+</Callout>

@@ -70,22 +70,57 @@ fn unique_native_actionable(
     control_type: &str,
     action: &str,
 ) -> Result<Option<usize>, BrowserRefusal> {
+    unique_native_actionable_with_focus(nodes, control_type, action, element_has_keyboard_focus)
+}
+
+fn element_has_keyboard_focus(element_ptr: usize) -> bool {
+    if element_ptr == 0 {
+        return false;
+    }
+    let element = unsafe { IUIAutomationElement::from_raw(element_ptr as *mut _) };
+    let focused = unsafe { element.CurrentHasKeyboardFocus() }
+        .ok()
+        .is_some_and(|value| value.as_bool());
+    std::mem::forget(element);
+    focused
+}
+
+fn unique_native_actionable_with_focus(
+    nodes: &[UiaNode],
+    control_type: &str,
+    action: &str,
+    mut has_keyboard_focus: impl FnMut(usize) -> bool,
+) -> Result<Option<usize>, BrowserRefusal> {
     let matches = nodes
         .iter()
         .filter(|node| {
             !node.in_web_content
                 && node.control_type == control_type
                 && node.actions.iter().any(|value| value == action)
+                && node.enabled != Some(false)
+                && node.element_ptr != 0
         })
         .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [] => Ok(None),
-        [element] => Ok(Some(*element)),
-        _ => Err(refusal(
-            BrowserRefusalCode::BrowserWrongTargetRefused,
-            format!("multiple native {control_type} controls expose the exact {action} action"),
-        )),
+        .collect::<HashSet<_>>();
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.into_iter().next()),
+        _ => {
+            let focused = matches
+                .into_iter()
+                .filter(|element| has_keyboard_focus(*element))
+                .collect::<Vec<_>>();
+            match focused.as_slice() {
+                [element] => Ok(Some(*element)),
+                _ => Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    format!(
+                        "multiple native {control_type} controls expose the exact {action} action, \
+                         and keyboard focus did not identify exactly one"
+                    ),
+                )),
+            }
+        }
     }
 }
 
@@ -839,8 +874,41 @@ mod tests {
         );
         second.element_ptr = 32;
 
-        let error = unique_native_actionable(&[first, second], "Edit", "set_value").unwrap_err();
+        let error =
+            unique_native_actionable_with_focus(&[first, second], "Edit", "set_value", |_| false)
+                .unwrap_err();
         assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+    }
+
+    #[test]
+    fn native_address_control_uses_unique_keyboard_focus_when_edge_exposes_multiple_edits() {
+        let mut first = node("Edit", "opaque first", None, &["set_value"]);
+        first.element_ptr = 31;
+        let mut second = node("Edit", "opaque second", None, &["set_value"]);
+        second.element_ptr = 32;
+
+        assert_eq!(
+            unique_native_actionable_with_focus(&[first, second], "Edit", "set_value", |element| {
+                element == 32
+            },)
+            .unwrap(),
+            Some(32)
+        );
+    }
+
+    #[test]
+    fn native_address_control_refuses_multiple_focused_edits() {
+        let mut first = node("Edit", "opaque first", None, &["set_value"]);
+        first.element_ptr = 31;
+        let mut second = node("Edit", "opaque second", None, &["set_value"]);
+        second.element_ptr = 32;
+
+        assert_eq!(
+            unique_native_actionable_with_focus(&[first, second], "Edit", "set_value", |_| true,)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
     }
 
     #[test]

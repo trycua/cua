@@ -359,9 +359,7 @@ async def build_user_image(
         # `run` commands per-OS (sudo bash on Linux, plain cmd on Windows).
         from cua_sandbox.builder.executor import LayerExecutor
 
-        executor = LayerExecutor(
-            f"http://{info.host}:{info.api_port}", os_type=image.os_type
-        )
+        executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
 
         # Env first, so copied files and run layers can reference the variables.
         await _apply_env(executor, image)

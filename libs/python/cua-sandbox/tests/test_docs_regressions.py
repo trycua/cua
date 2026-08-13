@@ -164,7 +164,6 @@ class TestDeletingNothingIsNotSuccess:
 
     def test_unknown_name_raises(self, monkeypatch):
         import asyncio
-
         import importlib
 
         # cua_sandbox exports a `sandbox()` function that shadows the submodule.
@@ -179,7 +178,6 @@ class TestDeletingNothingIsNotSuccess:
 
     def test_orphan_container_is_removed(self, monkeypatch):
         import asyncio
-
         import importlib
 
         # cua_sandbox exports a `sandbox()` function that shadows the submodule.
@@ -259,7 +257,6 @@ class TestLocalRuntimeSelection:
         """Falling back to Docker would hand back the XFCE container, which
         cannot become ready — a 120s timeout instead of a named dependency."""
         import pytest as _pytest
-
         from cua_sandbox.runtime import compat
         from cua_sandbox.sandbox import _auto_runtime
 

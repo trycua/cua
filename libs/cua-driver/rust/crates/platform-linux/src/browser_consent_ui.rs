@@ -11,6 +11,7 @@ use crate::atspi::AtspiNode;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ConsentButtonCandidate {
     element_index: usize,
+    parent_element_index: usize,
     rect: (i32, i32, i32, i32),
     focused: bool,
     depth: usize,
@@ -45,7 +46,7 @@ fn is_in_web_content(nodes: &[AtspiNode], node: &AtspiNode) -> bool {
     true
 }
 
-fn trusted_prompt_nodes(nodes: &[AtspiNode]) -> impl Iterator<Item = &AtspiNode> {
+fn trusted_prompt_nodes(nodes: &[AtspiNode]) -> impl DoubleEndedIterator<Item = &AtspiNode> {
     nodes.iter().filter(|node| {
         !node.in_web_content
             && !role_is(node, &["document web", "document frame", "document"])
@@ -64,14 +65,68 @@ fn has_nonempty_accessible_text(node: &AtspiNode) -> bool {
     .any(|value| !value.trim().is_empty())
 }
 
+fn is_descendant_of(nodes: &[AtspiNode], node: &AtspiNode, ancestor_index: usize) -> bool {
+    let mut parent = node.parent_element_index;
+    for _ in 0..nodes.len() {
+        let Some(parent_index) = parent else {
+            return false;
+        };
+        if parent_index == ancestor_index {
+            return true;
+        }
+        let Some(parent_node) = nodes
+            .iter()
+            .find(|candidate| candidate.element_index == Some(parent_index))
+        else {
+            return false;
+        };
+        parent = parent_node.parent_element_index;
+    }
+    false
+}
+
+fn exact_native_prompt_root(nodes: &[AtspiNode]) -> Result<Option<usize>, BrowserRefusal> {
+    let roots = trusted_prompt_nodes(nodes)
+        .filter(|node| {
+            role_is(node, &["alert"])
+                && node.element_index.is_some()
+                && has_nonempty_accessible_text(node)
+                && node.parent_element_index.is_some_and(|parent_index| {
+                    nodes
+                        .iter()
+                        .find(|candidate| candidate.element_index == Some(parent_index))
+                        .is_some_and(|parent| role_is(parent, &["frame", "window"]))
+                })
+        })
+        .filter_map(|root| {
+            let root_index = root.element_index?;
+            let heading_count = trusted_prompt_nodes(nodes)
+                .filter(|node| {
+                    is_descendant_of(nodes, node, root_index)
+                        && role_is(node, &["heading"])
+                        && has_nonempty_accessible_text(node)
+                })
+                .count();
+            let explanatory_surface_present = trusted_prompt_nodes(nodes).any(|node| {
+                is_descendant_of(nodes, node, root_index)
+                    && !role_is(node, &["heading", "push button", "button"])
+                    && has_nonempty_accessible_text(node)
+            });
+            (heading_count == 1 && explanatory_surface_present).then_some(root_index)
+        })
+        .collect::<Vec<_>>();
+    match roots.as_slice() {
+        [] => Ok(None),
+        [root] => Ok(Some(*root)),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the approved Chromium window exposed multiple native consent alerts",
+        )),
+    }
+}
+
 fn native_prompt_surface_present(nodes: &[AtspiNode]) -> bool {
-    let heading_count = trusted_prompt_nodes(nodes)
-        .filter(|node| role_is(node, &["heading"]) && has_nonempty_accessible_text(node))
-        .count();
-    let explanatory_text_present = trusted_prompt_nodes(nodes).any(|node| {
-        role_is(node, &["static", "text", "paragraph"]) && has_nonempty_accessible_text(node)
-    });
-    heading_count == 1 && explanatory_text_present
+    exact_native_prompt_root(nodes).ok().flatten().is_some()
 }
 
 fn redacted_native_prompt_snapshot(
@@ -85,6 +140,12 @@ fn redacted_native_prompt_snapshot(
                     || !node.actions.is_empty()
                     || node.focused == Some(true)
             })
+            // Chromium appends browser-owned transient UI after its persistent
+            // toolbar controls in the AT-SPI tree. Prefer that end when the
+            // redacted diagnostic must stay bounded, otherwise the first 64
+            // entries contain only the omnibox/toolbars and hide the prompt
+            // topology we need to refuse safely.
+            .rev()
             .take(64)
             .map(|node| {
                 let parent_role = node.parent_element_index.and_then(|parent_index| {
@@ -145,6 +206,21 @@ fn select_language_independent_allow(
         return Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the native Chromium consent prompt did not expose two or three distinct dialog buttons",
+        ));
+    }
+    let Some(action_parent) = candidates
+        .first()
+        .map(|candidate| candidate.parent_element_index)
+    else {
+        unreachable!("the candidate count was already checked")
+    };
+    if candidates
+        .iter()
+        .any(|candidate| candidate.parent_element_index != action_parent)
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native Chromium consent buttons did not share one exact action container",
         ));
     }
     let focused = candidates
@@ -212,17 +288,22 @@ fn exact_allow_button(
     nodes: &[AtspiNode],
     bounds: &[(usize, i32, i32, u32, u32)],
 ) -> Result<Option<usize>, BrowserRefusal> {
-    if !native_prompt_surface_present(nodes) {
+    let Some(prompt_root) = exact_native_prompt_root(nodes)? else {
         return Ok(None);
-    }
+    };
     let mut candidates = Vec::new();
     for node in trusted_prompt_nodes(nodes).filter(|node| {
-        role_is(node, &["push button", "button"])
+        is_descendant_of(nodes, node, prompt_root)
+            && role_is(node, &["push button", "button"])
             && !node.actions.is_empty()
             && node.enabled != Some(false)
             && node.element_index.is_some()
+            && node.parent_element_index.is_some()
     }) {
         let element_index = node.element_index.expect("filtered actionable index");
+        let parent_element_index = node
+            .parent_element_index
+            .expect("filtered action-container index");
         let Some((_, x, y, width, height)) =
             bounds.iter().find(|(index, ..)| *index == element_index)
         else {
@@ -242,6 +323,7 @@ fn exact_allow_button(
         };
         let candidate = ConsentButtonCandidate {
             element_index,
+            parent_element_index,
             rect: (*x, *y, right, bottom),
             focused: node.focused == Some(true),
             depth: node.depth,
@@ -451,50 +533,182 @@ mod tests {
     }
 
     fn prompt() -> Vec<AtspiNode> {
-        let mut cancel = node("push button", "Cancel", &["click"]);
-        cancel.element_index = Some(7);
-        cancel.element_key = 7;
-        cancel.focused = Some(true);
-        let mut allow = node("push button", "Allow", &["click"]);
-        allow.element_index = Some(8);
-        allow.element_key = 8;
-        allow.focused = Some(false);
-        vec![
-            node("heading", "Allow remote debugging?", &[]),
-            node(
-                "static",
-                "An external app wants full control. This includes access to your saved data, cookies and site data, and the ability to navigate to any URL.",
-                &[],
-            ),
-            cancel,
-            allow,
-        ]
+        opaque_prompt("Allow remote debugging?", ["Cancel", "Allow"])
     }
 
     fn prompt_bounds() -> Vec<(usize, i32, i32, u32, u32)> {
-        vec![(7, 100, 200, 90, 36), (8, 202, 200, 90, 36)]
+        vec![(184, 604, 367, 81, 38), (185, 693, 367, 81, 38)]
     }
 
     fn opaque_prompt(title: &str, labels: [&str; 2]) -> Vec<AtspiNode> {
-        let mut cancel = node("push button", labels[0], &["click"]);
-        cancel.element_index = Some(7);
-        cancel.element_key = 7;
+        let mut result = chrome_151_prompt();
+        result.retain(|node| node.element_index != Some(183));
+        result
+            .iter_mut()
+            .find(|node| node.element_index == Some(176))
+            .expect("fixture heading")
+            .name = Some(title.to_owned());
+        result
+            .iter_mut()
+            .find(|node| node.element_index == Some(184))
+            .expect("fixture cancel")
+            .name = Some(labels[0].to_owned());
+        result
+            .iter_mut()
+            .find(|node| node.element_index == Some(185))
+            .expect("fixture allow")
+            .name = Some(labels[1].to_owned());
+        result
+    }
+
+    fn indexed_node(
+        index: usize,
+        role: &str,
+        name: &str,
+        actions: &[&str],
+        parent: Option<usize>,
+        depth: usize,
+    ) -> AtspiNode {
+        let mut result = node(role, name, actions);
+        result.element_index = Some(index);
+        result.element_key = index as u64;
+        result.parent_element_index = parent;
+        result.depth = depth;
+        result
+    }
+
+    fn chrome_151_prompt() -> Vec<AtspiNode> {
+        let mut cancel = indexed_node(
+            184,
+            "push button",
+            "opaque cancel",
+            &["press", "showContextMenu"],
+            Some(182),
+            6,
+        );
         cancel.focused = Some(true);
-        let mut allow = node("push button", labels[1], &["click"]);
-        allow.element_index = Some(8);
-        allow.element_key = 8;
-        allow.focused = Some(false);
         vec![
-            node("heading", title, &[]),
-            node("static", "opaque body", &[]),
+            indexed_node(0, "frame", "browser", &["doDefault"], None, 0),
+            indexed_node(172, "alert", "opaque prompt", &["doDefault"], Some(0), 1),
+            indexed_node(173, "panel", "opaque prompt", &["doDefault"], Some(172), 2),
+            indexed_node(174, "panel", "opaque prompt", &["doDefault"], Some(173), 3),
+            indexed_node(175, "panel", "opaque title", &["doDefault"], Some(174), 4),
+            indexed_node(176, "heading", "opaque title", &["doDefault"], Some(175), 5),
+            indexed_node(177, "panel", "opaque body", &["doDefault"], Some(174), 4),
+            indexed_node(178, "panel", "opaque body", &["doDefault"], Some(177), 5),
+            indexed_node(179, "panel", "opaque body", &["doDefault"], Some(178), 6),
+            indexed_node(180, "panel", "opaque body", &["doDefault"], Some(179), 7),
+            indexed_node(182, "panel", "opaque actions", &["doDefault"], Some(177), 5),
+            indexed_node(
+                183,
+                "push button",
+                "opaque settings",
+                &["press", "showContextMenu"],
+                Some(182),
+                6,
+            ),
             cancel,
-            allow,
+            indexed_node(
+                185,
+                "push button",
+                "opaque allow",
+                &["press", "showContextMenu"],
+                Some(182),
+                6,
+            ),
+        ]
+    }
+
+    fn chrome_151_bounds() -> Vec<(usize, i32, i32, u32, u32)> {
+        vec![
+            (183, 366, 367, 161, 38),
+            (184, 604, 367, 81, 38),
+            (185, 693, 367, 81, 38),
         ]
     }
 
     #[test]
+    fn matcher_accepts_real_chrome_151_alert_topology_without_reading_labels() {
+        assert_eq!(
+            exact_allow_button(&chrome_151_prompt(), &chrome_151_bounds()).unwrap(),
+            Some(185)
+        );
+    }
+
+    #[test]
+    fn matcher_ignores_browser_toolbar_buttons_outside_the_exact_alert() {
+        let mut nodes = chrome_151_prompt();
+        nodes.push(indexed_node(
+            50,
+            "push button",
+            "opaque toolbar action",
+            &["click"],
+            Some(0),
+            1,
+        ));
+        let mut bounds = chrome_151_bounds();
+        bounds.push((50, 20, 20, 32, 32));
+
+        assert_eq!(exact_allow_button(&nodes, &bounds).unwrap(), Some(185));
+    }
+
+    #[test]
+    fn matcher_refuses_buttons_split_across_action_containers() {
+        let mut nodes = chrome_151_prompt();
+        nodes
+            .iter_mut()
+            .find(|node| node.element_index == Some(185))
+            .expect("fixture allow")
+            .parent_element_index = Some(177);
+
+        assert_eq!(
+            exact_allow_button(&nodes, &chrome_151_bounds())
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn matcher_refuses_multiple_native_alert_roots() {
+        let mut nodes = chrome_151_prompt();
+        let duplicate_root = indexed_node(
+            272,
+            "alert",
+            "another opaque prompt",
+            &["doDefault"],
+            Some(0),
+            1,
+        );
+        let duplicate_panel = indexed_node(
+            273,
+            "panel",
+            "another opaque body",
+            &["doDefault"],
+            Some(272),
+            2,
+        );
+        let duplicate_heading = indexed_node(
+            274,
+            "heading",
+            "another opaque title",
+            &["doDefault"],
+            Some(273),
+            3,
+        );
+        nodes.extend([duplicate_root, duplicate_panel, duplicate_heading]);
+
+        assert_eq!(
+            exact_allow_button(&nodes, &chrome_151_bounds())
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
     fn matcher_treats_native_prompt_names_as_opaque_unicode() {
-        let bounds = [(7, 100, 200, 90, 36), (8, 202, 200, 90, 36)];
+        let bounds = prompt_bounds();
         for (title, labels) in [
             ("e\u{301}", ["हिन्दी", "ไทย"]),
             ("\u{2067}العربية\u{2069}", ["עברית", "فارسی"]),
@@ -504,14 +718,14 @@ mod tests {
         ] {
             assert_eq!(
                 exact_allow_button(&opaque_prompt(title, labels), &bounds).unwrap(),
-                Some(8)
+                Some(185)
             );
         }
     }
 
     #[test]
     fn matcher_refuses_when_accessible_text_cannot_prove_the_native_surface() {
-        let bounds = [(7, 100, 200, 90, 36), (8, 202, 200, 90, 36)];
+        let bounds = prompt_bounds();
         let mut nodes = opaque_prompt("placeholder", ["A", "B"]);
         for node in &mut nodes {
             node.name = None;
@@ -526,7 +740,7 @@ mod tests {
     fn matcher_requires_exact_security_prompt_and_unique_allow_action() {
         assert_eq!(
             exact_allow_button(&prompt(), &prompt_bounds()).unwrap(),
-            Some(8)
+            Some(185)
         );
         assert!(exact_allow_button(
             &[node("push button", "Allow", &["click"])],
@@ -540,11 +754,13 @@ mod tests {
     fn matcher_refuses_ambiguous_allow_actions() {
         let mut nodes = prompt();
         let mut extra = node("push button", "Anything", &["click"]);
-        extra.element_index = Some(9);
-        extra.element_key = 9;
+        extra.element_index = Some(186);
+        extra.element_key = 186;
+        extra.parent_element_index = Some(182);
+        extra.depth = 6;
         nodes.push(extra);
         let mut bounds = prompt_bounds();
-        bounds.push((9, 304, 200, 90, 36));
+        bounds.push((186, 782, 367, 81, 38));
         assert_eq!(
             exact_allow_button(&nodes, &bounds).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
@@ -555,17 +771,22 @@ mod tests {
     fn matcher_collapses_duplicate_atspi_paths_for_one_physical_button() {
         let mut nodes = prompt();
         let mut duplicate = node("push button", "Allow", &["click"]);
-        duplicate.element_index = Some(9);
-        duplicate.element_key = 9;
-        duplicate.depth = 2;
-        nodes.last_mut().unwrap().depth = 1;
+        duplicate.element_index = Some(186);
+        duplicate.element_key = 186;
+        duplicate.parent_element_index = Some(182);
+        duplicate.depth = 7;
+        nodes
+            .iter_mut()
+            .find(|node| node.element_index == Some(185))
+            .expect("fixture allow")
+            .depth = 6;
         nodes.push(duplicate);
         let bounds = vec![
-            (7, 10, 20, 80, 30),
-            (8, 100, 20, 80, 30),
-            (9, 100, 20, 80, 30),
+            (184, 604, 367, 81, 38),
+            (185, 693, 367, 81, 38),
+            (186, 693, 367, 81, 38),
         ];
-        assert_eq!(exact_allow_button(&nodes, &bounds).unwrap(), Some(9));
+        assert_eq!(exact_allow_button(&nodes, &bounds).unwrap(), Some(186));
     }
 
     #[test]

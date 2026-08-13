@@ -192,7 +192,6 @@ A full run — launcher to standing in a new world — took 37 computer calls an
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| VM sits at a `Shell>` UEFI prompt instead of booting | stale EFI variables left by an earlier VM | delete `~/.cua/cua-sandbox/images/sessions/efivars.fd` and boot again |
 | Launcher never appears, no error | MSVC build without the VC++ redistributable | use the MinGW portable build |
 | Guest has an IP address but cannot resolve names | both user-mode NICs offered the same address | give the second NIC its own subnet |
 | `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |

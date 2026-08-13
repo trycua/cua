@@ -56,7 +56,7 @@ test.describe("Settings GitHub trust policies", () => {
     )
     await expect(workflowSnippet).toContainText('exit "$status"')
     await expect(workflowSnippet).toContainText(
-      "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest",
+      "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest",
     )
     await expect(workflowSnippet).toContainText("cua sb launch")
     await expect(workflowSnippet).toContainText('--name "$sandbox"')

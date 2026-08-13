@@ -307,7 +307,7 @@ A full run — launcher to standing in a new world — took 52 steps and about t
 
 The image and the agent loop are identical on Fleet. Two things change: there is no `local=True` and no `runtime=`, and the MCP endpoint is reached through Fleet's service proxy rather than a forwarded localhost port.
 
-`.expose(3000)` becomes a Fleet **service** named `port-3000`, and `sb.tunnel.forward()` hands you its URL — the same call documented in [Forward a port from a sandbox](/how-to-guides/sandbox/tunneling), so there is nothing Fleet-specific to hand-assemble.
+`.expose(3000)` becomes a Fleet **service** named `port-3000`, and `sb.tunnel.forward()` hands you its URL — the same call documented in [Forward a port from a sandbox](/docs/how-to-guides/sandbox/tunneling), so there is nothing Fleet-specific to hand-assemble.
 
 ```python
 import httpx
@@ -334,7 +334,9 @@ That is the same `run()` as above, with only the URL and an auth header changed.
 Notice there is no `-cpu host` here. That flag exists on the local path because the bare-metal runtime defaults to the thin `qemu64` model; a Fleet sandbox is provisioned for you and already reports a full host CPU — `Intel Xeon Processor (SapphireRapids)`, with AVX, AVX2 and AVX-512 all present — so there is nothing to override, and no QEMU arguments to pass.
 
 <Callout type="warn">
-  **Minecraft itself did not run on Fleet during this write-up, and the guide does not claim it does.** Everything above works there: the sandbox boots in about three minutes, `.expose(3000)` publishes cua-driver, the MCP client lists the same 55 tools, the setup script installs Prism and Mesa, the Microsoft sign-in completes, and the agent loop drives the desktop. But the game exits during resource loading, every time, with no Java exception, no `hs_err` file and nothing in the Windows event log — the log simply stops after `Reloading ResourceManager: vanilla`. That is the same stopping point as the local `qemu64` failure, yet the two known causes do not apply: the Fleet CPU reports full AVX-512, and forcing the heap down from Prism's auto-sized `-Xmx2717m` to `-Xmx1024m` on the 4 GB sandbox changed nothing. Unlike the local path there are no QEMU arguments to adjust. Use the local path for the game itself until this is understood.
+  **Minecraft itself did not run on Fleet during this write-up, and the guide does not claim it does.** Everything above works there: the sandbox boots in about three minutes, `.expose(3000)` publishes cua-driver, the MCP client lists the same 55 tools, the setup script installs Prism and Mesa, the Microsoft sign-in completes, and the agent loop drives the desktop. But the game dies during resource loading, every time, with `Process crashed with exitcode -2147024809` — no Java exception, no `hs_err` file, nothing in the Windows event log.
+
+  It is not version-specific: 1.20.1 on Java 17 with LWJGL 3 and 1.12.2 on Java 8 with LWJGL 2 both stop at the same point, right after `Reloading ResourceManager`. It is not the heap either — forcing Prism's auto-sized `-Xmx2717m` down to `-Xmx1024m` on the 4 GB sandbox changed nothing. And the usual local culprit does not apply: that exit code matches the local `qemu64` failure exactly, but the Fleet CPU reports `Intel Xeon Processor (SapphireRapids)` with AVX, AVX2 and AVX-512 all present, and there are no QEMU arguments to adjust on Fleet. Use the local path for the game itself until this is understood.
 </Callout>
 
 <Callout type="warn">

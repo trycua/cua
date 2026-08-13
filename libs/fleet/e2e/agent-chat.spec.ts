@@ -22,6 +22,34 @@ test("shows chat history, transcript region, prompt shell, and authenticated his
   )
 })
 
+test("renders a full-width multiline composer with hidden announcements", async ({ page }) => {
+  await mockAuth(page, { admin: false, chat: true })
+  await mockChatApi(page)
+
+  await page.goto("/agent")
+
+  const composer = page.locator(".agent-chat-composer")
+  const prompt = page.locator(".agent-chat-prompt")
+  const textarea = page.getByPlaceholder("Ask a question")
+  const composerBox = await composer.boundingBox()
+  const promptBox = await prompt.boundingBox()
+  const initialHeight = (await textarea.boundingBox())?.height ?? 0
+
+  expect(composerBox).not.toBeNull()
+  expect(promptBox).not.toBeNull()
+  expect((promptBox?.width ?? 0) / (composerBox?.width ?? 1)).toBeGreaterThan(0.9)
+  expect(initialHeight).toBeGreaterThan(44)
+
+  await textarea.fill("First line\nSecond line\nThird line")
+  await expect.poll(async () => (await textarea.boundingBox())?.height ?? 0).toBeGreaterThan(initialHeight)
+
+  const announcement = page.locator('[aria-live="polite"]').filter({ hasText: "No conversation selected" })
+  const announcements = page.locator(".agent-chat-announcements")
+  await expect(announcement).toBeAttached()
+  await expect(announcements).toHaveCSS("overflow", "hidden")
+  await expect.poll(async () => announcements.evaluate(element => ({ width: element.clientWidth, height: element.clientHeight }))).toEqual({ width: 1, height: 1 })
+})
+
 test("keeps the prompt visible while conversation history loads", async ({ page }) => {
   await mockAuth(page, { admin: false, chat: true })
   const chat = await mockChatApi(page, { holdList: true })
@@ -48,6 +76,67 @@ test("loads a selected conversation with message skeletons and accessible author
   await expect(page.getByText("The example site is ready.")).toBeVisible()
   await expect(page.getByLabel(/^You at /)).toBeVisible()
   await expect(page.getByLabel(/^Assistant at /)).toBeVisible()
+})
+
+test("renders and sanitizes Markdown in user and assistant messages", async ({ page }) => {
+  const now = new Date().toISOString()
+  await mockAuth(page, { admin: false, chat: true })
+  await mockChatApi(page, {
+    conversations: [{
+      id: "markdown-chat",
+      title: "Markdown chat",
+      created_at: now,
+      updated_at: now,
+      messages: [
+        {
+          id: "markdown-user",
+          role: "user",
+          content: [
+            "| Request | Value |",
+            "| --- | --- |",
+            "| Format | **Markdown** |",
+            "",
+            "[Safe link](https://example.com) [Unsafe link](javascript:alert(1))",
+            "",
+            '<script>window.__markdownXss = true</script><img src="https://example.com/tracker.png"><span id="location" style="color:red" onclick="window.__markdownXss = true">Sanitized text</span>',
+          ].join("\n"),
+          created_at: now,
+        },
+        {
+          id: "markdown-assistant",
+          role: "assistant",
+          content: [
+            "| Pool | Phase |",
+            "| --- | --- |",
+            "| demo | Ready |",
+            "",
+            "```ts",
+            "const ready = true",
+            "```",
+          ].join("\n"),
+          created_at: now,
+        },
+      ],
+    }],
+  })
+
+  await page.goto("/agent")
+  await page.getByRole("button", { name: "Markdown chat" }).click()
+
+  const userBubble = page.getByLabel(/^You at /)
+  const assistantBubble = page.getByLabel(/^Assistant at /)
+  await expect(userBubble.getByRole("table")).toBeVisible()
+  await expect(userBubble.getByRole("link", { name: "Safe link" })).toHaveAttribute("href", "https://example.com")
+  await expect(userBubble.getByText("Unsafe link")).not.toHaveAttribute("href", /.+/)
+  await expect(assistantBubble.getByRole("table")).toBeVisible()
+  await expect(assistantBubble.locator("pre code")).toContainText("const ready = true")
+
+  await expect(userBubble.locator("script, img")).toHaveCount(0)
+  const sanitizedSpan = userBubble.getByText("Sanitized text")
+  await expect(sanitizedSpan).not.toHaveAttribute("style")
+  await expect(sanitizedSpan).not.toHaveAttribute("onclick")
+  await expect(sanitizedSpan).not.toHaveAttribute("id")
+  expect(await page.evaluate(() => (window as Window & { __markdownXss?: boolean }).__markdownXss)).toBeUndefined()
 })
 
 test("does not redirect while chat feature configuration is pending", async ({ page }) => {
@@ -215,6 +304,28 @@ test("scrolls the newest message into view while keeping the composer fixed", as
   expect(composerBefore).not.toBeNull()
   expect(composerAfter).not.toBeNull()
   expect(composerAfter?.y).toBeCloseTo(composerBefore?.y ?? 0, 0)
+})
+
+test("contains long chat history without inflating document scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  const now = new Date().toISOString()
+  const messages = Array.from({ length: 20 }, (_, index) => ({
+    id: `windows-history-${index}`,
+    role: index % 2 === 0 ? "user" as const : "assistant" as const,
+    content: `| Column | Value |\n| --- | --- |\n| Row ${index} | ${"windows-image-value ".repeat(8)} |`,
+    created_at: now,
+  }))
+  await mockAuth(page, { admin: false, chat: true })
+  await mockChatApi(page, {
+    conversations: [{ id: "windows-history", title: "Windows history", created_at: now, updated_at: now, messages }],
+  })
+
+  await page.goto("/agent")
+  await page.getByRole("button", { name: "Windows history" }).click()
+
+  const transcript = page.getByRole("region", { name: "Chat" })
+  await expect.poll(() => transcript.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(1000)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight)).toBeLessThan(100)
 })
 
 test("parses fragmented unterminated NDJSON and rejects malformed final events", async ({ page }) => {
@@ -386,18 +497,21 @@ test("shows an API error and retries without duplicating the user bubble", async
   ])
 })
 
-test("keeps streamed content in one assistant bubble", async ({ page }) => {
+test("keeps streamed Markdown in one assistant bubble", async ({ page }) => {
+  const markdown = "| State | Value |\n| --- | --- |\n| Stream | Ready |"
   await mockAuth(page, { admin: false, chat: true })
   await mockChatApi(page, {
     conversations: [],
-    turns: [{ events: [{ type: "content_delta", delta: "One " }, { type: "content_delta", delta: "bubble" }, assistant("One bubble")] }],
+    turns: [{ events: [{ type: "content_delta", delta: markdown.slice(0, 24) }, { type: "content_delta", delta: markdown.slice(24) }, assistant(markdown)] }],
   })
 
   await page.goto("/agent")
   await page.getByPlaceholder("Ask a question").fill("Stream")
   await page.getByRole("button", { name: "Send message" }).click()
-  await expect(page.getByText("One bubble")).toBeVisible()
-  await expect(page.getByLabel(/^Assistant at /)).toHaveCount(1)
+  const assistantBubble = page.getByLabel(/^Assistant at /)
+  await expect(assistantBubble.getByRole("table")).toBeVisible()
+  await expect(assistantBubble.getByRole("cell", { name: "Ready" })).toBeVisible()
+  await expect(assistantBubble).toHaveCount(1)
 })
 
 test("reconstructs stored bash command steps from tool history", async ({ page }) => {
@@ -498,11 +612,11 @@ test("announces conversation loading, loaded, and no selected conversation", asy
   await mockAuth(page, { admin: false, chat: true })
   const chat = await mockChatApi(page, { holdConversation: true })
   await page.goto("/agent")
-  await expect(page.locator('[aria-live]').filter({ hasText: "No conversation selected" })).toBeVisible()
+  await expect(page.locator('[aria-live]').filter({ hasText: "No conversation selected" })).toBeAttached()
   await page.getByRole("button", { name: "Example browser task" }).click()
-  await expect(page.locator('[aria-live]').filter({ hasText: "Loading conversation" })).toBeVisible()
+  await expect(page.locator('[aria-live]').filter({ hasText: "Loading conversation" })).toBeAttached()
   chat.releaseConversation()
-  await expect(page.locator('[aria-live]').filter({ hasText: "Conversation loaded" })).toBeVisible()
+  await expect(page.locator('[aria-live]').filter({ hasText: "Conversation loaded" })).toBeAttached()
 })
 
 

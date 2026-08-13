@@ -34,13 +34,21 @@ type turnEvent struct {
 }
 
 func (h Handlers) chatUser(w http.ResponseWriter, r *http.Request) *auth.User {
-	if !h.ChatEnabled {
+	if !h.ChatAccess.Enabled() {
 		writeErr(w, http.StatusNotFound, "chat is disabled")
 		return nil
 	}
 	user := currentUser(r)
 	if user == nil || user.ID == "" {
 		writeErr(w, http.StatusUnauthorized, "missing user")
+		return nil
+	}
+	enabled, err := h.chatEnabled(r.Context(), user)
+	if err != nil {
+		slog.WarnContext(r.Context(), "chat access eval failed; defaulting off", "err", err, "user", user.ID)
+	}
+	if err != nil || !enabled {
+		writeErr(w, http.StatusNotFound, "chat is disabled")
 		return nil
 	}
 	if h.Conversations == nil {

@@ -24,7 +24,10 @@ type ctxKey int
 
 const UserKey ctxKey = 1
 
-var opaAdminQuery *rego.PreparedEvalQuery
+var (
+	opaAdminQuery *rego.PreparedEvalQuery
+	opaChatQuery  *rego.PreparedEvalQuery
+)
 
 // authzPolicy is the shared principal vocabulary every surface module imports.
 // It holds no allow rule of its own; see authz.rego.
@@ -293,6 +296,7 @@ func LoadOpa() {
 	}
 
 	opaAdminQuery = prepareAuthzQuery("data.authz.is_admin")
+	opaChatQuery = prepareAuthzQuery("data.authz.chat_enabled")
 
 	// Warm the flag cache once so the first request isn't slowed by the
 	// initial resolve and any SSM/provider misconfiguration surfaces in the
@@ -304,6 +308,16 @@ func LoadOpa() {
 // (data.authz.is_admin). is_admin only reads input.user and input.flags, so
 // no route/method/path is needed.
 func EvalIsAdmin(ctx context.Context, user *User) (bool, error) {
+	return evalUserDecision(ctx, user, opaAdminQuery)
+}
+
+// EvalChatEnabled returns the restricted-mode chat decision: administrators
+// and users listed in input.flags.chat_subs are enabled.
+func EvalChatEnabled(ctx context.Context, user *User) (bool, error) {
+	return evalUserDecision(ctx, user, opaChatQuery)
+}
+
+func evalUserDecision(ctx context.Context, user *User, query *rego.PreparedEvalQuery) (bool, error) {
 	if user == nil {
 		return false, nil
 	}
@@ -311,7 +325,7 @@ func EvalIsAdmin(ctx context.Context, user *User) (bool, error) {
 		"user":  buildUserInput(user),
 		"flags": flagsData(),
 	}
-	res, err := opaAdminQuery.Eval(ctx, rego.EvalInput(input))
+	res, err := query.Eval(ctx, rego.EvalInput(input))
 	if err != nil {
 		return false, err
 	}

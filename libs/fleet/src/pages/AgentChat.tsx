@@ -13,6 +13,10 @@ import LiveRegion from "@cloudscape-design/components/live-region"
 import PromptInput from "@cloudscape-design/components/prompt-input"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
+import { MarkdownMessage } from "../components/MarkdownMessage"
+import { createClaim, deleteClaim, getClaim, listClaims } from "../sdk/claims"
+import { createPool, deletePool, getPool, listNamespaces, listPools, updatePoolServices } from "../sdk/pools"
+import { createUserKey, deleteUserKey, listUserKeys } from "../sdk/userKeys"
 import {
   createConversation,
   getConversation,
@@ -30,6 +34,8 @@ import {
   type NormalizedBashArguments,
   type ToolCall,
 } from "../browser-agent"
+import { createBrowserMcpCommands } from "../browser-mcp-commands"
+import { createBrowserSdkCommands, type BrowserSdk } from "../browser-sdk-commands"
 import "./AgentChat.css"
 
 export interface ConversationGroup {
@@ -74,6 +80,21 @@ export function groupConversations(now: Date, summaries: ConversationSummary[]):
 
 const MOBILE_HISTORY_QUERY = "(max-width: 700px)"
 const GENERATION_LOADING_DELAY_MS = 300
+const browserSdk: BrowserSdk = {
+  listNamespaces,
+  listPools,
+  getPool,
+  createPool,
+  updatePoolServices,
+  deletePool,
+  listClaims,
+  createClaim,
+  getClaim,
+  deleteClaim,
+  listUserKeys,
+  createUserKey,
+  deleteUserKey,
+}
 
 function useMobileHistory(): boolean {
   const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE_HISTORY_QUERY).matches)
@@ -187,7 +208,7 @@ function MessageBubble({ message, position, loading = false }: { message: ChatMe
   return (
     <ChatBubble ariaLabel={`${author} at ${time.full}, message ${position}`} avatar={incoming ? <Avatar ariaLabel="Assistant avatar" color="gen-ai" iconName="gen-ai" loading={loading} /> : <Avatar ariaLabel="Your avatar" initials="You" />} type={incoming ? "incoming" : "outgoing"}>
       <SpaceBetween size="xxs">
-        <div>{loading && !message.content ? "Generating a response" : message.content}</div>
+        {loading && !message.content ? <div>Generating a response</div> : <MarkdownMessage content={message.content} />}
         {!loading && <span className="agent-chat-timestamp" title={time.full}>{author} - {time.local}</span>}
       </SpaceBetween>
     </ChatBubble>
@@ -260,7 +281,7 @@ export function AgentChat() {
         content: message.content,
         tool_calls: (message.tool_calls ?? []).filter((toolCall): toolCall is ToolCall => toolCall.type === "function"),
       }
-    })
+    }, [...createBrowserSdkCommands(browserSdk), ...createBrowserMcpCommands()])
   }
 
   const ownsRun = (runId: number, conversationID: string) =>
@@ -537,14 +558,16 @@ export function AgentChat() {
           ) : <div className="agent-chat-empty"><Box variant="h2">Select a conversation</Box><Box color="text-body-secondary">Choose a previous conversation to view its transcript.</Box></div>}
           {turnError && <div role="alert"><Alert action={<Button onClick={initialCreatePrompt ? retryInitialCreate : retryTurn}>Retry</Button>} type="error">{turnError}</Alert></div>}
           {refreshError && <div role="alert"><Alert action={<Button disabled={running} onClick={() => { if (selectedId) void recoverRefresh(selectedId) }}>Refresh conversation</Button>} type="error">{refreshError}</Alert></div>}
-          <LiveRegion hidden>{conversationLoading ? "Loading conversation" : selectedConversation ? "Conversation loaded" : "No conversation selected"}</LiveRegion>
-          <LiveRegion>{latestAnnouncement}</LiveRegion>
+          <div className="agent-chat-announcements">
+            <LiveRegion>{conversationLoading ? "Loading conversation" : selectedConversation ? "Conversation loaded" : "No conversation selected"}</LiveRegion>
+            <LiveRegion>{latestAnnouncement}</LiveRegion>
+          </div>
         </section>
         <div className="agent-chat-composer">
-          <SpaceBetween direction="horizontal" size="xs">
-            <div className="agent-chat-prompt"><PromptInput actionButtonAriaLabel="Send message" actionButtonIconName="send" disableActionButton={running || !draft.trim()} onAction={() => void submit()} onChange={({ detail }) => setDraft(detail.value)} placeholder="Ask a question" value={draft} /></div>
+          <div className="agent-chat-composer-surface">
+            <div className="agent-chat-prompt"><PromptInput actionButtonAriaLabel="Send message" actionButtonIconName="send" disableActionButton={running || !draft.trim()} maxRows={6} minRows={2} onAction={() => void submit()} onChange={({ detail }) => setDraft(detail.value)} placeholder="Ask a question" value={draft} /></div>
             {abortable && <Button ariaLabel="Stop generating" onClick={stop}>Stop</Button>}
-          </SpaceBetween>
+          </div>
         </div>
       </div>
       {mobileHistory && historyOpen && createPortal(

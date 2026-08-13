@@ -33,6 +33,17 @@ is_admin {
 	input.flags.admin_subs[_] == input.user.sub
 }
 
+# chat_enabled is the restricted-mode decision. Global all/disabled mode is
+# configuration state and remains outside policy; this rule only decides whether
+# an authenticated user belongs to the administrator-or-chat rollout set.
+chat_enabled {
+	is_admin
+}
+
+chat_enabled {
+	input.flags.chat_subs[_] == input.user.sub
+}
+
 # ── Token families ──────────────────────────────────────────────────────────
 #
 # Three families reach the policy, distinguished by `azp`. A fourth kind of

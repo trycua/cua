@@ -44,7 +44,7 @@ Run the Go backend with chat enabled in a separate terminal:
 
 ```bash
 cd cyclops-cs/backend
-CYCLOPS_CS_CHAT_ENABLED=true \
+CYCLOPS_CS_CHAT_ACCESS=all \
 LITELLM_BASE_URL=http://localhost:4000/v1 \
 LITELLM_MODEL=large \
 LITELLM_API_KEY='<virtual-key>' \
@@ -57,13 +57,15 @@ storage.
 
 ## Backend configuration
 
-- `CYCLOPS_CS_CHAT_ENABLED` enables the Chat navigation item and API handlers.
+- `CYCLOPS_CS_CHAT_ACCESS` selects `disabled`, `restricted`, or `all`.
+- `CYCLOPS_CS_CHAT_SUBS` is a JSON array of non-admin Keycloak `sub` values used in `restricted` mode; admins are enabled automatically.
 - `LITELLM_BASE_URL` is the OpenAI-compatible API base URL, including `/v1`.
 - `LITELLM_MODEL` selects the model alias and defaults to `large`.
 - `LITELLM_API_KEY` is the backend-only LiteLLM virtual key.
 
-When chat is enabled, both `LITELLM_BASE_URL` and `LITELLM_API_KEY` are
-required.
+In `restricted` and `all` modes, both `LITELLM_BASE_URL` and
+`LITELLM_API_KEY` are required. `CYCLOPS_CS_CHAT_ENABLED=true` remains a
+legacy fallback for `all` only when `CYCLOPS_CS_CHAT_ACCESS` is unset.
 
 ## API routes
 
@@ -115,7 +117,7 @@ a general-purpose or unrestricted gateway key for previews.
 Before adding preview wiring, the source-tree assertion was:
 
 ```bash
-rg -n "CYCLOPS_CS_CHAT_ENABLED|LITELLM_BASE_URL|LITELLM_API_KEY|litellm-credentials.yaml" \
+rg -n "CYCLOPS_CS_CHAT_ACCESS|CYCLOPS_CS_CHAT_SUBS|LITELLM_BASE_URL|LITELLM_API_KEY|litellm-credentials.yaml" \
   clusters/kopf-k3s/cyclops-cs-previews-base
 ```
 
@@ -144,7 +146,7 @@ Render and inspect the preview manifests:
 kubectl kustomize clusters/kopf-k3s/cyclops-cs-previews-base \
   > /tmp/cyclops-chat-preview.yaml
 rg -n \
-  "kind: ExternalSecret|CYCLOPS_CS_CHAT_ENABLED|LITELLM_BASE_URL|LITELLM_MODEL|LITELLM_API_KEY" \
+  "kind: ExternalSecret|CYCLOPS_CS_CHAT_ACCESS|CYCLOPS_CS_CHAT_SUBS|LITELLM_BASE_URL|LITELLM_MODEL|LITELLM_API_KEY" \
   /tmp/cyclops-chat-preview.yaml
 ```
 

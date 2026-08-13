@@ -336,10 +336,10 @@ func run() error {
 	h.WorkloadTokenURL = cfg.Keycloak.WorkloadTokenURL
 	initializeDatabaseFeatures(ctx, cfg.Database, &h, defaultDatabaseFeatureDependencies())
 
-	if cfg.Chat.Enabled {
+	if cfg.Chat.Access.Enabled() {
 		h.Conversations = chat.NewMemoryConversationStore()
 		h.Model = chat.NewLiteLLMClient(cfg.Chat.BaseURL, cfg.Chat.APIKey, cfg.Chat.Model)
-		slog.Info("chat: enabled", "base_url", cfg.Chat.BaseURL, "model", cfg.Chat.Model)
+		slog.Info("chat: enabled", "access", cfg.Chat.Access, "base_url", cfg.Chat.BaseURL, "model", cfg.Chat.Model)
 	}
 
 	router := setupRouter(h)

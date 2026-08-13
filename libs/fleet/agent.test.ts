@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Bash } from "just-bash/browser"
 import {
   BrowserBashAgent,
   normalizeBashArguments,
@@ -8,7 +9,180 @@ import {
   type AgentEvent,
   type TurnClient,
 } from "./src/browser-agent.ts"
+import { createBrowserMcpCommands, createBrowserMcpToolCaller, type McpClient } from "./src/browser-mcp-commands.ts"
+import { createBrowserSdkCommands, type BrowserSdk } from "./src/browser-sdk-commands.ts"
 import { gzipSync, gunzipSync } from "./src/node-zlib-browser.ts"
+
+
+const inertSdk: BrowserSdk = {
+  listNamespaces: async () => [],
+  listPools: async () => [],
+  getPool: async () => ({}),
+  createPool: async () => ({}),
+  updatePoolServices: async () => undefined,
+  deletePool: async () => undefined,
+  listClaims: async () => [],
+  createClaim: async () => ({}),
+  getClaim: async () => ({}),
+  deleteClaim: async () => undefined,
+  listUserKeys: async () => [],
+  createUserKey: async () => ({}),
+  deleteUserKey: async () => undefined,
+}
+
+function sdkShell(overrides: Partial<BrowserSdk> = {}): Bash {
+  const sdk: BrowserSdk = { ...inertSdk, ...overrides }
+  return new Bash({ customCommands: createBrowserSdkCommands(sdk) })
+}
+
+test("exposes SDK methods as composable bash commands", async () => {
+  const shell = sdkShell({
+    listPools: async () => [
+      { name: "beta", namespace: "team", phase: "Ready" },
+      { name: "alpha", namespace: "team", phase: "Pending" },
+    ],
+  })
+
+  const result = await shell.exec("listPools | jq -r '.[].name' | sort")
+
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.stdout, "alpha\nbeta\n")
+  assert.equal(result.stderr, "")
+})
+
+test("passes a JSON argument array to SDK methods", async () => {
+  const calls: unknown[][] = []
+  const shell = sdkShell({
+    getPool: async (...args) => {
+      calls.push(args)
+      return { namespace: args[0], name: args[1] }
+    },
+  })
+
+  const result = await shell.exec(`getPool '["team","alpha"]'`)
+
+  assert.deepEqual(calls, [["team", "alpha"]])
+  assert.equal(result.stdout, '{"namespace":"team","name":"alpha"}\n')
+})
+
+test("reads SDK argument arrays from stdin", async () => {
+  const calls: unknown[][] = []
+  const shell = sdkShell({
+    listClaims: async (...args) => {
+      calls.push(args)
+      return [{ namespace: args[0], name: "claim-one" }]
+    },
+  })
+
+  const result = await shell.exec(`printf '["team"]' | listClaims`)
+
+  assert.deepEqual(calls, [["team"]])
+  assert.equal(result.stdout, '[{"namespace":"team","name":"claim-one"}]\n')
+})
+
+test("emits no stdout for void SDK methods", async () => {
+  const calls: unknown[][] = []
+  const shell = sdkShell({
+    deleteClaim: async (...args) => {
+      calls.push(args)
+    },
+  })
+
+  const result = await shell.exec(`deleteClaim '["team","claim-one"]'`)
+
+  assert.deepEqual(calls, [["team", "claim-one"]])
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.stdout, "")
+})
+
+test("returns argument and SDK failures as shell errors", async () => {
+  const shell = sdkShell({
+    getPool: async () => {
+      throw new Error("pool unavailable")
+    },
+  })
+
+  const malformed = await shell.exec("getPool not-json")
+  assert.notEqual(malformed.exitCode, 0)
+  assert.match(malformed.stderr, /JSON array/)
+
+  const rejected = await shell.exec(`getPool '["team","alpha"]'`)
+  assert.notEqual(rejected.exitCode, 0)
+  assert.equal(rejected.stderr, "pool unavailable\n")
+})
+
+test("exposes exact MCP tool names as composable bash commands", async () => {
+  const calls: Array<{ name: string; arguments: Record<string, unknown> }> = []
+  const shell = new Bash({
+    customCommands: createBrowserMcpCommands(async (name, arguments_) => {
+      calls.push({ name, arguments: arguments_ })
+      return { content: [{ type: "text", text: "docs result" }] }
+    }),
+  })
+
+  const result = await shell.exec(`query_docs_vectors '{"query":"agent loop","limit":3}' | jq -r '.content[0].text'`)
+
+  assert.deepEqual(calls, [{ name: "query_docs_vectors", arguments: { query: "agent loop", limit: 3 } }])
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.stdout, "docs result\n")
+  assert.equal(result.stderr, "")
+})
+
+test("reads MCP tool arguments from stdin", async () => {
+  const calls: Array<{ name: string; arguments: Record<string, unknown> }> = []
+  const shell = new Bash({
+    customCommands: createBrowserMcpCommands(async (name, arguments_) => {
+      calls.push({ name, arguments: arguments_ })
+      return { structuredContent: { rows: [{ component: "agent" }] } }
+    }),
+  })
+
+  const result = await shell.exec(`printf '{"sql":"SELECT component FROM code_files LIMIT 1"}' | query_code_db`)
+
+  assert.deepEqual(calls, [{ name: "query_code_db", arguments: { sql: "SELECT component FROM code_files LIMIT 1" } }])
+  assert.equal(result.stdout, '{"structuredContent":{"rows":[{"component":"agent"}]}}\n')
+})
+
+test("returns MCP argument and tool failures as shell errors", async () => {
+  const shell = new Bash({
+    customCommands: createBrowserMcpCommands(async () => ({
+      isError: true,
+      content: [{ type: "text", text: "read-only query rejected" }],
+    })),
+  })
+
+  const malformed = await shell.exec("query_docs_db not-json")
+  assert.notEqual(malformed.exitCode, 0)
+  assert.match(malformed.stderr, /JSON object/)
+
+  const rejected = await shell.exec(`query_docs_db '{"sql":"DELETE FROM pages"}'`)
+  assert.notEqual(rejected.exitCode, 0)
+  assert.equal(rejected.stderr, "read-only query rejected\n")
+})
+
+test("shares one lazy MCP connection and retries failed connections", async () => {
+  let attempts = 0
+  const client: McpClient = {
+    callTool: async ({ name }) => ({ content: [{ type: "text", text: name }] }),
+  }
+  const callTool = createBrowserMcpToolCaller(async () => {
+    attempts += 1
+    if (attempts === 1) throw new Error("temporary connection failure")
+    return client
+  })
+
+  await assert.rejects(callTool("query_docs_db", { sql: "SELECT 1" }), /temporary connection failure/)
+  const results = await Promise.all([
+    callTool("query_docs_db", { sql: "SELECT 1" }),
+    callTool("query_code_vectors", { query: "screenshots" }),
+  ])
+
+  assert.equal(attempts, 2)
+  assert.deepEqual(results, [
+    { content: [{ type: "text", text: "query_docs_db" }] },
+    { content: [{ type: "text", text: "query_code_vectors" }] },
+  ])
+})
 
 test("clamps model-selected bash limits", () => {
   assert.deepEqual(
@@ -24,14 +198,14 @@ test("sanitizes control characters in bash execution errors", () => {
 
 test("keeps one virtual filesystem per conversation", async () => {
   const unused: TurnClient = async () => ({ role: "assistant", content: "done", tool_calls: [] })
-  const agent = new BrowserBashAgent(unused)
+  const agent = new BrowserBashAgent(unused, createBrowserSdkCommands(inertSdk))
   await agent.executeBash("one", { command: "echo alpha > note.txt" })
   assert.equal((await agent.executeBash("one", { command: "cat note.txt" })).stdout, "alpha\n")
   assert.notEqual((await agent.executeBash("two", { command: "cat note.txt" })).exit_code, 0)
 })
 
 test("browser zlib shim fails only when gzip-backed commands execute", async () => {
-  const agent = new BrowserBashAgent(async () => ({ role: "assistant", content: "", tool_calls: [] }))
+  const agent = new BrowserBashAgent(async () => ({ role: "assistant", content: "", tool_calls: [] }), createBrowserSdkCommands(inertSdk))
   assert.equal((await agent.executeBash("zlib-shim", { command: "printf normal" })).stdout, "normal")
 
   assert.throws(() => gzipSync(new Uint8Array()), /gzip commands are unsupported in the browser/)
@@ -54,7 +228,7 @@ test("runs tool calls until the assistant finishes", async () => {
     return responses.shift()!
   }
   const events: AgentEvent[] = []
-  const agent = new BrowserBashAgent(client)
+  const agent = new BrowserBashAgent(client, createBrowserSdkCommands(inertSdk))
   await agent.run("conversation-1", [{ role: "user", content: "Run it" }], event => events.push(event))
 
   assert.deepEqual(requests, [
@@ -76,7 +250,7 @@ test("runs tool calls until the assistant finishes", async () => {
 })
 
 test("normalizes timeout and truncation results", async () => {
-  const agent = new BrowserBashAgent(async () => ({ role: "assistant", content: "", tool_calls: [] }))
+  const agent = new BrowserBashAgent(async () => ({ role: "assistant", content: "", tool_calls: [] }), createBrowserSdkCommands(inertSdk))
   const truncated = await agent.executeBash("one", { command: "printf 123456", max_output_chars: 4 })
   assert.deepEqual(truncated, { stdout: "1234", stderr: "", exit_code: 0, timed_out: false, truncated: true })
 
@@ -105,7 +279,7 @@ test("caller cancellation aborts bash execution and stops the tool loop", async 
         { id: "call-cancel", type: "function", function: { name: "bash", arguments: '{"command":"sleep 2"}' } },
       ],
     }
-  })
+  }, createBrowserSdkCommands(inertSdk))
 
   const run = agent.run(
     "conversation-cancel",
@@ -142,7 +316,7 @@ test("batches multiple bash tool results into one follow-up turn", async () => {
     return responses.shift()!
   }
   const events: AgentEvent[] = []
-  const agent = new BrowserBashAgent(client)
+  const agent = new BrowserBashAgent(client, createBrowserSdkCommands(inertSdk))
 
   await agent.run("conversation-batch", [{ role: "user", content: "Run both commands" }], event => events.push(event))
 
@@ -194,7 +368,7 @@ test("rejects mixed tool batches before bash side effects", async () => {
       },
       { id: "call-unsupported", type: "function", function: { name: "other", arguments: "{}" } },
     ],
-  }))
+  }), createBrowserSdkCommands(inertSdk))
 
   await assert.rejects(
     agent.run("conversation-mixed", [{ role: "user", content: "Run the tools" }], event => events.push(event)),

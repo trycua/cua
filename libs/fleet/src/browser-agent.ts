@@ -1,4 +1,4 @@
-import { Bash } from "just-bash/browser"
+import { Bash, type Command } from "just-bash/browser"
 
 export const BASH_TIMEOUT = { min: 250, default: 10_000, max: 60_000 } as const
 export const BASH_OUTPUT = { min: 256, default: 20_000, max: 100_000 } as const
@@ -93,9 +93,11 @@ function capOutput(stdout: string, stderr: string, maxOutputChars: number): Pick
 export class BrowserBashAgent {
   private readonly shells = new Map<string, Bash>()
   private readonly client: TurnClient
+  private readonly customCommands: Command[]
 
-  constructor(client: TurnClient) {
+  constructor(client: TurnClient, customCommands: Command[] = []) {
     this.client = client
+    this.customCommands = customCommands
   }
 
   async executeBash(conversationID: string, input: BashToolArguments, signal?: AbortSignal): Promise<BashToolResult> {
@@ -118,7 +120,7 @@ export class BrowserBashAgent {
     timeoutController.signal.addEventListener("abort", abortLinked, { once: true })
 
     try {
-      const shell = this.getShell(conversationID)
+      const shell = await this.getShell(conversationID)
       const result = await shell.exec(arguments_.command, { signal: linkedController.signal })
       if (signal?.aborted) {
         throw abortError()
@@ -194,10 +196,13 @@ export class BrowserBashAgent {
     }
   }
 
-  private getShell(conversationID: string): Bash {
+  private async getShell(conversationID: string): Promise<Bash> {
     let shell = this.shells.get(conversationID)
     if (!shell) {
-      shell = new Bash({ executionLimitProfile: "hardened" })
+      shell = new Bash({
+        customCommands: this.customCommands,
+        executionLimitProfile: "hardened",
+      })
       this.shells.set(conversationID, shell)
     }
     return shell

@@ -13,6 +13,7 @@ import (
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/chat"
+	"cyclops-cs-backend/config"
 )
 
 type fakeModel struct {
@@ -47,7 +48,7 @@ func (f *fakeModel) Complete(_ context.Context, messages []chat.Message, onDelta
 func newChatHandlers(responses ...chat.Message) (Handlers, *chat.MemoryConversationStore, *fakeModel) {
 	store := chat.NewMemoryConversationStore()
 	model := &fakeModel{responses: responses}
-	return Handlers{ChatEnabled: true, Conversations: store, Model: model, chatLocks: newConversationLockRegistry()}, store, model
+	return Handlers{ChatAccess: config.ChatAccessAll, Conversations: store, Model: model, chatLocks: newConversationLockRegistry()}, store, model
 }
 
 func createChatConversation(t *testing.T, h Handlers, user *auth.User) *chat.Conversation {
@@ -362,7 +363,7 @@ func TestChatTurnSerializesConcurrentTurnsPerConversation(t *testing.T) {
 		secondStarted: make(chan struct{}),
 		releaseFirst:  make(chan struct{}),
 	}
-	h := Handlers{ChatEnabled: true, Conversations: store, Model: model}
+	h := Handlers{ChatAccess: config.ChatAccessAll, Conversations: store, Model: model}
 	conversation := createChatConversation(t, h, alice)
 
 	statuses := make(chan int, 2)
@@ -504,7 +505,7 @@ func TestConversationLockRegistryEvictsReleasedLocks(t *testing.T) {
 
 func TestCreateConversationReportsStoreLimit(t *testing.T) {
 	store := chat.NewMemoryConversationStore()
-	h := Handlers{ChatEnabled: true, Conversations: store, Model: &fakeModel{}}
+	h := Handlers{ChatAccess: config.ChatAccessAll, Conversations: store, Model: &fakeModel{}}
 	for index := 0; index < 100; index++ {
 		w := httptest.NewRecorder()
 		h.CreateConversation(w, newReq(http.MethodPost, "/api/chat/conversations", "", alice))
@@ -516,5 +517,39 @@ func TestCreateConversationReportsStoreLimit(t *testing.T) {
 	h.CreateConversation(w, newReq(http.MethodPost, "/api/chat/conversations", "", alice))
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429; body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestChatEndpointsEnforceEffectiveAccess(t *testing.T) {
+	store := chat.NewMemoryConversationStore()
+	user := &auth.User{ID: "restricted-user", AZP: "cyclops-cs-spa"}
+	tests := []struct {
+		name       string
+		access     config.ChatAccessMode
+		restricted bool
+		wantStatus int
+	}{
+		{name: "disabled", access: config.ChatAccessDisabled, restricted: true, wantStatus: http.StatusNotFound},
+		{name: "all", access: config.ChatAccessAll, restricted: false, wantStatus: http.StatusCreated},
+		{name: "restricted allowed", access: config.ChatAccessRestricted, restricted: true, wantStatus: http.StatusCreated},
+		{name: "restricted denied", access: config.ChatAccessRestricted, restricted: false, wantStatus: http.StatusNotFound},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := Handlers{
+				ChatAccess:    test.access,
+				Conversations: store,
+				Model:         &fakeModel{},
+				chatAccessEvaluator: func(context.Context, *auth.User) (bool, error) {
+					return test.restricted, nil
+				},
+			}
+			w := httptest.NewRecorder()
+			h.CreateConversation(w, newReq(http.MethodPost, "/api/chat/conversations", "", user))
+			if w.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", w.Code, test.wantStatus, w.Body.String())
+			}
+		})
 	}
 }

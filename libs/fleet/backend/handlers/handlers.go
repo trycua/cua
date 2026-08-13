@@ -4,6 +4,7 @@ package handlers
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -32,10 +33,11 @@ type Handlers struct {
 
 	StateQueryExecutor StateQueryExecutor
 
-	ChatEnabled   bool
-	Conversations chat.ConversationStore
-	Model         chat.ModelClient
-	chatLocks     *conversationLockRegistry
+	ChatAccess          config.ChatAccessMode
+	Conversations       chat.ConversationStore
+	Model               chat.ModelClient
+	chatAccessEvaluator func(context.Context, *auth.User) (bool, error)
+	chatLocks           *conversationLockRegistry
 
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
@@ -49,13 +51,31 @@ type Handlers struct {
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 	return Handlers{
-		Admin:       admin,
-		GatewayCfg:  cfg.Gateway,
-		AuthCfg:     cfg.Auth,
-		KC:          cfg.Keycloak,
-		Stripe:      cfg.Stripe,
-		ChatEnabled: cfg.Chat.Enabled,
-		chatLocks:   newConversationLockRegistry(),
+		Admin:      admin,
+		GatewayCfg: cfg.Gateway,
+		AuthCfg:    cfg.Auth,
+		KC:         cfg.Keycloak,
+		Stripe:     cfg.Stripe,
+		ChatAccess: cfg.Chat.Access,
+		chatLocks:  newConversationLockRegistry(),
+	}
+}
+
+func (h Handlers) chatEnabled(ctx context.Context, user *auth.User) (bool, error) {
+	if user == nil || user.ID == "" {
+		return false, nil
+	}
+	switch h.ChatAccess {
+	case config.ChatAccessAll:
+		return true, nil
+	case config.ChatAccessRestricted:
+		evaluator := h.chatAccessEvaluator
+		if evaluator == nil {
+			evaluator = auth.EvalChatEnabled
+		}
+		return evaluator(ctx, user)
+	default:
+		return false, nil
 	}
 }
 

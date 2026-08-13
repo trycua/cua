@@ -28,7 +28,8 @@ func TestLiteLLMCompleteStreamsContentAndRequest(t *testing.T) {
 			Model    string `json:"model"`
 			Stream   bool   `json:"stream"`
 			Messages []struct {
-				Role string `json:"role"`
+				Role    string `json:"role"`
+				Content string `json:"content"`
 			} `json:"messages"`
 			Tools []struct {
 				Type     string `json:"type"`
@@ -54,10 +55,19 @@ func TestLiteLLMCompleteStreamsContentAndRequest(t *testing.T) {
 		if body.Model != "test-model" || !body.Stream {
 			t.Errorf("model/stream = %q/%t, want test-model/true", body.Model, body.Stream)
 		}
-		for _, message := range body.Messages {
-			if message.Role == "system" {
-				t.Fatal("request included a system-role message")
+		if len(body.Messages) != 2 {
+			t.Fatalf("message count = %d, want system and user", len(body.Messages))
+		}
+		if body.Messages[0].Role != "system" {
+			t.Fatalf("first message role = %q, want system", body.Messages[0].Role)
+		}
+		for _, fragment := range []string{"Cyclops CS", "listPools", "getPool", "listClaims", "JSON array", "query_docs_db", "query_docs_vectors", "query_code_db", "query_code_vectors", "JSON object", "component@version:path", "no network access"} {
+			if !strings.Contains(body.Messages[0].Content, fragment) {
+				t.Errorf("system prompt missing %q", fragment)
 			}
+		}
+		if body.Messages[1].Role != "user" || body.Messages[1].Content != "Say hello" {
+			t.Errorf("user message = %#v", body.Messages[1])
 		}
 		if len(body.Tools) != 1 {
 			t.Fatalf("tool count = %d, want 1", len(body.Tools))

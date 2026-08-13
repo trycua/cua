@@ -148,6 +148,37 @@ func evalIsAdmin(t *testing.T, input map[string]any) bool {
 	return rs.Allowed()
 }
 
+func evalChatEnabled(t *testing.T, input map[string]any) bool {
+	t.Helper()
+	pq := prepareQuery(t, "data.authz.chat_enabled", map[string]string{"authz.rego": authzPolicy})
+	rs, err := pq.Eval(context.Background(), rego.EvalInput(input))
+	if err != nil {
+		t.Fatalf("eval chat_enabled: %v", err)
+	}
+	return rs.Allowed()
+}
+
+func TestChatEnabled(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]any
+		want  bool
+	}{
+		{name: "admin", input: map[string]any{"user": spaUser("admin"), "flags": map[string]any{"admin_subs": []any{"admin"}, "chat_subs": []any{}}}, want: true},
+		{name: "allowlisted", input: map[string]any{"user": spaUser("listed"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": []any{"listed"}}}, want: true},
+		{name: "unlisted", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": []any{"listed"}}}, want: false},
+		{name: "missing allowlist", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}}}, want: false},
+		{name: "malformed allowlist", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": "other"}}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := evalChatEnabled(t, test.input); got != test.want {
+				t.Fatalf("chat_enabled = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func evalPoolAdmission(t *testing.T, input map[string]any) bool {
 	t.Helper()
 	pq := prepareQuery(t, "data.pool_admission.allow", map[string]string{

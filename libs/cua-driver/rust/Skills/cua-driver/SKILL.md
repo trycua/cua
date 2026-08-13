@@ -166,11 +166,17 @@ or a public session label.
 
 ## GUI transport defaults — prefer cua-driver over GUI shell shims
 
-**Default transport is the `cua-driver` CLI** — `Bash` shelling out
-to `cua-driver <tool-name> '<JSON-args>'`. MCP tools (prefix
-`mcp__cua-driver__*`) only when the user explicitly asks for them.
-CLI wins because it picks up rebuilds instantly, failures are
-easier to diagnose, and there's no per-tool schema-load overhead.
+**Default transport is the `cua-driver` CLI for one-off calls** — `Bash`
+shelling out to `cua-driver <tool-name> '<JSON-args>'`. Each CLI invocation
+owns a disposable transport session that is cleaned up after its response.
+Use one persistent `cua-driver mcp` connection for a multi-call GUI workflow
+that needs shared cursor, recording, browser, or named-session state. A public
+session label is not a credential and a later one-shot process cannot adopt
+the previous process's lifecycle merely by repeating that label.
+
+CLI wins for isolated inspection and management because it picks up rebuilds
+instantly, failures are easier to diagnose, and there's no per-tool
+schema-load overhead. Persistent MCP wins for an ordered action loop.
 
 Every reference to `click(...)`, `get_window_state(...)` etc. in this
 skill means `cua-driver click '{...}'` — translate to MCP form only
@@ -218,18 +224,19 @@ Tool names are `snake_case`, management subcommands are
 - `cua-driver recording start|stop|status` — see `RECORDING.md`
 - `cua-driver check-update [--json] [--no-cache]` — read-only "is a newer release available?" probe. Same payload as the `check_for_update` MCP tool; pair with `cua-driver update --apply` to install.
 
-Canonical multi-step workflow (example shape — platform-specific
-launch idioms in the per-OS companion file):
+Canonical multi-step workflow within one persistent MCP connection (example
+shape — platform-specific launch idioms in the per-OS companion file):
 
 ```bash
-cua-driver serve
-cua-driver launch_app '{"bundle_id":"..."}'
+# Start the service once, then connect one MCP client with `cua-driver mcp`.
+# The calls below are tool calls on that same connection, not separate shell
+# invocations of `cua-driver <tool>`.
+launch_app({"bundle_id":"..."})
 # → {pid: 844, windows: [{window_id: 10725, ...}]}
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
+get_window_state({"pid":844,"window_id":10725})
 # Use the returned structuredContent.elements[].element_token:
-cua-driver click '{"pid":844,"element_token":"s0000002a:14"}'
-cua-driver verify_state '{"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}]}'
-cua-driver stop
+click({"pid":844,"element_token":"s0000002a:14"})
+verify_state({"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}]})
 ```
 
 For Chromium page content, keep the same native window selection but switch to

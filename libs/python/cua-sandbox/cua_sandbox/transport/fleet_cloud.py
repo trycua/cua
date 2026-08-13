@@ -34,6 +34,7 @@ from fleet_sdk import (
     CyclopsConfiguration,
     CyclopsCredentials,
     CyclopsTokenProviderConfiguration,
+    Firmware,
     HttpRequest,
     OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpecBuilder,
@@ -574,6 +575,12 @@ class FleetCloudTransport(FleetTransport):
             )
             .services(services)
         )
+        # Windows guest disks are built UEFI-only (see registry/qemu_builder.py), and the
+        # Fleet schema defaults firmware to BIOS, so a Windows image left at the default
+        # boots SeaBIOS against a GPT/ESP disk and never reaches the readiness probe.
+        # The local QEMU runtime keys off the same os_type check.
+        if self._image.os_type == "windows":
+            vm_template_builder = vm_template_builder.firmware(Firmware.EFI)
         if self._cpu is not None:
             vm_template_builder = vm_template_builder.cpu_cores(self._cpu)
         if self._memory_mb is not None:

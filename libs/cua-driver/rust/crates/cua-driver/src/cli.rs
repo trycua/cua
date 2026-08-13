@@ -2008,13 +2008,80 @@ mod daemon_compatibility_tests {
     }
 }
 
+/// How one `cua-driver call` binds to daemon session lifecycle.
+///
+/// Overlay, recording, and the resurrection guard are owned by the daemon
+/// transport id. `session_end` for that id reaps every public session it
+/// owns, so a named CLI episode must use the public label as the transport
+/// id and must not send `session_end`. A missing `session` still mints a
+/// disposable `cli-{uuid}` and ends it after the response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CliCallSession {
+    session_id: String,
+    end_after_call: bool,
+}
+
+fn public_cli_session_name(json_args: Option<&serde_json::Value>) -> Option<String> {
+    json_args
+        .and_then(|value| value.get("session"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn resolve_cli_call_session(json_args: Option<&serde_json::Value>) -> CliCallSession {
+    match public_cli_session_name(json_args) {
+        Some(session_id) => CliCallSession {
+            session_id,
+            end_after_call: false,
+        },
+        None => CliCallSession {
+            session_id: format!("cli-{}", uuid::Uuid::new_v4()),
+            end_after_call: true,
+        },
+    }
+}
+
+fn build_cli_call_requests(
+    tool: &str,
+    json_args: Option<serde_json::Value>,
+) -> (
+    crate::serve::DaemonRequest,
+    Option<crate::serve::DaemonRequest>,
+) {
+    let call_session = resolve_cli_call_session(json_args.as_ref());
+    let mut args_for_daemon =
+        json_args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    cua_driver_core::tool_args::sanitize_reserved_args(&mut args_for_daemon);
+    let req = crate::serve::DaemonRequest {
+        method: "call".into(),
+        name: Some(tool.to_owned()),
+        args: Some(args_for_daemon),
+        session_id: Some(call_session.session_id.clone()),
+        observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+        client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
+    };
+    let cleanup = call_session
+        .end_after_call
+        .then(|| crate::serve::DaemonRequest {
+            method: "session_end".into(),
+            name: None,
+            args: None,
+            session_id: Some(call_session.session_id),
+            observation_origin: None,
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
+        });
+    (req, cleanup)
+}
+
 pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
     screenshot_out_file: Option<String>,
     socket_override: Option<String>,
 ) {
-    // One-shot public calls remain service-backed so policy, session state,
+    // Public calls remain service-backed so policy, session state,
     // AppStateEngine caches, and platform identity have one enforcement point.
     // The Windows UIAccess helper is daemon-internal: routing an untrusted CLI
     // directly to it would bypass this authorization path.
@@ -2022,6 +2089,11 @@ pub fn run_call(
     // When `socket_override` is Some (i.e. caller passed `--socket <path>`),
     // route directly to that path and skip the platform default. Used by
     // integration tests to drive a tempfile-socketed daemon.
+    //
+    // An explicit JSON `session` is the daemon transport id and is left live
+    // after the call so later invocations (and `get_agent_cursor_state`) can
+    // continue that overlay. Calls without `session` still mint a disposable
+    // `cli-{uuid}` and send `session_end` after the response.
     let socket_path = socket_override.unwrap_or_else(crate::serve::default_socket_path);
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
@@ -2033,34 +2105,12 @@ pub fn run_call(
     require_compatible_daemon(&socket_path);
 
     {
-        let mut args_for_daemon = json_args
-            .clone()
-            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-        cua_driver_core::tool_args::sanitize_reserved_args(&mut args_for_daemon);
-        let transport_session = format!("cli-{}", uuid::Uuid::new_v4());
-        let req = crate::serve::DaemonRequest {
-            method: "call".into(),
-            name: Some(tool.to_owned()),
-            args: Some(args_for_daemon),
-            // Every one-shot call owns one disposable implicit transport
-            // session. The daemon closes all lifecycle state attached to it
-            // synchronously after the response is received.
-            session_id: Some(transport_session.clone()),
-            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
-            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
-        };
+        let (req, cleanup) = build_cli_call_requests(tool, json_args);
         let response = crate::serve::send_request(&socket_path, &req);
-        let cleanup = crate::serve::DaemonRequest {
-            method: "session_end".into(),
-            name: None,
-            args: None,
-            session_id: Some(transport_session),
-            observation_origin: None,
-            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
-        };
-        let cleanup_result = crate::serve::send_request(&socket_path, &cleanup);
-        if let Err(error) = cleanup_result {
-            eprintln!("warning: disposable session cleanup failed: {error}");
+        if let Some(cleanup) = cleanup {
+            if let Err(error) = crate::serve::send_request(&socket_path, &cleanup) {
+                eprintln!("warning: disposable session cleanup failed: {error}");
+            }
         }
         match response {
             Ok(resp) => {
@@ -4127,6 +4177,80 @@ mod tests {
             aliased_flag_value(&identical, "--capability-manifest", "--session-policy"),
             Some("/tmp/shared.yaml".to_owned())
         );
+    }
+
+    #[test]
+    fn named_cli_session_is_the_daemon_transport_and_is_not_ended() {
+        let args = serde_json::json!({"session":"demo","x":12,"y":34});
+        let first = resolve_cli_call_session(Some(&args));
+        let second = resolve_cli_call_session(Some(&args));
+        assert_eq!(
+            first,
+            CliCallSession {
+                session_id: "demo".into(),
+                end_after_call: false,
+            }
+        );
+        assert_eq!(first, second);
+
+        let (req, cleanup) = build_cli_call_requests("move_cursor", Some(args));
+        assert_eq!(req.method, "call");
+        assert_eq!(req.name.as_deref(), Some("move_cursor"));
+        assert_eq!(req.session_id.as_deref(), Some("demo"));
+        assert_eq!(
+            req.args.as_ref().and_then(|v| v.get("session")),
+            Some(&serde_json::json!("demo"))
+        );
+        assert!(
+            cleanup.is_none(),
+            "named CLI sessions must not send session_end"
+        );
+    }
+
+    #[test]
+    fn unnamed_cli_call_mints_a_disposable_transport_and_session_ends_it() {
+        let (first_req, first_cleanup) = build_cli_call_requests("move_cursor", None);
+        let (second_req, second_cleanup) =
+            build_cli_call_requests("move_cursor", Some(serde_json::json!({"x":1,"y":2})));
+
+        let first_sid = first_req.session_id.expect("disposable session");
+        let second_sid = second_req.session_id.expect("disposable session");
+        assert!(first_sid.starts_with("cli-"), "{first_sid}");
+        assert!(second_sid.starts_with("cli-"), "{second_sid}");
+        assert_ne!(
+            first_sid, second_sid,
+            "each one-shot call mints its own transport"
+        );
+
+        let first_cleanup = first_cleanup.expect("unnamed call must session_end");
+        let second_cleanup = second_cleanup.expect("unnamed call must session_end");
+        assert_eq!(first_cleanup.method, "session_end");
+        assert_eq!(
+            first_cleanup.session_id.as_deref(),
+            Some(first_sid.as_str())
+        );
+        assert_eq!(
+            second_cleanup.session_id.as_deref(),
+            Some(second_sid.as_str())
+        );
+    }
+
+    #[test]
+    fn blank_or_non_string_session_stays_on_the_disposable_path() {
+        for args in [
+            serde_json::json!({"session":""}),
+            serde_json::json!({"session":"   "}),
+            serde_json::json!({"session":null}),
+            serde_json::json!({"session":12}),
+        ] {
+            let plan = resolve_cli_call_session(Some(&args));
+            assert!(plan.end_after_call, "{args}");
+            assert!(
+                plan.session_id.starts_with("cli-"),
+                "{args} -> {}",
+                plan.session_id
+            );
+        }
     }
 
     #[test]

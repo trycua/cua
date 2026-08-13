@@ -10,7 +10,7 @@ Minecraft exercises almost everything a Windows sandbox can do: it needs interne
 ## Before you start
 
 - **cua-sandbox 0.3.1 or newer.** `Image.expose()` on the local QEMU runtime landed in 0.3.1, and Windows on Fleet needs 0.3.0.
-- **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright; use the Fleet path there instead.
+- **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright. The Fleet path runs there and gets you as far as the agent loop, but not the game itself — see the Fleet section below.
 - **A Microsoft account that owns Minecraft Java Edition.** Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
 - **A vision-capable LLM endpoint** for the agent loop.
 
@@ -347,7 +347,7 @@ Notice there is no `-cpu host` here. That flag exists on the local path because 
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| QEMU refuses to start with `-cpu host` | no KVM or HVF — for example an x86_64 guest on Apple Silicon, which runs under TCG | use a host with hardware virtualisation, or the Fleet path |
+| QEMU refuses to start with `-cpu host` | no KVM or HVF — for example an x86_64 guest on Apple Silicon, which runs under TCG | use a host with hardware virtualisation — the Fleet path boots and runs the agent loop, but not the game |
 | Launcher never appears, no error | MSVC build without the VC++ redistributable | use the MinGW portable build |
 | Guest has an IP address but cannot resolve names | both user-mode NICs offered the same address | give the second NIC its own subnet |
 | `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |

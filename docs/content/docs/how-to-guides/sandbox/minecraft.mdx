@@ -46,7 +46,7 @@ async def main():
             extra_args=EXTRA_ARGS,
         ),
     )
-    mcp_port = sb._runtime_info.exposed_ports[3000]
+    mcp_port = sb.exposed_ports[3000]
     print(f'cua-driver MCP on http://127.0.0.1:{mcp_port}/mcp')
     await sb.disconnect()  # the sandbox keeps running
 
@@ -56,7 +56,7 @@ asyncio.run(main())
 A warm boot takes about 30 seconds. `exposed_ports` maps each exposed guest port to the host port it landed on, and `GET /healthz` on that port answers `ok` once cua-driver is up.
 
 <Callout type="warn">
-  **Keep that port number.** On the local runtime it is only available from the object `Sandbox.create` returns. `sb.tunnel.forward(3000)` — the usual way to get a forwarded port, and the one the Fleet section below uses — raises `NotImplementedError: HTTPTransport does not support port forwarding` on this transport, and the port is not in the saved sandbox state either, so a later `Sandbox.connect()` cannot recover it. Either run the agent in the same script that created the sandbox, or print the port and pass it in.
+  **Read the port from `sb.exposed_ports`, not from a tunnel.** `sb.tunnel.forward(3000)` — the usual way to get a forwarded port, and the one the Fleet section below uses — raises `NotImplementedError: HTTPTransport does not support port forwarding` on the local transport. `exposed_ports` is the local equivalent: the runtime picks a free host port at boot, so the mapping is only knowable at runtime, and it is saved with the sandbox state so a later `Sandbox.connect()` can read it back. On Fleet the property is empty, because Fleet publishes services instead — use `tunnel.forward()` there.
 </Callout>
 
 <Callout type="warn">
@@ -169,7 +169,7 @@ The sandbox already runs **cua-driver**, which serves an MCP endpoint on guest p
 
 Three things about cua-driver's tools shape the loop:
 
-- **A YAML policy governs which tools may actually run.** `list_tools()` advertises the full surface — 55 tools on this image, identically over the local and Fleet transports — but calls to tools outside the policy come back with `Permission denied: user policy: tool 'X' is not allowed by the YAML policy`. On the image used here `get_desktop_state`, `list_apps`, `list_windows`, `get_window_state`, `click`, `double_click`, `type_text`, `press_key`, `hotkey`, `launch_app`, `bring_to_front`, `scroll` and `drag` were allowed, while `get_screen_size`, `get_accessibility_tree`, `get_config`, `check_permissions`, `get_cursor_position` and `zoom` were refused. Treat the split as something to discover on your image rather than a fixed list: a policy denial surfaces before the tool executes, so probing is cheap.
+- **A YAML policy governs which tools may actually run**, and whether the denied ones are visible depends on your image. The driver build used here advertised the full surface from `list_tools()` — 55 tools, identically over the local and Fleet transports — and refused the out-of-policy ones only at call time, with `Permission denied: user policy: tool 'X' is not allowed by the YAML policy`. `get_desktop_state`, `list_apps`, `list_windows`, `get_window_state`, `click`, `double_click`, `type_text`, `press_key`, `hotkey`, `launch_app`, `bring_to_front`, `scroll` and `drag` were allowed; `get_screen_size`, `get_accessibility_tree`, `get_config`, `check_permissions`, `get_cursor_position` and `zoom` were refused. Newer cua-driver builds filter the listing through the same policy, so denied tools no longer appear at all. Either way, treat the split as something to discover on your image rather than a fixed list, and do not assume the listing and the callable set are the same.
 - **Clicks are addressed to an application, not the screen.** `click(pid=..., x=..., y=...)` targets a window belonging to that pid, which you find with `list_windows`. Add `delivery_mode='foreground'` when a background-delivered click does not land.
 - **There is no wait tool.** The loop waits by calling `get_desktop_state` again, so say that in the system prompt or the model will invent something worse.
 
@@ -226,11 +226,11 @@ def prune_images(messages, keep=3):
 async def run(mcp_url, task, model, max_steps=60, headers=None):
     client = Client(StreamableHttpTransport(mcp_url, headers=headers))
     async with client:
-        # list_tools() advertises everything cua-driver has — 55 tools on this
-        # image, most of them browser and recording plumbing this task never
-        # needs. Hand the model only what the job requires; 55 schemas is a lot
-        # of context to spend, and a shorter menu is a shorter list of ways to
-        # go wrong.
+        # list_tools() returned 55 tools on the image used here, most of them
+        # browser and recording plumbing this task never needs. Hand the model
+        # only what the job requires: dozens of schemas is a lot of context to
+        # spend, and a shorter menu is a shorter list of ways to go wrong. Worth
+        # doing whether or not your driver already filters denied tools out.
         wanted = {
             'get_desktop_state', 'list_windows', 'list_apps', 'click',
             'double_click', 'type_text', 'press_key', 'hotkey', 'launch_app',
@@ -364,5 +364,5 @@ What that crash is *not*, since each obvious explanation was tested and eliminat
 | `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |
 | Game exits during resource loading with no Java exception, **local** | default `qemu64` CPU model | append `-cpu host` to `extra_args` |
 | Game exits during resource loading with `exitcode -2147024809`, **Fleet** | Mesa's default llvmpipe renderer | set `GALLIUM_DRIVER=softpipe` in the process that starts the launcher, and restart the launcher if it is already running |
-| `Permission denied: user policy: tool 'X' is not allowed` | cua-driver's YAML policy refuses that tool even though `list_tools()` lists it | use an allowed tool — `get_desktop_state` instead of `get_screen_size`, `list_windows` instead of `get_accessibility_tree` |
+| `Permission denied: user policy: tool 'X' is not allowed` | cua-driver's YAML policy refuses that tool; on driver builds that predate policy-filtered listings it is advertised by `list_tools()` anyway | use an allowed tool — `get_desktop_state` instead of `get_screen_size`, `list_windows` instead of `get_accessibility_tree` |
 | Model replies with empty output on the first call | endpoint is streaming-only | issue `stream=True` and rebuild with `litellm.stream_chunk_builder` |

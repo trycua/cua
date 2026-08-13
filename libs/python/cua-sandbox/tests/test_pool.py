@@ -908,6 +908,53 @@ async def test_pool_apply_uses_stable_configuration_name(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pool_apply_rejects_replicas_with_autoscaling():
+    with pytest.raises(ValueError, match="exactly one of replicas or autoscaling"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            replicas=3,
+            autoscaling={"max_pool_size": 5},
+        )
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_autoscaling_reconciles_bounds_and_seeds_replicas(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+        autoscaling={"min_pool_size": 1, "initial_pool_size": 3, "max_pool_size": 20},
+    )
+
+    spec = clients[0].reconciled[0].spec
+    assert spec.replicas == 3
+    assert spec.autoscaling.min_pool_size == 1
+    assert spec.autoscaling.initial_pool_size == 3
+    assert spec.autoscaling.max_pool_size == 20
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_autoscaling_uses_stable_normalized_name(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(6)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    image = Image.from_registry("registry.example/workspace:latest")
+
+    partial = await Pool.apply(image, autoscaling={"initial_pool_size": 3})
+    explicit_defaults = await Pool.apply(
+        image,
+        autoscaling={"min_pool_size": 0, "initial_pool_size": 3, "max_pool_size": 50},
+    )
+    static = await Pool.apply(image)
+
+    assert partial.name == explicit_defaults.name
+    assert partial.name != static.name
+
+
+@pytest.mark.asyncio
 async def test_close_after_disconnect_reopens_client_for_release(monkeypatch):
     claim_client = FakeFleetClient()
     release_client = FakeFleetClient()

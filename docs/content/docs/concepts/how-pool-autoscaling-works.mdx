@@ -51,7 +51,7 @@ from cua_sandbox import Image, Pool
 pool = await Pool.apply(
     Image.windows(),
     name="windows-pool",
-    replicas=3,
+    autoscaling={"min_pool_size": 0, "initial_pool_size": 3, "max_pool_size": 20},
     cpu=4,
     memory_mb=4096,
     services={"server": 8000},
@@ -61,7 +61,7 @@ async with pool.claim() as sandbox:
     await sandbox.screenshot()
 ```
 
-`Pool.apply` in the Python SDK sets a static warm target; start with [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python). Configure the autoscaling bounds with the `autoscaling` block in Terraform, following [Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform), or from the run.cua.ai dashboard.
+Pass `replicas` instead of `autoscaling` for a static pool; `Pool.apply` accepts exactly one of the two. Start with [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python). The same bounds are available as the `autoscaling` block in Terraform, following [Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform), and from the run.cua.ai dashboard.
 
 ## Warm sandboxes instead of idle GPUs
 

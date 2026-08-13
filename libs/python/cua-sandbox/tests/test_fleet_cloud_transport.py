@@ -101,6 +101,53 @@ def test_pool_request_uses_the_single_sandbox_name_and_requested_replicas():
     assert request.spec.autoscaling is None
 
 
+def test_pool_request_with_autoscaling_builds_bounds_and_seeds_replicas():
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+        autoscaling={"min_pool_size": 1, "initial_pool_size": 3, "max_pool_size": 20},
+    )._pool_request()
+
+    assert request.spec.replicas == 3
+    assert request.spec.autoscaling.min_pool_size == 1
+    assert request.spec.autoscaling.initial_pool_size == 3
+    assert request.spec.autoscaling.max_pool_size == 20
+
+
+def test_pool_request_autoscaling_defaults_match_the_schema():
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+        autoscaling={},
+    )._pool_request()
+
+    assert request.spec.replicas == 0
+    assert request.spec.autoscaling.min_pool_size == 0
+    assert request.spec.autoscaling.initial_pool_size == 0
+    assert request.spec.autoscaling.max_pool_size == 50
+
+
+@pytest.mark.parametrize(
+    "autoscaling",
+    [
+        {"pool_size": 3},
+        {"min_pool_size": -1},
+        {"initial_pool_size": True},
+        {"initial_pool_size": "3"},
+        {"max_pool_size": 0},
+        {"min_pool_size": 5, "max_pool_size": 4},
+        {"initial_pool_size": 5, "max_pool_size": 4},
+    ],
+)
+def test_pool_request_rejects_invalid_autoscaling(autoscaling):
+    with pytest.raises(ValueError):
+        FleetCloudTransport(
+            image=Image.from_registry("registry.example/workspace@sha256:abc"),
+            name="demo",
+            autoscaling=autoscaling,
+        )
+
+
 @pytest.mark.parametrize("pool_length", [57, 58, 63])
 def test_deterministic_claim_name_obeys_dns_label_boundary(pool_length):
     pool_name = "a" * pool_length

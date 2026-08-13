@@ -10,7 +10,7 @@ Minecraft exercises almost everything a Windows sandbox can do: it needs interne
 ## Before you start
 
 - **cua-sandbox 0.3.1 or newer.** `Image.expose()` on the local QEMU runtime landed in 0.3.1, and Windows on Fleet needs 0.3.0.
-- **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright. The Fleet path runs there and gets you as far as the agent loop, but not the game itself — see the Fleet section below.
+- **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright. The Fleet path runs there instead, including the game, with the one extra environment variable described in the Fleet section below.
 - **A Microsoft account that owns Minecraft Java Edition.** Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
 - **A vision-capable LLM endpoint** for the agent loop.
 
@@ -297,7 +297,7 @@ Because the MCP tools are presented as **ordinary function tools**, this works a
 
 The `complete()` wrapper above exists only for that gateway — it is streaming-only, and it rejects `role: system`. Against an endpoint without those quirks, call `litellm.acompletion` directly.
 
-A full run — launcher to standing in a new world — took 52 steps and about twenty minutes, most of it waiting on the software renderer. Expect the model to spend long stretches doing nothing but re-screenshotting.
+A full run — launcher to standing in a new world — took 52 steps locally and 51 on Fleet, roughly twenty minutes, most of it waiting on the software renderer. Expect the model to spend long stretches doing nothing but re-screenshotting.
 
 <Callout type="info">
   Give the model help with coordinates. A vision model without grounding guesses pixel positions and misses: in one run an ungrounded model clicked at (1226, 210) four times, nowhere near the button it wanted, then declared it had no desktop tool. cua-driver's `list_windows` and pid-scoped clicks avoid most of this, and a grounding pass over the screenshot removes the rest.
@@ -333,21 +333,32 @@ That is the same `run()` as above, with only the URL and an auth header changed.
 
 Notice there is no `-cpu host` here. That flag exists on the local path because the bare-metal runtime defaults to the thin `qemu64` model; a Fleet sandbox is provisioned for you and already reports a full host CPU — `Intel Xeon Processor (SapphireRapids)`, with AVX, AVX2 and AVX-512 all present — so there is nothing to override, and no QEMU arguments to pass.
 
-<Callout type="warn">
-  **Minecraft itself did not run on Fleet during this write-up, and the guide does not claim it does.** Everything above works there: the sandbox boots in about three minutes, `.expose(3000)` publishes cua-driver, the MCP client lists the same 55 tools, the setup script installs Prism and Mesa, the Microsoft sign-in completes, and the agent loop drives the desktop. But the game dies during resource loading, every time, with `Process crashed with exitcode -2147024809` — no Java exception, no `hs_err` file, nothing in the Windows event log.
+`Sandbox.create` also accepts `cpu` and `memory_mb`, but sizing a Fleet sandbox is account-dependent: passing them routes the request through a gated custom-resource path, which returned `403 create pool: k8s request is not allowed` at every size until a card-on-file requirement was lifted for the account. The default sandbox — 4 vCPU and 4 GB — is what this guide was written against, and it is enough.
 
-  It is not version-specific: 1.20.1 on Java 17 with LWJGL 3 and 1.12.2 on Java 8 with LWJGL 2 both stop at the same point, right after `Reloading ResourceManager`. It is not the heap either — forcing Prism's auto-sized `-Xmx2717m` down to `-Xmx1024m` on the 4 GB sandbox changed nothing. It is not the size of the machine: the same local sandbox, rebooted onto its own session disk with `-m 4096 -smp 4` to match Fleet exactly, runs the game fine — Prism warns about low free memory and the game launches anyway. And the usual local culprit does not apply: that exit code matches the local `qemu64` failure exactly, but the Fleet CPU reports `Intel Xeon Processor (SapphireRapids)` with AVX, AVX2 and AVX-512 all present, and there are no QEMU arguments to adjust on Fleet. Use the local path for the game itself until this is understood.
+<Callout type="warn">
+  **On Fleet the game needs one extra environment variable: `GALLIUM_DRIVER=softpipe`.** With Mesa's default llvmpipe renderer, Minecraft dies during resource loading every time — `Process crashed with exitcode -2147024809`, no Java exception, no `hs_err` file, nothing in the Windows event log, the log simply stopping after `Reloading ResourceManager`. Switching Mesa to its `softpipe` rasteriser fixes it, and the game runs.
+
+  Set the variable in the process that launches the launcher, so the game inherits it — a machine-level variable does not reach an already-running process, and a test that silently did not apply looks exactly like a test that failed.
+
+  ```powershell
+  $env:GALLIUM_DRIVER = 'softpipe'
+  Start-Process -FilePath C:\mc\prismw\prismlauncher.exe -WorkingDirectory C:\mc\prismw
+  ```
+
+  Softpipe is a reference rasteriser with no JIT, so it is **considerably slower than llvmpipe** — allow several minutes for the title screen and longer again for world generation.
 </Callout>
 
 <Callout type="warn">
   Use client credentials, not a `cua auth login` session token. The session token is short-lived and is held without refresh, so a long provisioning wait dies partway with `401 auth token is invalid`. Client-credential tokens expire too — the ones issued here came back with `expires_in` of 900 seconds — so a run longer than that has to re-mint the token and rebuild the MCP client.
 </Callout>
 
+What that crash is *not*, since each obvious explanation was tested and eliminated: not the Minecraft version or the Java/LWJGL generation (1.20.1 on Java 17 with LWJGL 3 and 1.12.2 on Java 8 with LWJGL 2 fail identically), not the heap (forcing Prism's auto-sized `-Xmx2717m` down to `-Xmx1024m` changed nothing), and not the size of the machine (the same local session disk rebooted with `-m 4096 -smp 4`, matching Fleet exactly, runs the game fine). Narrowing llvmpipe's vectors with `LP_NATIVE_VECTOR_WIDTH=128` did **not** help either, which argues the fault is not simply wide-vector code generation.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| QEMU refuses to start with `-cpu host` | no KVM or HVF — for example an x86_64 guest on Apple Silicon, which runs under TCG | use a host with hardware virtualisation — the Fleet path boots and runs the agent loop, but not the game |
+| QEMU refuses to start with `-cpu host` | no KVM or HVF — for example an x86_64 guest on Apple Silicon, which runs under TCG | use a host with hardware virtualisation, or the Fleet path |
 | Launcher never appears, no error | MSVC build without the VC++ redistributable | use the MinGW portable build |
 | Guest has an IP address but cannot resolve names | both user-mode NICs offered the same address | give the second NIC its own subnet |
 | `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |

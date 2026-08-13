@@ -303,6 +303,136 @@ A full run — launcher to standing in a new world — took 52 steps locally and
   Give the model help with coordinates. A vision model without grounding guesses pixel positions and misses: in one run an ungrounded model clicked at (1226, 210) four times, nowhere near the button it wanted, then declared it had no desktop tool. cua-driver's `list_windows` and pid-scoped clicks avoid most of this, and a grounding pass over the screenshot removes the rest.
 </Callout>
 
+## Publish the installed sandbox as a containerDisk
+
+Everything above is a one-time cost, and none of it has to be repeated — least of all on Fleet, where a manual GUI install is the least pleasant part of this guide. A cua sandbox boots from a **containerDisk**: an OCI image whose entire content is one file at `/disk/disk.img`. Push the disk you just built as one, and every later sandbox, local or Fleet, starts with Prism, Java, Mesa and the game files already in place.
+
+Despite the name, `/disk/disk.img` is a **qcow2**, not a raw image. The puller looks for exactly `disk/disk.img` or `./disk/disk.img` inside the layer tarball and caches whatever it finds under `~/.cua/cua-sandbox/images/container-disks/`. Nothing reads the extension — it is a KubeVirt convention.
+
+`Sandbox.snapshot()` is a different feature and not a substitute: it forks a *cloud* sandbox in place, raises `NotImplementedError: Snapshots are only supported for cloud sandboxes` on the local runtime, and returns an `Image` you cannot push or pull.
+
+<Callout type="error">
+  **Build the image before you sign in, never after.** A disk that has ever held a signed-in Minecraft account cannot be reliably cleaned, and a containerDisk you publish is a disk anyone can pull.
+
+  Deleting Prism's `accounts.json` is not enough, and neither is deleting it and then zero-filling the volume's free space. Both were done to a disk where the game had been played, and the Microsoft profile name, the profile UUID and a full Mojang access-token JWT were still recoverable from the exported image. Mapping the byte offsets back to files with `ntfscluster` put them in three places:
+
+  - **`pagefile.sys`** — most of them. The JVM heap, swapped out, holding the `--accessToken` command line and raw HTTPS response bodies from `api.minecraftservices.com`. Free-space zeroing cannot reach it, because the pagefile is an allocated file.
+  - **File slack inside a live log.** Clusters allocated to `instances/1.20.1/minecraft/logs/latest.log` past its valid-data length still held `Setting user: <name>` from a longer earlier run. This is also why searching from inside the guest proves nothing: `findstr` stops at end-of-file, the disk image does not.
+  - **Unallocated clusters the zero-fill missed**, because NTFS does not reuse every freed cluster when you write one large file.
+
+  No scrub turns "my search found nothing" into "no credential is present". Build the image without ever signing in and the question does not arise — and signing in is the reader's step anyway, since every reader needs their own Microsoft account.
+</Callout>
+
+### Build the image without an account
+
+Follow the walkthrough above but **skip the sign-in section entirely**. Prism's Quick Setup ends on an *Add Microsoft account* page that also has a **Finish** button; click Finish.
+
+Two steps that normally happen as a side effect of signing in and launching then have to be done explicitly:
+
+- **Create the instance.** *Add Instance → Custom*, search `1.20.1`, **OK**. Prism downloads the client jar, libraries and assets with no account attached.
+- **Fetch Java without launching.** The walkthrough gets Prism's Java runtime by clicking Launch, which needs an account. Use *Settings → Java → Installations → **Download*** instead and pick a Mojang **Java 17** runtime — `java-runtime-gamma` `17.0.15` for 1.20.1. It lands in `C:\mc\prismw\java\java-runtime-gamma\bin\`, which is where the Mesa script then copies `opengl32.dll`. Run that script *after* this, not before.
+
+Then close the launcher and make two edits. Prism rewrites its config on exit, so doing this while it is running achieves nothing.
+
+```powershell
+# Prism auto-sizes -Xmx from the *build* host's RAM. A Fleet sandbox has 4 GB.
+(Get-Content C:\mc\prismw\prismlauncher.cfg) -replace '^MaxMemAlloc=.*','MaxMemAlloc=2048' |
+  Set-Content C:\mc\prismw\prismlauncher.cfg
+# The installers are dead weight once unpacked — 243 MB of them.
+Remove-Item C:\mc\prism.zip, C:\mc\mesa.7z, C:\mc\7z.msi -Force
+```
+
+<Callout type="info">
+  Prism refuses to add an **offline** account until a Microsoft account that owns Minecraft has been added at least once — *"You must add a Microsoft account that owns Minecraft before you can add an offline account."* So there is no way to smoke-test the game on the finished image without signing into it, which is exactly what you are avoiding. Test the game on the sandbox you built it from, before the export.
+</Callout>
+
+### Shut the guest down from inside
+
+<Callout type="warn">
+  **Do not stop the sandbox with `sb.stop()`.** The QEMU runtime treats the session disk as ephemeral — `runtime.start()` reads `opts.pop("ephemeral", True)` and `Sandbox.create()` never passes the flag — so `stop()` unlinks `~/.cua/cua-sandbox/images/sessions/<name>.qcow2`, which is the disk you just spent an hour building. Starting the same sandbox name again is no safer: `create_session_disk()` unlinks and recreates the overlay every time.
+
+  Shut Windows down from inside instead, and wait for the QEMU process to exit before touching the file.
+
+  ```python
+  async with Sandbox.connect('mc-win', local=True) as sb:
+      await sb.shell.run('shutdown /s /t 0')
+  ```
+</Callout>
+
+### Export the disk
+
+The session disk is a qcow2 overlay on the base containerDisk. `qemu-img convert` flattens the chain and `-c` compresses the result, so one command produces a standalone image.
+
+```bash
+qemu-img convert -O qcow2 -c ~/.cua/cua-sandbox/images/sessions/mc-win.qcow2 disk.img
+```
+
+Expect it to be slow and CPU-bound rather than I/O-bound — `-c` is single-threaded zlib. For the image built here it took **8 min 44 s** and produced **7,697,072,128 bytes (7.14 GiB)** from a 3.40 GB overlay on the 5.62 GiB base disk, 64 GiB virtual. `qemu-img` itself needs almost nothing resident — under 20 MB — so the size of the host does not matter.
+
+<Callout type="info">
+  Zero-filling the volume's free space from inside Windows before shutting down makes the export smaller, but only if QEMU is told to discard the zeroes instead of storing them. Attach the disk with `discard=unmap,detect-zeroes=unmap` and the writes are dropped, so the source qcow2 *shrinks* rather than growing toward its 64 GiB virtual size.
+
+  ```bash
+  -drive file=<session>.qcow2,format=qcow2,if=virtio,discard=unmap,detect-zeroes=unmap
+  ```
+
+  Inside the guest, write zeroes to a file until the volume is nearly full and then delete it. Leave about a gigabyte of headroom; filling `C:` completely destabilises Windows. Zeroing roughly 46 GB took under two minutes on the disks here, because QEMU drops the writes rather than committing them.
+</Callout>
+
+### Build the OCI image and push it
+
+The Dockerfile is two lines, and `FROM scratch` is not an optimisation — a containerDisk must contain nothing else.
+
+```dockerfile
+FROM scratch
+ADD disk.img /disk/disk.img
+```
+
+```bash
+docker buildx build --provenance=false --sbom=false \
+  -t ghcr.io/<you>/minecraft-workspace:1.20.1 --push .
+```
+
+That took **6 min 28 s** here — 3 min 48 s exporting the layer and 1 min 57 s pushing it. The layer came out at 7,631,366,006 bytes as `application/vnd.oci.image.layer.v1.tar+gzip`: gzip buys essentially nothing on a qcow2 that is already zlib-compressed, so budget for pushing the full size rather than expecting the progress bar to outrun it.
+
+`--provenance=false --sbom=false` suppresses buildx's attestation manifests. With them off, buildx publishes a plain `application/vnd.oci.image.manifest.v1+json` and no image index at all, which is the simplest thing for a single-platform disk to be. cua's puller does follow an index and skips attestation children — it filters on `os == "linux"` and on the `vnd.docker.reference.type` annotation — so an index is not fatal, but there is no reason to publish one here.
+
+<Callout type="warn">
+  **A GHCR package is private when first pushed, and Fleet pulls anonymously.** Fleet's nodes have no credentials for your registry, so a private package fails there no matter how well `docker login` works on your own machine. Make the package public before testing on Fleet — *Package settings → Change visibility → Public* — and only publish an image you are willing to hand to strangers, which is what the sign-in warning above is about.
+
+  A `gh auth login` token does not carry `write:packages`. `docker login ghcr.io` still succeeds with it, and the push then fails at the very end with `denied: permission_denied: The token provided does not match expected scopes`. Run `gh auth refresh -h github.com -s write:packages` first, or use a PAT that has the scope.
+</Callout>
+
+### Boot the published image
+
+`Image.from_registry()` is the constructor for a registry reference, but it hardcodes `os_type="linux"` — and `os_type` is what selects firmware on both paths. The local runtime only looks for OVMF when it is `"windows"`, and the Fleet transport only sets `Firmware.EFI` for it, so a Windows containerDisk taken straight from `from_registry()` boots SeaBIOS against a GPT/ESP disk and never reaches the readiness probe. `Image` is a frozen dataclass, so override the field:
+
+```python
+from dataclasses import replace
+from cua import Image, QEMURuntime, Sandbox
+
+REF = 'ghcr.io/<you>/minecraft-workspace:1.20.1'
+IMAGE = replace(Image.from_registry(REF), os_type='windows', kind='vm').expose(3000)
+```
+
+`IMAGE` is then a drop-in replacement for `Image.windows().expose(3000)` in both snippets earlier in this guide — the local `Sandbox.create(..., local=True, runtime=QEMURuntime(...))` call and the Fleet one. Nothing else changes: the same `EXTRA_ARGS` locally, the same agent loop, and on Fleet the same `GALLIUM_DRIVER=softpipe`.
+
+<Callout type="warn">
+  `sb.tunnel.forward(3000)` is not available on every Fleet path. A sandbox handed back by a pool claim carries the base `FleetTransport`, which does not implement port forwarding, and the error names the transport rather than the cause: `FleetTransport does not support port forwarding`. A sandbox created directly carries `FleetCloudTransport`, which does. If you hit it, reach the service through Fleet's proxy at `/api/svc/<namespace>/<sandbox>-port-3000/` instead.
+</Callout>
+
+Booted locally, that image printed `Image(windows/registry:latest, kind=vm, ...)`, came up on the first try, and had everything in it: `instances\1.20.1`, `java\java-runtime-gamma`, Mesa's `opengl32.dll` beside `javaw.exe`, `minecraft-1.20.1-client.jar`, `MaxMemAlloc=2048` — and `Test-Path C:\mc\prismw\accounts.json` returning `False`. Opening Prism shows the Quick Setup account page and *No accounts added!*, which is what a correctly-built image looks like.
+
+<Callout type="info">
+  Use a registry that speaks **HTTPS**. The puller goes through `oras`, which never tries plain HTTP, so a scratch `docker run registry:2` on `localhost:5000` fails with `SSLError(1, '[SSL: WRONG_VERSION_NUMBER] wrong version number')` before it ever fetches a manifest. Give the registry a certificate and point `REQUESTS_CA_BUNDLE` at the CA if you want to rehearse this locally.
+
+  Expect the first Fleet boot on a given node to be slow: it has to pull the whole image before the sandbox can start, and Fleet enforces a **300-second bind deadline** that `time_to_start=` does not extend, so a cold pull can surface as `BindDeadlineExceeded: no adoptable Sandbox within 300s`.
+
+  **Retry under a new sandbox name, not the same one.** A template can be created but never updated: both branches of the gateway's image policy are guarded by `input.method != "PATCH"`, so reusing the name makes the SDK patch the existing template and the request is refused with `403 k8s request is not allowed` — the same opaque message you get for a disallowed image, saying nothing about why. A fresh name creates a fresh template and pulls against the now-warm cache. Measured here: a cold attempt hit the deadline, the same name then returned 403, and a new name reached `READY` in 157 s.
+</Callout>
+
+The reader's remaining work is the part that has to be theirs: open Prism, *Accounts → Add Microsoft*, approve the device code, and click Launch.
+
 ## Run the same thing on Fleet
 
 The image and the agent loop are identical on Fleet. Two things change: there is no `local=True` and no `runtime=`, and the MCP endpoint is reached through Fleet's service proxy rather than a forwarded localhost port.
@@ -366,3 +496,8 @@ What that crash is *not*, since each obvious explanation was tested and eliminat
 | Game exits during resource loading with `exitcode -2147024809`, **Fleet** | Mesa's default llvmpipe renderer | set `GALLIUM_DRIVER=softpipe` in the process that starts the launcher, and restart the launcher if it is already running |
 | `Permission denied: user policy: tool 'X' is not allowed` | cua-driver's YAML policy refuses that tool, which `list_tools()` advertises anyway on every driver released so far | use an allowed tool — `get_desktop_state` instead of `get_screen_size`, `list_windows` instead of `get_accessibility_tree` |
 | Model replies with empty output on the first call | endpoint is streaming-only | issue `stream=True` and rebuild with `litellm.stream_chunk_builder` |
+| Sandbox from `Image.from_registry()` never becomes ready | `from_registry` hardcodes `os_type="linux"`, so a Windows disk gets BIOS instead of UEFI | `dataclasses.replace(Image.from_registry(ref), os_type="windows", kind="vm")` |
+| `SSLError(1, '[SSL: WRONG_VERSION_NUMBER] wrong version number')` while pulling | the registry speaks plain HTTP; `oras` only speaks HTTPS | give the registry a certificate, and set `REQUESTS_CA_BUNDLE` for a self-signed one |
+| `denied: permission_denied: The token provided does not match expected scopes` at the end of a push | the `gh` OAuth token carries no `write:packages` | `gh auth refresh -h github.com -s write:packages`, or use a PAT that has it |
+| Fleet cannot pull the image you just published | GHCR packages are private on first push, and Fleet pulls anonymously | make the package public |
+| The session disk vanished after a run | `stop()` unlinks the ephemeral session overlay, and starting the same name recreates it | shut the guest down from inside, and copy the qcow2 before anything else touches it |

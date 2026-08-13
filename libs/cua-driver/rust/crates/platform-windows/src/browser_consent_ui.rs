@@ -14,23 +14,17 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
 use crate::uia::UiaNode;
 
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
+const CHROMIUM_DIALOG_BUTTON_CLASS: &str = "MdTextButton";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ConsentButtonCandidate {
+    element_ptr: usize,
+    rect: (i32, i32, i32, i32),
+    has_keyboard_focus: bool,
 }
 
-fn normalized_text(node: &UiaNode) -> String {
-    [
-        node.name.as_deref(),
-        node.value.as_deref(),
-        node.automation_id.as_deref(),
-        node.help_text.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" ")
-    .trim()
-    .to_ascii_lowercase()
+fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
+    BrowserRefusal::new(code, message)
 }
 
 fn release_nodes(nodes: &[UiaNode]) {
@@ -67,40 +61,199 @@ fn trusted_prompt_nodes(nodes: &[UiaNode]) -> impl Iterator<Item = &UiaNode> {
     })
 }
 
-fn remote_debugging_prompt_present(nodes: &[UiaNode]) -> bool {
-    let has_title =
-        trusted_prompt_nodes(nodes).any(|node| normalized_text(node) == "allow remote debugging?");
-    let body = trusted_prompt_nodes(nodes)
-        .map(normalized_text)
-        .collect::<Vec<_>>()
-        .join(" ");
-    has_title
-        && body.contains("external app wants full control")
-        && body.contains("saved data, cookies and site data")
-        && body.contains("navigate to any url")
+fn node_name(node: &UiaNode) -> Option<&str> {
+    node.name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+fn native_prompt_surface_present(nodes: &[UiaNode]) -> bool {
+    trusted_prompt_nodes(nodes).any(|window| {
+        window.depth > 0
+            && window.control_type == "Window"
+            && node_name(window).is_some_and(|name| {
+                let has_container = trusted_prompt_nodes(nodes)
+                    .any(|node| node.control_type == "Pane" && node_name(node) == Some(name));
+                let has_title = trusted_prompt_nodes(nodes)
+                    .any(|node| node.control_type == "Text" && node_name(node) == Some(name));
+                has_container && has_title
+            })
+    })
+}
+
+fn native_button_properties(element_ptr: usize) -> Result<(String, bool), BrowserRefusal> {
+    let element = unsafe { IUIAutomationElement::from_raw(element_ptr as *mut _) };
+    let properties = unsafe {
+        element.CurrentClassName().and_then(|class_name| {
+            element
+                .CurrentHasKeyboardFocus()
+                .map(|focused| (class_name.to_string(), focused.as_bool()))
+        })
+    };
+    std::mem::forget(element);
+    properties.map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!("could not prove a native Chromium consent button: {error}"),
+        )
+    })
+}
+
+fn edge_gap(first: (i32, i32, i32, i32), second: (i32, i32, i32, i32)) -> Option<i64> {
+    let (first_left, first_top, first_right, first_bottom) = first;
+    let (second_left, second_top, second_right, second_bottom) = second;
+    let same_row = first_top == second_top && first_bottom == second_bottom;
+    if !same_row {
+        return None;
+    }
+    if first_right <= second_left {
+        Some(i64::from(second_left) - i64::from(first_right))
+    } else if second_right <= first_left {
+        Some(i64::from(first_left) - i64::from(second_right))
+    } else {
+        None
+    }
+}
+
+fn select_language_independent_allow(
+    candidates: &[ConsentButtonCandidate],
+) -> Result<usize, BrowserRefusal> {
+    // Chromium builds this modal from one separated extra action plus the
+    // standard OK/Cancel pair. Accessible names are localized, and the whole
+    // footer mirrors for RTL locales, but adjacency and separation are stable.
+    // Cancel focus is additional contradiction evidence when the browser is
+    // active; an inactive browser legitimately reports no focused button.
+    if candidates.len() != 3 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native Chromium consent prompt did not expose exactly three distinct dialog buttons",
+        ));
+    }
+    let focused_indices = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.has_keyboard_focus)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if focused_indices.len() > 1 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native Chromium consent prompt exposed multiple focused dialog buttons",
+        ));
+    }
+
+    let mut pairwise_gaps = Vec::new();
+    for first in 0..candidates.len() {
+        for second in (first + 1)..candidates.len() {
+            if let Some(gap) = edge_gap(candidates[first].rect, candidates[second].rect) {
+                pairwise_gaps.push((gap, first, second));
+            }
+        }
+    }
+    pairwise_gaps.sort_by_key(|(gap, _, _)| *gap);
+    let [(standard_gap, first_standard, second_standard), (extra_gap, _, _), _] =
+        pairwise_gaps.as_slice()
+    else {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native Chromium consent buttons did not form one exact non-overlapping dialog row",
+        ));
+    };
+    let first_width = i64::from(candidates[*first_standard].rect.2)
+        - i64::from(candidates[*first_standard].rect.0);
+    let second_width = i64::from(candidates[*second_standard].rect.2)
+        - i64::from(candidates[*second_standard].rect.0);
+    if *standard_gap >= *extra_gap
+        || *standard_gap > first_width.max(second_width)
+        || *extra_gap < standard_gap.saturating_mul(2)
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native Chromium consent prompt had no uniquely separated standard button pair",
+        ));
+    }
+
+    let extra_index = (0..candidates.len())
+        .find(|index| index != first_standard && index != second_standard)
+        .expect("three candidates and a two-button pair");
+    let first_to_extra = edge_gap(
+        candidates[*first_standard].rect,
+        candidates[extra_index].rect,
+    );
+    let second_to_extra = edge_gap(
+        candidates[*second_standard].rect,
+        candidates[extra_index].rect,
+    );
+    let allow_index = match (first_to_extra, second_to_extra) {
+        (Some(first_gap), Some(second_gap)) if first_gap < second_gap => *first_standard,
+        (Some(first_gap), Some(second_gap)) if second_gap < first_gap => *second_standard,
+        _ => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the native Chromium consent prompt had no unique standard button adjacent to the extra action",
+            ));
+        }
+    };
+    let cancel_index = if allow_index == *first_standard {
+        *second_standard
+    } else {
+        *first_standard
+    };
+    if focused_indices
+        .first()
+        .is_some_and(|focused| *focused != cancel_index)
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native Chromium consent prompt focus contradicted the structural cancel button",
+        ));
+    }
+    Ok(candidates[allow_index].element_ptr)
+}
+
+fn exact_allow_button_with<F>(
+    nodes: &[UiaNode],
+    mut properties: F,
+) -> Result<Option<usize>, BrowserRefusal>
+where
+    F: FnMut(usize) -> Result<(String, bool), BrowserRefusal>,
+{
+    if !native_prompt_surface_present(nodes) {
+        return Ok(None);
+    }
+    let mut candidates = Vec::new();
+    for node in trusted_prompt_nodes(nodes).filter(|node| {
+        node.control_type == "Button"
+            && node.actions.iter().any(|action| action == "invoke")
+            && node.element_ptr != 0
+            && node.rect.is_some()
+    }) {
+        let (class_name, has_keyboard_focus) = properties(node.element_ptr)?;
+        if class_name != CHROMIUM_DIALOG_BUTTON_CLASS {
+            continue;
+        }
+        let rect = node.rect.expect("filtered above");
+        if rect.0 >= rect.2 || rect.1 >= rect.3 {
+            continue;
+        }
+        if candidates
+            .iter()
+            .any(|candidate: &ConsentButtonCandidate| candidate.rect == rect)
+        {
+            continue;
+        }
+        candidates.push(ConsentButtonCandidate {
+            element_ptr: node.element_ptr,
+            rect,
+            has_keyboard_focus,
+        });
+    }
+    select_language_independent_allow(&candidates).map(Some)
 }
 
 fn exact_allow_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
-    if !remote_debugging_prompt_present(nodes) {
-        return Ok(None);
-    }
-    let matches = trusted_prompt_nodes(nodes)
-        .filter(|node| {
-            node.control_type == "Button"
-                && normalized_text(node) == "allow"
-                && node.actions.iter().any(|action| action == "invoke")
-                && node.element_ptr != 0
-        })
-        .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [] => Ok(None),
-        [element] => Ok(Some(*element)),
-        _ => Err(refusal(
-            BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple exact Allow actions matched the browser consent prompt",
-        )),
-    }
+    exact_allow_button_with(nodes, native_button_properties)
 }
 
 unsafe fn invoke(element_ptr: usize) -> Result<(), BrowserRefusal> {
@@ -153,7 +306,7 @@ pub async fn handle(
                     format!("could not inspect the browser consent UI: {error}"),
                 )
             })?;
-        let prompt_present = remote_debugging_prompt_present(&tree.nodes);
+        let prompt_present = native_prompt_surface_present(&tree.nodes);
         saw_prompt |= prompt_present;
         match exact_allow_button(&tree.nodes) {
             Ok(Some(element)) => {
@@ -193,7 +346,7 @@ mod tests {
 
     fn node(control_type: &str, name: &str, actions: &[&str]) -> UiaNode {
         UiaNode {
-            element_index: (!actions.is_empty()).then_some(0),
+            element_index: None,
             control_type: control_type.to_owned(),
             name: Some(name.to_owned()),
             value: None,
@@ -202,7 +355,7 @@ mod tests {
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             enabled: None,
             selected: None,
-            element_ptr: 7,
+            element_ptr: 0,
             center_x: 0,
             center_y: 0,
             rect: None,
@@ -213,47 +366,158 @@ mod tests {
         }
     }
 
-    fn prompt() -> Vec<UiaNode> {
+    fn dialog_node(control_type: &str, name: &str, depth: usize) -> UiaNode {
+        let mut node = node(control_type, name, &[]);
+        node.depth = depth;
+        node
+    }
+
+    fn button(name: &str, element_ptr: usize, rect: (i32, i32, i32, i32)) -> UiaNode {
+        let mut node = node("Button", name, &["invoke"]);
+        node.element_index = Some(element_ptr);
+        node.element_ptr = element_ptr;
+        node.rect = Some(rect);
+        node.depth = 8;
+        node
+    }
+
+    fn prompt(title: &str, labels: [&str; 3]) -> Vec<UiaNode> {
         vec![
-            node("Text", "Allow remote debugging?", &[]),
-            node(
-                "Text",
-                "An external app wants full control. This includes access to your saved data, cookies and site data, and the ability to navigate to any URL.",
-                &[],
-            ),
-            node("Button", "Cancel", &["invoke"]),
-            node("Button", "Allow", &["invoke"]),
+            dialog_node("Pane", title, 2),
+            dialog_node("Window", title, 3),
+            dialog_node("Text", title, 7),
+            button(labels[0], 11, (-6066, 343, -5886, 399)),
+            button(labels[1], 12, (-5657, 343, -5560, 399)),
+            button(labels[2], 13, (-5549, 343, -5452, 399)),
         ]
     }
 
+    fn properties(element_ptr: usize) -> Result<(String, bool), BrowserRefusal> {
+        Ok((CHROMIUM_DIALOG_BUTTON_CLASS.to_owned(), element_ptr == 13))
+    }
+
     #[test]
-    fn matcher_requires_exact_security_prompt_and_unique_allow_action() {
-        assert_eq!(exact_allow_button(&prompt()).unwrap(), Some(7));
+    fn matcher_is_language_independent_across_localized_native_dialogs() {
+        for (title, labels) in [
+            (
+                "リモート デバッグを許可しますか？",
+                ["設定でオフ", "許可", "キャンセル"],
+            ),
+            (
+                "Remote-Debugging zulassen?",
+                ["In Einstellungen deaktivieren", "Zulassen", "Abbrechen"],
+            ),
+            (
+                "Autoriser le débogage à distance ?",
+                ["Désactiver", "Autoriser", "Annuler"],
+            ),
+            (
+                "هل تريد السماح بتصحيح الأخطاء عن بُعد؟",
+                ["تعطيل", "سماح", "إلغاء"],
+            ),
+        ] {
+            assert_eq!(
+                exact_allow_button_with(&prompt(title, labels), properties).unwrap(),
+                Some(12)
+            );
+        }
+    }
+
+    #[test]
+    fn matcher_deduplicates_repeated_uia_walk_rows_by_exact_geometry() {
+        let mut nodes = prompt("任何语言", ["A", "B", "C"]);
+        let mut duplicate = nodes[4].clone();
+        duplicate.element_ptr = 99;
+        nodes.push(duplicate);
         assert_eq!(
-            exact_allow_button(&[node("Button", "Allow", &["invoke"])]).unwrap(),
-            None
+            exact_allow_button_with(&nodes, properties).unwrap(),
+            Some(12)
         );
     }
 
     #[test]
-    fn matcher_refuses_ambiguous_allow_actions() {
-        let mut nodes = prompt();
-        nodes.push(node("Button", "Allow", &["invoke"]));
+    fn matcher_is_direction_independent_for_rtl_dialog_layouts() {
+        let mut nodes = prompt(
+            "هل تريد السماح بتصحيح الأخطاء عن بُعد؟",
+            ["تعطيل", "سماح", "إلغاء"],
+        );
+        nodes[3].rect = Some((600, 343, 780, 399));
+        nodes[4].rect = Some((299, 343, 396, 399));
+        nodes[5].rect = Some((191, 343, 288, 399));
         assert_eq!(
-            exact_allow_button(&nodes).unwrap_err().code,
+            exact_allow_button_with(&nodes, properties).unwrap(),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn matcher_does_not_require_focus_when_the_browser_is_inactive() {
+        let nodes = prompt(
+            "¿Permitir la depuración remota?",
+            ["Desactivar", "Permitir", "Cancelar"],
+        );
+        assert_eq!(
+            exact_allow_button_with(&nodes, |_| {
+                Ok((CHROMIUM_DIALOG_BUTTON_CLASS.to_owned(), false))
+            })
+            .unwrap(),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn matcher_refuses_ambiguous_focus_or_button_geometry() {
+        let nodes = prompt("Qualsiasi lingua", ["A", "B", "C"]);
+        assert_eq!(
+            exact_allow_button_with(&nodes, |element_ptr| {
+                Ok((CHROMIUM_DIALOG_BUTTON_CLASS.to_owned(), element_ptr >= 12))
+            })
+            .unwrap_err()
+            .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+
+        let mut equidistant = nodes;
+        equidistant[3].rect = Some((-5700, 343, -5560, 399));
+        assert_eq!(
+            exact_allow_button_with(&equidistant, properties)
+                .unwrap_err()
+                .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }
 
     #[test]
     fn matcher_ignores_a_spoofed_prompt_inside_web_content() {
-        let mut nodes = prompt();
-        nodes.insert(0, node("Document", "Example page", &[]));
-        nodes[0].element_index = Some(42);
-        for child in &mut nodes[1..] {
-            child.parent_element_index = Some(42);
+        let mut nodes = prompt("Permitir depuração remota?", ["A", "B", "C"]);
+        for child in &mut nodes {
             child.in_web_content = true;
         }
-        assert_eq!(exact_allow_button(&nodes).unwrap(), None);
+        assert_eq!(exact_allow_button_with(&nodes, properties).unwrap(), None);
+    }
+
+    #[test]
+    fn matcher_requires_the_native_prompt_surface_and_chromium_button_class() {
+        let mut nodes = prompt("원격 디버깅을 허용하시겠습니까?", ["A", "B", "C"]);
+        nodes[0].name = Some("different native pane".to_owned());
+        assert_eq!(exact_allow_button_with(&nodes, properties).unwrap(), None);
+
+        let nodes = prompt("원격 디버깅을 허용하시겠습니까?", ["A", "B", "C"]);
+        assert_eq!(
+            exact_allow_button_with(&nodes, |element_ptr| {
+                Ok((
+                    if element_ptr == 12 {
+                        "RendererButton"
+                    } else {
+                        CHROMIUM_DIALOG_BUTTON_CLASS
+                    }
+                    .to_owned(),
+                    element_ptr == 13,
+                ))
+            })
+            .unwrap_err()
+            .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
     }
 }

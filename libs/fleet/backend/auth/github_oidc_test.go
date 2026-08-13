@@ -6,15 +6,19 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"cyclops-cs-backend/config"
 
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -241,4 +245,200 @@ func bigEndianBytes(v int) []byte {
 		out = append([]byte{byte(n & 0xff)}, out...)
 	}
 	return out
+}
+
+func TestTokenAuthMiddlewareDoesNotExtendGitHubResolverDeadline(t *testing.T) {
+	signingKey, jwksURL := newGitHubJWKS(t)
+	t.Cleanup(func() {
+		SetGitHubTrustResolver(nil)
+	})
+	if err := Init(&config.AuthConfiguration{
+		Issuer:             "https://issuer.example.test/realms/cyclops-cs",
+		JWKSUri:            jwksURL,
+		SigningAlgs:        []string{"RS256"},
+		SPAClientID:        "cyclops-cs-spa",
+		KeyClientPfx:       "key-",
+		UserKeyClientPfx:   "ukey-",
+		GitHubOIDCIssuer:   testGitHubIssuer,
+		GitHubOIDCJWKSUri:  jwksURL,
+		GitHubOIDCAudience: testGitHubAudience,
+		GitHubOIDCEnabled:  true,
+		GitHubOIDCAlgs:     []string{"RS256"},
+	}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	resolverDeadline := make(chan time.Time, 1)
+	SetGitHubTrustResolver(githubTrustResolverFunc(func(ctx context.Context, _ string) ([]GitHubTrustPolicy, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("resolver context has no deadline")
+		}
+		resolverDeadline <- deadline
+		return []GitHubTrustPolicy{{ID: "p1", OwnerSub: "user-123", Repository: "trycua/cloud", AllowedNamespaces: []string{"ns-a"}, Enabled: true}}, nil
+	}))
+	raw := signGitHubToken(t, signingKey, jwt.MapClaims{
+		"iss": testGitHubIssuer, "aud": testGitHubAudience, "sub": "repo:trycua/cloud:ref:refs/heads/main",
+		"repository": "trycua/cloud", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Add(-time.Minute).Unix(),
+	})
+	parent, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
+	defer cancel()
+	wantDeadline, ok := parent.Deadline()
+	if !ok {
+		t.Fatal("request context has no deadline")
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(parent)
+	request.Header.Set("Authorization", "Bearer "+raw)
+	response := httptest.NewRecorder()
+
+	TokenAuthMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if gotDeadline := <-resolverDeadline; !gotDeadline.Equal(wantDeadline) {
+		t.Fatalf("resolver deadline = %s, want request deadline %s", gotDeadline, wantDeadline)
+	}
+}
+
+func TestTokenAuthMiddlewareReturnsServiceUnavailableForGitHubTrustDatabaseOutage(t *testing.T) {
+	signingKey, jwksURL := newGitHubJWKS(t)
+	t.Cleanup(func() {
+		SetGitHubTrustResolver(nil)
+	})
+	if err := Init(&config.AuthConfiguration{
+		Issuer:             "https://issuer.example.test/realms/cyclops-cs",
+		JWKSUri:            jwksURL,
+		SigningAlgs:        []string{"RS256"},
+		SPAClientID:        "cyclops-cs-spa",
+		KeyClientPfx:       "key-",
+		UserKeyClientPfx:   "ukey-",
+		GitHubOIDCIssuer:   testGitHubIssuer,
+		GitHubOIDCJWKSUri:  jwksURL,
+		GitHubOIDCAudience: testGitHubAudience,
+		GitHubOIDCEnabled:  true,
+		GitHubOIDCAlgs:     []string{"RS256"},
+	}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	SetGitHubTrustResolver(githubTrustResolverFunc(func(context.Context, string) ([]GitHubTrustPolicy, error) {
+		return nil, ErrDatabaseUnavailable
+	}))
+	raw := signGitHubToken(t, signingKey, jwt.MapClaims{
+		"iss": testGitHubIssuer, "aud": testGitHubAudience, "sub": "repo:trycua/cloud:ref:refs/heads/main",
+		"repository": "trycua/cloud", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Add(-time.Minute).Unix(),
+	})
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer "+raw)
+	response := httptest.NewRecorder()
+
+	TokenAuthMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("next handler must not run")
+	})).ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestClassifyDatabaseErrorRecognizesTransportButNotPostgresErrors(t *testing.T) {
+	connectionRefused := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	classified := ClassifyDatabaseError(errors.New("resolve policies: " + connectionRefused.Error()))
+	if errors.Is(classified, ErrDatabaseUnavailable) {
+		t.Fatal("string-only network error must not be classified as database unavailable")
+	}
+
+	classified = ClassifyDatabaseError(errors.Join(errors.New("resolve policies"), connectionRefused))
+	if !errors.Is(classified, ErrDatabaseUnavailable) {
+		t.Fatalf("classified error = %v, want database unavailable sentinel", classified)
+	}
+	if !errors.Is(classified, connectionRefused) {
+		t.Fatalf("classified error = %v, want original transport error", classified)
+	}
+
+	postgresError := &pgconn.PgError{Code: "42501", Message: "permission denied"}
+	classified = ClassifyDatabaseError(errors.Join(errors.New("resolve policies"), postgresError))
+	if errors.Is(classified, ErrDatabaseUnavailable) {
+		t.Fatalf("postgres authorization error = %v, must not be classified as unavailable", classified)
+	}
+}
+
+func TestTokenAuthMiddlewareReturnsServiceUnavailableForImmediateGitHubTrustConnectionFailure(t *testing.T) {
+	signingKey, jwksURL := newGitHubJWKS(t)
+	t.Cleanup(func() {
+		SetGitHubTrustResolver(nil)
+	})
+	if err := Init(&config.AuthConfiguration{
+		Issuer:             "https://issuer.example.test/realms/cyclops-cs",
+		JWKSUri:            jwksURL,
+		SigningAlgs:        []string{"RS256"},
+		SPAClientID:        "cyclops-cs-spa",
+		KeyClientPfx:       "key-",
+		UserKeyClientPfx:   "ukey-",
+		GitHubOIDCIssuer:   testGitHubIssuer,
+		GitHubOIDCJWKSUri:  jwksURL,
+		GitHubOIDCAudience: testGitHubAudience,
+		GitHubOIDCEnabled:  true,
+		GitHubOIDCAlgs:     []string{"RS256"},
+	}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	connectionRefused := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	SetGitHubTrustResolver(githubTrustResolverFunc(func(context.Context, string) ([]GitHubTrustPolicy, error) {
+		return nil, ClassifyDatabaseError(connectionRefused)
+	}))
+	raw := signGitHubToken(t, signingKey, jwt.MapClaims{
+		"iss": testGitHubIssuer, "aud": testGitHubAudience, "sub": "repo:trycua/cloud:ref:refs/heads/main",
+		"repository": "trycua/cloud", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Add(-time.Minute).Unix(),
+	})
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer "+raw)
+	response := httptest.NewRecorder()
+
+	TokenAuthMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("next handler must not run")
+	})).ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestTokenAuthMiddlewareKeepsGitHubTrustPostgresErrorsUnauthorized(t *testing.T) {
+	signingKey, jwksURL := newGitHubJWKS(t)
+	t.Cleanup(func() {
+		SetGitHubTrustResolver(nil)
+	})
+	if err := Init(&config.AuthConfiguration{
+		Issuer:             "https://issuer.example.test/realms/cyclops-cs",
+		JWKSUri:            jwksURL,
+		SigningAlgs:        []string{"RS256"},
+		SPAClientID:        "cyclops-cs-spa",
+		KeyClientPfx:       "key-",
+		UserKeyClientPfx:   "ukey-",
+		GitHubOIDCIssuer:   testGitHubIssuer,
+		GitHubOIDCJWKSUri:  jwksURL,
+		GitHubOIDCAudience: testGitHubAudience,
+		GitHubOIDCEnabled:  true,
+		GitHubOIDCAlgs:     []string{"RS256"},
+	}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	SetGitHubTrustResolver(githubTrustResolverFunc(func(context.Context, string) ([]GitHubTrustPolicy, error) {
+		return nil, &pgconn.PgError{Code: "42501", Message: "permission denied"}
+	}))
+	raw := signGitHubToken(t, signingKey, jwt.MapClaims{
+		"iss": testGitHubIssuer, "aud": testGitHubAudience, "sub": "repo:trycua/cloud:ref:refs/heads/main",
+		"repository": "trycua/cloud", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Add(-time.Minute).Unix(),
+	})
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer "+raw)
+	response := httptest.NewRecorder()
+
+	TokenAuthMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("next handler must not run")
+	})).ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body = %s", response.Code, response.Body.String())
+	}
 }

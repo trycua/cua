@@ -19,6 +19,7 @@ require (
 	github.com/stripe/stripe-go/v85 v85.2.0
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/swaggo/swag v1.16.6
+	sigs.k8s.io/yaml v1.4.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.53.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.28.0
 	golang.org/x/sync v0.17.0
@@ -112,7 +113,6 @@ require (
 	golang.org/x/tools v0.37.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	sigs.k8s.io/yaml v1.4.0 // indirect
 )
 
 replace github.com/trycua/cloud/pkg/featureflags => ../../pkg/featureflags

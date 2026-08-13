@@ -570,6 +570,38 @@ func TestRunFailsClosedForStaticRoleCreateDBDrift(t *testing.T) {
 	}
 }
 
+func TestRunPreservesMaintenanceSuperuserStaticMembershipGrant(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationOwner := currentRole(t, ctx, migrationURL)
+	maintenance := connect(t, ctx, maintenanceURLForDatabase(t, maintenanceURL, migrationURL))
+	defer maintenance.Close(ctx)
+	migrationOwnerIdentifier := pgx.Identifier{migrationOwner}.Sanitize()
+	if _, err := maintenance.Exec(ctx, "revoke k8s_query_tenant from k8s_role_admin granted by "+migrationOwnerIdentifier+" restrict"); err != nil {
+		t.Fatal("remove migration-owner static membership")
+	}
+	if _, err := maintenance.Exec(ctx, `grant k8s_query_tenant to k8s_role_admin with admin true, inherit false, set false`); err != nil {
+		t.Fatal("create maintenance-superuser static membership")
+	}
+
+	before := staticMembershipRows(t, ctx, maintenance, "k8s_query_tenant", "k8s_role_admin")
+	if len(before) != 1 || before[0].grantor == migrationOwner || !before[0].grantorSuperuser || !before[0].admin || before[0].inherit || before[0].set {
+		t.Fatalf("maintenance-superuser static membership = %+v, want one exact grant from a superuser other than %s", before, migrationOwner)
+	}
+
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+	if after := staticMembershipRows(t, ctx, maintenance, "k8s_query_tenant", "k8s_role_admin"); !reflect.DeepEqual(after, before) {
+		t.Fatalf("maintenance-superuser static membership changed during rerun: before=%+v after=%+v", before, after)
+	}
+}
+
 func TestRunFailsClosedForForeignGrantorMembership(t *testing.T) {
 	maintenanceURL := os.Getenv("CYCLOPS_TEST_DATABASE_URL")
 	if maintenanceURL == "" {
@@ -632,6 +664,134 @@ func TestRunFailsClosedForForeignGrantorMembership(t *testing.T) {
 	}
 }
 
+func TestRunPreflightLeavesEarlierRepairableStaticMembershipUnchanged(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+
+	ctx := context.Background()
+
+	for _, testCase := range []struct {
+		name           string
+		introduceFirst func(t *testing.T, maintenance *pgx.Conn, migrationOwner string)
+		introduceLater func(t *testing.T, maintenance *pgx.Conn, migrationURL, migrationOwner string)
+		wantError      string
+	}{
+		{
+			name: "missing before foreign membership",
+			introduceFirst: func(t *testing.T, maintenance *pgx.Conn, migrationOwner string) {
+				t.Helper()
+				identifier := pgx.Identifier{migrationOwner}.Sanitize()
+				if _, err := maintenance.Exec(ctx, "revoke k8s_state_owner from "+identifier+" granted by "+identifier+" restrict"); err != nil {
+					t.Fatal("remove repairable state-owner membership")
+				}
+			},
+			introduceLater: func(t *testing.T, maintenance *pgx.Conn, migrationURL, migrationOwner string) {
+				t.Helper()
+				foreignGrantor := "foreign_grantor_" + testToken(t)[:12]
+				foreignIdentifier := pgx.Identifier{foreignGrantor}.Sanitize()
+				t.Cleanup(func() {
+					cleanupCtx := context.Background()
+					connection := connect(t, cleanupCtx, maintenanceURLForDatabase(t, maintenanceURL, migrationURL))
+					defer connection.Close(cleanupCtx)
+					if _, err := connection.Exec(cleanupCtx, "drop owned by "+foreignIdentifier); err != nil {
+						t.Errorf("drop foreign grantor-owned objects: %v", err)
+					}
+					dropRole(t, cleanupCtx, maintenanceURL, foreignGrantor)
+				})
+				if _, err := maintenance.Exec(ctx, "create role "+foreignIdentifier); err != nil {
+					t.Fatal("create foreign grantor")
+				}
+				if _, err := maintenance.Exec(ctx, "grant k8s_query_tenant to "+foreignIdentifier+" with admin true, inherit false, set false"); err != nil {
+					t.Fatal("grant query tenant admin to foreign grantor")
+				}
+				identifier := pgx.Identifier{migrationOwner}.Sanitize()
+				if _, err := maintenance.Exec(ctx, "revoke k8s_query_tenant from k8s_role_admin granted by "+identifier+" restrict"); err != nil {
+					t.Fatal("remove migration-owner query tenant membership")
+				}
+				if _, err := maintenance.Exec(ctx, "set role "+foreignIdentifier); err != nil {
+					t.Fatal("set foreign grantor role")
+				}
+				if _, err := maintenance.Exec(ctx, `grant k8s_query_tenant to k8s_role_admin with admin true, inherit false, set false`); err != nil {
+					t.Fatal("create foreign static membership")
+				}
+				if _, err := maintenance.Exec(ctx, `reset role`); err != nil {
+					t.Fatal("reset foreign grantor role")
+				}
+			},
+			wantError: "has grantor foreign_grantor_",
+		},
+		{
+			name: "SET drift before duplicate membership",
+			introduceFirst: func(t *testing.T, maintenance *pgx.Conn, migrationOwner string) {
+				t.Helper()
+				identifier := pgx.Identifier{migrationOwner}.Sanitize()
+				if _, err := maintenance.Exec(ctx, "revoke k8s_state_owner from "+identifier+" granted by "+identifier+" restrict"); err != nil {
+					t.Fatal("remove state-owner membership before SET drift")
+				}
+				if _, err := maintenance.Exec(ctx, "grant k8s_state_owner to "+identifier+" with admin false, inherit false, set false granted by "+identifier); err != nil {
+					t.Fatal("introduce repairable state-owner SET drift")
+				}
+			},
+			introduceLater: func(t *testing.T, maintenance *pgx.Conn, migrationURL, migrationOwner string) {
+				t.Helper()
+				if _, err := maintenance.Exec(ctx, `grant k8s_query_tenant to k8s_role_admin with admin true, inherit false, set false`); err != nil {
+					t.Fatal("create postgres-grantor duplicate static membership")
+				}
+			},
+			wantError: "has 2 non-implicit grants",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+			if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+				t.Fatal("initial Run()", err)
+			}
+			migrationOwner := currentRole(t, ctx, migrationURL)
+			maintenance := connect(t, ctx, maintenanceURL)
+			defer maintenance.Close(ctx)
+			testCase.introduceFirst(t, maintenance, migrationOwner)
+			testCase.introduceLater(t, maintenance, migrationURL, migrationOwner)
+
+			connection := connect(t, ctx, migrationURL)
+			defer connection.Close(ctx)
+			before := staticMembershipRows(t, ctx, connection, "k8s_state_owner", migrationOwner)
+			err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
+			if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+				t.Fatalf("Run() error = %v, want fail-closed error containing %q", err, testCase.wantError)
+			}
+			if after := staticMembershipRows(t, ctx, connection, "k8s_state_owner", migrationOwner); !reflect.DeepEqual(after, before) {
+				t.Fatalf("repairable state-owner membership changed after fail-closed preflight: before=%+v after=%+v", before, after)
+			}
+		})
+	}
+}
+
+func staticMembershipRows(t *testing.T, ctx context.Context, connection *pgx.Conn, role, member string) []staticMembershipGrant {
+	t.Helper()
+	rows, err := connection.Query(ctx, `
+		select grantor_role.rolname, grantor_role.rolsuper, membership.admin_option, membership.inherit_option, membership.set_option
+		from pg_auth_members as membership
+		join pg_roles as grantor_role on grantor_role.oid = membership.grantor
+		where membership.roleid = $1::regrole and membership.member = $2::regrole
+		order by grantor_role.rolname`, role, member)
+	if err != nil {
+		t.Fatalf("read static membership %s -> %s: %v", role, member, err)
+	}
+	defer rows.Close()
+
+	var grants []staticMembershipGrant
+	for rows.Next() {
+		var grant staticMembershipGrant
+		if err := rows.Scan(&grant.grantor, &grant.grantorSuperuser, &grant.admin, &grant.inherit, &grant.set); err != nil {
+			t.Fatalf("scan static membership %s -> %s: %v", role, member, err)
+		}
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate static membership %s -> %s: %v", role, member, err)
+	}
+	return grants
+}
+
 func TestRunFailsClosedForNonSuperuserStaticCreatorAdminGrantor(t *testing.T) {
 	maintenanceURL := requireMigratorIntegration(t)
 	ctx := context.Background()
@@ -667,7 +827,7 @@ func TestRunFailsClosedForNonSuperuserStaticCreatorAdminGrantor(t *testing.T) {
 		t.Fatal("introduce static role repair sentinel")
 	}
 
-	assertRunFailsBeforeStaticRoleRepair(t, ctx, migrationURL, credentials, "true PostgreSQL superuser")
+	assertRunFailsBeforeStaticRoleRepair(t, ctx, migrationURL, credentials, "has grantor")
 }
 
 func TestRunFailsClosedForRegisteredTenantMembershipDrift(t *testing.T) {
@@ -1248,7 +1408,7 @@ func assertStaticCreatorAdminMemberships(t *testing.T, ctx context.Context, migr
 		}
 		rows.Close()
 		allowOwnerGrant := role == "k8s_state_owner" || role == "k8s_reporting_owner"
-		if !staticCreatorAdminMembershipsAreExact(migrationOwner, grants, allowOwnerGrant) {
+		if !staticCreatorAdminMembershipsAreExact(migrationOwner, grants, allowOwnerGrant, nil) {
 			t.Fatalf("static creator memberships for %s = %+v", role, grants)
 		}
 	}

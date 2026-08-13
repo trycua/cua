@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 
+	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/identity"
 	"cyclops-cs-backend/statequery"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -63,6 +64,9 @@ func (writer *stateQueryStreamWriter) WriteRow(values []any) error {
 
 func (writer *stateQueryStreamWriter) Finish(err error) error {
 	if err != nil {
+		if auth.IsDatabaseUnavailable(err) {
+			return writer.write(stateQueryErrorEvent{Type: "error", Error: "state query unavailable"})
+		}
 		return writer.write(stateQueryErrorEvent{Type: "error", Error: err.Error()})
 	}
 	return writer.write(stateQueryDoneEvent{Type: "done"})
@@ -106,9 +110,14 @@ func (h Handlers) QueryState(w http.ResponseWriter, r *http.Request) {
 
 	user := currentUser(r)
 	stream := newStateQueryStreamWriter(w)
-	err = stream.Finish(h.StateQueryExecutor.Execute(
-		r.Context(), identity.PersonalGroup(r.Context(), user.ID), string(body), stream,
-	))
+	ctx, cancel := databaseContext(r.Context())
+	defer cancel()
+	err = h.StateQueryExecutor.Execute(ctx, identity.PersonalGroup(r.Context(), user.ID), string(body), stream)
+	if err != nil && !stream.started {
+		writeErr(w, http.StatusServiceUnavailable, "state query unavailable")
+		return
+	}
+	err = stream.Finish(err)
 	if err != nil {
 		slog.Debug("state query stream failed", "err", err)
 	}

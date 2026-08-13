@@ -32,8 +32,6 @@ type Handlers struct {
 
 	StateQueryExecutor StateQueryExecutor
 
-	Readiness *Readiness
-
 	ChatEnabled   bool
 	Conversations chat.ConversationStore
 	Model         chat.ModelClient
@@ -51,11 +49,11 @@ type Handlers struct {
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 	return Handlers{
-		Admin:      admin,
-		GatewayCfg: cfg.Gateway,
-		AuthCfg:    cfg.Auth,
-		KC:         cfg.Keycloak,
-		Stripe:     cfg.Stripe,
+		Admin:       admin,
+		GatewayCfg:  cfg.Gateway,
+		AuthCfg:     cfg.Auth,
+		KC:          cfg.Keycloak,
+		Stripe:      cfg.Stripe,
 		ChatEnabled: cfg.Chat.Enabled,
 		chatLocks:   newConversationLockRegistry(),
 	}

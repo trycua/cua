@@ -23,7 +23,9 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/handlers"
+	"cyclops-cs-backend/statequery"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/trycua/cloud/pkg/featureflags"
@@ -51,7 +53,7 @@ func TestHealthAndReadinessRoutes(t *testing.T) {
 		statusCode int
 	}{
 		{path: "/healthz", statusCode: http.StatusOK},
-		{path: "/readyz", statusCode: http.StatusServiceUnavailable},
+		{path: "/readyz", statusCode: http.StatusOK},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			response := httptest.NewRecorder()
@@ -457,4 +459,165 @@ func TestNginxRoutesChatToBackend(t *testing.T) {
 	if !strings.Contains(string(data), "|chat|") && !strings.Contains(string(data), "|chat)") {
 		t.Fatal("nginx.conf backend matcher does not include chat")
 	}
+}
+
+func TestInitializeDatabaseFeatures(t *testing.T) {
+	tests := []struct {
+		name                string
+		config              config.DatabaseConfiguration
+		requireVersionError error
+		newExecutorError    error
+		newStoreError       error
+		wantExecutor        bool
+		wantStore           bool
+		wantRequireVersion  bool
+		wantNewExecutor     bool
+		wantNewStore        bool
+	}{
+		{
+			name: "state query initializes without application database",
+			config: config.DatabaseConfiguration{
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			wantExecutor:    true,
+			wantNewExecutor: true,
+		},
+		{
+			name: "state query initializes when application schema validation fails",
+			config: config.DatabaseConfiguration{
+				URL:                      "postgres://application/application",
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			requireVersionError: fmt.Errorf("schema unavailable"),
+			wantExecutor:        true,
+			wantRequireVersion:  true,
+			wantNewExecutor:     true,
+		},
+		{
+			name:               "application database enables GitHub trust store",
+			config:             config.DatabaseConfiguration{URL: "postgres://application/application"},
+			wantStore:          true,
+			wantRequireVersion: true,
+			wantNewStore:       true,
+		},
+		{
+			name: "constructor failures are non-fatal and clear stale fields",
+			config: config.DatabaseConfiguration{
+				URL:                      "postgres://application/application",
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			newExecutorError:   fmt.Errorf("invalid state query configuration"),
+			newStoreError:      fmt.Errorf("store unavailable"),
+			wantRequireVersion: true,
+			wantNewExecutor:    true,
+			wantNewStore:       true,
+		},
+		{
+			name:               "missing database config clears stale fields",
+			config:             config.DatabaseConfiguration{},
+			wantRequireVersion: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var requireVersionContext context.Context
+			var storeContext context.Context
+			newExecutorCalls := 0
+			newStoreCalls := 0
+			dependencies := databaseFeatureDependencies{
+				requireVersion: func(ctx context.Context, _ string, _ int64) error {
+					requireVersionContext = ctx
+					return test.requireVersionError
+				},
+				newStateQueryExecutor: func(_ string, _ string) (handlers.StateQueryExecutor, error) {
+					newExecutorCalls++
+					if test.newExecutorError != nil {
+						return nil, test.newExecutorError
+					}
+					return stateQueryExecutorStub{}, nil
+				},
+				newGitHubTrustStore: func(ctx context.Context, _ string) (githubtrust.Store, error) {
+					newStoreCalls++
+					storeContext = ctx
+					if test.newStoreError != nil {
+						return nil, test.newStoreError
+					}
+					return githubTrustStoreStub{}, nil
+				},
+			}
+			h := handlers.Handlers{
+				StateQueryExecutor:  stateQueryExecutorStub{},
+				GitHubTrustPolicies: githubTrustStoreStub{},
+			}
+			auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolver(githubTrustStoreStub{}))
+			t.Cleanup(func() { auth.SetGitHubTrustResolver(nil) })
+
+			initializeDatabaseFeatures(context.Background(), test.config, &h, dependencies)
+
+			if got := newExecutorCalls == 1; got != test.wantNewExecutor {
+				t.Fatalf("state-query constructor called = %t, want %t", got, test.wantNewExecutor)
+			}
+			if got := newStoreCalls == 1; got != test.wantNewStore {
+				t.Fatalf("GitHub trust store constructor called = %t, want %t", got, test.wantNewStore)
+			}
+			if got := h.StateQueryExecutor != nil; got != test.wantExecutor {
+				t.Fatalf("StateQueryExecutor present = %t, want %t", got, test.wantExecutor)
+			}
+			if got := h.GitHubTrustPolicies != nil; got != test.wantStore {
+				t.Fatalf("GitHubTrustPolicies present = %t, want %t", got, test.wantStore)
+			}
+			assertStartupContext(t, requireVersionContext, test.wantRequireVersion)
+			assertStartupContext(t, storeContext, test.wantNewStore)
+		})
+	}
+}
+
+func assertStartupContext(t *testing.T, ctx context.Context, wantCalled bool) {
+	t.Helper()
+	if !wantCalled {
+		if ctx != nil {
+			t.Fatal("initializer received a context unexpectedly")
+		}
+		return
+	}
+	if ctx == nil {
+		t.Fatal("initializer did not receive a context")
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("initializer context has no deadline")
+	}
+	if remaining := time.Until(deadline); remaining > databaseStartupTimeout+100*time.Millisecond {
+		t.Fatalf("context deadline is too far away: %s", remaining)
+	}
+	if err := ctx.Err(); err != context.Canceled {
+		t.Fatalf("initializer context error = %v, want %v", err, context.Canceled)
+	}
+}
+
+type stateQueryExecutorStub struct{}
+
+func (stateQueryExecutorStub) Execute(context.Context, string, string, statequery.ResultWriter) error {
+	return nil
+}
+
+type githubTrustStoreStub struct{}
+
+func (githubTrustStoreStub) List(context.Context, string) ([]*githubtrust.Policy, error) {
+	return nil, nil
+}
+func (githubTrustStoreStub) Create(context.Context, *githubtrust.Policy) error { return nil }
+func (githubTrustStoreStub) Get(context.Context, string, string) (*githubtrust.Policy, error) {
+	return nil, nil
+}
+func (githubTrustStoreStub) Update(context.Context, *githubtrust.Policy) error { return nil }
+func (githubTrustStoreStub) Delete(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (githubTrustStoreStub) ResolveByRepository(context.Context, string) ([]*githubtrust.Policy, error) {
+	return nil, nil
 }

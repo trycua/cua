@@ -772,6 +772,10 @@ func reconcileStaticRoleContracts(ctx context.Context, transaction pgx.Tx) ([]ro
 		return nil, nil, fmt.Errorf("read migration role: %w", err)
 	}
 	membershipContracts := staticMembershipContracts(migrationOwner)
+	membershipEvents, err := reconcileStaticMembershipContracts(ctx, transaction, migrationOwner, membershipContracts)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := validateStaticRoleMemberships(ctx, transaction, migrationOwner, membershipContracts); err != nil {
 		return nil, nil, err
 	}
@@ -789,45 +793,79 @@ func reconcileStaticRoleContracts(ctx context.Context, transaction pgx.Tx) ([]ro
 		roleEvents = append(roleEvents, roleReconciliationEvent{Role: contract.role, DurationMS: time.Since(started).Milliseconds()})
 	}
 
-	membershipEvents := make([]membershipReconciliationEvent, 0, len(membershipContracts))
-	for _, contract := range membershipContracts {
-		started := time.Now()
-		grants, err := readStaticMembershipGrants(ctx, transaction, contract)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		var migrationOwnerGrant *staticMembershipGrant
-		for index := range grants {
-			grant := &grants[index]
-			if grant.grantor == migrationOwner {
-				migrationOwnerGrant = grant
-				continue
-			}
-			if allowsImplicitCreatorAdminMembership(contract.role, contract.member, migrationOwner, *grant) {
-				continue
-			}
-			return nil, nil, foreignStaticMembershipGrantError(contract, grant.grantor, migrationOwner)
-		}
-
-		if migrationOwnerGrant == nil || migrationOwnerGrant.admin != contract.admin || migrationOwnerGrant.inherit != contract.inherit || migrationOwnerGrant.set != contract.set {
-			ddl := newRuntimeDDL(transaction)
-			if migrationOwnerGrant != nil {
-				if err := ddl.revokeStaticMembership(ctx, contract, migrationOwner); err != nil {
-					return nil, nil, fmt.Errorf("remove drifted static role membership %s -> %s: %w", contract.role, contract.member, err)
-				}
-			}
-			if err := ddl.grantStaticMembership(ctx, contract, migrationOwner); err != nil {
-				return nil, nil, fmt.Errorf("reconcile static role membership %s -> %s: %w", contract.role, contract.member, err)
-			}
-		}
-		membershipEvents = append(membershipEvents, membershipReconciliationEvent{Role: contract.role, DurationMS: time.Since(started).Milliseconds()})
-	}
-
 	if err := reconcileStaticRoleSettings(ctx, transaction); err != nil {
 		return nil, nil, err
 	}
 	return roleEvents, membershipEvents, nil
+}
+
+func reconcileStaticMembershipContracts(ctx context.Context, transaction pgx.Tx, migrationOwner string, membershipContracts []staticMembershipContract) ([]membershipReconciliationEvent, error) {
+	grantsByContract := make([][]staticMembershipGrant, len(membershipContracts))
+	for index, contract := range membershipContracts {
+		grants, err := readStaticMembershipGrants(ctx, transaction, contract)
+		if err != nil {
+			return nil, err
+		}
+		grantsByContract[index] = grants
+	}
+	repairs, err := staticMembershipReconciliationPlan(migrationOwner, membershipContracts, grantsByContract)
+	if err != nil {
+		return nil, err
+	}
+
+	membershipEvents := make([]membershipReconciliationEvent, 0, len(membershipContracts))
+	for index, contract := range membershipContracts {
+		started := time.Now()
+		if !isStaticMembershipRepair(contract, repairs) {
+			membershipEvents = append(membershipEvents, membershipReconciliationEvent{Role: contract.role, DurationMS: time.Since(started).Milliseconds()})
+			continue
+		}
+
+		authoritativeGrant, err := authoritativeStaticMembershipGrant(contract, migrationOwner, grantsByContract[index])
+		if err != nil && !errors.Is(err, errStaticMembershipGrantMissing) && !errors.Is(err, errStaticMembershipGrantOwnerOptions) {
+			return nil, err
+		}
+
+		ddl := newRuntimeDDL(transaction)
+		if authoritativeGrant != nil {
+			if err := ddl.revokeStaticMembership(ctx, contract, migrationOwner); err != nil {
+				return nil, fmt.Errorf("remove drifted static role membership %s -> %s: %w", contract.role, contract.member, err)
+			}
+		}
+		if err := ddl.grantStaticMembership(ctx, contract, migrationOwner); err != nil {
+			return nil, fmt.Errorf("reconcile static role membership %s -> %s: %w", contract.role, contract.member, err)
+		}
+		membershipEvents = append(membershipEvents, membershipReconciliationEvent{Role: contract.role, DurationMS: time.Since(started).Milliseconds()})
+	}
+	return membershipEvents, nil
+}
+
+func staticMembershipReconciliationPlan(migrationOwner string, membershipContracts []staticMembershipContract, grantsByContract [][]staticMembershipGrant) ([]staticMembershipContract, error) {
+	if len(membershipContracts) != len(grantsByContract) {
+		return nil, fmt.Errorf("static membership reconciliation plan has %d contracts and %d grant sets", len(membershipContracts), len(grantsByContract))
+	}
+
+	repairs := make([]staticMembershipContract, 0, len(membershipContracts))
+	for index, contract := range membershipContracts {
+		_, err := authoritativeStaticMembershipGrant(contract, migrationOwner, grantsByContract[index])
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, errStaticMembershipGrantMissing) && !errors.Is(err, errStaticMembershipGrantOwnerOptions) {
+			return nil, err
+		}
+		repairs = append(repairs, contract)
+	}
+	return repairs, nil
+}
+
+func isStaticMembershipRepair(contract staticMembershipContract, repairs []staticMembershipContract) bool {
+	for _, repair := range repairs {
+		if repair == contract {
+			return true
+		}
+	}
+	return false
 }
 
 func foreignStaticMembershipGrantError(contract staticMembershipContract, grantor, migrationOwner string) error {
@@ -840,10 +878,9 @@ func validateStaticRoleMemberships(ctx context.Context, transaction pgx.Tx, migr
 		if err != nil {
 			return err
 		}
-		for _, grant := range grants {
-			if grant.grantor != migrationOwner && contract.member != migrationOwner && !allowsImplicitCreatorAdminMembership(contract.role, contract.member, migrationOwner, grant) {
-				return foreignStaticMembershipGrantError(contract, grant.grantor, migrationOwner)
-			}
+		_, err = authoritativeStaticMembershipGrant(contract, migrationOwner, grants)
+		if err != nil && !errors.Is(err, errStaticMembershipGrantMissing) && !errors.Is(err, errStaticMembershipGrantOwnerOptions) {
+			return err
 		}
 	}
 
@@ -873,8 +910,16 @@ func validateStaticRoleMembers(ctx context.Context, transaction pgx.Tx, migratio
 	if err != nil {
 		return err
 	}
-	allowMigrationOwnerGrant := isDeclaredStaticMembership(role, migrationOwner, contracts)
-	if !staticCreatorAdminMembershipsAreExact(migrationOwner, creatorGrants, allowMigrationOwnerGrant) {
+	declaredContract, allowMigrationOwnerGrant := declaredStaticMembershipContract(role, migrationOwner, contracts)
+	var declaredGrant *staticMembershipGrant
+	if allowMigrationOwnerGrant {
+		var err error
+		declaredGrant, err = authoritativeStaticMembershipGrant(declaredContract, migrationOwner, creatorGrants)
+		if err != nil {
+			return err
+		}
+	}
+	if !staticCreatorAdminMembershipsAreExact(migrationOwner, creatorGrants, allowMigrationOwnerGrant, declaredGrant) {
 		return staticCreatorAdminMembershipError(role, migrationOwner)
 	}
 
@@ -965,7 +1010,7 @@ func validateQueryTenantRoleMembers(ctx context.Context, transaction pgx.Tx, mig
 	if err != nil {
 		return nil, err
 	}
-	if !staticCreatorAdminMembershipsAreExact(migrationOwner, creatorGrants, false) {
+	if !staticCreatorAdminMembershipsAreExact(migrationOwner, creatorGrants, false, nil) {
 		return nil, staticCreatorAdminMembershipError("k8s_query_tenant", migrationOwner)
 	}
 	for _, tenant := range dynamicTenants {
@@ -1038,10 +1083,14 @@ func validateRegisteredTenantRoleMemberships(ctx context.Context, transaction pg
 	return nil
 }
 
-func staticCreatorAdminMembershipsAreExact(member string, grants []staticMembershipGrant, allowOwnerGrant bool) bool {
+func staticCreatorAdminMembershipsAreExact(member string, grants []staticMembershipGrant, allowOwnerGrant bool, declaredGrant *staticMembershipGrant) bool {
 	foreignCount := 0
 	ownerCount := 0
 	for _, grant := range grants {
+		if declaredGrant != nil && grant == *declaredGrant {
+			declaredGrant = nil
+			continue
+		}
 		if grant.grantor == member {
 			ownerCount++
 			continue
@@ -1094,13 +1143,18 @@ func allowsRegisteredTenantCreatorAdminMembership(tenant dynamicTenantRole, memb
 		grant.admin && !grant.inherit && !grant.set
 }
 
-func isDeclaredStaticMembership(role, member string, contracts []staticMembershipContract) bool {
+func declaredStaticMembershipContract(role, member string, contracts []staticMembershipContract) (staticMembershipContract, bool) {
 	for _, contract := range contracts {
 		if contract.role == role && contract.member == member {
-			return true
+			return contract, true
 		}
 	}
-	return false
+	return staticMembershipContract{}, false
+}
+
+func isDeclaredStaticMembership(role, member string, contracts []staticMembershipContract) bool {
+	_, ok := declaredStaticMembershipContract(role, member, contracts)
+	return ok
 }
 
 func isLowerHex(value string) bool {
@@ -1253,6 +1307,40 @@ func allowsImplicitCreatorAdminMembership(role, member, migrationOwner string, g
 		grant.admin &&
 		!grant.inherit &&
 		!grant.set
+}
+
+var (
+	errStaticMembershipGrantMissing      = errors.New("static membership grant missing")
+	errStaticMembershipGrantOwnerOptions = errors.New("static membership grant owner options drifted")
+)
+
+func authoritativeStaticMembershipGrant(contract staticMembershipContract, migrationOwner string, grants []staticMembershipGrant) (*staticMembershipGrant, error) {
+	nonImplicitGrants := make([]staticMembershipGrant, 0, len(grants))
+	for _, grant := range grants {
+		if !allowsImplicitCreatorAdminMembership(contract.role, contract.member, migrationOwner, grant) {
+			nonImplicitGrants = append(nonImplicitGrants, grant)
+		}
+	}
+	if len(nonImplicitGrants) == 0 {
+		return nil, fmt.Errorf("static role membership %s -> %s: %w", contract.role, contract.member, errStaticMembershipGrantMissing)
+	}
+	for _, grant := range nonImplicitGrants {
+		if grant.grantor != migrationOwner && !grant.grantorSuperuser {
+			return nil, foreignStaticMembershipGrantError(contract, grant.grantor, migrationOwner)
+		}
+	}
+	if len(nonImplicitGrants) != 1 {
+		return nil, fmt.Errorf("static role membership %s -> %s has %d non-implicit grants; revoke duplicate grants without CASCADE before rerunning the migration", contract.role, contract.member, len(nonImplicitGrants))
+	}
+
+	grant := nonImplicitGrants[0]
+	if grant.admin != contract.admin || grant.inherit != contract.inherit || grant.set != contract.set {
+		if grant.grantor == migrationOwner {
+			return &grant, fmt.Errorf("static role membership %s -> %s: %w", contract.role, contract.member, errStaticMembershipGrantOwnerOptions)
+		}
+		return nil, fmt.Errorf("static role membership %s -> %s has options that do not match its contract", contract.role, contract.member)
+	}
+	return &grant, nil
 }
 
 func readStaticMembershipGrants(ctx context.Context, transaction pgx.Tx, contract staticMembershipContract) ([]staticMembershipGrant, error) {

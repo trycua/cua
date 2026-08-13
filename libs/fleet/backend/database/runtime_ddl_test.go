@@ -16,6 +16,39 @@ import (
 
 const expectedInsertAppliedMigrationStatement = `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values ($1, $2, $3)`
 
+func TestRuntimeDDLStaticMembershipGrantorSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		contract staticMembershipContract
+		want     string
+	}{
+		{
+			name: "ADMIN TRUE lets PostgreSQL select the grantor",
+			contract: staticMembershipContract{
+				role: "k8s_query_tenant", member: "k8s_role_admin",
+				admin: true, inherit: false, set: false,
+			},
+			want: `grant "k8s_query_tenant" to "k8s_role_admin" with admin TRUE, inherit FALSE, set FALSE`,
+		},
+		{
+			name: "ADMIN FALSE retains the migration owner grantor",
+			contract: staticMembershipContract{
+				role: "k8s_query_tenant", member: "tenant_query_role",
+				admin: false, inherit: true, set: false,
+			},
+			want: `grant "k8s_query_tenant" to "tenant_query_role" with admin FALSE, inherit TRUE, set FALSE granted by "migration_owner"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := staticMembershipGrantStatement(test.contract, "migration_owner"); got != test.want {
+				t.Fatalf("staticMembershipGrantStatement() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestMigrationAuthorityExecArguments(t *testing.T) {
 	packageDir := databasePackageDir(t)
 	entries, err := os.ReadDir(packageDir)

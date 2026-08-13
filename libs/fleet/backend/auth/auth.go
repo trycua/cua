@@ -38,9 +38,12 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -50,6 +53,7 @@ import (
 
 	keyfunc "github.com/MicahParks/keyfunc/v2"
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -68,6 +72,57 @@ type GitHubTrustPolicy struct {
 
 type GitHubTrustResolver interface {
 	ResolveGitHubTrustPolicies(ctx context.Context, repository string) ([]GitHubTrustPolicy, error)
+}
+
+var ErrDatabaseUnavailable = errors.New("database unavailable")
+
+type databaseContextKey struct{}
+
+const DatabaseRequestTimeout = 15 * time.Second
+
+func DatabaseContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if databaseContext, ok := parent.Value(databaseContextKey{}).(context.Context); ok {
+		return databaseContext, func() {}
+	}
+	if deadline, ok := parent.Deadline(); ok && time.Until(deadline) <= DatabaseRequestTimeout {
+		return context.WithValue(parent, databaseContextKey{}, parent), func() {}
+	}
+	databaseContext, cancel := context.WithTimeout(parent, DatabaseRequestTimeout)
+	return context.WithValue(databaseContext, databaseContextKey{}, databaseContext), cancel
+}
+
+func IsDatabaseUnavailable(err error) bool {
+	return errors.Is(err, ErrDatabaseUnavailable) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+func DatabaseUnavailable(err error) error {
+	if errors.Is(err, ErrDatabaseUnavailable) {
+		return err
+	}
+	return errors.Join(ErrDatabaseUnavailable, err)
+}
+
+func ClassifyDatabaseError(err error) error {
+	if err == nil || errors.Is(err, ErrDatabaseUnavailable) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return DatabaseUnavailable(err)
+	}
+
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) {
+		return err
+	}
+	var connectError *pgconn.ConnectError
+	if errors.As(err, &connectError) {
+		return DatabaseUnavailable(err)
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) || errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return DatabaseUnavailable(err)
+	}
+	return err
 }
 
 var githubTrustResolver GitHubTrustResolver

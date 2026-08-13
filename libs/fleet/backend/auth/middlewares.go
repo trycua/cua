@@ -362,6 +362,10 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 		user, err := validateWithContext(r.Context(), raw)
 		if err != nil {
 			result = err.Error()
+			if IsDatabaseUnavailable(err) {
+				writeJSONErr(w, http.StatusServiceUnavailable, "authentication unavailable")
+				return
+			}
 			writeJSONErr(w, http.StatusUnauthorized, "auth token is invalid")
 			return
 		}

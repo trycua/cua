@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"os"
 	"reflect"
@@ -175,11 +176,18 @@ func TestAllowsRegisteredTenantCreatorAdminMembership(t *testing.T) {
 func TestStaticCreatorAdminMembershipsRequireOneForeignSuperuserGrant(t *testing.T) {
 	foreign := staticMembershipGrant{grantor: "bootstrap_owner", grantorSuperuser: true, admin: true, inherit: false, set: false}
 	ownerDrift := staticMembershipGrant{grantor: "migration_owner", admin: true, inherit: true, set: true}
-	if !staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{foreign}, false) {
+	if !staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{foreign}, false, nil) {
 		t.Fatal("expected one foreign superuser creator row to be allowed")
 	}
-	if !staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{foreign, ownerDrift}, true) {
+	if !staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{foreign, ownerDrift}, true, nil) {
 		t.Fatal("expected one repairable migration-owner row to be allowed")
+	}
+	delegatedContractGrant := staticMembershipGrant{grantor: "rdsadmin", grantorSuperuser: true, admin: false, inherit: false, set: true}
+	if !staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{foreign, delegatedContractGrant}, true, &delegatedContractGrant) {
+		t.Fatal("expected an authoritative delegated contract grant to be ignored")
+	}
+	if staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{foreign, delegatedContractGrant, {grantor: "other_bootstrap_owner", grantorSuperuser: true, admin: true, inherit: false, set: false}}, true, &delegatedContractGrant) {
+		t.Fatal("unexpectedly allowed an unrelated foreign creator grant")
 	}
 
 	for _, testCase := range []struct {
@@ -195,13 +203,85 @@ func TestStaticCreatorAdminMembershipsRequireOneForeignSuperuserGrant(t *testing
 		{name: "duplicate owner row", grants: []staticMembershipGrant{foreign, ownerDrift, {grantor: "migration_owner", admin: false, inherit: false, set: true}}, allowOwnerGrant: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			if staticCreatorAdminMembershipsAreExact("migration_owner", testCase.grants, testCase.allowOwnerGrant) {
+			if staticCreatorAdminMembershipsAreExact("migration_owner", testCase.grants, testCase.allowOwnerGrant, nil) {
 				t.Fatal("unexpectedly allowed static creator-admin memberships")
 			}
 		})
 	}
 }
 
+func TestStaticMembershipReconciliationPlanRepairsOnlyAfterFailClosedPreflight(t *testing.T) {
+	stateOwner := staticMembershipContract{role: "k8s_state_owner", member: "migration_owner", admin: false, inherit: false, set: true}
+	reportingOwner := staticMembershipContract{role: "k8s_reporting_owner", member: "migration_owner", admin: false, inherit: false, set: true}
+	healthyGrant := staticMembershipGrant{grantor: "migration_owner", admin: false, inherit: false, set: true}
+	driftedStateOwnerGrant := staticMembershipGrant{grantor: "migration_owner", admin: false, inherit: false, set: false}
+
+	for _, testCase := range []struct {
+		name        string
+		grants      [][]staticMembershipGrant
+		wantRepairs []staticMembershipContract
+		wantError   string
+	}{
+		{
+			name:        "missing state-owner membership",
+			grants:      [][]staticMembershipGrant{nil, {healthyGrant}},
+			wantRepairs: []staticMembershipContract{stateOwner},
+		},
+		{
+			name:        "set-drifted state-owner membership",
+			grants:      [][]staticMembershipGrant{{driftedStateOwnerGrant}, {healthyGrant}},
+			wantRepairs: []staticMembershipContract{stateOwner},
+		},
+		{
+			name: "foreign grant blocks earlier state-owner repair",
+			grants: [][]staticMembershipGrant{
+				nil,
+				{{grantor: "foreign_owner", admin: false, inherit: false, set: true}},
+			},
+			wantError: "grantor foreign_owner",
+		},
+		{
+			name: "duplicate grant blocks earlier state-owner repair",
+			grants: [][]staticMembershipGrant{
+				nil,
+				{healthyGrant, {grantor: "rdsadmin", grantorSuperuser: true, admin: false, inherit: false, set: true}},
+			},
+			wantError: "2 non-implicit grants",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repairs, err := staticMembershipReconciliationPlan("migration_owner", []staticMembershipContract{stateOwner, reportingOwner}, testCase.grants)
+			if testCase.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+					t.Fatalf("staticMembershipReconciliationPlan() error = %v, want containing %q", err, testCase.wantError)
+				}
+				if repairs != nil {
+					t.Fatalf("staticMembershipReconciliationPlan() repairs = %#v, want nil before any mutation", repairs)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(repairs, testCase.wantRepairs) {
+				t.Fatalf("staticMembershipReconciliationPlan() repairs = %#v, want %#v", repairs, testCase.wantRepairs)
+			}
+		})
+	}
+}
+
+func TestStaticCreatorAdminMembershipsAllowDelegatedContractGrantAlongsideImplicitCreatorGrant(t *testing.T) {
+	implicitCreatorGrant := staticMembershipGrant{grantor: "bootstrap_owner", grantorSuperuser: true, admin: true, inherit: false, set: false}
+	delegatedContractGrant := staticMembershipGrant{grantor: "rdsadmin", grantorSuperuser: true, admin: false, inherit: false, set: true}
+
+	if !staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{implicitCreatorGrant, delegatedContractGrant}, true, &delegatedContractGrant) {
+		t.Fatal("expected exact delegated contract and implicit creator grants to coexist")
+	}
+	foreignCreatorGrant := staticMembershipGrant{grantor: "foreign_creator", grantorSuperuser: true, admin: true, inherit: false, set: false}
+	if staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{implicitCreatorGrant, delegatedContractGrant, foreignCreatorGrant}, true, &delegatedContractGrant) {
+		t.Fatal("unexpectedly allowed unrelated foreign creator grant")
+	}
+}
 func TestCreatorAdminMembershipsRequireOneForeignSuperuserGrant(t *testing.T) {
 	valid := staticMembershipGrant{grantor: "bootstrap_owner", grantorSuperuser: true, admin: true, inherit: false, set: false}
 	if !creatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{valid}) {
@@ -284,6 +364,130 @@ func TestAllowsImplicitCreatorAdminMembership(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			if allowsImplicitCreatorAdminMembership(testCase.role, testCase.member, "migration_owner", testCase.grant) {
 				t.Fatal("unexpectedly allowed foreign membership")
+			}
+		})
+	}
+}
+
+func TestAuthoritativeStaticMembershipGrant(t *testing.T) {
+	declaredContract := staticMembershipContract{
+		role: "k8s_query_tenant", member: "k8s_role_admin",
+		admin: true, inherit: false, set: false,
+	}
+	creatorContract := staticMembershipContract{
+		role: "k8s_state_owner", member: "migration_owner",
+		admin: false, inherit: false, set: true,
+	}
+	implicitCreatorGrant := staticMembershipGrant{
+		grantor: "bootstrap_owner", grantorSuperuser: true,
+		admin: true, inherit: false, set: false,
+	}
+
+	for _, testCase := range []struct {
+		name              string
+		contract          staticMembershipContract
+		grants            []staticMembershipGrant
+		wantGrantor       string
+		wantError         bool
+		wantErrorIs       error
+		wantReturnedGrant bool
+	}{
+		{
+			name:        "migration owner grant",
+			contract:    declaredContract,
+			grants:      []staticMembershipGrant{{grantor: "migration_owner", admin: true, inherit: false, set: false}},
+			wantGrantor: "migration_owner",
+		},
+		{
+			name:        "delegated superuser exact grant",
+			contract:    declaredContract,
+			grants:      []staticMembershipGrant{{grantor: "rdsadmin", grantorSuperuser: true, admin: true, inherit: false, set: false}},
+			wantGrantor: "rdsadmin",
+		},
+		{
+			name:        "implicit creator grant is ignored beside owner grant",
+			contract:    creatorContract,
+			grants:      []staticMembershipGrant{implicitCreatorGrant, {grantor: "migration_owner", admin: false, inherit: false, set: true}},
+			wantGrantor: "migration_owner",
+		},
+		{
+			name:        "missing grant",
+			contract:    declaredContract,
+			wantError:   true,
+			wantErrorIs: errStaticMembershipGrantMissing,
+		},
+		{
+			name:        "implicit creator grant does not satisfy declared contract",
+			contract:    creatorContract,
+			grants:      []staticMembershipGrant{implicitCreatorGrant},
+			wantError:   true,
+			wantErrorIs: errStaticMembershipGrantMissing,
+		},
+		{
+			name:      "non-superuser grantor",
+			contract:  declaredContract,
+			grants:    []staticMembershipGrant{{grantor: "foreign_owner", admin: true, inherit: false, set: false}},
+			wantError: true,
+		},
+		{
+			name:              "owner admin option drift",
+			contract:          declaredContract,
+			grants:            []staticMembershipGrant{{grantor: "migration_owner", admin: false, inherit: false, set: false}},
+			wantError:         true,
+			wantErrorIs:       errStaticMembershipGrantOwnerOptions,
+			wantReturnedGrant: true,
+		},
+		{
+			name:              "owner inherit option drift",
+			contract:          declaredContract,
+			grants:            []staticMembershipGrant{{grantor: "migration_owner", admin: true, inherit: true, set: false}},
+			wantError:         true,
+			wantErrorIs:       errStaticMembershipGrantOwnerOptions,
+			wantReturnedGrant: true,
+		},
+		{
+			name:              "owner set option drift",
+			contract:          declaredContract,
+			grants:            []staticMembershipGrant{{grantor: "migration_owner", admin: true, inherit: false, set: true}},
+			wantError:         true,
+			wantErrorIs:       errStaticMembershipGrantOwnerOptions,
+			wantReturnedGrant: true,
+		},
+		{
+			name:      "delegated superuser option drift",
+			contract:  declaredContract,
+			grants:    []staticMembershipGrant{{grantor: "rdsadmin", grantorSuperuser: true, admin: true, inherit: true, set: false}},
+			wantError: true,
+		},
+		{
+			name:     "owner and superuser duplicates",
+			contract: declaredContract,
+			grants: []staticMembershipGrant{
+				{grantor: "migration_owner", admin: true, inherit: false, set: false},
+				{grantor: "rdsadmin", grantorSuperuser: true, admin: true, inherit: false, set: false},
+			},
+			wantError: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			grant, err := authoritativeStaticMembershipGrant(testCase.contract, "migration_owner", testCase.grants)
+			if testCase.wantError {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				if testCase.wantErrorIs != nil && !errors.Is(err, testCase.wantErrorIs) {
+					t.Fatalf("error = %v, want errors.Is(_, %v)", err, testCase.wantErrorIs)
+				}
+				if (grant != nil) != testCase.wantReturnedGrant {
+					t.Fatalf("returned grant = %#v, want present %t", grant, testCase.wantReturnedGrant)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if grant.grantor != testCase.wantGrantor {
+				t.Fatalf("grantor = %q, want %q", grant.grantor, testCase.wantGrantor)
 			}
 		})
 	}

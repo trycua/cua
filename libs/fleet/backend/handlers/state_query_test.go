@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/statequery"
@@ -19,6 +20,22 @@ type fakeStateQueryExecutor struct {
 	fields []pgconn.FieldDescription
 	rows   [][]any
 	err    error
+}
+
+type deadlineStateQueryExecutor struct {
+	context context.Context
+	write   bool
+	err     error
+}
+
+func (fake *deadlineStateQueryExecutor) Execute(ctx context.Context, _ string, _ string, writer statequery.ResultWriter) error {
+	fake.context = ctx
+	if fake.write {
+		if err := writer.WriteFieldDescriptions([]pgconn.FieldDescription{{Name: "name", DataTypeOID: 25}}); err != nil {
+			return err
+		}
+	}
+	return fake.err
 }
 
 func (fake *fakeStateQueryExecutor) Execute(_ context.Context, tenant, query string, writer statequery.ResultWriter) error {
@@ -108,5 +125,119 @@ func TestQueryStateWritesExecutorErrorAsTerminalEvent(t *testing.T) {
 	wantSuffix := `{"type":"error","error":"stream failed"}` + "\n"
 	if !strings.HasSuffix(response.Body.String(), wantSuffix) {
 		t.Fatalf("body = %q, want suffix %q", response.Body.String(), wantSuffix)
+	}
+}
+
+func TestQueryStateUsesBoundedDatabaseContext(t *testing.T) {
+	tests := []struct {
+		name            string
+		write           bool
+		err             error
+		wantStatus      int
+		wantBody        string
+		wantSuffix      string
+		wantUnavailable bool
+	}{
+		{"deadline before stream start", false, context.DeadlineExceeded, http.StatusServiceUnavailable, "", "", true},
+		{"executor error before stream start", false, errors.New("stream failed"), http.StatusServiceUnavailable, "", "", true},
+		{"deadline after stream start", true, context.DeadlineExceeded, http.StatusOK, "", `{"type":"error","error":"state query unavailable"}` + "\n", true},
+		{"executor error after stream start", true, errors.New("stream failed"), http.StatusOK, "", `{"type":"error","error":"stream failed"}` + "\n", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &deadlineStateQueryExecutor{write: test.write, err: test.err}
+			h := Handlers{StateQueryExecutor: executor}
+			request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")), &auth.User{ID: "alice"})
+			request.Header.Set("Content-Type", "application/sql")
+			response := httptest.NewRecorder()
+			start := time.Now()
+
+			h.QueryState(response, request)
+
+			assertBoundedDatabaseContext(t, executor.context, start)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, test.wantStatus, response.Body.String())
+			}
+			if test.wantBody != "" && response.Body.String() != test.wantBody {
+				t.Fatalf("body = %q, want %q", response.Body.String(), test.wantBody)
+			}
+			if test.wantSuffix != "" && !strings.HasSuffix(response.Body.String(), test.wantSuffix) {
+				t.Fatalf("body = %q, want suffix %q", response.Body.String(), test.wantSuffix)
+			}
+			if test.wantUnavailable && strings.Contains(response.Body.String(), test.err.Error()) {
+				t.Fatalf("body exposes internal error: %q", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestQueryStateDatabaseFailureBeforeStreamReturnsServiceUnavailable(t *testing.T) {
+	executor := &deadlineStateQueryExecutor{err: auth.ErrDatabaseUnavailable}
+	h := Handlers{StateQueryExecutor: executor}
+	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")), &auth.User{ID: "alice"})
+	request.Header.Set("Content-Type", "application/sql")
+	response := httptest.NewRecorder()
+
+	h.QueryState(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), auth.ErrDatabaseUnavailable.Error()) {
+		t.Fatalf("body exposes internal error: %s", response.Body.String())
+	}
+}
+
+func TestQueryStateDatabaseFailureAfterStreamWritesSanitizedTerminalEvent(t *testing.T) {
+	executor := &deadlineStateQueryExecutor{write: true, err: auth.ErrDatabaseUnavailable}
+	h := Handlers{StateQueryExecutor: executor}
+	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")), &auth.User{ID: "alice"})
+	request.Header.Set("Content-Type", "application/sql")
+	response := httptest.NewRecorder()
+
+	h.QueryState(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.HasSuffix(response.Body.String(), `{"type":"error","error":"state query unavailable"}`+"\n") {
+		t.Fatalf("body = %q", response.Body.String())
+	}
+}
+
+type cancellationStateQueryExecutor struct {
+	started chan<- struct{}
+	done    chan<- struct{}
+}
+
+func (executor cancellationStateQueryExecutor) Execute(ctx context.Context, _, _ string, _ statequery.ResultWriter) error {
+	close(executor.started)
+	<-ctx.Done()
+	close(executor.done)
+	return ctx.Err()
+}
+
+func TestQueryStatePropagatesRequestCancellation(t *testing.T) {
+	started := make(chan struct{})
+	done := make(chan struct{})
+	handlerDone := make(chan struct{})
+	h := Handlers{StateQueryExecutor: cancellationStateQueryExecutor{started: started, done: done}}
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")).WithContext(parent), &auth.User{ID: "alice"})
+	request.Header.Set("Content-Type", "application/sql")
+	response := httptest.NewRecorder()
+
+	go func() {
+		h.QueryState(response, request)
+		close(handlerDone)
+	}()
+	<-started
+	cancel()
+	<-done
+	<-handlerDone
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 }

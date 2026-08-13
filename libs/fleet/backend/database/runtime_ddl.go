@@ -299,15 +299,20 @@ func (ddl runtimeDDL) revokeStaticMembership(ctx context.Context, contract stati
 }
 
 func (ddl runtimeDDL) grantStaticMembership(ctx context.Context, contract staticMembershipContract, grantor string) error {
-	_, err := ddl.transaction.Exec(ctx,
-		"grant "+pgx.Identifier{contract.role}.Sanitize()+
-			" to "+pgx.Identifier{contract.member}.Sanitize()+
-			" with admin "+postgresBoolean(contract.admin)+
-			", inherit "+postgresBoolean(contract.inherit)+
-			", set "+postgresBoolean(contract.set)+
-			" granted by "+pgx.Identifier{grantor}.Sanitize(),
-	)
+	_, err := ddl.transaction.Exec(ctx, staticMembershipGrantStatement(contract, grantor))
 	return err
+}
+
+func staticMembershipGrantStatement(contract staticMembershipContract, grantor string) string {
+	statement := "grant " + pgx.Identifier{contract.role}.Sanitize() +
+		" to " + pgx.Identifier{contract.member}.Sanitize() +
+		" with admin " + postgresBoolean(contract.admin) +
+		", inherit " + postgresBoolean(contract.inherit) +
+		", set " + postgresBoolean(contract.set)
+	if !contract.admin {
+		statement += " granted by " + pgx.Identifier{grantor}.Sanitize()
+	}
+	return statement
 }
 
 func (ddl runtimeDDL) reconcileStaticRoleSettings(ctx context.Context, role staticRoleContract, actual []staticRoleSetting, desired staticRoleSettingsContract) error {

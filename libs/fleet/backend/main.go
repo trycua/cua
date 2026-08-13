@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -320,7 +321,6 @@ func run() error {
 	}
 
 	h := handlers.New(admin, cfg)
-	h.Readiness = handlers.NewReadiness()
 	if cfg.Stripe.SecretKey != "" {
 		h.Billing = billing.NewService(billing.NewStripeGateway(cfg.Stripe.SecretKey))
 		slog.Info("stripe billing: hosted flows enabled")
@@ -331,45 +331,7 @@ func run() error {
 	h.WorkloadAdmin = workloadAdmin
 	h.WorkloadAudience = cfg.Keycloak.WorkloadAudience
 	h.WorkloadTokenURL = cfg.Keycloak.WorkloadTokenURL
-	databaseReady := false
-	if cfg.Database.URL != "" {
-		if err := database.RequireVersion(ctx, cfg.Database.URL, 1); err != nil {
-			slog.Error("postgres database schema unavailable", "err", err)
-		} else {
-			databaseReady = true
-			h.Readiness.MarkReady()
-			slog.Info("postgres database schema ready", "version", 1)
-		}
-	}
-
-	stateSchemaReady := databaseReady && cfg.Database.StateQueryDSN != "" && cfg.Database.StateQueryTenantPassword != ""
-	if stateSchemaReady {
-		executor, err := statequery.NewExecutor(
-			cfg.Database.StateQueryDSN,
-			cfg.Database.StateQueryTenantPassword,
-		)
-		if err != nil {
-			slog.Error("kubernetes state query: executor init failed; /api/state/query will return 503", "err", err)
-		} else {
-			h.StateQueryExecutor = executor
-			slog.Info("kubernetes state query: query endpoint enabled")
-		}
-	}
-	// Postgres-backed GitHub OIDC trust policies (CUA-675). A connection
-	// failure is non-fatal — the routes stay registered and reply 503 until
-	// the database is reachable, mirroring how the other optional surfaces
-	// degrade gracefully.
-	if databaseReady {
-		if store, err := githubtrust.New(ctx, cfg.Database.URL); err != nil {
-			slog.Error("github trust policies: init failed; /api/github-trust-policies will return 503", "err", err)
-		} else if store != nil {
-			h.GitHubTrustPolicies = store
-			auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolver(store))
-			slog.Info("github trust policies: enabled")
-		}
-	} else {
-		slog.Info("github trust policies: disabled (database schema unavailable)")
-	}
+	initializeDatabaseFeatures(ctx, cfg.Database, &h, defaultDatabaseFeatureDependencies())
 
 	if cfg.Chat.Enabled {
 		h.Conversations = chat.NewMemoryConversationStore()
@@ -384,4 +346,63 @@ func run() error {
 		return fmt.Errorf("server exited: %w", err)
 	}
 	return nil
+}
+
+const databaseStartupTimeout = 5 * time.Second
+
+type databaseFeatureDependencies struct {
+	requireVersion        func(context.Context, string, int64) error
+	newStateQueryExecutor func(string, string) (handlers.StateQueryExecutor, error)
+	newGitHubTrustStore   func(context.Context, string) (githubtrust.Store, error)
+}
+
+func defaultDatabaseFeatureDependencies() databaseFeatureDependencies {
+	return databaseFeatureDependencies{
+		requireVersion: database.RequireVersion,
+		newStateQueryExecutor: func(dsn, tenantPassword string) (handlers.StateQueryExecutor, error) {
+			return statequery.NewExecutor(dsn, tenantPassword)
+		},
+		newGitHubTrustStore: githubtrust.New,
+	}
+}
+
+func initializeDatabaseFeatures(parent context.Context, cfg config.DatabaseConfiguration, h *handlers.Handlers, dependencies databaseFeatureDependencies) {
+	h.StateQueryExecutor = nil
+	h.GitHubTrustPolicies = nil
+	auth.SetGitHubTrustResolver(nil)
+
+	if cfg.StateQueryDSN != "" && cfg.StateQueryTenantPassword != "" {
+		executor, err := dependencies.newStateQueryExecutor(cfg.StateQueryDSN, cfg.StateQueryTenantPassword)
+		if err != nil {
+			slog.Error("kubernetes state query: executor init failed; /api/state/query will return 503", "err", err)
+		} else {
+			h.StateQueryExecutor = executor
+			slog.Info("kubernetes state query: query endpoint enabled")
+		}
+	}
+
+	if cfg.URL == "" {
+		slog.Info("postgres-backed features disabled (DATABASE_URL unset)")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(parent, databaseStartupTimeout)
+	defer cancel()
+
+	if err := dependencies.requireVersion(ctx, cfg.URL, 1); err != nil {
+		slog.Error("postgres database schema unavailable; database-backed routes will return 503", "err", err)
+		return
+	}
+	slog.Info("postgres database schema ready", "version", 1)
+
+	store, err := dependencies.newGitHubTrustStore(ctx, cfg.URL)
+	if err != nil {
+		slog.Error("github trust policies: init failed; /api/github-trust-policies will return 503", "err", err)
+		return
+	}
+	if store != nil {
+		h.GitHubTrustPolicies = store
+		auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolver(store))
+		slog.Info("github trust policies: enabled")
+	}
 }

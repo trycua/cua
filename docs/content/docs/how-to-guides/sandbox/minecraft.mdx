@@ -9,7 +9,7 @@ Minecraft exercises almost everything a Windows sandbox can do: it needs interne
 
 ## Before you start
 
-- **cua-sandbox 0.3.1 or newer.** `Image.expose()` on the local QEMU runtime landed in 0.3.1, and Windows on Fleet needs 0.3.0.
+- **cua-sandbox 0.3.2 or newer.** Windows on Fleet needs 0.3.0, `Image.expose()` on the local QEMU runtime landed in 0.3.1, and the `sb.exposed_ports` this guide reads the forwarded port from landed in 0.3.2.
 - **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright. The Fleet path runs there instead, including the game, with the one extra environment variable described in the Fleet section below.
 - **A Microsoft account that owns Minecraft Java Edition.** Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
 - **A vision-capable LLM endpoint** for the agent loop.

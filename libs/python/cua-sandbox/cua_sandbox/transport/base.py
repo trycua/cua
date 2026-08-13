@@ -87,7 +87,8 @@ class Transport(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support port forwarding. "
-            "Supported transports: ADBTransport, GRPCEmulatorTransport, SSHTransport."
+            "Supported transports: ADBTransport, FleetCloudTransport, "
+            "GRPCEmulatorTransport, SSHTransport."
         )
 
     async def close_tunnel(self, info: "TunnelInfo") -> None:

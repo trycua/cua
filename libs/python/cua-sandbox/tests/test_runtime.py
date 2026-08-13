@@ -20,6 +20,16 @@ pytestmark = pytest.mark.asyncio
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 
+# Every async test in this module boots a real sandbox: it pulls a multi-gigabyte
+# image and then waits for a full desktop or VM to come up. Having Docker
+# installed is not enough to make that a sane thing to do on a shared CI runner,
+# where the pull alone outlives the job, so provisioning tests are opt-in.
+RUNTIME_TESTS_ENABLED = os.environ.get("CUA_TEST_RUNTIME", "").lower() in ("1", "true", "yes")
+requires_runtime_optin = pytest.mark.skipif(
+    not RUNTIME_TESTS_ENABLED,
+    reason="provisions a real sandbox (multi-GB pull + boot); set CUA_TEST_RUNTIME=1 to run",
+)
+
 
 def _has_cua_api_key() -> bool:
     return bool(os.environ.get("CUA_API_KEY"))
@@ -77,6 +87,7 @@ def _has_android_image() -> bool:
 # ── 1. Linux container (Docker) ─────────────────────────────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_docker(), reason="Docker not available")
 async def test_linux_container():
     from cua_sandbox.runtime import DockerRuntime
@@ -98,6 +109,7 @@ async def test_linux_container():
 # ── 2. Linux VM (QEMU-in-Docker) ────────────────────────────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_docker(), reason="Docker not available")
 async def test_linux_vm():
     from cua_sandbox.runtime import QEMURuntime
@@ -119,6 +131,7 @@ async def test_linux_vm():
 # ── 3. Windows VM (bare-metal QEMU on Windows host) ─────────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not IS_WINDOWS, reason="Windows host only")
 @pytest.mark.skipif(not _has_qemu(), reason="QEMU not available")
 async def test_windows_vm():
@@ -140,6 +153,7 @@ async def test_windows_vm():
 # ── 3b. Windows VM (Hyper-V) ────────────────────────────────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_hyperv(), reason="Hyper-V not available")
 async def test_windows_hyperv():
     from cua_sandbox.runtime import HyperVRuntime
@@ -160,6 +174,7 @@ async def test_windows_hyperv():
 # ── 4. macOS VM (Lume) ──────────────────────────────────────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not IS_MACOS or not _has_lume(), reason="Lume only on macOS")
 async def test_macos_vm():
     from cua_sandbox.runtime import LumeRuntime
@@ -195,6 +210,7 @@ def _get_android_iso() -> str:
     return str(isos[0]) if isos else ""
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_qemu(), reason="QEMU not available")
 @pytest.mark.skipif(
     not _has_android_image(),
@@ -220,6 +236,7 @@ async def test_android_vm_baremetal():
         assert len(screenshot) > 1000
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_qemu(), reason="QEMU not available")
 @pytest.mark.skipif(not _has_android_iso(), reason="No android-x86*.iso in ~/Downloads")
 async def test_android_vm_from_iso():
@@ -262,6 +279,7 @@ async def test_android_vm_from_iso():
 # ── 5b. Android VM (QEMU-in-Docker) ──────────────────────────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_docker(), reason="Docker not available")
 async def test_android_vm_docker():
     """Test Android VM via QEMU inside Docker."""
@@ -287,6 +305,7 @@ def _has_osworld_image() -> bool:
     return any(cache.rglob("Ubuntu.qcow2")) if cache.exists() else False
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_qemu(), reason="QEMU not available")
 @pytest.mark.skipif(not _has_osworld_image(), reason="OSWorld Ubuntu.qcow2 not in image cache")
 async def test_osworld_ubuntu_vm():
@@ -328,6 +347,7 @@ def _has_android_sdk() -> bool:
         return False
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_android_sdk(), reason="Android SDK not available")
 async def test_android_emulator():
     """Test Android emulator boots to homescreen."""
@@ -344,6 +364,7 @@ async def test_android_emulator():
         assert len(screenshot) > 10000
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_android_sdk(), reason="Android SDK not available")
 async def test_android_emulator_apk_install():
     """Test Android emulator with F-Droid APK installed from URL."""
@@ -373,6 +394,7 @@ def _has_tart() -> bool:
     return shutil.which("tart") is not None
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not IS_MACOS, reason="Tart only on macOS")
 @pytest.mark.skipif(not _has_tart(), reason="Tart CLI not available")
 async def test_tart_ubuntu():
@@ -394,6 +416,7 @@ async def test_tart_ubuntu():
         assert "Linux" in result.stdout
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not IS_MACOS, reason="Tart only on macOS")
 @pytest.mark.skipif(not _has_tart(), reason="Tart CLI not available")
 async def test_tart_macos_tahoe():
@@ -411,6 +434,7 @@ async def test_tart_macos_tahoe():
         assert len(screenshot) > 1000
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not IS_MACOS, reason="Tart only on macOS")
 @pytest.mark.skipif(not _has_tart(), reason="Tart CLI not available")
 async def test_tart_macos_sequoia_cua():
@@ -428,6 +452,7 @@ async def test_tart_macos_sequoia_cua():
         assert len(screenshot) > 1000
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not IS_MACOS or not _has_lume(), reason="Lume only on macOS")
 async def test_lume_macos_tahoe_cua():
     """Test CUA macOS Tahoe image via Lume from ghcr.io/trycua/macos-tahoe-cua:latest."""
@@ -463,6 +488,7 @@ def test_qemu_baremetal_missing_binary_error():
 # ── 10. Auto-runtime (local=True, no explicit runtime) ───────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_docker(), reason="Docker not available")
 async def test_auto_runtime_linux_container():
     """local=True with no runtime auto-selects DockerRuntime for linux container images."""
@@ -479,6 +505,7 @@ async def test_auto_runtime_linux_container():
         assert screenshot[:4] == b"\x89PNG"
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_docker(), reason="Docker not available")
 async def test_auto_runtime_linux_vm():
     """local=True with no runtime auto-selects QEMURuntime(docker) for linux vm images."""
@@ -495,6 +522,7 @@ async def test_auto_runtime_linux_vm():
         assert screenshot[:4] == b"\x89PNG"
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not IS_MACOS or not _has_lume(), reason="Lume only on macOS")
 async def test_auto_runtime_macos():
     """local=True with no runtime auto-selects LumeRuntime for macOS images."""
@@ -511,6 +539,7 @@ async def test_auto_runtime_macos():
         assert screenshot[:4] == b"\x89PNG"
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_android_sdk(), reason="Android SDK not available")
 async def test_auto_runtime_android():
     """local=True with no runtime auto-selects AndroidEmulatorRuntime for android images."""
@@ -524,6 +553,7 @@ async def test_auto_runtime_android():
         assert len(screenshot) > 10000
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not IS_WINDOWS, reason="Windows host only")
 @pytest.mark.skipif(not _has_qemu(), reason="QEMU not available")
 async def test_auto_runtime_windows():
@@ -543,6 +573,7 @@ async def test_auto_runtime_windows():
 # ── 11. Cloud sandboxes (local=False) ────────────────────────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
 async def test_cloud_linux_ephemeral():
     """Cloud sandbox: Sandbox.ephemeral with linux image (local=False)."""
@@ -557,6 +588,7 @@ async def test_cloud_linux_ephemeral():
         assert screenshot[:4] == b"\x89PNG"
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
 async def test_cloud_android_ephemeral():
     """Cloud sandbox: Sandbox.ephemeral with android image (local=False)."""
@@ -571,6 +603,7 @@ async def test_cloud_android_ephemeral():
 # ── 12. Sandbox.create (persistent) ─────────────────────────────────────────
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_docker(), reason="Docker not available")
 async def test_create_persistent_linux():
     """Sandbox.create provisions a persistent sandbox that survives disconnect."""
@@ -593,6 +626,7 @@ async def test_create_persistent_linux():
         await sb.disconnect()
 
 
+@requires_runtime_optin
 @pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
 async def test_create_persistent_cloud_linux():
     """Sandbox.create provisions a persistent cloud sandbox."""

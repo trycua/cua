@@ -6,7 +6,12 @@ all available backends.
 
 Environment variables control which backends are exercised:
 
-    CUA_TEST_LOCAL=1              Enable localhost/local-sandbox tests (default: on)
+    CUA_TEST_LOCAL=1              Force localhost/local-sandbox tests on/off.
+                                  Unset means "auto": they run only when this
+                                  host actually has a controllable desktop
+                                  (pynput importable + a screenshot succeeds),
+                                  so a headless CI runner skips them instead of
+                                  failing on a missing DISPLAY.
     CUA_TEST_WS_URL=ws://...     Enable WebSocket transport tests
     CUA_TEST_HTTP_URL=http://...  Enable HTTP transport tests
     CUA_TEST_API_KEY=sk-...       API key for remote transports
@@ -15,7 +20,10 @@ Environment variables control which backends are exercised:
 
 from __future__ import annotations
 
+import functools
 import os
+import subprocess
+import sys
 
 import pytest
 import pytest_asyncio
@@ -37,7 +45,52 @@ def _env_bool(key: str, default: bool = False) -> bool:
     return val.lower() in ("1", "true", "yes")
 
 
-LOCAL_ENABLED = _env_bool("CUA_TEST_LOCAL", default=True)
+_DESKTOP_PROBE = """
+import cua_auto.keyboard
+import cua_auto.mouse
+from cua_auto.screen import screenshot
+
+screenshot()
+"""
+
+
+@functools.lru_cache(maxsize=1)
+def local_desktop_available() -> bool:
+    """True when this host can actually be driven as a Localhost sandbox.
+
+    The Localhost backend types on the real keyboard and grabs the real screen
+    through cua-auto/pynput. On a headless machine (CI runners included) the
+    import raises, so every localhost test fails for a reason that has nothing
+    to do with the code under test.
+
+    The probe runs in a subprocess on purpose: against an X display with no
+    window manager, pynput's Xlib backend terminates the interpreter outright
+    rather than raising, which would take the whole pytest session down during
+    collection.
+    """
+    if sys.platform.startswith("linux") and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return False
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _DESKTOP_PROBE],
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def _local_enabled() -> bool:
+    if os.environ.get("CUA_TEST_LOCAL", ""):
+        return _env_bool("CUA_TEST_LOCAL")
+    return local_desktop_available()
+
+
+LOCAL_ENABLED = _local_enabled()
+LOCAL_SKIP_REASON = "no controllable local desktop (set CUA_TEST_LOCAL=1 to force, 0 to silence)"
 WS_URL = os.environ.get("CUA_TEST_WS_URL")
 HTTP_URL = os.environ.get("CUA_TEST_HTTP_URL")
 API_KEY = os.environ.get("CUA_TEST_API_KEY")
@@ -85,7 +138,7 @@ async def http_transport():
 @pytest_asyncio.fixture
 async def local_sandbox():
     if not LOCAL_ENABLED:
-        pytest.skip("CUA_TEST_LOCAL disabled")
+        pytest.skip(LOCAL_SKIP_REASON)
     async with Localhost.connect() as host:
         yield host
 
@@ -116,7 +169,7 @@ async def http_sandbox():
 @pytest_asyncio.fixture
 async def localhost_instance():
     if not LOCAL_ENABLED:
-        pytest.skip("CUA_TEST_LOCAL disabled")
+        pytest.skip(LOCAL_SKIP_REASON)
     async with Localhost.connect() as host:
         yield host
 
@@ -145,9 +198,13 @@ def any_sandbox_name(request):
     return request.param
 
 
-@pytest_asyncio.fixture
-async def any_sandbox(any_sandbox_name, request):
-    """Yields a Sandbox connected via whichever transport is being parametrized."""
-    # Dynamically request the named fixture
-    sb = request.getfixturevalue(any_sandbox_name)
-    return sb
+@pytest.fixture
+def any_sandbox(any_sandbox_name, request):
+    """Returns a Sandbox connected via whichever transport is being parametrized.
+
+    Deliberately a *sync* fixture: the backend fixtures it forwards to are
+    async-generator fixtures, and pytest-asyncio can only set those up from
+    outside a running event loop. Resolving them from an async fixture raises
+    "Runner.run() cannot be called from a running event loop".
+    """
+    return request.getfixturevalue(any_sandbox_name)

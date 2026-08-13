@@ -8,6 +8,8 @@ fetch real manifests from ghcr.io and require network access.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from cua_sandbox.registry.manifest import (
     ImageFormat,
@@ -19,7 +21,10 @@ from cua_sandbox.registry.manifest import (
 from cua_sandbox.registry.media_types import (
     DOCKER_IMAGE_CONFIG,
     DOCKER_IMAGE_LAYER,
+    LEGACY_CONFIG,
     LEGACY_DISK_CHUNK,
+    LUME_DISK,
+    LUME_NVRAM,
     OCI_IMAGE_CONFIG,
     OCI_IMAGE_LAYER,
     OCI_VM_AUX,
@@ -199,12 +204,91 @@ class TestGetLayerInfo:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Real manifest shapes, captured offline
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def _lume_chunked_manifest() -> dict:
+    """Trimmed copy of ghcr.io/trycua/macos-sequoia-cua:latest.
+
+    Two disk parts instead of 160; everything else is verbatim. This is what
+    `lume push` produces today: trycua.lume media types with the part index in
+    annotations, not in the media type string.
+    """
+    return {
+        "annotations": {"org.trycua.lume.os": "macOS"},
+        "config": {
+            "mediaType": LEGACY_CONFIG,
+            "digest": "sha256:478d66",
+            "size": 611,
+        },
+        "layers": [
+            {
+                "mediaType": LUME_NVRAM,
+                "digest": "sha256:921d54",
+                "size": 33579164,
+                "annotations": {"org.opencontainers.image.title": "nvram.bin"},
+            },
+            {
+                "mediaType": LUME_DISK,
+                "digest": "sha256:14d748",
+                "size": 1123260,
+                "annotations": {
+                    "org.opencontainers.image.title": "disk.img.part.0",
+                    "org.trycua.lume.part.number": "0",
+                    "org.trycua.lume.part.total": "160",
+                },
+            },
+            {
+                "mediaType": LUME_DISK,
+                "digest": "sha256:603f15",
+                "size": 5728169,
+                "annotations": {
+                    "org.opencontainers.image.title": "disk.img.part.1",
+                    "org.trycua.lume.part.number": "1",
+                    "org.trycua.lume.part.total": "160",
+                },
+            },
+        ],
+    }
+
+
+class TestLumeChunkedManifest:
+    """A lume-pushed macOS image classified as UNKNOWN, so `cua pull` logged
+    "(unknown, vm)" and no format-specific handling could ever match it."""
+
+    def test_format_is_chunked_parts(self):
+        assert detect_format(_lume_chunked_manifest()) == ImageFormat.CHUNKED_PARTS
+
+    def test_kind_and_os(self):
+        manifest = _lume_chunked_manifest()
+        assert detect_kind(manifest) == "vm"
+        assert detect_os(manifest) == "macos"
+
+    def test_layer_parts_are_numbered(self):
+        info = get_layer_info(_lume_chunked_manifest())
+        disk_parts = [layer for layer in info if layer["part_number"] is not None]
+        assert [layer["part_number"] for layer in disk_parts] == [0, 1]
+        assert all(layer["part_total"] == 160 for layer in disk_parts)
+
+    def test_lz4_still_wins_over_chunked(self):
+        """Legacy LZ4 images share the lume config type — they must not be
+        reclassified just because the config media type matches."""
+        manifest = _lume_chunked_manifest()
+        manifest["layers"] = [{"mediaType": LEGACY_DISK_CHUNK, "digest": "sha256:a", "size": 1}]
+        assert detect_format(manifest) == ImageFormat.LEGACY_LZ4
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Live registry tests (require network)
 # ═════════════════════════════════════════════════════════════════════════════
 
+# These reach out to ghcr.io / docker.io over the network. Anonymous pulls from
+# a shared CI runner are rate-limited, so the whole class is opt-in; the offline
+# regression tests above cover the same detection logic against real manifests.
 oci_live = pytest.mark.skipif(
-    not pytest.importorskip("oras", reason="oras-py not installed"),
-    reason="oras-py not installed",
+    os.environ.get("CUA_TEST_REGISTRY", "").lower() not in ("1", "true", "yes"),
+    reason="hits a live registry; set CUA_TEST_REGISTRY=1 to run",
 )
 
 

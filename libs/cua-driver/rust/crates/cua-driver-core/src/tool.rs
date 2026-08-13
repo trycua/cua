@@ -810,11 +810,13 @@ impl ToolRegistry {
     }
 
     pub fn tools_list(&self) -> Value {
+        let empty_args = Value::Object(serde_json::Map::new());
         let list: Vec<Value> = self
             .order
             .iter()
-            .filter_map(|n| self.tools.get(n))
-            .map(|t| t.def().to_list_entry())
+            .filter(|name| crate::policy::authorize_tool_call(name, &empty_args).is_ok())
+            .filter_map(|name| self.tools.get(name))
+            .map(|tool| tool.def().to_list_entry())
             .collect();
         // `capability_version` is the contract version for the
         // capability tokens claimed by each tool entry. Bumped on

@@ -1,26 +1,26 @@
 ---
 title: Run Minecraft in a Windows sandbox
-description: Boot a Windows sandbox, install Minecraft Java Edition into it, and let a computer-use agent open a single-player world.
+description: Boot a Windows sandbox, install Minecraft Java Edition, and drive it with an agent through the cua-driver MCP server running inside the sandbox.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Minecraft exercises almost everything a Windows sandbox can do: it needs internet access, a Java runtime, working OpenGL, and a GUI that only clicks can drive. This guide boots a Windows sandbox on the local QEMU runtime, installs Minecraft Java Edition, and hands the launcher to a computer-use agent that starts a single-player world.
+Minecraft exercises almost everything a Windows sandbox can do: it needs internet access, a Java runtime, working OpenGL, and a GUI that only clicks can drive. This guide boots a Windows sandbox, installs Minecraft Java Edition, and hands it to an agent that talks to **cua-driver's MCP server inside the sandbox** — the same loop against a local sandbox and against Fleet.
 
-<Callout type="warn">
-  You need a Microsoft account that owns Minecraft Java Edition. Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
-</Callout>
+## Before you start
 
-<Callout type="info">
-  This guide covers the **local** QEMU runtime only. A Windows sandbox on Fleet cloud does not currently boot: the SDK creates its sandbox templates without a firmware setting, so they inherit the BIOS default, while the Windows containerDisk is UEFI/GPT and BIOS has nothing to chainload. That is tracked in [trycua/cua#3125](https://github.com/trycua/cua/pull/3125).
-</Callout>
+- **cua-sandbox 0.3.1 or newer.** `Image.expose()` on the local QEMU runtime landed in 0.3.1, and Windows on Fleet needs 0.3.0.
+- **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright; use the Fleet path there instead.
+- **A Microsoft account that owns Minecraft Java Edition.** Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
+- **A vision-capable LLM endpoint** for the agent loop.
 
-## Boot a Windows sandbox that can reach the internet
+## Boot a Windows sandbox
 
-`Image.windows()` resolves to a pinned Windows Server 2022 containerDisk. Two QEMU arguments have to be added on top of the defaults:
+`Image.windows()` resolves to a pinned Windows Server 2022 containerDisk. Three things get added on top of the defaults:
 
+- **`.expose(3000)`** publishes cua-driver's MCP server, which already runs inside the guest, so the agent can reach it.
 - **A second network interface.** The bare-metal runtime attaches its NIC with `restrict=on`, which isolates the guest. `sb.shell.run()` still works over the forwarded port, but nothing inside Windows can reach the internet — and Minecraft needs to.
-- **`-cpu host`.** The default `qemu64` CPU model is too thin for a software OpenGL driver. With it, Minecraft creates its window and then dies while loading resources, with no Java exception and no crash log. The last `-cpu` on the command line wins, so appending it is enough.
+- **`-cpu host`.** The default `qemu64` model is too thin for a software OpenGL driver: Minecraft creates its window and then dies while loading resources, with no Java exception and no crash log. The last `-cpu` on the command line wins, so appending it is enough.
 
 ```python
 import asyncio
@@ -36,7 +36,7 @@ EXTRA_ARGS = [
 
 async def main():
     sb = await Sandbox.create(
-        Image.windows(),
+        Image.windows().expose(3000),
         name='mc-win',
         local=True,
         runtime=QEMURuntime(
@@ -46,17 +46,20 @@ async def main():
             extra_args=EXTRA_ARGS,
         ),
     )
-    print(await sb.shell.run('ver'))
+    mcp_port = sb._runtime_info.exposed_ports[3000]
+    print(f'cua-driver MCP on http://127.0.0.1:{mcp_port}/mcp')
     await sb.disconnect()  # the sandbox keeps running
 
 asyncio.run(main())
 ```
 
+A warm boot takes about 30 seconds. `exposed_ports` maps each exposed guest port to the host port it landed on, and `GET /healthz` on that port answers `ok` once cua-driver is up.
+
 <Callout type="warn">
   Give the second NIC its own subnet. Both user-mode networks default to `10.0.2.0/24` and both offer the guest `10.0.2.15`, so Windows drops one interface to a `169.254.x.x` link-local address with no gateway and no working DNS.
 </Callout>
 
-A warm boot takes about 35 seconds. Confirm the guest really has internet before installing anything.
+Confirm the guest really has internet before installing anything.
 
 ```python
 async with Sandbox.connect('mc-win', local=True) as sb:
@@ -143,56 +146,161 @@ foreach ($d in $dirs) {
 }
 ```
 
-Click **Launch** again. The Minecraft title screen appears after a minute or two.
-
-## Let an agent start a world
-
-Now hand the running launcher to a computer-use agent. A `Sandbox` can be passed straight to `ComputerAgent` as a tool.
-
-Use a **grounded** configuration. The `omniparser+` prefix runs a local element-detection pass over each screenshot and gives the model labelled UI elements to choose from, which is what makes clicks land on the right button. A plain vision model without that step guesses pixel coordinates and misses. It needs `cua-som` installed alongside the agent.
+Deliver it the same way as the first script.
 
 ```python
-import asyncio
-from pathlib import Path
-from cua import ComputerAgent, Sandbox
-
-PROMPT = """
-Prism Launcher is open on a Windows desktop, with a Minecraft instance and a signed-in account.
-
-1. Select the instance and click Launch.
-2. Wait for Minecraft. It runs on a software renderer, so the window takes minutes to appear
-   and repaints slowly. Screenshot, wait 15-30 seconds, screenshot again. Slow is not failure.
-3. On the title screen click Singleplayer, then Create New World, then Create New World again
-   to accept the defaults.
-4. Stop as soon as the hotbar and terrain are visible. Do not move, do not press Escape.
-"""
-
-async def main():
-    async with Sandbox.connect('mc-win', local=True) as sb:
-        agent = ComputerAgent(
-            model='omniparser+anthropic/claude-sonnet-4-5',
-            tools=[sb],
-            only_n_most_recent_images=4,
-        )
-        async for result in agent.run([{'role': 'user', 'content': PROMPT}]):
-            for item in result['output']:
-                if item['type'] == 'computer_call':
-                    print(item['action'])
-
-        Path('in-world.png').write_bytes(await sb.screenshot())
-
-asyncio.run(main())
+async with Sandbox.connect('mc-win', local=True) as sb:
+    await sb.files.write_text('C:\\mc\\mesa.ps1', Path('mesa.ps1').read_text())
+    result = await sb.shell.run(
+        'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\mc\\mesa.ps1', timeout=600,
+    )
+    print(result.stdout)   # mesa -> C:\mc\prismw\java\java-runtime-gamma\bin
 ```
 
-Give the agent room to be patient. World generation takes a couple of minutes under software rendering, and an agent that reads a half-drawn frame as a failure will click somewhere it should not.
+Click **Launch** again. The Minecraft title screen appears after a minute or two.
 
-A full run — launcher to standing in a new world — took 37 computer calls and about twenty minutes here, most of it waiting on the software renderer. The agent drove Minecraft's own menus mostly with `Tab` and `Enter` rather than clicks, which is more reliable than aiming at a slowly repainting screen.
+## Drive it with an agent over MCP
+
+The sandbox already runs **cua-driver**, which serves an MCP endpoint on guest port 3000 — that is what `.expose(3000)` published. The agent is a small loop: list the MCP tools, hand them to a model as ordinary function tools, call whichever one it picks, feed the result back.
+
+Three things about cua-driver's tools shape the loop:
+
+- **A YAML policy governs which tools may actually run.** `list_tools()` advertises everything, but calls to tools outside the policy come back with `Permission denied: user policy: tool 'X' is not allowed by the YAML policy`. In this image `get_desktop_state`, `list_apps`, `list_windows`, `get_window_state`, `click`, `double_click`, `type_text`, `press_key`, `hotkey`, `launch_app`, `bring_to_front`, `scroll` and `drag` are allowed, while `get_screen_size`, `get_accessibility_tree`, `get_config`, `check_permissions`, `get_cursor_position` and `zoom` are refused.
+- **Clicks are addressed to an application, not the screen.** `click(pid=..., x=..., y=...)` targets a window belonging to that pid, which you find with `list_windows`. Add `delivery_mode='foreground'` when a background-delivered click does not land.
+- **There is no wait tool.** The loop waits by calling `get_desktop_state` again, so say that in the system prompt or the model will invent something worse.
+
+```python
+import asyncio, base64, json, os
+import litellm
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+
+SYSTEM = """You operate a computer through the provided tools.
+
+The desktop is Windows at 1280x800. Work in a loop: look at the screen with
+get_desktop_state, decide one action, call one tool, then look again.
+
+  * click / type_text / press_key act on a specific application, addressed by
+    `pid`. Use list_windows to find the pid, then pass pid with x/y.
+  * There is no wait tool. If something is still loading, call
+    get_desktop_state again — repeated looks are how you wait.
+
+Call exactly one tool per turn. When the task is complete, reply DONE."""
+
+async def run(mcp_url, task, model, max_steps=60):
+    client = Client(StreamableHttpTransport(mcp_url))
+    async with client:
+        mcp_tools = await client.list_tools()
+        tools = [{
+            'type': 'function',
+            'function': {
+                'name': t.name,
+                'description': (t.description or '')[:800],
+                'parameters': t.inputSchema or {'type': 'object', 'properties': {}},
+            },
+        } for t in mcp_tools]
+
+        messages = [{'role': 'system', 'content': SYSTEM},
+                    {'role': 'user', 'content': task}]
+
+        for _ in range(max_steps):
+            resp = await litellm.acompletion(
+                model=model, messages=messages, tools=tools,
+                tool_choice='auto', temperature=0.0,
+            )
+            msg = resp.choices[0].message
+            messages.append(msg.model_dump())
+            if not msg.tool_calls:
+                break                      # model said DONE
+
+            for call in msg.tool_calls:
+                args = json.loads(call.function.arguments or '{}')
+                result = await client.call_tool(call.function.name, args,
+                                                raise_on_error=False)
+                text = ''.join(getattr(b, 'text', '') for b in (result.content or []))
+                messages.append({'role': 'tool', 'tool_call_id': call.id,
+                                 'name': call.function.name, 'content': text[:1500]})
+
+                shot = next((b.data for b in (result.content or [])
+                             if getattr(b, 'data', None)), None)
+                if shot:
+                    messages.append({'role': 'user', 'content': [
+                        {'type': 'text', 'text': 'screenshot after that action:'},
+                        {'type': 'image_url',
+                         'image_url': {'url': f'data:image/png;base64,{shot}'}},
+                    ]})
+```
+
+Point it at the exposed port and give it the task.
+
+```python
+TASK = """
+Prism Launcher is open, with a Minecraft instance and a signed-in account.
+Select the instance and click Launch. Minecraft uses a software renderer, so the
+window takes minutes to appear and repaints slowly — keep calling
+get_desktop_state to watch it, and do not restart anything. On the title screen
+click Singleplayer, then Create New World, then Create New World again. Stop as
+soon as you are inside the world (terrain in first person, hotbar and hearts
+visible) and reply DONE. Never press Escape while Minecraft is in the foreground.
+"""
+
+asyncio.run(run(f'http://127.0.0.1:{mcp_port}/mcp', TASK, 'your-model'))
+```
+
+<Callout type="warn">
+  Prune old screenshots out of the message history — keep the newest two or three and replace the rest with a placeholder. Each `get_desktop_state` returns a full-screen PNG, and a run that waits for a slow renderer accumulates dozens.
+</Callout>
+
+Because the MCP tools are presented as **ordinary function tools**, this works against endpoints that reject the provider-native computer-use tool types. That is not hypothetical: on the gateway used here, the same model with the same image in the same second returned 200 for an ordinary function tool and 403 for Anthropic's `computer_20250124`, and `computer_use_preview` was refused outright.
+
+Two adjustments were needed for that gateway, and a different endpoint may need neither: it is streaming-only, so the loop issues `stream=True` and reassembles the reply with `litellm.stream_chunk_builder`, and it rejects `role: system`, so the system prompt is carried as the first user turn instead.
+
+A full run — launcher to standing in a new world — took 52 steps and about twenty minutes, most of it waiting on the software renderer. Expect the model to spend long stretches doing nothing but re-screenshotting.
+
+<Callout type="info">
+  Give the model help with coordinates. A vision model without grounding guesses pixel positions and misses: in one run an ungrounded model clicked at (1226, 210) four times, nowhere near the button it wanted, then declared it had no desktop tool. cua-driver's `list_windows` and pid-scoped clicks avoid most of this, and a grounding pass over the screenshot removes the rest.
+</Callout>
+
+## Run the same thing on Fleet
+
+The image and the agent loop are identical on Fleet. Only two things change: there is no `local=True`, and the MCP endpoint is reached through Fleet's service proxy rather than a forwarded localhost port.
+
+`.expose(3000)` becomes a Fleet **service** named `port-3000`, served at `https://run.cua.ai/api/svc/<namespace>/<sandbox>-port-3000/`.
+
+```python
+import httpx
+from cua import Image, Sandbox
+
+sb = await Sandbox.create(Image.windows().expose(3000), name='mc-fleet', time_to_start=900)
+
+bound = sb._transport._bound
+base = f'https://run.cua.ai/api/svc/{bound.namespace}/{bound.name}-port-3000/'
+
+token = httpx.post(
+    'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token',
+    data={'grant_type': 'client_credentials',
+          'client_id': os.environ['CUA_CLIENT_ID'],
+          'client_secret': os.environ['CUA_CLIENT_SECRET']},
+).json()['access_token']
+
+client = Client(StreamableHttpTransport(base + 'mcp',
+                                        headers={'Authorization': f'Bearer {token}'}))
+```
+
+That client goes into the same `run()` loop as above. A Fleet Windows sandbox takes about three minutes to become ready, against about thirty seconds for a warm local one, and `GET healthz` on that service URL answers `ok` when cua-driver is up.
+
+<Callout type="warn">
+  Use client credentials, not a `cua auth login` session token. The session token is short-lived and is held without refresh, so a long provisioning wait dies partway with `401 auth token is invalid`. Client-credential tokens still expire — the ones here last 900 seconds — so a run longer than that must re-mint the token and rebuild the MCP client.
+</Callout>
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| QEMU refuses to start with `-cpu host` | no KVM or HVF — for example an x86_64 guest on Apple Silicon, which runs under TCG | use a host with hardware virtualisation, or the Fleet path |
 | Launcher never appears, no error | MSVC build without the VC++ redistributable | use the MinGW portable build |
 | Guest has an IP address but cannot resolve names | both user-mode NICs offered the same address | give the second NIC its own subnet |
 | `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |
 | Game exits during resource loading with no Java exception | default `qemu64` CPU model | append `-cpu host` to `extra_args` |
+| `Permission denied: user policy: tool 'X' is not allowed` | cua-driver's YAML policy refuses that tool even though `list_tools()` lists it | use an allowed tool — `get_desktop_state` instead of `get_screen_size`, `list_windows` instead of `get_accessibility_tree` |
+| Model replies with empty output on the first call | endpoint is streaming-only | issue `stream=True` and rebuild with `litellm.stream_chunk_builder` |

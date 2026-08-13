@@ -74,6 +74,55 @@ fn native_prompt_surface_present(nodes: &[AtspiNode]) -> bool {
     heading_count == 1 && explanatory_text_present
 }
 
+fn redacted_native_prompt_snapshot(
+    nodes: &[AtspiNode],
+    bounds: &[(usize, i32, i32, u32, u32)],
+) -> serde_json::Value {
+    serde_json::Value::Array(
+        trusted_prompt_nodes(nodes)
+            .filter(|node| {
+                has_nonempty_accessible_text(node)
+                    || !node.actions.is_empty()
+                    || node.focused == Some(true)
+            })
+            .take(64)
+            .map(|node| {
+                let parent_role = node.parent_element_index.and_then(|parent_index| {
+                    nodes
+                        .iter()
+                        .find(|candidate| candidate.element_index == Some(parent_index))
+                        .map(|parent| parent.role.as_str())
+                });
+                let node_bounds = node.element_index.and_then(|element_index| {
+                    bounds
+                        .iter()
+                        .find(|(index, ..)| *index == element_index)
+                        .map(|(_, x, y, width, height)| {
+                            serde_json::json!({
+                                "x": x,
+                                "y": y,
+                                "width": width,
+                                "height": height,
+                            })
+                        })
+                });
+                serde_json::json!({
+                    "role": &node.role,
+                    "depth": node.depth,
+                    "element_index": node.element_index,
+                    "parent_element_index": node.parent_element_index,
+                    "parent_role": parent_role,
+                    "actions": &node.actions,
+                    "focused": node.focused,
+                    "enabled": node.enabled,
+                    "has_text": has_nonempty_accessible_text(node),
+                    "bounds": node_bounds,
+                })
+            })
+            .collect(),
+    )
+}
+
 fn edge_gap(first: (i32, i32, i32, i32), second: (i32, i32, i32, i32)) -> Option<i64> {
     let (first_left, first_top, first_right, first_bottom) = first;
     let (second_left, second_top, second_right, second_bottom) = second;
@@ -363,7 +412,13 @@ pub async fn handle(
                         "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}",
                         request.attempt
                     ),
-                ));
+                )
+                .with_detail(serde_json::json!({
+                    "redacted_native_nodes": redacted_native_prompt_snapshot(
+                        &tree.nodes,
+                        &tree.bounds,
+                    ),
+                })));
             }
             _ => {}
         }

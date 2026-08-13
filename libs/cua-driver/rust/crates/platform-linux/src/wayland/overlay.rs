@@ -56,6 +56,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 enum WlOverlayCmd {
     Cmd { key: CursorKey, cmd: OverlayCommand },
     Remove(CursorKey),
+    Revive(CursorKey),
     Shutdown,
 }
 
@@ -104,9 +105,9 @@ pub fn forward(msg: &OverlayMsg) -> bool {
     if !should_forward(CONFIG_ENABLED.load(Ordering::Acquire), msg) {
         return false;
     }
-    // The native Wayland path owns one cursor and does not keep keyed session
-    // tombstones. Accept revival without starting the compositor thread.
-    if matches!(msg, OverlayMsg::Revive(_)) {
+    // If the owner has never started, it cannot hold a tombstone. Accept the
+    // lifecycle transition without paying the compositor startup cost.
+    if matches!(msg, OverlayMsg::Revive(_)) && tx().is_none() {
         return true;
     }
     // Lazy startup: spawning the layer-shell owner thread + connecting to
@@ -130,6 +131,7 @@ fn map_overlay_msg(msg: &OverlayMsg) -> Option<WlOverlayCmd> {
             key: kc.key.clone(),
             cmd: kc.cmd.clone(),
         }),
+        OverlayMsg::Revive(key) => Some(WlOverlayCmd::Revive(key.clone())),
     }
 }
 
@@ -383,6 +385,12 @@ fn remove_keyed_core(
     removed
 }
 
+fn revive_key(ended: &mut HashSet<CursorKey>, key: CursorKey) {
+    if key != "default" {
+        ended.remove(&key);
+    }
+}
+
 fn dbg(msg: &str) {
     if std::env::var_os("CUA_OVERLAY_DEBUG").is_some() {
         eprintln!("[cua-overlay-wl] {msg}");
@@ -616,6 +624,9 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                 }
                 Ok(WlOverlayCmd::Remove(key)) => {
                     dirty |= remove_keyed_core(&mut state.cores, &mut state.ended, key);
+                }
+                Ok(WlOverlayCmd::Revive(key)) => {
+                    revive_key(&mut state.ended, key);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -1552,6 +1563,10 @@ mod tests {
             map_overlay_msg(&OverlayMsg::Remove("session-a".to_owned())),
             Some(WlOverlayCmd::Remove(key)) if key == "session-a"
         ));
+        assert!(matches!(
+            map_overlay_msg(&OverlayMsg::Revive("session-a".to_owned())),
+            Some(WlOverlayCmd::Revive(key)) if key == "session-a"
+        ));
     }
 
     #[test]
@@ -1645,6 +1660,21 @@ mod tests {
             },
         ));
         assert!(!cores.contains_key("session-a"));
+
+        revive_key(&mut ended, "session-a".to_owned());
+        assert!(!ended.contains("session-a"));
+        assert!(apply_keyed_command(
+            &mut cores,
+            &template,
+            &ended,
+            "session-a".to_owned(),
+            OverlayCommand::SnapTo {
+                x: 200.0,
+                y: 200.0,
+                heading_radians: None,
+            },
+        ));
+        assert!(cores.contains_key("session-a"));
     }
 
     #[test]

@@ -12,8 +12,9 @@ use cua_driver_core::browser::{
 };
 use windows::core::{Interface, BSTR};
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTogglePattern, IUIAutomationValuePattern, ToggleState_Off,
-    ToggleState_On, UIA_TogglePatternId, UIA_ValuePatternId,
+    IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationTogglePattern,
+    IUIAutomationValuePattern, ToggleState_Off, ToggleState_On, UIA_InvokePatternId,
+    UIA_TogglePatternId, UIA_ValuePatternId,
 };
 
 use crate::uia::UiaNode;
@@ -98,6 +99,43 @@ fn native_tab_count(nodes: &[UiaNode]) -> usize {
         .len()
 }
 
+fn exact_native_new_tab_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
+    let Some(last_tab_index) = nodes.iter().rposition(|node| {
+        !node.in_web_content
+            && node.control_type == "TabItem"
+            && node
+                .rect
+                .is_some_and(|(left, top, right, bottom)| left < right && top < bottom)
+    }) else {
+        return Ok(None);
+    };
+    let last_tab = &nodes[last_tab_index];
+    let successor_index =
+        (last_tab_index + 1..nodes.len()).find(|index| nodes[*index].depth <= last_tab.depth);
+    let Some(successor) = successor_index.map(|index| &nodes[index]) else {
+        return Ok(None);
+    };
+    let vertically_overlaps_tab_row = match (last_tab.rect, successor.rect) {
+        (Some((_, tab_top, _, tab_bottom)), Some((_, button_top, _, button_bottom))) => {
+            tab_top < button_bottom && button_top < tab_bottom
+        }
+        _ => false,
+    };
+    if successor.in_web_content
+        || successor.control_type != "Button"
+        || successor.enabled == Some(false)
+        || successor.element_ptr == 0
+        || !successor.actions.iter().any(|action| action == "invoke")
+        || !vertically_overlaps_tab_row
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native tab strip did not expose one exact structural new-tab action",
+        ));
+    }
+    Ok(Some(successor.element_ptr))
+}
+
 fn stable_native_tab_count(hwnd: u64, initial_count: usize) -> Result<usize, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut previous = initial_count;
@@ -168,17 +206,19 @@ fn force_setup_foreground(target: windows::Win32::Foundation::HWND) -> (bool, bo
     unsafe { crate::input::force_foreground_assisted(target) }
 }
 
-fn require_temporary_tab_foreground(
-    foregrounded: bool,
-    injected_global_input: bool,
-) -> Result<(bool, bool), BrowserRefusal> {
-    if !foregrounded {
-        return Err(refusal(
+unsafe fn invoke(element_ptr: usize, description: &str) -> Result<(), BrowserRefusal> {
+    let element = IUIAutomationElement::from_raw(element_ptr as *mut _);
+    let result = element
+        .GetCurrentPattern(UIA_InvokePatternId)
+        .and_then(|pattern| pattern.cast::<IUIAutomationInvokePattern>())
+        .and_then(|pattern| pattern.Invoke());
+    std::mem::forget(element);
+    result.map_err(|error| {
+        refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "Windows refused the bounded foreground assist before temporary-tab creation",
-        ));
-    }
-    Ok((foregrounded, injected_global_input))
+            format!("the exact {description} UIA Invoke action failed: {error}"),
+        )
+    })
 }
 
 fn confirm_setup_navigation(
@@ -462,25 +502,29 @@ pub fn enable(
                 injected_global_input: false,
                 enable_attempted: false,
             };
-            let target = windows::Win32::Foundation::HWND(hwnd as *mut _);
-            let foreground_proof = force_setup_foreground(target);
-            let (foregrounded, foreground_injected) =
-                match require_temporary_tab_foreground(foreground_proof.0, foreground_proof.1) {
-                    Ok(result) => result,
-                    Err(error) => return Err(handle.abort(error)),
-                };
-            handle.foregrounded_window = foregrounded;
-            handle.injected_global_input |= foreground_injected;
-            handle.injected_global_input = true;
-            if let Err(error) = crate::input::keyboard::send_key_synthesized(hwnd, "t", &["ctrl"]) {
-                return Err(handle.abort(refusal(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    format!(
-                        "could not open a bounded temporary tab in the exact {} window: {error}",
-                        descriptor.product_name
-                    ),
-                )));
+            let tab_tree = crate::uia::walk_tree(hwnd, None);
+            let new_tab_button = match exact_native_new_tab_button(&tab_tree.nodes) {
+                Ok(Some(element)) => element,
+                Ok(None) => {
+                    release_nodes(&tab_tree.nodes);
+                    return Err(handle.abort(refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        format!(
+                            "the exact {} window has no structural native new-tab action",
+                            descriptor.product_name
+                        ),
+                    )));
+                }
+                Err(error) => {
+                    release_nodes(&tab_tree.nodes);
+                    return Err(handle.abort(error));
+                }
+            };
+            if let Err(error) = unsafe { invoke(new_tab_button, "native new-tab button") } {
+                release_nodes(&tab_tree.nodes);
+                return Err(handle.abort(error));
             }
+            release_nodes(&tab_tree.nodes);
             handle.opened_setup_page = true;
 
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -838,13 +882,36 @@ mod tests {
     }
 
     #[test]
-    fn temporary_tab_bootstrap_requires_proven_foreground_activation() {
-        let error = require_temporary_tab_foreground(false, true).unwrap_err();
-        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+    fn native_new_tab_button_is_the_strict_successor_of_the_tab_strip() {
+        let mut first = node("TabItem", "opaque-1", None, &["select"]);
+        first.element_index = Some(10);
+        first.element_ptr = 10;
+        first.depth = 8;
+        first.rect = Some((10, 10, 110, 40));
+        let mut first_close = node("Button", "opaque-close-1", None, &["invoke"]);
+        first_close.element_index = Some(11);
+        first_close.element_ptr = 11;
+        first_close.depth = 9;
+        first_close.parent_element_index = Some(10);
+        let mut second = node("TabItem", "opaque-2", None, &["select"]);
+        second.element_index = Some(20);
+        second.element_ptr = 20;
+        second.depth = 8;
+        second.rect = Some((120, 10, 220, 40));
+        let mut second_close = node("Button", "opaque-close-2", None, &["invoke"]);
+        second_close.element_index = Some(21);
+        second_close.element_ptr = 21;
+        second_close.depth = 9;
+        second_close.parent_element_index = Some(20);
+        let mut new_tab = node("Button", "opaque-new-tab", None, &["invoke"]);
+        new_tab.element_ptr = 30;
+        new_tab.depth = 6;
+        new_tab.rect = Some((220, 10, 260, 40));
 
         assert_eq!(
-            require_temporary_tab_foreground(true, true).unwrap(),
-            (true, true)
+            exact_native_new_tab_button(&[first, first_close, second, second_close, new_tab,])
+                .unwrap(),
+            Some(30)
         );
     }
 }

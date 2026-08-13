@@ -46,8 +46,9 @@ const (
 
 // verdict is the result of evaluating a policy against one request.
 type verdict struct {
-	truth truth
-	err   error // non-nil if and only if truth == truthError
+	truth  truth
+	err    error  // non-nil if and only if truth == truthError
+	reason string // non-empty only when truth == truthFalse
 }
 
 // A combinator is a fold over truth: All is min, Any is max. annihilator must
@@ -121,6 +122,18 @@ func compileNode(n Node) (compiledNode, error) {
 			return nil, err
 		}
 		return &compiledAny{children: children}, nil
+	case BecauseNode:
+		if node.Child == nil {
+			return nil, fmt.Errorf("policy reason %q has no child", node.Reason)
+		}
+		if node.Reason == "" {
+			return nil, fmt.Errorf("policy reason is empty")
+		}
+		child, err := compileNode(node.Child)
+		if err != nil {
+			return nil, err
+		}
+		return &compiledBecause{child: child, reason: node.Reason}, nil
 	default:
 		return nil, fmt.Errorf("cannot compile unknown policy node %T", n)
 	}
@@ -197,6 +210,23 @@ func (leaf *compiledLeaf) eval(ctx context.Context, input *requestPolicyInput) v
 
 func (leaf *compiledLeaf) bodyBudget() int64 { return leaf.config.maxBodyBytes }
 
+type compiledBecause struct {
+	child  compiledNode
+	reason string
+}
+
+func (node *compiledBecause) eval(ctx context.Context, input *requestPolicyInput) verdict {
+	result := node.child.eval(ctx, input)
+	if result.truth == truthFalse {
+		result.reason = node.reason
+		return result
+	}
+	result.reason = ""
+	return result
+}
+
+func (node *compiledBecause) bodyBudget() int64 { return node.child.bodyBudget() }
+
 type compiledAll struct{ children []compiledNode }
 
 func (node *compiledAll) eval(ctx context.Context, input *requestPolicyInput) verdict {
@@ -218,6 +248,7 @@ func (node *compiledAny) bodyBudget() int64 { return maxChildBudget(node.childre
 // annihilator can still win — that is what makes the fold order-independent.
 func fold(ctx context.Context, input *requestPolicyInput, children []compiledNode, over combinator) verdict {
 	var errs []error
+	var reason string
 	for _, child := range children {
 		result := child.eval(ctx, input)
 		switch result.truth {
@@ -230,13 +261,17 @@ func fold(ctx context.Context, input *requestPolicyInput, children []compiledNod
 				slog.Warn("opa: policy error discarded; a sibling decided the verdict",
 					"allowed", over.annihilator == truthTrue, "err", errors.Join(errs...))
 			}
-			return verdict{truth: over.annihilator}
+			return verdict{truth: over.annihilator, reason: result.reason}
 		case truthError:
 			errs = append(errs, result.err)
+		case truthFalse:
+			if reason == "" {
+				reason = result.reason
+			}
 		}
 	}
 	if len(errs) > 0 {
 		return verdict{truth: truthError, err: errors.Join(errs...)}
 	}
-	return verdict{truth: over.identity}
+	return verdict{truth: over.identity, reason: reason}
 }

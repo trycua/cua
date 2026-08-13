@@ -125,6 +125,8 @@ func evalPolicyNode(t *testing.T, node Node, input map[string]any) bool {
 			}
 		}
 		return true
+	case BecauseNode:
+		return evalPolicyNode(t, policy.Child, input)
 	case AnyNode:
 		for _, child := range policy.Children {
 			if evalPolicyNode(t, child, input) {

@@ -439,7 +439,11 @@ func PolicyMiddleware(expression Node, options ...MiddlewareOption) Middleware {
 			case truthTrue:
 				next.ServeHTTP(w, request)
 			case truthFalse:
-				writeJSONErr(w, http.StatusForbidden, config.deniedMessage)
+				message := verdict.reason
+				if message == "" {
+					message = config.deniedMessage
+				}
+				writeJSONErr(w, http.StatusForbidden, message)
 			default:
 				// truthError, and deliberately also any truth value a future
 				// change adds: an undecidable policy must fail closed rather

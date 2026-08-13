@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -828,5 +829,118 @@ allow {
 	}
 	if year.loads != 1 || month.loads != 1 {
 		t.Fatalf("provider loads = year:%d month:%d, want 1 each", year.loads, month.loads)
+	}
+}
+
+func policyErrorMessage(t *testing.T, response *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v; body = %q", err, response.Body.String())
+	}
+	return body.Error
+}
+
+func TestPolicyMiddlewareUsesAnnotatedDenialReason(t *testing.T) {
+	deny := Policy(Inline("deny-reason.rego", `package deny_reason
+default allow = false
+`), Query("data.deny_reason.allow"))
+	handler := PolicyMiddleware(
+		Because(deny, "specific denial"),
+		WithDeniedMessage("fallback denial"),
+	)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("denied request reached downstream handler")
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+	if got := policyErrorMessage(t, response); got != "specific denial" {
+		t.Fatalf("error = %q, want %q", got, "specific denial")
+	}
+}
+
+func TestAllStopsAfterAnnotatedDenial(t *testing.T) {
+	deny := Policy(Inline("deny-short-circuit.rego", `package deny_short_circuit
+default allow = false
+`), Query("data.deny_short_circuit.allow"))
+	provider := &testFactProvider{cacheKey: "reason-must-not-load", facts: FactSet{"allowed": true}}
+	expensive := Policy(Inline("reason-must-not-load.rego", `package reason_must_not_load
+allow { input.facts.user.allowed }
+`), Query("data.reason_must_not_load.allow"), WithFacts("user", provider))
+	handler := PolicyMiddleware(All(Because(deny, "stop here"), expensive), WithPipeline())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("denied request reached downstream handler")
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if got := policyErrorMessage(t, response); got != "stop here" {
+		t.Fatalf("error = %q, want %q", got, "stop here")
+	}
+	if provider.loads != 0 {
+		t.Fatalf("later fact provider loaded %d times, want 0", provider.loads)
+	}
+}
+
+func TestPolicyMiddlewareFallsBackForUnannotatedDenial(t *testing.T) {
+	deny := Policy(Inline("deny-fallback.rego", `package deny_fallback
+default allow = false
+`), Query("data.deny_fallback.allow"))
+	handler := PolicyMiddleware(deny, WithDeniedMessage("fallback denial"))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("denied request reached downstream handler")
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if got := policyErrorMessage(t, response); got != "fallback denial" {
+		t.Fatalf("error = %q, want %q", got, "fallback denial")
+	}
+}
+
+func TestBecauseReasonComposition(t *testing.T) {
+	allow := Policy(Inline("reason-allow.rego", `package reason_allow
+allow { true }
+`), Query("data.reason_allow.allow"))
+	deny := Policy(Inline("reason-deny.rego", `package reason_deny
+default allow = false
+`), Query("data.reason_deny.allow"))
+	brokenProvider := &testFactProvider{cacheKey: "reason-error", err: errors.New("dependency unavailable")}
+	broken := Policy(Inline("reason-error.rego", `package reason_error
+allow { input.facts.user.allowed }
+`), Query("data.reason_error.allow"), WithFacts("user", brokenProvider))
+
+	cases := []struct {
+		name       string
+		expression Node
+		wantStatus int
+		wantError  string
+	}{
+		{name: "all propagates denying child", expression: All(allow, Because(deny, "all denial")), wantStatus: http.StatusForbidden, wantError: "all denial"},
+		{name: "any remembers first reason when all deny", expression: Any(Because(deny, "first denial"), Because(deny, "second denial")), wantStatus: http.StatusForbidden, wantError: "first denial"},
+		{name: "outer annotation replaces inner reason", expression: Because(Because(deny, "inner denial"), "outer denial"), wantStatus: http.StatusForbidden, wantError: "outer denial"},
+		{name: "allow discards remembered reason", expression: Any(Because(deny, "must disappear"), allow), wantStatus: http.StatusNoContent},
+		{name: "error discards remembered reason", expression: Any(Because(deny, "must disappear"), broken), wantStatus: http.StatusInternalServerError, wantError: "policy evaluation failed"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			handler := PolicyMiddleware(testCase.expression, WithPipeline(), WithDeniedMessage("fallback denial"))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, testCase.wantStatus, response.Body.String())
+			}
+			if testCase.wantError != "" {
+				if got := policyErrorMessage(t, response); got != testCase.wantError {
+					t.Fatalf("error = %q, want %q", got, testCase.wantError)
+				}
+			}
+		})
 	}
 }

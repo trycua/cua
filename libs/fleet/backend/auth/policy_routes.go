@@ -173,6 +173,8 @@ func StateQueryRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-state-query", "data.authz_state_query.allow"))
 }
 
+const billingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
+
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
 // as every other route, with two admission conjuncts: card-or-admin admission
 // for custom-resource creation, and pool admission over the request body.
@@ -209,7 +211,7 @@ func K8sRoutePolicy() Node {
 	return All(
 		BasePolicy(),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
-		CustomResourceCreationAdmissionPolicy(),
+		Because(CustomResourceCreationAdmissionPolicy(), billingSetupRequiredMessage),
 		Policy(
 			Modules(
 				Registered("authz"),

@@ -83,6 +83,83 @@ func runK8sPolicy(t *testing.T, request *http.Request) (int, bool) {
 	return response.Code, reached
 }
 
+func runK8sPolicyResponse(t *testing.T, request *http.Request) (*httptest.ResponseRecorder, bool) {
+	t.Helper()
+	surface, ok := surfacePolicies["k8s"]
+	if !ok {
+		t.Fatal("K8s surface is not configured")
+	}
+	options := append([]MiddlewareOption{}, surface.options...)
+	options = append(options, WithPipeline())
+
+	reached := false
+	handler := PolicyMiddleware(surface.tree(), options...)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response, reached
+}
+
+func TestK8sCopyTestsUseProductionSurfaceDeniedMessage(t *testing.T) {
+	const want = "configured K8s denial"
+	previous := surfacePolicies["k8s"]
+	surface := previous
+	surface.options = []MiddlewareOption{WithDeniedMessage(want)}
+	surfacePolicies["k8s"] = surface
+	t.Cleanup(func() {
+		surfacePolicies["k8s"] = previous
+	})
+
+	setCardAdmissionFlags(t, false)
+	response, reached := runK8sPolicyResponse(t, cardAdmissionRequest(http.MethodGet, "api/v1/nodes", "user-1"))
+	if response.Code != http.StatusForbidden || reached {
+		t.Fatalf("status, reached = %d, %v; want %d, false", response.Code, reached, http.StatusForbidden)
+	}
+	if got := policyErrorMessage(t, response); got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestK8sCardAdmissionReturnsBillingMessage(t *testing.T) {
+	setCardAdmissionFlags(t, true)
+	installAdmissionFacts(t, StripeCardsFactProvider, &countingAdmissionFacts{
+		cacheKey: StripeCardsFactProvider,
+		facts:    FactSet{"cards": []map[string]any{}},
+	})
+	installAdmissionFacts(t, CurrentYearFactProvider, &countingAdmissionFacts{
+		cacheKey: CurrentYearFactProvider,
+		facts:    FactSet{"current_year": 2026},
+	})
+	installAdmissionFacts(t, CurrentMonthFactProvider, &countingAdmissionFacts{
+		cacheKey: CurrentMonthFactProvider,
+		facts:    FactSet{"current_month": 8},
+	})
+
+	const path = "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims"
+	response, reached := runK8sPolicyResponse(t, cardAdmissionRequest(http.MethodPost, path, "user-1"))
+	if response.Code != http.StatusForbidden || reached {
+		t.Fatalf("status, reached = %d, %v; want %d, false", response.Code, reached, http.StatusForbidden)
+	}
+	const want = "A payment method is required to create this resource. Add one in Billing and try again."
+	if got := policyErrorMessage(t, response); got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestK8sUnrelatedDenialKeepsSurfaceMessage(t *testing.T) {
+	setCardAdmissionFlags(t, false)
+	const path = "api/v1/nodes"
+	response, reached := runK8sPolicyResponse(t, cardAdmissionRequest(http.MethodGet, path, "user-1"))
+	if response.Code != http.StatusForbidden || reached {
+		t.Fatalf("status, reached = %d, %v; want %d, false", response.Code, reached, http.StatusForbidden)
+	}
+	if got := policyErrorMessage(t, response); got != "k8s request is not allowed" {
+		t.Fatalf("error = %q, want %q", got, "k8s request is not allowed")
+	}
+}
+
 func TestK8sCardAdmissionLazyTruthTable(t *testing.T) {
 	const createPath = "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims"
 	const readPath = "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims/claim-a"

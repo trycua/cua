@@ -120,6 +120,26 @@ class TestConcurrentLocalVMsDoNotCollide:
         b = Path("/s/beta.qcow2").with_suffix(".efivars.fd")
         assert a != b
 
+    def test_expose_forwards_ports_on_the_local_qemu_path(self):
+        """Image.expose() recorded ports the local runtime never read, so an exposed
+        port was silently unreachable: the guest listened, nothing forwarded, and
+        nothing errored. Verified live against cua-driver's MCP on guest :3000,
+        which answered /healthz and an MCP initialize once forwarded."""
+        src = inspect.getsource(
+            __import__("cua_sandbox.runtime.qemu", fromlist=["x"]).QEMUBaremetalRuntime.start
+        )
+        assert "image._ports" in src, "expose() ports are never read"
+        assert "extra_hostfwd" in src
+        assert "{extra_hostfwd}" in src, "forwards are built but never passed to qemu"
+        assert "exposed_ports=exposed_ports" in src, "caller cannot find the host port"
+
+    def test_runtime_info_can_report_exposed_ports(self):
+        from cua_sandbox.runtime.base import RuntimeInfo
+
+        info = RuntimeInfo(host="localhost", api_port=1, exposed_ports={3000: 41041})
+        assert info.exposed_ports == {3000: 41041}
+        assert RuntimeInfo(host="localhost", api_port=1).exposed_ports is None
+
     def test_qmp_port_is_allocated_not_fixed(self):
         src = inspect.getsource(
             __import__("cua_sandbox.runtime.qemu", fromlist=["x"]).QEMUBaremetalRuntime.start

@@ -310,6 +310,23 @@ class QEMUBaremetalRuntime(Runtime):
         # Detect guest server port from transport hint
         guest_port = 5000 if image._agent_type == "osworld" else 8000
 
+        # Image.expose() ports. Without these the port is silently unreachable
+        # from the host: the guest listens, nothing forwards, and nothing errors.
+        exposed_ports: dict = {}
+        extra_hostfwd = ""
+        for exposed in dict.fromkeys(image._ports):
+            if exposed == guest_port:
+                # already forwarded as the computer-server port
+                exposed_ports[exposed] = hostfwd_port
+                continue
+            host_port = _find_free_port(exposed)
+            while host_port in exposed_ports.values() or host_port in (hostfwd_port, qmp_port):
+                host_port = _find_free_port(host_port + 1)
+            exposed_ports[exposed] = host_port
+            extra_hostfwd += f",hostfwd=tcp:127.0.0.1:{host_port}-:{exposed}"
+        if exposed_ports:
+            logger.info(f"Forwarding exposed ports (guest -> host): {exposed_ports}")
+
         # Detect disk format from extension
         disk_ext = Path(disk_path).suffix.lower()
         disk_fmt = {".qcow2": "qcow2", ".vhdx": "vhdx", ".raw": "raw", ".img": "raw"}.get(
@@ -377,7 +394,8 @@ class QEMUBaremetalRuntime(Runtime):
                 "-drive",
                 f"file={disk_path},format={disk_fmt},if=virtio",
                 "-netdev",
-                f"user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{hostfwd_port}-:{guest_port}",
+                f"user,id=net0,restrict=on,"
+                f"hostfwd=tcp:127.0.0.1:{hostfwd_port}-:{guest_port}{extra_hostfwd}",
                 "-device",
                 "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
                 "-vnc",
@@ -435,6 +453,7 @@ class QEMUBaremetalRuntime(Runtime):
         info = RuntimeInfo(
             host="localhost",
             api_port=hostfwd_port,
+            exposed_ports=exposed_ports or None,
             vnc_port=5900 + vnc_display,
             name=name,
             qmp_port=qmp_port if use_qmp else None,
@@ -460,6 +479,7 @@ class QEMUBaremetalRuntime(Runtime):
                 image=image.to_dict(),
                 host="localhost",
                 api_port=hostfwd_port,
+                exposed_ports=exposed_ports or None,
                 vnc_port=5900 + vnc_display,
                 qmp_port=qmp_port,
                 disk_path=str(disk_path) if disk_path else None,

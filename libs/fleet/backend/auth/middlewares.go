@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"cyclops-cs-backend/metrics"
 	"cyclops-cs-backend/middlewares"
 
 	"github.com/open-feature/go-sdk/openfeature"
@@ -383,6 +384,7 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 					Email: proxyEmail,
 					AZP:   "oauth2-proxy", // distinct from SPA/key clients for OPA
 				}
+				metrics.SetRequestUser(r.Context(), user.ID)
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserKey, user)))
 				return
 			}
@@ -418,6 +420,7 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		metrics.SetRequestUser(r.Context(), user.ID)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserKey, user)))
 	})
 }

@@ -3,7 +3,7 @@
 // Exported metrics:
 //
 //	cyclops_cs_http_requests_total          - counter, labels: method, path, status_code
-//	cyclops_cs_http_request_duration_seconds - histogram, labels: method, path, status_code
+//	cyclops_cs_http_request_duration_seconds - histogram, labels: method, path, status_code, user
 //	cyclops_cs_keycloak_requests_total       - counter, labels: operation, status
 //	cyclops_cs_keycloak_request_duration_seconds - histogram, labels: operation, status
 //	cyclops_cs_upstream_proxy_requests_total - counter, labels: target, status_code
@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -38,7 +39,7 @@ var (
 		Name:    "cyclops_cs_http_request_duration_seconds",
 		Help:    "Latency of HTTP requests handled by the cyclops-cs backend.",
 		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
-	}, []string{"method", "path", "status_code"})
+	}, []string{"method", "path", "status_code", "user"})
 
 	ActiveRequests = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "cyclops_cs_active_requests",
@@ -128,6 +129,19 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hj.Hijack()
 }
 
+type requestLabelsKey struct{}
+
+type requestLabels struct {
+	user string
+}
+
+// SetRequestUser attaches the authenticated subject to the current request metrics.
+func SetRequestUser(ctx context.Context, user string) {
+	if labels, ok := ctx.Value(requestLabelsKey{}).(*requestLabels); ok && user != "" {
+		labels.user = user
+	}
+}
+
 // Middleware returns an http.Handler that records HTTP SLI metrics for
 // each request. It must be placed as the outermost handler wrapper so
 // that it captures the final status code from all inner layers (auth,
@@ -135,6 +149,8 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		labels := &requestLabels{user: "unknown"}
+		r = r.WithContext(context.WithValue(r.Context(), requestLabelsKey{}, labels))
 		rw := newResponseWriter(w)
 		ActiveRequests.Inc()
 		defer ActiveRequests.Dec()
@@ -146,7 +162,7 @@ func Middleware(next http.Handler) http.Handler {
 		path := normalizePath(r.URL.Path)
 
 		HTTPRequestsTotal.WithLabelValues(r.Method, path, statusStr).Inc()
-		HTTPRequestDuration.WithLabelValues(r.Method, path, statusStr).Observe(duration)
+		HTTPRequestDuration.WithLabelValues(r.Method, path, statusStr, labels.user).Observe(duration)
 	})
 }
 

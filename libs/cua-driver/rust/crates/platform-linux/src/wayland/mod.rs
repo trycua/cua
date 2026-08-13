@@ -209,6 +209,7 @@ struct Toplevel {
     title: String,
     app_id: String,
     closed: bool,
+    activated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -563,10 +564,19 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
         match event {
             ftl_handle::Event::Title { title } => tl.title = title,
             ftl_handle::Event::AppId { app_id } => tl.app_id = app_id,
+            ftl_handle::Event::State { state } => {
+                tl.activated = foreign_toplevel_state_is_activated(&state)
+            }
             ftl_handle::Event::Closed => tl.closed = true,
             _ => {}
         }
     }
+}
+
+fn foreign_toplevel_state_is_activated(state: &[u8]) -> bool {
+    state
+        .chunks_exact(std::mem::size_of::<u32>())
+        .any(|bytes| u32::from_ne_bytes(bytes.try_into().expect("four-byte state")) == 2)
 }
 
 /// Enumerate native Wayland toplevels via wlr-foreign-toplevel-management.
@@ -1199,10 +1209,23 @@ pub fn activate_window_for_input_target(
         state.seat.clone(),
         matching_handle(&state, window_id),
     ) {
+        let protocol_id = handle.id().protocol_id();
         handle.activate(&seat);
-        queue.roundtrip(&mut state)?;
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        return Ok(());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            queue.roundtrip(&mut state)?;
+            if state
+                .toplevels
+                .get(&protocol_id)
+                .is_some_and(|toplevel| toplevel.activated)
+            {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     if shell_helper::activate_window(window_id) {
@@ -3064,6 +3087,7 @@ fn enrich_native_windows(
                 title: undecorated_native_title(window).to_owned(),
                 app_id: window.app_name.clone(),
                 closed: false,
+                activated: false,
             };
             window.xid = candidate.xid;
             remember_identity(window.xid, &toplevel);
@@ -3363,6 +3387,26 @@ mod tests {
             crop_png_to_rect(encoded.get_ref(), 2, 1, 3, 4, "fixture").expect("crop fixture PNG");
         let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
         assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn foreign_toplevel_state_requires_activated_value() {
+        let states = [0_u32, 2_u32, 3_u32]
+            .into_iter()
+            .flat_map(u32::to_ne_bytes)
+            .collect::<Vec<_>>();
+        assert!(foreign_toplevel_state_is_activated(&states));
+
+        let inactive = [0_u32, 1_u32, 3_u32]
+            .into_iter()
+            .flat_map(u32::to_ne_bytes)
+            .collect::<Vec<_>>();
+        assert!(!foreign_toplevel_state_is_activated(&inactive));
+    }
+
+    #[test]
+    fn foreign_toplevel_state_ignores_incomplete_wire_values() {
+        assert!(!foreign_toplevel_state_is_activated(&[2, 0, 0]));
     }
 
     #[test]

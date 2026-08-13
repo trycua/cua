@@ -801,3 +801,32 @@ allow { input.body == "12345" }
 		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusBadRequest, response.Body.String())
 	}
 }
+
+func TestPolicyMiddlewareMergesFactsFromSeparateProvidersInOneNamespace(t *testing.T) {
+	year := &testFactProvider{cacheKey: "current-year", facts: FactSet{"current_year": 2026}}
+	month := &testFactProvider{cacheKey: "current-month", facts: FactSet{"current_month": 8}}
+	expression := Policy(
+		Inline("merged-time.rego", `package merged_time
+allow {
+	input.facts.time.current_year == 2026
+	input.facts.time.current_month == 8
+}
+`),
+		Query("data.merged_time.allow"),
+		WithFacts("time", year),
+		WithFacts("time", month),
+	)
+
+	handler := PolicyMiddleware(expression)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body = %s", response.Code, response.Body.String())
+	}
+	if year.loads != 1 || month.loads != 1 {
+		t.Fatalf("provider loads = year:%d month:%d, want 1 each", year.loads, month.loads)
+	}
+}

@@ -1,4 +1,7 @@
 All
   Leaf query=data.authz_base.allow source=registered:authz-base
   Leaf query=data.authz_k8s.allow source=multi["registered:authz","registered:authz-k8s"]
+  Any
+    Leaf query=data.custom_resource_creation_admission.exempt source=multi["registered:authz","registered:custom-resource-creation-admission"]
+    Leaf query=data.custom_resource_creation_admission.has_qualifying_card source=multi["registered:authz","registered:custom-resource-creation-admission"] facts=stripe_cards@registered-facts:stripe-cards facts=time@registered-facts:current-year facts=time@registered-facts:current-month
   Leaf query=data.pool_admission.allow source=multi["registered:authz","registered:pool-admission"] body=1048576

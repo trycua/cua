@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -186,6 +187,11 @@ func TestMain(m *testing.M) {
 	}))
 	defer jwksServer.Close()
 
+	if os.Getenv("CARD_ADMISSION_ROUTER_HELPER") != "1" {
+		if err := os.Setenv("CYCLOPS_CS_REQUIRE_CARD_FOR_CUSTOM_RESOURCE_CREATION", "false"); err != nil {
+			panic(err)
+		}
+	}
 	if err := os.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`); err != nil {
 		panic(err)
 	}
@@ -244,6 +250,10 @@ func bigEndianBytes(v int) []byte {
 }
 
 type routerBillingService struct{}
+
+func (routerBillingService) AttachedCards(context.Context, string) ([]billing.SavedCard, error) {
+	return []billing.SavedCard{}, nil
+}
 
 func (routerBillingService) Summary(context.Context, string) (billing.Summary, error) {
 	return billing.Summary{}, nil
@@ -458,6 +468,96 @@ func TestNginxRoutesChatToBackend(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "|chat|") && !strings.Contains(string(data), "|chat)") {
 		t.Fatal("nginx.conf backend matcher does not include chat")
+	}
+}
+
+type routerCardBilling struct {
+	cards []billing.SavedCard
+	err   error
+	calls int
+}
+
+func (service *routerCardBilling) AttachedCards(context.Context, string) ([]billing.SavedCard, error) {
+	service.calls++
+	return service.cards, service.err
+}
+func (*routerCardBilling) Summary(context.Context, string) (billing.Summary, error) {
+	panic("unexpected Summary call")
+}
+func (*routerCardBilling) CreateSetupSession(context.Context, string, billing.SetupOptions) (string, error) {
+	panic("unexpected setup call")
+}
+func (*routerCardBilling) CreatePortalSession(context.Context, string, string) (string, error) {
+	panic("unexpected portal call")
+}
+func (*routerCardBilling) SetDefaultPaymentMethodForSetupGeneration(context.Context, string, string, string) (bool, error) {
+	panic("unexpected webhook call")
+}
+
+func TestK8sRouteRejectsCustomResourceCreateWithoutCardBeforeProxy(t *testing.T) {
+	if os.Getenv("CARD_ADMISSION_ROUTER_HELPER") != "1" {
+		command := exec.Command(os.Args[0], "-test.run=^TestK8sRouteRejectsCustomResourceCreateWithoutCardBeforeProxy$")
+		command.Env = append(os.Environ(),
+			"CARD_ADMISSION_ROUTER_HELPER=1",
+			"CYCLOPS_CS_REQUIRE_CARD_FOR_CUSTOM_RESOURCE_CREATION=true",
+		)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("enabled router subprocess failed: %v\n%s", err, output)
+		}
+		return
+	}
+
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer upstream.Close()
+	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
+
+	service := &routerCardBilling{}
+	router := setupRouter(handlers.Handlers{Billing: service})
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "legacy workspace pool",
+			path: "/api/k8s/apis/cua.ai/v1/namespaces/foo/osgymworkspacepools",
+			body: `{"spec":{"template":{"containerDiskImage":"public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest","imagePullSecret":"ecr-credentials"}}}`,
+		},
+		{
+			name: "native sandbox template",
+			path: "/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/foo/osgymsandboxtemplates",
+			body: `{"spec":{"vmTemplate":{"containerDiskImage":"public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest","imagePullSecret":"ecr-credentials"}}}`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, authorizedRequest(t, http.MethodPost, testCase.path, strings.NewReader(testCase.body)))
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if upstreamCalled {
+		t.Fatal("denied custom-resource create reached kubectl proxy")
+	}
+
+	service.cards = []billing.SavedCard{{ExpYear: 2099, ExpMonth: 1}}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, authorizedRequest(t, http.MethodPost, cases[0].path, strings.NewReader(cases[0].body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("valid attached card status = %d, want 201; body = %s", response.Code, response.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("allowed custom-resource create did not reach kubectl proxy")
+	}
+	if service.calls != len(cases)+1 {
+		t.Fatalf("Stripe attached-card calls = %d, want %d", service.calls, len(cases)+1)
 	}
 }
 

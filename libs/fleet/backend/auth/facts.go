@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // A FactProvider answers a question the token cannot: whether some other
@@ -88,3 +89,55 @@ const (
 	// input: authz_ownership.rego reads input.facts.namespace_rbac.allowed.
 	NamespaceRBACFactNamespace = "namespace_rbac"
 )
+
+// Facts used by custom-resource creation admission.
+const (
+	StripeCardsFactProvider  = "stripe-cards"
+	StripeCardsFactNamespace = "stripe_cards"
+	CurrentYearFactProvider  = "current-year"
+	CurrentMonthFactProvider = "current-month"
+	TimeFactNamespace        = "time"
+)
+
+type clockFactProvider struct {
+	cacheKey string
+	key      string
+	now      func() time.Time
+}
+
+type requestClockSnapshot struct {
+	once sync.Once
+	now  time.Time
+}
+
+type requestClockSnapshotKey struct{}
+
+func (provider clockFactProvider) CacheKey() string { return provider.cacheKey }
+
+func (provider clockFactProvider) LoadFacts(_ context.Context, request *http.Request) (FactSet, error) {
+	var now time.Time
+	if snapshot, ok := request.Context().Value(requestClockSnapshotKey{}).(*requestClockSnapshot); ok {
+		snapshot.once.Do(func() { snapshot.now = provider.now().UTC() })
+		now = snapshot.now
+	} else {
+		now = provider.now().UTC()
+	}
+	if provider.key == "current_year" {
+		return FactSet{provider.key: now.Year()}, nil
+	}
+	return FactSet{provider.key: int(now.Month())}, nil
+}
+
+func CurrentYearFacts(now func() time.Time) FactProvider {
+	if now == nil {
+		panic("current-year fact provider requires a clock")
+	}
+	return clockFactProvider{cacheKey: CurrentYearFactProvider, key: "current_year", now: now}
+}
+
+func CurrentMonthFacts(now func() time.Time) FactProvider {
+	if now == nil {
+		panic("current-month fact provider requires a clock")
+	}
+	return clockFactProvider{cacheKey: CurrentMonthFactProvider, key: "current_month", now: now}
+}

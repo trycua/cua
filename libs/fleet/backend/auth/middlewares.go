@@ -35,6 +35,9 @@ var authzPolicy string
 //go:embed pool_admission.rego
 var poolAdmissionPolicy string
 
+//go:embed custom_resource_creation_admission.rego
+var customResourceCreationAdmissionPolicy string
+
 // authzOwnershipPolicy is the namespace-ownership boundary. Like
 // pool_admission.rego it is not a surface — it is a conjunct several surfaces
 // carry — so it is registered by name below rather than through
@@ -112,7 +115,10 @@ var authzStateQueryPolicy string
 //	/feature-flags/cyclops-cs/admin-subs → CYCLOPS_CS_ADMIN_SUBS
 //
 // Values are JSON string arrays (e.g. '["sub1","sub2"]').
-const flagPrefix = "/feature-flags/cyclops-cs/"
+const (
+	flagPrefix        = "/feature-flags/cyclops-cs/"
+	cardAdmissionFlag = flagPrefix + "require-card-for-custom-resource-creation"
+)
 
 // flagsTTL bounds how long flagsData returns its last computed result
 // before re-resolving via OpenFeature. Refresh is lazy and ad-hoc: the
@@ -195,12 +201,24 @@ func computeFlagsData(ctx context.Context) map[string]interface{} {
 	}
 	flags := map[string]interface{}{}
 	for _, key := range keys {
+		if key == cardAdmissionFlag {
+			continue
+		}
 		name := opaNameFromFlagKey(key)
 		if name == "" {
 			continue
 		}
 		flags[name] = loadStringList(ctx, ffClient, key)
 	}
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	enabled, err := ffClient.BooleanValue(
+		callCtx, cardAdmissionFlag, false, openfeature.EvaluationContext{},
+	)
+	if err != nil {
+		slog.Warn("auth: flag eval failed; using false", "flag", cardAdmissionFlag, "err", err)
+	}
+	flags["require_card_for_custom_resource_creation"] = enabled
 	return flags
 }
 
@@ -252,6 +270,7 @@ func loadStringList(ctx context.Context, client *openfeature.Client, flagKey str
 func LoadOpa() {
 	RegisterPolicyModule("authz", "authz.rego", authzPolicy)
 	RegisterPolicyModule("pool-admission", "pool_admission.rego", poolAdmissionPolicy)
+	RegisterPolicyModule("custom-resource-creation-admission", "custom_resource_creation_admission.rego", customResourceCreationAdmissionPolicy)
 	RegisterPolicyModule("authz-ownership", "authz_ownership.rego", authzOwnershipPolicy)
 	for name, module := range surfacePolicySources {
 		RegisterPolicyModule(name, module.filename, module.source)

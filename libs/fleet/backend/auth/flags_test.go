@@ -79,6 +79,19 @@ func TestFlagsDataCachedAndRefreshes(t *testing.T) {
 	}
 }
 
+func TestFlagsDataLoadsCardRequirementExemptSubs(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_CARD_REQUIREMENT_EXEMPT_SUBS", `["exempt-a","exempt-b"]`)
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+	resetFlagsCache()
+
+	got := asStrings(flagsData()["card_requirement_exempt_subs"])
+	if len(got) != 2 || got[0] != "exempt-a" || got[1] != "exempt-b" {
+		t.Fatalf("card_requirement_exempt_subs = %v, want [exempt-a exempt-b]", got)
+	}
+}
+
 func asStrings(v any) []string {
 	items, ok := v.([]interface{})
 	if !ok {

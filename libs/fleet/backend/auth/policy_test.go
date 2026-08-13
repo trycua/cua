@@ -95,48 +95,46 @@ func evalAllow(t *testing.T, input map[string]any) bool {
 	if !ok {
 		t.Fatalf("input names route %q, which is bound to no authorization surface", route)
 	}
+	return evalPolicyNode(t, tree, input)
+}
 
-	allowed := true
-	for _, leaf := range conjunctiveLeaves(t, tree) {
-		if leaf.MaxBody > 0 {
-			continue
+func evalPolicyNode(t *testing.T, node Node, input map[string]any) bool {
+	t.Helper()
+	switch policy := node.(type) {
+	case Leaf:
+		if policy.MaxBody > 0 {
+			return true
 		}
-		modules, err := leaf.Source.modules()
+		modules, err := policy.Source.modules()
 		if err != nil {
-			t.Fatalf("load modules for %q: %v", leaf.Query, err)
+			t.Fatalf("load modules for %q: %v", policy.Query, err)
 		}
 		sources := make(map[string]string, len(modules))
 		for _, module := range modules {
 			sources[module.name] = module.source
 		}
-		result, err := prepareQuery(t, leaf.Query, sources).Eval(context.Background(), rego.EvalInput(input))
+		result, err := prepareQuery(t, policy.Query, sources).Eval(context.Background(), rego.EvalInput(input))
 		if err != nil {
-			t.Fatalf("eval %q: %v", leaf.Query, err)
+			t.Fatalf("eval %q: %v", policy.Query, err)
 		}
-		if !result.Allowed() {
-			allowed = false
-		}
-	}
-	return allowed
-}
-
-// conjunctiveLeaves flattens a route tree into its leaves, refusing anything but
-// conjunction. Every route policy is All(...) today; a disjunction would make
-// "AND the leaves" the wrong fold, and silently so.
-func conjunctiveLeaves(t *testing.T, n Node) []Leaf {
-	t.Helper()
-	switch node := n.(type) {
-	case Leaf:
-		return []Leaf{node}
+		return result.Allowed()
 	case AllNode:
-		var leaves []Leaf
-		for _, child := range node.Children {
-			leaves = append(leaves, conjunctiveLeaves(t, child)...)
+		for _, child := range policy.Children {
+			if !evalPolicyNode(t, child, input) {
+				return false
+			}
 		}
-		return leaves
+		return true
+	case AnyNode:
+		for _, child := range policy.Children {
+			if evalPolicyNode(t, child, input) {
+				return true
+			}
+		}
+		return false
 	default:
-		t.Fatalf("route policy contains a %T; this helper folds conjunctions only", n)
-		return nil
+		t.Fatalf("route policy contains unknown node %T", node)
+		return false
 	}
 }
 

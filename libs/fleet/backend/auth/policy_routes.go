@@ -174,20 +174,42 @@ func StateQueryRoutePolicy() Node {
 }
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
-// as every other route, with one extra conjunct: admission control over the
-// request body.
+// as every other route, with two admission conjuncts: card-or-admin admission
+// for custom-resource creation, and pool admission over the request body.
 //
-// All three must pass. The admission leaf reads the raw body (bounded at 1 MiB)
+// Every conjunct must pass. The pool-admission leaf reads the raw body (bounded at 1 MiB)
 // to inspect the object being created or patched, which is why it names
 // pool_admission.rego alongside authz.rego — pool_admission imports
 // data.authz.is_admin. It stays a separate leaf rather than rules inside
 // authz_k8s.rego because it is the only thing on this surface that needs the
 // body, and folding it in would put every k8s request's verdict behind a body
 // read.
+func CustomResourceCreationAdmissionPolicy() Node {
+	leaf := func(query string, options ...PolicyOption) Node {
+		return Policy(
+			Modules(
+				Registered("authz"),
+				Registered("custom-resource-creation-admission"),
+			),
+			append([]PolicyOption{Query(query)}, options...)...,
+		)
+	}
+	return Any(
+		leaf("data.custom_resource_creation_admission.exempt"),
+		leaf(
+			"data.custom_resource_creation_admission.has_qualifying_card",
+			WithFacts(StripeCardsFactNamespace, RegisteredFacts(StripeCardsFactProvider)),
+			WithFacts(TimeFactNamespace, RegisteredFacts(CurrentYearFactProvider)),
+			WithFacts(TimeFactNamespace, RegisteredFacts(CurrentMonthFactProvider)),
+		),
+	)
+}
+
 func K8sRoutePolicy() Node {
 	return All(
 		BasePolicy(),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
+		CustomResourceCreationAdmissionPolicy(),
 		Policy(
 			Modules(
 				Registered("authz"),

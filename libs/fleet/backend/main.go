@@ -123,6 +123,9 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// before the first RouteMiddleware below, because that is what compiles the
 	// plans that refer to it.
 	auth.RegisterFactProvider(auth.NamespaceRBACFactProvider, handlers.NamespaceRBACFacts(c))
+	auth.RegisterFactProvider(auth.StripeCardsFactProvider, handlers.StripeCardFacts(c))
+	auth.RegisterFactProvider(auth.CurrentYearFactProvider, auth.CurrentYearFacts(time.Now))
+	auth.RegisterFactProvider(auth.CurrentMonthFactProvider, auth.CurrentMonthFacts(time.Now))
 
 	r := http.NewServeMux()
 

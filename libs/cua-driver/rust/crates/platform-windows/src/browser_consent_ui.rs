@@ -53,12 +53,10 @@ fn is_in_web_content(nodes: &[UiaNode], node: &UiaNode) -> bool {
     true
 }
 
-fn trusted_prompt_nodes(nodes: &[UiaNode]) -> impl Iterator<Item = &UiaNode> {
-    nodes.iter().filter(|node| {
-        !node.in_web_content
-            && !node.control_type.eq_ignore_ascii_case("Document")
-            && !is_in_web_content(nodes, node)
-    })
+fn is_trusted_prompt_node(nodes: &[UiaNode], node: &UiaNode) -> bool {
+    !node.in_web_content
+        && !node.control_type.eq_ignore_ascii_case("Document")
+        && !is_in_web_content(nodes, node)
 }
 
 fn node_name(node: &UiaNode) -> Option<&str> {
@@ -68,18 +66,61 @@ fn node_name(node: &UiaNode) -> Option<&str> {
         .filter(|name| !name.is_empty())
 }
 
+fn subtree_end(nodes: &[UiaNode], root_index: usize) -> usize {
+    let root_depth = nodes[root_index].depth;
+    nodes
+        .iter()
+        .enumerate()
+        .skip(root_index + 1)
+        .find(|(_, node)| node.depth <= root_depth)
+        .map_or(nodes.len(), |(index, _)| index)
+}
+
+fn has_matching_pane_ancestor(nodes: &[UiaNode], window_index: usize, name: &str) -> bool {
+    let mut descendant_depth = nodes[window_index].depth;
+    for ancestor in nodes[..window_index].iter().rev() {
+        if ancestor.depth >= descendant_depth {
+            continue;
+        }
+        descendant_depth = ancestor.depth;
+        if is_trusted_prompt_node(nodes, ancestor)
+            && ancestor.control_type == "Pane"
+            && node_name(ancestor) == Some(name)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn native_prompt_surfaces(nodes: &[UiaNode]) -> Vec<(usize, usize)> {
+    nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(window_index, window)| {
+            if !is_trusted_prompt_node(nodes, window)
+                || window.depth == 0
+                || window.control_type != "Window"
+            {
+                return None;
+            }
+            let name = node_name(window)?;
+            if !has_matching_pane_ancestor(nodes, window_index, name) {
+                return None;
+            }
+            let end = subtree_end(nodes, window_index);
+            let has_bound_title = nodes[(window_index + 1)..end].iter().any(|node| {
+                is_trusted_prompt_node(nodes, node)
+                    && node.control_type == "Text"
+                    && node_name(node) == Some(name)
+            });
+            has_bound_title.then_some((window_index, end))
+        })
+        .collect()
+}
+
 fn native_prompt_surface_present(nodes: &[UiaNode]) -> bool {
-    trusted_prompt_nodes(nodes).any(|window| {
-        window.depth > 0
-            && window.control_type == "Window"
-            && node_name(window).is_some_and(|name| {
-                let has_container = trusted_prompt_nodes(nodes)
-                    .any(|node| node.control_type == "Pane" && node_name(node) == Some(name));
-                let has_title = trusted_prompt_nodes(nodes)
-                    .any(|node| node.control_type == "Text" && node_name(node) == Some(name));
-                has_container && has_title
-            })
-    })
+    !native_prompt_surfaces(nodes).is_empty()
 }
 
 fn native_button_properties(element_ptr: usize) -> Result<(String, bool), BrowserRefusal> {
@@ -219,37 +260,49 @@ fn exact_allow_button_with<F>(
 where
     F: FnMut(usize) -> Result<(String, bool), BrowserRefusal>,
 {
-    if !native_prompt_surface_present(nodes) {
+    let surfaces = native_prompt_surfaces(nodes);
+    if surfaces.is_empty() {
         return Ok(None);
     }
-    let mut candidates = Vec::new();
-    for node in trusted_prompt_nodes(nodes).filter(|node| {
-        node.control_type == "Button"
-            && node.actions.iter().any(|action| action == "invoke")
-            && node.element_ptr != 0
-            && node.rect.is_some()
-    }) {
-        let (class_name, has_keyboard_focus) = properties(node.element_ptr)?;
-        if class_name != CHROMIUM_DIALOG_BUTTON_CLASS {
-            continue;
+    let mut matches = Vec::new();
+    for (start, end) in surfaces {
+        let mut candidates = Vec::new();
+        for node in nodes[(start + 1)..end].iter().filter(|node| {
+            is_trusted_prompt_node(nodes, node)
+                && node.control_type == "Button"
+                && node.actions.iter().any(|action| action == "invoke")
+                && node.element_ptr != 0
+                && node.rect.is_some()
+        }) {
+            let (class_name, has_keyboard_focus) = properties(node.element_ptr)?;
+            if class_name != CHROMIUM_DIALOG_BUTTON_CLASS {
+                continue;
+            }
+            let rect = node.rect.expect("filtered above");
+            if rect.0 >= rect.2 || rect.1 >= rect.3 {
+                continue;
+            }
+            if candidates
+                .iter()
+                .any(|candidate: &ConsentButtonCandidate| candidate.rect == rect)
+            {
+                continue;
+            }
+            candidates.push(ConsentButtonCandidate {
+                element_ptr: node.element_ptr,
+                rect,
+                has_keyboard_focus,
+            });
         }
-        let rect = node.rect.expect("filtered above");
-        if rect.0 >= rect.2 || rect.1 >= rect.3 {
-            continue;
-        }
-        if candidates
-            .iter()
-            .any(|candidate: &ConsentButtonCandidate| candidate.rect == rect)
-        {
-            continue;
-        }
-        candidates.push(ConsentButtonCandidate {
-            element_ptr: node.element_ptr,
-            rect,
-            has_keyboard_focus,
-        });
+        matches.push(select_language_independent_allow(&candidates)?);
     }
-    select_language_independent_allow(&candidates).map(Some)
+    match matches.as_slice() {
+        [element] => Ok(Some(*element)),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "multiple bound native Chromium consent prompts exposed structural allow actions",
+        )),
+    }
 }
 
 fn exact_allow_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
@@ -520,6 +573,43 @@ mod tests {
         for child in &mut nodes {
             child.in_web_content = true;
         }
+        assert_eq!(exact_allow_button_with(&nodes, properties).unwrap(), None);
+    }
+
+    #[test]
+    fn matcher_refuses_chromium_buttons_outside_the_bound_prompt_subtree() {
+        let title = "opaque consent surface";
+        let nodes = vec![
+            dialog_node("Pane", title, 2),
+            dialog_node("Window", title, 3),
+            dialog_node("Text", title, 7),
+            dialog_node("Pane", "unrelated native sibling", 2),
+            button("A", 11, (-6066, 343, -5886, 399)),
+            button("B", 12, (-5657, 343, -5560, 399)),
+            button("C", 13, (-5549, 343, -5452, 399)),
+        ];
+
+        assert_eq!(
+            exact_allow_button_with(&nodes, properties)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn matcher_requires_the_matching_pane_to_be_a_window_ancestor() {
+        let title = "opaque consent surface";
+        let nodes = vec![
+            dialog_node("Pane", title, 2),
+            dialog_node("Pane", "different native container", 2),
+            dialog_node("Window", title, 3),
+            dialog_node("Text", title, 7),
+            button("A", 11, (-6066, 343, -5886, 399)),
+            button("B", 12, (-5657, 343, -5560, 399)),
+            button("C", 13, (-5549, 343, -5452, 399)),
+        ];
+
         assert_eq!(exact_allow_button_with(&nodes, properties).unwrap(), None);
     }
 

@@ -79,7 +79,11 @@
 [CmdletBinding()]
 param(
     [string]$Release = "latest",
-    [ValidateSet("stable", "nightly")]
+    # No [ValidateSet] here. This script is documented to be run as
+    # `irm ... | iex`, where param() becomes a set of attributed *variable*
+    # declarations rather than a parameter block: [string]$Channel is then
+    # initialised to '' and the set rejects its own default before the body
+    # ever runs. Validated in Resolve-SelectedChannel instead.
     [string]$Channel,
     # Default-on: cua-driver-serve is what makes the agent flow work
     # across logon / reboot. Without the scheduled task the user has
@@ -979,7 +983,16 @@ function Resolve-SelectedChannel {
         Write-ErrorStep "-Channel cannot be combined with an exact release pin; pins do not change saved channel state"
         exit 2
     }
-    if ($ChannelWasExplicit) { return $Channel }
+    if ($ChannelWasExplicit) {
+        # Validated here rather than with [ValidateSet] on the parameter;
+        # see the note in param(). Same accepted values and same wording as
+        # the saved-channel check below.
+        if ($Channel -notin @('stable', 'nightly')) {
+            Write-ErrorStep "invalid -Channel '$Channel'; expected stable or nightly"
+            exit 2
+        }
+        return $Channel
+    }
     if ($env:CUA_DRIVER_RS_VERSION -or $Release -ne 'latest') {
         # Exact pins are one-shot and outrank persisted preference. This also
         # preserves a recovery path when the preference file is malformed.

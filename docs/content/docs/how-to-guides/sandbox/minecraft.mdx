@@ -331,7 +331,11 @@ await run(tunnel.url + 'mcp', TASK, 'your-model',
 
 That is the same `run()` as above, with only the URL and an auth header changed. A Fleet Windows sandbox takes about three minutes to become ready, against about thirty seconds for a warm local one, and `GET healthz` on that service URL answers `ok` when cua-driver is up.
 
-Notice there is no `-cpu host` here. That flag exists on the local path because the bare-metal runtime defaults to the thin `qemu64` model; a Fleet sandbox is provisioned for you and already reports a full host CPU — `Intel Xeon Processor (SapphireRapids)` on the machine used here — so there is nothing to override, and no QEMU arguments to pass.
+Notice there is no `-cpu host` here. That flag exists on the local path because the bare-metal runtime defaults to the thin `qemu64` model; a Fleet sandbox is provisioned for you and already reports a full host CPU — `Intel Xeon Processor (SapphireRapids)`, with AVX, AVX2 and AVX-512 all present — so there is nothing to override, and no QEMU arguments to pass.
+
+<Callout type="warn">
+  **Minecraft itself did not run on Fleet during this write-up, and the guide does not claim it does.** Everything above works there: the sandbox boots in about three minutes, `.expose(3000)` publishes cua-driver, the MCP client lists the same 55 tools, the setup script installs Prism and Mesa, the Microsoft sign-in completes, and the agent loop drives the desktop. But the game exits during resource loading, every time, with no Java exception, no `hs_err` file and nothing in the Windows event log — the log simply stops after `Reloading ResourceManager: vanilla`. That is the same stopping point as the local `qemu64` failure, yet the two known causes do not apply: the Fleet CPU reports full AVX-512, and forcing the heap down from Prism's auto-sized `-Xmx2717m` to `-Xmx1024m` on the 4 GB sandbox changed nothing. Unlike the local path there are no QEMU arguments to adjust. Use the local path for the game itself until this is understood.
+</Callout>
 
 <Callout type="warn">
   Use client credentials, not a `cua auth login` session token. The session token is short-lived and is held without refresh, so a long provisioning wait dies partway with `401 auth token is invalid`. Client-credential tokens expire too — the ones issued here came back with `expires_in` of 900 seconds — so a run longer than that has to re-mint the token and rebuild the MCP client.

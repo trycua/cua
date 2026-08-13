@@ -1,7 +1,6 @@
 //! Exact macOS handling for Chrome's browser-owned remote-debugging consent.
 
 use std::time::{Duration, Instant};
-use std::{collections::HashSet, iter};
 
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_core::browser::{
@@ -9,6 +8,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::ax::bindings::{copy_bool_attr, kAXErrorSuccess, perform_action, AXUIElementRef};
+use crate::ax::exact_target::element_window_id;
 use crate::ax::tree::{walk_tree_bounded, AXNode, DEFAULT_MAX_DEPTH};
 
 // Large Chromium pages can put the browser-owned consent sheet after the
@@ -52,20 +52,16 @@ fn consent_surface_ids(
     pid: i32,
     approved_window_id: u32,
 ) -> Vec<u32> {
-    let mut windows = windows
+    windows
         .into_iter()
-        .filter(|window| {
+        .find(|window| {
             window.pid == pid
-                && !window.title.trim().is_empty()
+                && window.window_id == approved_window_id
                 && window.bounds.width > 0.0
                 && window.bounds.height > 0.0
         })
-        .collect::<Vec<_>>();
-    windows.sort_by_key(|window| std::cmp::Reverse(window.z_index));
-    let mut seen = HashSet::new();
-    iter::once(approved_window_id)
-        .chain(windows.into_iter().map(|window| window.window_id))
-        .filter(|window_id| seen.insert(*window_id))
+        .map(|window| window.window_id)
+        .into_iter()
         .collect()
 }
 
@@ -158,12 +154,15 @@ fn select_language_independent_allow(
     Ok(candidates[allow_index].element_ptr)
 }
 
-fn exact_allow_button_with<F>(
+fn exact_allow_button_with<F, W>(
     nodes: &[AXNode],
+    approved_window_id: u32,
     mut focused: F,
+    mut owner_window: W,
 ) -> Result<Option<usize>, BrowserRefusal>
 where
     F: FnMut(usize) -> bool,
+    W: FnMut(usize) -> Option<u32>,
 {
     let mut matches = Vec::new();
     for (sheet_index, sheet) in nodes
@@ -188,6 +187,7 @@ where
                 || !node.actions.iter().any(|action| action == "AXPress")
                 || node.enabled == Some(false)
                 || node.element_index.is_none()
+                || owner_window(node.element_ptr) != Some(approved_window_id)
             {
                 continue;
             }
@@ -220,13 +220,28 @@ where
     }
 }
 
-fn exact_allow_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal> {
-    exact_allow_button_with(nodes, |element_ptr| unsafe {
-        copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") == Some(true)
-    })
+fn exact_allow_button(
+    nodes: &[AXNode],
+    approved_window_id: u32,
+) -> Result<Option<usize>, BrowserRefusal> {
+    exact_allow_button_with(
+        nodes,
+        approved_window_id,
+        |element_ptr| unsafe {
+            copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") == Some(true)
+        },
+        |element_ptr| unsafe { element_window_id(element_ptr as AXUIElementRef) },
+    )
 }
 
-fn native_consent_sheet_present(nodes: &[AXNode]) -> bool {
+fn native_consent_sheet_present_with<W>(
+    nodes: &[AXNode],
+    approved_window_id: u32,
+    mut owner_window: W,
+) -> bool
+where
+    W: FnMut(usize) -> Option<u32>,
+{
     nodes.iter().enumerate().any(|(sheet_index, sheet)| {
         if sheet.role != "AXSheet" {
             return false;
@@ -248,9 +263,16 @@ fn native_consent_sheet_present(nodes: &[AXNode]) -> bool {
                             && node.actions.iter().any(|action| action == "AXPress")
                             && node.enabled != Some(false)
                             && node.element_index.is_some()
+                            && owner_window(node.element_ptr) == Some(approved_window_id)
                     })
                     .count(),
             )
+    })
+}
+
+fn native_consent_sheet_present(nodes: &[AXNode], approved_window_id: u32) -> bool {
+    native_consent_sheet_present_with(nodes, approved_window_id, |element_ptr| unsafe {
+        element_window_id(element_ptr as AXUIElementRef)
     })
 }
 
@@ -297,12 +319,12 @@ pub async fn handle(
         })?;
         let prompt_present = trees
             .iter()
-            .any(|nodes| native_consent_sheet_present(nodes));
+            .any(|nodes| native_consent_sheet_present(nodes, window_id));
         saw_prompt |= prompt_present;
         let mut candidates = Vec::new();
         let mut matcher_error = None;
         for nodes in &trees {
-            match exact_allow_button(nodes) {
+            match exact_allow_button(nodes, window_id) {
                 Ok(Some(element)) => candidates.push(element),
                 Ok(None) => {}
                 Err(error) => {
@@ -320,6 +342,15 @@ pub async fn handle(
             return Err(error);
         }
         if let [element] = candidates.as_slice() {
+            if unsafe { element_window_id(*element as AXUIElementRef) } != Some(window_id) {
+                for nodes in &trees {
+                    release_actionable_nodes(nodes);
+                }
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    "the exact browser consent action changed windows before AXPress",
+                ));
+            }
             let pressed = unsafe { perform_action(*element as AXUIElementRef, "AXPress") };
             for nodes in &trees {
                 release_actionable_nodes(nodes);
@@ -414,17 +445,34 @@ mod tests {
         ]
     }
 
+    fn exact_allow_button_for_test<F>(
+        nodes: &[AXNode],
+        focused: F,
+    ) -> Result<Option<usize>, BrowserRefusal>
+    where
+        F: FnMut(usize) -> bool,
+    {
+        exact_allow_button_with(nodes, 7, focused, |_| Some(7))
+    }
+
+    fn native_consent_sheet_present_for_test(nodes: &[AXNode]) -> bool {
+        native_consent_sheet_present_with(nodes, 7, |_| Some(7))
+    }
+
     #[test]
     fn matcher_requires_sheet_prompt_and_unique_press_action() {
         let nodes = prompt("Allow remote debugging?", ["Cancel", "Allow"]);
         assert_eq!(
-            exact_allow_button_with(&nodes, |pointer| pointer == 7).unwrap(),
+            exact_allow_button_for_test(&nodes, |pointer| pointer == 7).unwrap(),
             Some(8)
         );
-        assert!(native_consent_sheet_present(&nodes));
+        assert!(native_consent_sheet_present_for_test(&nodes));
 
         let no_sheet = vec![node("AXButton", 1, Some("Allow"), &["AXPress"])];
-        assert_eq!(exact_allow_button_with(&no_sheet, |_| false).unwrap(), None);
+        assert_eq!(
+            exact_allow_button_for_test(&no_sheet, |_| false).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -438,7 +486,7 @@ mod tests {
         ] {
             let nodes = prompt(title, labels);
             assert_eq!(
-                exact_allow_button_with(&nodes, |pointer| pointer == 7).unwrap(),
+                exact_allow_button_for_test(&nodes, |pointer| pointer == 7).unwrap(),
                 Some(8)
             );
         }
@@ -452,7 +500,7 @@ mod tests {
         }
 
         assert_eq!(
-            exact_allow_button_with(&nodes, |pointer| pointer == 7).unwrap(),
+            exact_allow_button_for_test(&nodes, |pointer| pointer == 7).unwrap(),
             None
         );
     }
@@ -463,7 +511,7 @@ mod tests {
         nodes[2].frame = Some([202.0, 200.0, 90.0, 36.0]);
         nodes[3].frame = Some([100.0, 200.0, 90.0, 36.0]);
         assert_eq!(
-            exact_allow_button_with(&nodes, |pointer| pointer == 7).unwrap(),
+            exact_allow_button_for_test(&nodes, |pointer| pointer == 7).unwrap(),
             Some(8)
         );
     }
@@ -477,7 +525,7 @@ mod tests {
             button(9, "C", 304.0),
         ];
         assert_eq!(
-            exact_allow_button_with(&nodes, |pointer| pointer == 7)
+            exact_allow_button_for_test(&nodes, |pointer| pointer == 7)
                 .unwrap_err()
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
@@ -485,7 +533,18 @@ mod tests {
     }
 
     #[test]
-    fn consent_surfaces_keep_approved_window_then_frontmost_normal_windows() {
+    fn matcher_refuses_structurally_valid_sheet_owned_by_sibling_window() {
+        let nodes = prompt("opaque prompt", ["opaque cancel", "opaque allow"]);
+
+        assert_eq!(
+            exact_allow_button_with(&nodes, 7, |pointer| pointer == 7, |_| Some(8)).unwrap(),
+            None
+        );
+        assert!(!native_consent_sheet_present_with(&nodes, 7, |_| Some(8)));
+    }
+
+    #[test]
+    fn consent_surfaces_never_expand_beyond_the_approved_window() {
         let window = |window_id, title: &str, z_index| crate::windows::WindowInfo {
             window_id,
             pid: 42,
@@ -514,7 +573,7 @@ mod tests {
                 42,
                 7,
             ),
-            vec![7, 9, 8]
+            vec![7]
         );
     }
 }

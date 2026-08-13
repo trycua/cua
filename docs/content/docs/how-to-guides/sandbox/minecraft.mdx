@@ -1,0 +1,199 @@
+---
+title: Run Minecraft in a Windows sandbox
+description: Boot a Windows sandbox, install Minecraft Java Edition into it, and let a computer-use agent open a single-player world.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Minecraft exercises almost everything a Windows sandbox can do: it needs internet access, a Java runtime, working OpenGL, and a GUI that only clicks can drive. This guide boots a Windows sandbox on the local QEMU runtime, installs Minecraft Java Edition, and hands the launcher to a computer-use agent that starts a single-player world.
+
+<Callout type="warn">
+  You need a Microsoft account that owns Minecraft Java Edition. Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
+</Callout>
+
+<Callout type="info">
+  This guide covers the **local** QEMU runtime only. A Windows sandbox on Fleet cloud does not currently boot: the SDK creates its sandbox templates without a firmware setting, so they inherit the BIOS default, while the Windows containerDisk is UEFI/GPT and BIOS has nothing to chainload. That is tracked in [trycua/cua#3125](https://github.com/trycua/cua/pull/3125).
+</Callout>
+
+## Boot a Windows sandbox that can reach the internet
+
+`Image.windows()` resolves to a pinned Windows Server 2022 containerDisk. Two QEMU arguments have to be added on top of the defaults:
+
+- **A second network interface.** The bare-metal runtime attaches its NIC with `restrict=on`, which isolates the guest. `sb.shell.run()` still works over the forwarded port, but nothing inside Windows can reach the internet — and Minecraft needs to.
+- **`-cpu host`.** The default `qemu64` CPU model is too thin for a software OpenGL driver. With it, Minecraft creates its window and then dies while loading resources, with no Java exception and no crash log. The last `-cpu` on the command line wins, so appending it is enough.
+
+```python
+import asyncio
+from cua import Image, QEMURuntime, Sandbox
+
+EXTRA_ARGS = [
+    # a second, unrestricted user-mode NIC — the default one is restrict=on
+    '-netdev', 'user,id=net1,net=10.0.3.0/24,host=10.0.3.2,dns=10.0.3.3',
+    '-device', 'virtio-net-pci,netdev=net1,mac=52:55:00:d1:55:02',
+    # a CPU the software OpenGL driver can actually use
+    '-cpu', 'host',
+]
+
+async def main():
+    sb = await Sandbox.create(
+        Image.windows(),
+        name='mc-win',
+        local=True,
+        runtime=QEMURuntime(
+            mode='bare-metal',
+            cpu_count=12,
+            memory_mb=16384,
+            extra_args=EXTRA_ARGS,
+        ),
+    )
+    print(await sb.shell.run('ver'))
+    await sb.disconnect()  # the sandbox keeps running
+
+asyncio.run(main())
+```
+
+<Callout type="warn">
+  Give the second NIC its own subnet. Both user-mode networks default to `10.0.2.0/24` and both offer the guest `10.0.2.15`, so Windows drops one interface to a `169.254.x.x` link-local address with no gateway and no working DNS.
+</Callout>
+
+A warm boot takes about 35 seconds. Confirm the guest really has internet before installing anything.
+
+```python
+async with Sandbox.connect('mc-win', local=True) as sb:
+    check = await sb.shell.run(
+        'powershell -Command "(Invoke-WebRequest -UseBasicParsing '
+        'https://piston-meta.mojang.com/mc/game/version_manifest.json).StatusCode"'
+    )
+    print(check.stdout)  # 200
+```
+
+## Install a launcher and a software OpenGL driver
+
+The sandbox GPU is the *Microsoft Basic Display Adapter*, which offers OpenGL 1.1. Minecraft 1.17 and later need OpenGL 3.2, so the game needs Mesa3D's `opengl32.dll` (llvmpipe), which implements OpenGL in software.
+
+Both downloads below are **MinGW** builds on purpose. The MSVC builds of Prism Launcher and Mesa both depend on the Visual C++ redistributable, which Windows Server 2022 does not ship: Prism then exits silently, and Mesa's DLL fails to load so Windows quietly falls back to the system `opengl32.dll`.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+New-Item -ItemType Directory -Force -Path C:\mc | Out-Null
+
+# Prism Launcher — signs in with Microsoft device authorization, which needs no browser
+Invoke-WebRequest -UseBasicParsing -OutFile C:\mc\prism.zip `
+  'https://github.com/PrismLauncher/PrismLauncher/releases/download/11.0.3/PrismLauncher-Windows-MinGW-w64-Portable-11.0.3.zip'
+Expand-Archive C:\mc\prism.zip -DestinationPath C:\mc\prismw -Force
+
+# 7-Zip, because Mesa ships as .7z
+Invoke-WebRequest -UseBasicParsing -OutFile C:\mc\7z.msi 'https://www.7-zip.org/a/7z2408-x64.msi'
+Start-Process msiexec.exe -ArgumentList '/i','C:\mc\7z.msi','/qn' -Wait
+
+# Mesa3D software OpenGL
+Invoke-WebRequest -UseBasicParsing -OutFile C:\mc\mesa.7z `
+  'https://github.com/pal1000/mesa-dist-win/releases/download/26.1.6/mesa3d-26.1.6-release-mingw.7z'
+& 'C:\Program Files\7-Zip\7z.exe' x C:\mc\mesa.7z -oC:\mc\mesamw -y | Out-Null
+
+Start-Process -FilePath C:\mc\prismw\prismlauncher.exe -WorkingDirectory C:\mc\prismw
+```
+
+Save that as `setup.ps1`, push it into the sandbox, and run it. It downloads roughly 100 MB, so allow a generous timeout.
+
+```python
+from pathlib import Path
+
+async with Sandbox.connect('mc-win', local=True) as sb:
+    await sb.shell.run('if not exist C:\\mc mkdir C:\\mc')
+    await sb.files.write_text('C:\\mc\\setup.ps1', Path('setup.ps1').read_text())
+    result = await sb.shell.run(
+        'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\mc\\setup.ps1',
+        timeout=1800,
+    )
+    print(result.stdout)
+```
+
+## Sign in and create an instance
+
+Prism opens a **Quick Setup** wizard on first run. Screenshot the sandbox, click through it, and stop at the account page.
+
+```python
+async with Sandbox.connect('mc-win', local=True) as sb:
+    Path('sandbox.png').write_bytes(await sb.screenshot())   # look at it
+    await sb.mouse.click(888, 678)                           # Next
+```
+
+1. Work through the wizard to **Accounts → Add Microsoft**. Prism shows a QR code and an eight-character device code.
+2. Read the code off a screenshot, open `https://www.microsoft.com/link` in your own browser, enter it, and approve the sign-in. The account then appears with status *Ready*.
+3. Click **Add Instance**, search for a version such as `1.20.1`, and click **OK**. Prism downloads the client jar and assets.
+
+<Callout type="info">
+  Device codes expire after about fifteen minutes, but Prism issues a fresh one automatically and keeps polling, so the dialog can be left open. Take a new screenshot to read the current code rather than reusing an old one.
+</Callout>
+
+## Point the software driver at the launcher's Java
+
+Click **Launch** once. Prism downloads its own Java runtime and the game fails with `GLFW error 65542: WGL: The driver does not appear to support OpenGL` — expected, because Mesa is not in place yet.
+
+Prism may keep using the runtime it downloaded even if you set `JavaPath` in its config, so copy the Mesa DLLs next to *every* `javaw.exe` under the install root. Windows loads `opengl32.dll` from the running executable's directory before the system directory, which is what makes this work.
+
+```powershell
+$dirs = Get-ChildItem C:\mc -Recurse -Filter javaw.exe -ErrorAction SilentlyContinue |
+  Select-Object -ExpandProperty DirectoryName -Unique
+foreach ($d in $dirs) {
+  Copy-Item C:\mc\mesamw\x64\opengl32.dll, C:\mc\mesamw\x64\libgallium_wgl.dll $d -Force
+  Write-Output "mesa -> $d"
+}
+```
+
+Click **Launch** again. The Minecraft title screen appears after a minute or two.
+
+## Let an agent start a world
+
+Now hand the running launcher to a computer-use agent. A `Sandbox` can be passed straight to `ComputerAgent` as a tool.
+
+Use a **grounded** configuration. The `omniparser+` prefix runs a local element-detection pass over each screenshot and gives the model labelled UI elements to choose from, which is what makes clicks land on the right button. A plain vision model without that step guesses pixel coordinates and misses. It needs `cua-som` installed alongside the agent.
+
+```python
+import asyncio
+from pathlib import Path
+from cua import ComputerAgent, Sandbox
+
+PROMPT = """
+Prism Launcher is open on a Windows desktop, with a Minecraft instance and a signed-in account.
+
+1. Select the instance and click Launch.
+2. Wait for Minecraft. It runs on a software renderer, so the window takes minutes to appear
+   and repaints slowly. Screenshot, wait 15-30 seconds, screenshot again. Slow is not failure.
+3. On the title screen click Singleplayer, then Create New World, then Create New World again
+   to accept the defaults.
+4. Stop as soon as the hotbar and terrain are visible. Do not move, do not press Escape.
+"""
+
+async def main():
+    async with Sandbox.connect('mc-win', local=True) as sb:
+        agent = ComputerAgent(
+            model='omniparser+anthropic/claude-sonnet-4-5',
+            tools=[sb],
+            only_n_most_recent_images=4,
+        )
+        async for result in agent.run([{'role': 'user', 'content': PROMPT}]):
+            for item in result['output']:
+                if item['type'] == 'computer_call':
+                    print(item['action'])
+
+        Path('in-world.png').write_bytes(await sb.screenshot())
+
+asyncio.run(main())
+```
+
+Give the agent room to be patient. World generation takes a couple of minutes under software rendering, and an agent that reads a half-drawn frame as a failure will click somewhere it should not.
+
+A full run — launcher to standing in a new world — took 37 computer calls and about twenty minutes here, most of it waiting on the software renderer. The agent drove Minecraft's own menus mostly with `Tab` and `Enter` rather than clicks, which is more reliable than aiming at a slowly repainting screen.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| VM sits at a `Shell>` UEFI prompt instead of booting | stale EFI variables left by an earlier VM | delete `~/.cua/cua-sandbox/images/sessions/efivars.fd` and boot again |
+| Launcher never appears, no error | MSVC build without the VC++ redistributable | use the MinGW portable build |
+| Guest has an IP address but cannot resolve names | both user-mode NICs offered the same address | give the second NIC its own subnet |
+| `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |
+| Game exits during resource loading with no Java exception | default `qemu64` CPU model | append `-cpu host` to `extra_args` |

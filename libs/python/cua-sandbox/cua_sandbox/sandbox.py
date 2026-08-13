@@ -386,6 +386,34 @@ class Sandbox:
         await self._transport.disconnect()
 
     @property
+    def exposed_ports(self) -> dict:
+        """Map each Image.expose() port to the host port forwarding it.
+
+        Local sandboxes forward exposed ports to free host ports chosen at boot,
+        so the mapping is only knowable at runtime. Reading it from the saved
+        state as well means a reconnecting caller can still find the port rather
+        than it living only on the object create() returned. Empty when the
+        runtime forwards nothing (Fleet publishes services instead — use
+        tunnel.forward()).
+        """
+        info = getattr(self, "_runtime_info", None)
+        ports = getattr(info, "exposed_ports", None) if info else None
+        if ports:
+            return dict(ports)
+        name = getattr(self, "name", None)
+        if name:
+            try:
+                from cua_sandbox import sandbox_state
+
+                saved = sandbox_state.load(name) or {}
+            except Exception:  # noqa: BLE001 - a missing state file is not an error here
+                saved = {}
+            stored = saved.get("exposed_ports") or {}
+            # JSON object keys are strings; callers index by guest port int.
+            return {int(guest): host for guest, host in stored.items()}
+        return {}
+
+    @property
     def claim_name(self) -> str | None:
         """Fleet claim name, distinct from the bound sandbox name."""
         return self._claim_handle.name if self._claim_handle is not None else None

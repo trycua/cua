@@ -14,6 +14,7 @@
     "lint:fix": "biome check --write",
     "test:e2e": "npm run sdk:browser && playwright test",
     "test:e2e:ui": "npm run sdk:browser && playwright test --ui",
+    "test:favicon": "node --test tests/favicon.test.mjs",
     "test:sdk-models": "rm -rf target/sdk-model-tests && tsc e2e/sdk-models.unit.ts src/sdk/status.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --outDir target/sdk-model-tests --skipLibCheck && node target/sdk-model-tests/e2e/sdk-models.unit.js",
     "test:agent": "node --test --experimental-strip-types agent.test.ts"
   },

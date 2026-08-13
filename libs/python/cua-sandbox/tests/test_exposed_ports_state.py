@@ -63,3 +63,35 @@ class TestExposedPortsSurviveAReconnect:
         from cua_sandbox.sandbox import Sandbox
 
         assert isinstance(getattr(Sandbox, "exposed_ports", None), property)
+
+
+class TestTunnelErrorNamesEverySupportedTransport:
+    """The message hardcoded a list that fell out of date: FleetCloudTransport
+    implements forward_tunnel but was not named, so a local caller was told Fleet
+    could not tunnel either — contradicting the documented Fleet path."""
+
+    def test_message_lists_exactly_the_transports_that_implement_it(self):
+        import importlib
+        import inspect
+        import pkgutil
+
+        import cua_sandbox.transport as pkg
+        from cua_sandbox.transport.base import Transport
+
+        for mod in pkgutil.iter_modules(pkg.__path__):
+            importlib.import_module(f"cua_sandbox.transport.{mod.name}")
+
+        implementers = {
+            cls.__name__ for cls in _subclasses(Transport) if "forward_tunnel" in vars(cls)
+        }
+        assert implementers, "no transport implements forward_tunnel"
+
+        message = inspect.getsource(Transport.forward_tunnel)
+        missing = sorted(n for n in implementers if n not in message)
+        assert not missing, f"error message omits transports that support tunnelling: {missing}"
+
+
+def _subclasses(cls):
+    for sub in cls.__subclasses__():
+        yield sub
+        yield from _subclasses(sub)

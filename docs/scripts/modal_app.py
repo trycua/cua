@@ -469,6 +469,48 @@ async def crawl_docs():
     return summary
 
 
+def _publish_dir(s3, bucket: str, local_dir, prefix: str) -> int:
+    """Publish local_dir to s3://bucket/prefix, removing anything stale.
+
+    Uploads every file, then deletes keys under the prefix that the current
+    build did not write. Plain upload-only publishing is what broke docs
+    vector search: the indexer rebuilds docs.lance from scratch, but old
+    files were never removed from S3, so manifests from a previous Lance
+    format lingered next to the new ones. Lance then refused to open the
+    table ("Found multiple manifest naming schemes in the same directory:
+    V1 and V2") and the server reported it as a missing database.
+
+    Deletes run after the uploads, not before, so the prefix is never empty
+    and the S3->PVC sync job cannot mirror a half-published table.
+    """
+    uploaded_keys = set()
+    count = 0
+    for fpath in sorted(local_dir.rglob("*")):
+        if fpath.is_file():
+            key = f"{prefix}{fpath.relative_to(local_dir).as_posix()}"
+            s3.upload_file(str(fpath), bucket, key)
+            uploaded_keys.add(key)
+            count += 1
+
+    stale = []
+    for page in s3.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket, Prefix=prefix
+    ):
+        for obj in page.get("Contents", []):
+            if obj["Key"] not in uploaded_keys:
+                stale.append({"Key": obj["Key"]})
+
+    for batch_start in range(0, len(stale), 1000):
+        s3.delete_objects(
+            Bucket=bucket,
+            Delete={"Objects": stale[batch_start : batch_start + 1000]},
+        )
+    if stale:
+        print(f"  Removed {len(stale)} stale object(s) under {prefix}")
+
+    return count
+
+
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
@@ -527,11 +569,7 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
         # LanceDB directory
         lance_dir = docs_db_dir / "docs.lance"
         if lance_dir.exists():
-            for fpath in lance_dir.rglob("*"):
-                if fpath.is_file():
-                    key = f"docs_db/docs.lance/{fpath.relative_to(lance_dir)}"
-                    s3.upload_file(str(fpath), bucket, key)
-                    uploaded += 1
+            uploaded += _publish_dir(s3, bucket, lance_dir, "docs_db/docs.lance/")
             print("  Uploaded docs LanceDB directory")
 
     # --- code databases ---
@@ -548,11 +586,9 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
         # Aggregated LanceDB directory
         code_lance = code_db_dir / "code_index.lancedb"
         if code_lance.exists():
-            for fpath in code_lance.rglob("*"):
-                if fpath.is_file():
-                    key = f"code_db/code_index.lancedb/{fpath.relative_to(code_lance)}"
-                    s3.upload_file(str(fpath), bucket, key)
-                    uploaded += 1
+            uploaded += _publish_dir(
+                s3, bucket, code_lance, "code_db/code_index.lancedb/"
+            )
             print("  Uploaded code LanceDB directory")
 
     print(f"S3 sync complete: {uploaded} files uploaded to s3://{bucket}/")

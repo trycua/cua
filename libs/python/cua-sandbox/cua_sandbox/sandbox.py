@@ -257,6 +257,24 @@ def _auto_runtime(image: Image) -> "Runtime":
     # Linux VM or Windows VM → prefer Docker-wrapped QEMU; fall back to bare-metal
     from cua_sandbox.runtime.qemu import QEMURuntime
 
+    if image.os_type == "linux":
+        # A Linux VM boots the pinned containerDisk under bare-metal QEMU — the
+        # same disk Fleet cloud boots. Docker-wrapped QEMU cannot reach that path
+        # at all: resolve_image() hands it the XFCE *container* image, so asking
+        # for a VM used to quietly get you a container.
+        from cua_sandbox.runtime.compat import _has_qemu
+
+        if not _has_qemu():
+            raise RuntimeError(
+                "Image.linux() is a VM and needs QEMU, which was not found on "
+                "this host. Install it:\n"
+                "  Debian/Ubuntu:  sudo apt install qemu-system-x86\n"
+                "  Fedora/RHEL:    sudo dnf install qemu-system-x86\n"
+                "  macOS:          brew install qemu\n"
+                "Or pass an explicit runtime= if you want a different one."
+            )
+        return QEMURuntime(mode="bare-metal")
+
     if image.os_type == "windows":
         # Windows bare-metal QEMU works on any host with qemu-system-x86_64
         try:

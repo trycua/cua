@@ -219,20 +219,57 @@ class TestDeletingNothingIsNotSuccess:
 
 
 class TestLocalRuntimeSelection:
-    """`Image.linux()` says kind='vm', but started locally with no explicit
-    runtime it lands on the same XFCE container as kind='container'."""
+    """`Image.linux()` says kind='vm'. Started locally with no explicit runtime it
+    used to land on Docker-wrapped QEMU, which `resolve_image` hands the XFCE
+    *container* image — so a VM request quietly became a container, identical to
+    `kind='container'`, and never touched the pinned containerDisk."""
 
-    def test_linux_vm_and_container_resolve_to_the_same_docker_image(self):
-        from cua_sandbox.runtime.images import UBUNTU_XFCE, resolve_image
+    def test_a_linux_vm_boots_under_bare_metal_qemu(self, monkeypatch):
+        from cua_sandbox.runtime import compat
+        from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
+        from cua_sandbox.sandbox import _auto_runtime
 
-        assert resolve_image("linux") == UBUNTU_XFCE
+        monkeypatch.setattr(compat, "_has_qemu", lambda: True)
+        assert isinstance(_auto_runtime(Image.linux()), QEMUBaremetalRuntime)
 
-    def test_only_a_disk_path_reaches_bare_metal_qemu(self):
+    def test_a_linux_container_still_goes_to_docker(self):
+        from cua_sandbox.runtime.docker import DockerRuntime
+        from cua_sandbox.sandbox import _auto_runtime
+
+        assert isinstance(_auto_runtime(Image.linux(kind="container")), DockerRuntime)
+
+    def test_vm_and_container_do_not_resolve_alike(self, monkeypatch):
+        """The regression in one assertion. Comparing the two runtime classes is
+        not enough: QEMUDockerRuntime *subclasses* DockerRuntime and resolved to
+        the same `trycua/cua-xfce` image, so the old behaviour passed a
+        type-inequality check while still booting an identical container. The VM
+        must not go through Docker at all."""
+        from cua_sandbox.runtime import compat
+        from cua_sandbox.runtime.docker import DockerRuntime
+        from cua_sandbox.sandbox import _auto_runtime
+
+        monkeypatch.setattr(compat, "_has_qemu", lambda: True)
+        vm = _auto_runtime(Image.linux())
+        container = _auto_runtime(Image.linux(kind="container"))
+
+        assert isinstance(container, DockerRuntime)
+        assert not isinstance(vm, DockerRuntime)
+
+    def test_missing_qemu_fails_loudly_rather_than_silently_downgrading(self, monkeypatch):
+        """Falling back to Docker would hand back the XFCE container, which
+        cannot become ready — a 120s timeout instead of a named dependency."""
+        import pytest as _pytest
+
+        from cua_sandbox.runtime import compat
+        from cua_sandbox.sandbox import _auto_runtime
+
+        monkeypatch.setattr(compat, "_has_qemu", lambda: False)
+        with _pytest.raises(RuntimeError, match="needs QEMU"):
+            _auto_runtime(Image.linux())
+
+    def test_a_disk_path_still_reaches_bare_metal_qemu(self):
         from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
         from cua_sandbox.sandbox import _auto_runtime
 
         with_disk = Image.from_file("/tmp/does-not-need-to-exist.qcow2", os_type="linux")
         assert isinstance(_auto_runtime(with_disk), QEMUBaremetalRuntime)
-
-        # Documented as a QEMU VM, but auto-selection gives Docker-wrapped QEMU.
-        assert not isinstance(_auto_runtime(Image.linux()), QEMUBaremetalRuntime)

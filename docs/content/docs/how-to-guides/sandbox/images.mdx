@@ -36,8 +36,8 @@ Image.android()                      # Android 14
 
 | Image | Kind | Runs in cloud | Notes |
 |-------|------|---------------|-------|
-| Image.linux() | VM | yes | Ubuntu 24.04; a real VM only with the bare-metal runtime (see below) |
-| Image.linux(kind='container') | container | no | Lighter, Docker/XFCE |
+| Image.linux() | VM | yes | Ubuntu 24.04; boots the pinned containerDisk under QEMU, needs qemu-system-x86_64 |
+| Image.linux(kind='container') | container | no | Lighter, Docker/XFCE, no QEMU needed |
 | Image.linux('ubuntu', '22.04') | VM | no | Built locally, no pinned disk |
 | Image.macos() | VM | no | Apple Virtualization / Lume |
 | Image.windows() | VM | yes | QEMU or Hyper-V |
@@ -61,31 +61,37 @@ Image.android()                      # Android 14
   container (`computer_server/cli.py:34` defaults `--host` to `127.0.0.1`, and the
   image's start script does not override it), so Docker's published port mapping
   forwards to nothing and every launch ends in `TimeoutError: Container <name> not
-  ready after 120s`. This needs a rebuild of the image; until then use the
-  bare-metal VM path below.
+  ready after 120s`. This needs a rebuild of the image; until then use
+  `Image.linux()`, which runs as a VM and does not go through that image.
 </Callout>
 
-### Getting a real Linux VM locally
+### How a Linux image runs locally
 
-`kind='vm'` describes the image, not the runtime that ends up booting it. Started
-locally with no explicit runtime, `Image.linux()` auto-selects Docker-wrapped QEMU,
-which resolves to the same `trycua/cua-xfce` **container** that `kind='container'`
-uses — no QEMU, no KVM, and none of the pinned containerDisk.
-
-To boot the same disk Cua cloud boots, ask for the bare-metal runtime:
+`Image.linux()` is a VM. Locally it boots the same pinned containerDisk that Cua
+cloud boots, under QEMU on the host — so a sandbox behaves the same in both places:
 
 ```python
-from cua import Image, QEMURuntime, Sandbox
+from cua import Image, Sandbox
 
-async with Sandbox.ephemeral(
-    Image.linux(), local=True, runtime=QEMURuntime(mode='bare-metal'),
-) as sb:
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
     print((await sb.shell.run('uname -a')).stdout)
 ```
 
-Plain `QEMURuntime()` defaults to `mode='docker'` and does **not** take the
-containerDisk path. Bare-metal needs `qemu-system-x86_64` on the host, and uses
-`/dev/kvm` when it is available.
+That path needs `qemu-system-x86_64` on the host, and uses `/dev/kvm` when it is
+available. Without QEMU the call raises rather than quietly starting something else:
+
+```
+RuntimeError: Image.linux() is a VM and needs QEMU, which was not found on this host.
+```
+
+`Image.linux(kind='container')` is the Docker path instead, and needs no QEMU.
+
+<Callout type="warn">
+  Passing `runtime=QEMURuntime()` explicitly selects `mode='docker'`, which wraps
+  QEMU in a container and does **not** boot the pinned containerDisk. Use
+  `QEMURuntime(mode='bare-metal')` if you are naming a runtime by hand, or leave
+  `runtime=` off and let the default pick it.
+</Callout>
 
 ## Install packages
 

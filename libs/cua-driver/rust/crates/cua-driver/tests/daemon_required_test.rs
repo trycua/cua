@@ -212,6 +212,68 @@ fn named_session_survives_across_one_shot_cli_calls() {
 }
 
 #[test]
+fn implicitly_started_named_session_survives_across_one_shot_cli_calls() {
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let session = format!("synthetic-cli-implicit-{}", std::process::id());
+
+    let first_action = driver.call("get_config", serde_json::json!({"session": session}));
+    assert!(
+        !first_action.is_error(),
+        "implicit first action failed: {}",
+        first_action.text()
+    );
+
+    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    assert!(
+        !state.is_error(),
+        "implicitly started session did not survive the next CLI process: {}",
+        state.text()
+    );
+    assert_eq!(state.structured()["session"], session);
+
+    let ended = driver.call("end_session", serde_json::json!({"session": session}));
+    assert!(!ended.is_error(), "end failed: {}", ended.text());
+}
+
+#[test]
+fn named_cli_session_cleanup_is_isolated() {
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let first = format!("synthetic-cli-isolation-a-{}", std::process::id());
+    let second = format!("synthetic-cli-isolation-b-{}", std::process::id());
+
+    for session in [&first, &second] {
+        let started = driver.call(
+            "start_session",
+            serde_json::json!({"session": session, "capture_scope": "window"}),
+        );
+        assert!(!started.is_error(), "start failed: {}", started.text());
+    }
+
+    let ended = driver.call("end_session", serde_json::json!({"session": first}));
+    assert!(!ended.is_error(), "first end failed: {}", ended.text());
+
+    let anonymous = driver.call("get_config", serde_json::json!({}));
+    assert!(
+        !anonymous.is_error(),
+        "anonymous one-shot call failed: {}",
+        anonymous.text()
+    );
+
+    let state = driver.call("get_session_state", serde_json::json!({"session": second}));
+    assert!(
+        !state.is_error(),
+        "ending another named session or cleaning an anonymous call ended the survivor: {}",
+        state.text()
+    );
+    assert_eq!(state.structured()["session"], second);
+
+    let ended = driver.call("end_session", serde_json::json!({"session": second}));
+    assert!(!ended.is_error(), "second end failed: {}", ended.text());
+}
+
+#[test]
 fn revoke_cli_ends_the_exact_live_session() {
     let mut driver = CliDriver::new();
     assert!(driver.available(), "test daemon failed to start");

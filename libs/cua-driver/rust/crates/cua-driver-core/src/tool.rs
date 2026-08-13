@@ -810,11 +810,10 @@ impl ToolRegistry {
     }
 
     pub fn tools_list(&self) -> Value {
-        let empty_args = Value::Object(serde_json::Map::new());
         let list: Vec<Value> = self
             .order
             .iter()
-            .filter(|name| crate::policy::authorize_tool_call(name, &empty_args).is_ok())
+            .filter(|name| crate::policy::is_tool_listable(name))
             .filter_map(|name| self.tools.get(name))
             .map(|tool| tool.def().to_list_entry())
             .collect();

@@ -1,5 +1,6 @@
 //! Exact Windows UIA handling for Chromium's browser-owned debugging consent.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use cua_driver_core::browser::{
@@ -139,6 +140,61 @@ fn native_button_properties(element_ptr: usize) -> Result<(String, bool), Browse
             format!("could not prove a native Chromium consent button: {error}"),
         )
     })
+}
+
+fn redacted_native_structure_with<F>(nodes: &[UiaNode], mut properties: F) -> String
+where
+    F: FnMut(usize) -> Result<(String, bool), BrowserRefusal>,
+{
+    const MAX_ROWS: usize = 64;
+    let relevant = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            is_trusted_prompt_node(nodes, node)
+                && matches!(
+                    node.control_type.as_str(),
+                    "Pane" | "Window" | "Text" | "Button" | "Group" | "CheckBox"
+                )
+        })
+        .collect::<Vec<_>>();
+    let start = relevant.len().saturating_sub(MAX_ROWS);
+    let mut name_groups = HashMap::<String, usize>::new();
+    let mut next_name_group = 1usize;
+    let mut rows = Vec::new();
+    for (tree_index, node) in relevant.into_iter().skip(start) {
+        let name_group = node_name(node).map(|name| {
+            *name_groups.entry(name.to_owned()).or_insert_with(|| {
+                let group = next_name_group;
+                next_name_group += 1;
+                group
+            })
+        });
+        let native = (node.control_type == "Button" && node.element_ptr != 0)
+            .then(|| properties(node.element_ptr).ok())
+            .flatten();
+        rows.push(format!(
+            "i={tree_index},type={},depth={},parent={:?},name_group={:?},rect={:?},actions={:?},class={:?},focused={:?}",
+            node.control_type,
+            node.depth,
+            node.parent_element_index,
+            name_group,
+            node.rect,
+            node.actions,
+            native.as_ref().map(|(class_name, _)| class_name),
+            native.as_ref().map(|(_, focused)| focused),
+        ));
+    }
+    format!(
+        "surfaces={},relevant={},sample=[{}]",
+        native_prompt_surfaces(nodes).len(),
+        start + rows.len(),
+        rows.join(";")
+    )
+}
+
+fn redacted_native_structure(nodes: &[UiaNode]) -> String {
+    redacted_native_structure_with(nodes, native_button_properties)
 }
 
 fn edge_gap(first: (i32, i32, i32, i32), second: (i32, i32, i32, i32)) -> Option<i64> {
@@ -348,6 +404,8 @@ pub async fn handle(
     prove_window_owner(request.window_id, pid)?;
     let deadline = Instant::now() + Duration::from_secs(4);
     let mut saw_prompt = false;
+    let diagnostics_enabled = std::env::var_os("CUA_DRIVER_BROWSER_CONSENT_DIAGNOSTICS").is_some();
+    let mut last_structure = None;
     loop {
         prove_window_owner(request.window_id, pid)?;
         let hwnd = request.window_id;
@@ -361,6 +419,9 @@ pub async fn handle(
             })?;
         let prompt_present = native_prompt_surface_present(&tree.nodes);
         saw_prompt |= prompt_present;
+        if diagnostics_enabled {
+            last_structure = Some(redacted_native_structure(&tree.nodes));
+        }
         match exact_allow_button(&tree.nodes) {
             Ok(Some(element)) => {
                 let invoked = unsafe { invoke(element) };
@@ -383,10 +444,16 @@ pub async fn handle(
         if Instant::now() >= deadline {
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!(
-                    "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}",
-                    request.attempt
-                ),
+                match last_structure {
+                    Some(structure) => format!(
+                        "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}; redacted native structure: {structure}",
+                        request.attempt
+                    ),
+                    None => format!(
+                        "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}",
+                        request.attempt
+                    ),
+                },
             ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -636,5 +703,22 @@ mod tests {
             .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn diagnostics_preserve_structure_without_exposing_localized_names() {
+        let title = "秘密のリモートデバッグ許可";
+        let labels = ["設定でオフ", "許可", "キャンセル"];
+        let nodes = prompt(title, labels);
+
+        let diagnostic = redacted_native_structure_with(&nodes, properties);
+
+        assert!(diagnostic.contains("surfaces=1"));
+        assert!(diagnostic.contains("type=Button"));
+        assert!(diagnostic.contains("name_group=Some"));
+        assert!(!diagnostic.contains(title));
+        for label in labels {
+            assert!(!diagnostic.contains(label));
+        }
     }
 }

@@ -471,6 +471,12 @@ func TestNginxRoutesChatToBackend(t *testing.T) {
 	}
 }
 
+type routerCardAccounts struct{}
+
+func (routerCardAccounts) UserCreatedAt(context.Context, string) (time.Time, error) {
+	return time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC), nil
+}
+
 type routerCardBilling struct {
 	cards []billing.SavedCard
 	err   error
@@ -517,7 +523,7 @@ func TestK8sRouteRejectsCustomResourceCreateWithoutCardBeforeProxy(t *testing.T)
 	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
 
 	service := &routerCardBilling{}
-	router := setupRouter(handlers.Handlers{Billing: service})
+	router := setupRouter(handlers.Handlers{Billing: service, UserAccounts: routerCardAccounts{}})
 	cases := []struct {
 		name string
 		path string

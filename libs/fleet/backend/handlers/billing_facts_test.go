@@ -8,10 +8,24 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
 )
+
+type cardEligibilityAccounts struct {
+	createdAt time.Time
+	err       error
+	subject   string
+	calls     int
+}
+
+func (accounts *cardEligibilityAccounts) UserCreatedAt(_ context.Context, subject string) (time.Time, error) {
+	accounts.calls++
+	accounts.subject = subject
+	return accounts.createdAt, accounts.err
+}
 
 type cardEligibilityBilling struct {
 	subject string
@@ -50,34 +64,54 @@ func stripeFactRequest(user *auth.User) *http.Request {
 func TestStripeCardFacts(t *testing.T) {
 	stripeErr := errors.New("stripe unavailable: customer cus_secret payment method pm_secret")
 	cases := []struct {
-		name            string
-		user            *auth.User
-		cards           []billing.SavedCard
-		serviceErr      error
-		wantFacts       auth.FactSet
-		wantUnavailable bool
-		wantError       bool
-		wantCalls       int
+		name             string
+		user             *auth.User
+		cards            []billing.SavedCard
+		createdAt        time.Time
+		accountErr       error
+		serviceErr       error
+		withoutBilling   bool
+		wantFacts        auth.FactSet
+		wantUnavailable  bool
+		wantError        bool
+		wantCalls        int
+		wantAccountCalls int
 	}{
 		{
-			name:  "projects only raw expiration fields",
-			user:  &auth.User{ID: "user-123"},
-			cards: []billing.SavedCard{{Brand: "visa", Last4: "4242", ExpYear: 2027, ExpMonth: 3}},
+			name:      "projects only raw expiration fields",
+			user:      &auth.User{ID: "user-123"},
+			createdAt: time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC),
+			cards:     []billing.SavedCard{{Brand: "visa", Last4: "4242", ExpYear: 2027, ExpMonth: 3}},
 			wantFacts: auth.FactSet{"cards": []map[string]any{{
 				"exp_year": int64(2027), "exp_month": int64(3),
 			}}},
-			wantCalls: 1,
+			wantCalls:        1,
+			wantAccountCalls: 1,
 		},
-		{name: "empty cards are a definite fact", user: &auth.User{ID: "user-123"}, wantFacts: auth.FactSet{"cards": []map[string]any{}}, wantCalls: 1},
+		{
+			name:             "user created through August 14 is grandfathered without Stripe",
+			user:             &auth.User{ID: "user-123"},
+			createdAt:        time.Date(2026, time.August, 14, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+			wantFacts:        auth.FactSet{"grandfathered": true, "cards": []map[string]any{}},
+			withoutBilling:   true,
+			wantAccountCalls: 1,
+		},
+		{name: "empty cards are a definite fact at cutoff", user: &auth.User{ID: "user-123"}, createdAt: time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC), wantFacts: auth.FactSet{"cards": []map[string]any{}}, wantCalls: 1, wantAccountCalls: 1},
 		{name: "missing user is internal wiring error", wantError: true},
 		{name: "empty subject is internal wiring error", user: &auth.User{}, wantError: true},
-		{name: "Stripe error is unavailable", user: &auth.User{ID: "user-123"}, serviceErr: stripeErr, wantUnavailable: true, wantCalls: 1},
+		{name: "Stripe error is unavailable", user: &auth.User{ID: "user-123"}, createdAt: time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC), serviceErr: stripeErr, wantUnavailable: true, wantCalls: 1, wantAccountCalls: 1},
+		{name: "Keycloak error is unavailable before Stripe", user: &auth.User{ID: "user-123"}, accountErr: errors.New("keycloak unavailable"), wantUnavailable: true, wantAccountCalls: 1},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			service := &cardEligibilityBilling{cards: testCase.cards, err: testCase.serviceErr}
-			provider := StripeCardFacts(Handlers{Billing: service})
+			accounts := &cardEligibilityAccounts{createdAt: testCase.createdAt, err: testCase.accountErr}
+			var billingService BillingService = service
+			if testCase.withoutBilling {
+				billingService = nil
+			}
+			provider := StripeCardFacts(Handlers{Billing: billingService, UserAccounts: accounts})
 			facts, err := provider.LoadFacts(context.Background(), stripeFactRequest(testCase.user))
 			var unavailable *auth.FactUnavailableError
 			if testCase.wantUnavailable != errors.As(err, &unavailable) {
@@ -93,12 +127,15 @@ func TestStripeCardFacts(t *testing.T) {
 				t.Fatalf("facts = %#v, want %#v", facts, testCase.wantFacts)
 			}
 			if service.calls != testCase.wantCalls {
-				t.Fatalf("calls = %d, want %d", service.calls, testCase.wantCalls)
+				t.Fatalf("billing calls = %d, want %d", service.calls, testCase.wantCalls)
+			}
+			if accounts.calls != testCase.wantAccountCalls {
+				t.Fatalf("account calls = %d, want %d", accounts.calls, testCase.wantAccountCalls)
 			}
 			if service.calls > 0 && service.subject != "user-123" {
 				t.Fatalf("subject = %q, want resolved User.ID", service.subject)
 			}
-			if len(facts) > 1 {
+			if len(facts) > 2 {
 				t.Fatalf("fact leaked extra data: %#v", facts)
 			}
 		})

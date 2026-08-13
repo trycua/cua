@@ -63,6 +63,18 @@ test_non_admin_custom_resource_create_not_exempt {
 	)
 }
 
+test_user_created_before_cutoff_is_grandfathered {
+	custom_resource_creation_admission.billing_eligible with input as {
+		"facts": {"stripe_cards": {"grandfathered": true, "cards": []}},
+	}
+}
+
+test_user_created_at_cutoff_without_card_is_not_eligible {
+	not custom_resource_creation_admission.billing_eligible with input as {
+		"facts": {"stripe_cards": {"grandfathered": false, "cards": []}},
+	}
+}
+
 test_current_month_card_qualifies {
 	custom_resource_creation_admission.has_qualifying_card with input as input_for(
 		"POST", "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools", true, [], "user-1",

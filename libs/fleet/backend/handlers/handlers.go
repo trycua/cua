@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/chat"
@@ -20,6 +21,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+type UserAccountService interface {
+	UserCreatedAt(ctx context.Context, subject string) (time.Time, error)
+}
+
 type Handlers struct {
 	Admin           *keycloak.Admin
 	GatewayCfg      config.GatewayConfiguration
@@ -27,6 +32,7 @@ type Handlers struct {
 	KC              config.KeycloakConfiguration
 	Stripe          config.StripeConfiguration
 	Billing         BillingService
+	UserAccounts    UserAccountService
 	WebhookVerifier WebhookVerifier
 
 	GitHubTrustPolicies githubtrust.Store
@@ -51,13 +57,14 @@ type Handlers struct {
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 	return Handlers{
-		Admin:      admin,
-		GatewayCfg: cfg.Gateway,
-		AuthCfg:    cfg.Auth,
-		KC:         cfg.Keycloak,
-		Stripe:     cfg.Stripe,
-		ChatAccess: cfg.Chat.Access,
-		chatLocks:  newConversationLockRegistry(),
+		Admin:        admin,
+		UserAccounts: admin,
+		GatewayCfg:   cfg.Gateway,
+		AuthCfg:      cfg.Auth,
+		KC:           cfg.Keycloak,
+		Stripe:       cfg.Stripe,
+		ChatAccess:   cfg.Chat.Access,
+		chatLocks:    newConversationLockRegistry(),
 	}
 }
 

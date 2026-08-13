@@ -197,7 +197,7 @@ func CustomResourceCreationAdmissionPolicy() Node {
 	return Any(
 		leaf("data.custom_resource_creation_admission.exempt"),
 		leaf(
-			"data.custom_resource_creation_admission.has_qualifying_card",
+			"data.custom_resource_creation_admission.billing_eligible",
 			WithFacts(StripeCardsFactNamespace, RegisteredFacts(StripeCardsFactProvider)),
 			WithFacts(TimeFactNamespace, RegisteredFacts(CurrentYearFactProvider)),
 			WithFacts(TimeFactNamespace, RegisteredFacts(CurrentMonthFactProvider)),

@@ -7,6 +7,8 @@ default exempt = false
 
 default has_qualifying_card = false
 
+default billing_eligible = false
+
 custom_api_group(group) {
 	group == "cua.ai"
 }
@@ -49,6 +51,14 @@ exempt {
 
 exempt {
 	input.flags.card_requirement_exempt_subs[_] == input.user.sub
+}
+
+billing_eligible {
+	input.facts.stripe_cards.grandfathered == true
+}
+
+billing_eligible {
+	has_qualifying_card
 }
 
 has_qualifying_card {

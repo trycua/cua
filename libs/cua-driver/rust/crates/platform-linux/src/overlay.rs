@@ -114,6 +114,10 @@ fn try_send_x11_message(
     sender.is_some_and(|tx| tx.try_send(msg).is_ok())
 }
 
+fn should_start_x11_overlay(native_wayland: bool) -> bool {
+    !native_wayland
+}
+
 #[cfg(target_os = "linux")]
 struct X11OverlayThreadCleanup {
     receiver: Option<std::sync::mpsc::Receiver<OverlayMsg>>,
@@ -298,7 +302,8 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         key: key.clone(),
         cmd: cmd.clone(),
     });
-    let x11_queued = try_send_x11_message(CMD_TX.get(), msg.clone());
+    let native_wayland = crate::wayland::is_wayland();
+    let x11_queued = !native_wayland && try_send_x11_message(CMD_TX.get(), msg.clone());
     // Also forward to the native-Wayland layer-shell overlay when Wayland
     // is opted in. The wayland overlay's `forward` is a no-op when its
     // owner thread isn't started yet (which is the normal X11-only case).
@@ -548,6 +553,15 @@ pub fn run_on_thread() {
     };
 
     if !cfg.enabled {
+        return;
+    }
+
+    // A native Wayland session may also expose DISPLAY through XWayland, but
+    // that does not make the legacy full-root X11 overlay authoritative. The
+    // command path below forwards to the layer-shell backend; running both
+    // produces two independently scaled cursors and lets X11 save-unders leak
+    // into Wayland desktop captures.
+    if !should_start_x11_overlay(crate::wayland::is_wayland()) {
         return;
     }
 
@@ -2638,6 +2652,12 @@ fn bgra_and_visible_shape(
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_wayland_does_not_start_legacy_x11_overlay() {
+        assert!(!should_start_x11_overlay(true));
+        assert!(should_start_x11_overlay(false));
+    }
 
     fn drain_x11_test_events(conn: &impl x11rb::connection::Connection) -> anyhow::Result<()> {
         while conn.poll_for_event()?.is_some() {}

@@ -2,15 +2,14 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import yaml
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github/workflows/periodic-cua-sandbox-live.yml"
@@ -79,6 +78,15 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         self.assertIn('"lane":"main-source"', prepare_script)
         self.assertIn('"lane":"published-package"', prepare_script)
 
+    def test_jobs_only_run_in_the_upstream_repository(self) -> None:
+        workflow = self.workflow()
+        for job_name in ("prepare", "live"):
+            with self.subTest(job=job_name):
+                self.assertEqual(
+                    workflow["jobs"][job_name]["if"],
+                    "github.repository == 'trycua/cua'",
+                )
+
     def test_prepare_matrix_selects_lanes_for_each_trigger(self) -> None:
         expected_matrices = {
             ("push", ""): {"include": [{"lane": "main-source"}]},
@@ -119,6 +127,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         )
         required_contract = (
             "libs/python/cua-fleet/**",
+            "github.repository == 'trycua/cua'",
             "Check Fleet OAuth credentials",
             "step-scoped OAuth credentials",
             "CUA_LIVE_E2E_SOURCE_SHA",
@@ -208,7 +217,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         )
         self.assertEqual(
             checkout["with"]["ref"],
-            "${{ github.event_name == 'push' && github.sha || 'main' }}",
+            "${{ github.event_name == 'push' && github.sha || github.ref }}",
         )
         self.assertEqual(
             steps["Set up Python"]["uses"],

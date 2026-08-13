@@ -27,10 +27,11 @@ const EXPECTED_OUTPUT_SCHEMA_COUNT =
 const DRIVER_ARGS = [
   "mcp",
   "--direct",
-  "--dangerously-bypass-approvals",
 ];
 const PROBE_ENV = {
   ...process.env,
+  CUA_DRIVER_PERMISSION_MODE: "unrestricted",
+  CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS: "1",
   CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   DISABLE_AUTOUPDATER: "1",

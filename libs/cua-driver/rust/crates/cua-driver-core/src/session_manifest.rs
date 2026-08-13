@@ -1,4 +1,4 @@
-//! Immutable bounded-autonomy manifest loaded at trusted daemon startup.
+//! Immutable capability manifest loaded at trusted daemon startup.
 //!
 //! The agent may propose this file, but selecting and approving it is a
 //! launcher responsibility. The manifest only narrows the built-in,
@@ -17,6 +17,8 @@ use sha2::{Digest, Sha256};
 
 pub const SESSION_POLICY_FILE_ENV: &str = "CUA_DRIVER_SESSION_POLICY_FILE";
 pub const SESSION_POLICY_APPROVED_ENV: &str = "CUA_DRIVER_SESSION_POLICY_APPROVED";
+pub const CAPABILITY_MANIFEST_FILE_ENV: &str = "CUA_DRIVER_CAPABILITY_MANIFEST_FILE";
+pub const CAPABILITY_MANIFEST_APPROVED_ENV: &str = "CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestDecision {
@@ -30,8 +32,8 @@ pub enum ManifestDecision {
 pub struct SessionManifest {
     version: u32,
     sha256: String,
-    expires_unix_ms: u128,
-    idle_timeout: Duration,
+    expires_unix_ms: Option<u128>,
+    idle_timeout: Option<Duration>,
     allow: HashSet<String>,
     deny: HashSet<String>,
     ask: HashSet<String>,
@@ -84,11 +86,11 @@ impl SessionManifest {
         &self.sha256
     }
 
-    pub fn expires_unix_ms(&self) -> u128 {
+    pub fn expires_unix_ms(&self) -> Option<u128> {
         self.expires_unix_ms
     }
 
-    pub fn idle_timeout(&self) -> Duration {
+    pub fn idle_timeout(&self) -> Option<Duration> {
         self.idle_timeout
     }
 
@@ -134,7 +136,7 @@ impl SessionManifest {
                     && !self.existing_profiles.contains(&(pid, window_id))
                 {
                     return Err(format!(
-                        "browser pid {pid} window {window_id} is outside the bounded session policy"
+                        "browser pid {pid} window {window_id} is outside the capability manifest"
                     ));
                 }
             }
@@ -156,12 +158,12 @@ impl SessionManifest {
         if self.browser_origins.contains(&origin) {
             Ok(())
         } else {
-            Err("the live browser origin is outside the bounded session policy".to_owned())
+            Err("the live browser origin is outside the capability manifest".to_owned())
         }
     }
 
     /// Match the implementation-attested resource of an active adapter
-    /// against the immutable bounded manifest. A tool allow-list entry alone
+    /// against the immutable capability manifest. A tool allow-list entry alone
     /// never widens the resources approved at launch.
     pub fn authorize_protected_resource(
         &self,
@@ -174,7 +176,7 @@ impl SessionManifest {
             .ok_or_else(|| format!("{adapter_id} did not attest a resource kind"))?;
         let refused = || {
             Err(format!(
-                "{adapter_id} resource kind '{kind}' is outside the bounded session policy"
+                "{adapter_id} resource kind '{kind}' is outside the capability manifest"
             ))
         };
         match adapter_id {
@@ -182,7 +184,7 @@ impl SessionManifest {
                 "window" => self.authorize_desktop_window(resource),
                 "application" => self.authorize_desktop_application(resource),
                 "display" => self.desktop_display.then_some(()).ok_or_else(|| {
-                    "desktop display observation is outside the bounded session policy".to_owned()
+                    "desktop display observation is outside the capability manifest".to_owned()
                 }),
                 "browser_target" | "authenticated_browser_tab" => {
                     self.authorize_resource_origin(resource)
@@ -193,7 +195,7 @@ impl SessionManifest {
                 // directly instead of keying enforcement on a field the tool
                 // can never send.
                 "session_capture_scope" => self.desktop_display.then_some(()).ok_or_else(|| {
-                    "desktop capture escalation is outside the bounded session policy".to_owned()
+                    "desktop capture escalation is outside the capability manifest".to_owned()
                 }),
                 "session_trajectory_recording" => Ok(()),
                 _ => refused(),
@@ -202,7 +204,7 @@ impl SessionManifest {
                 "window_input" => self.authorize_desktop_window(resource),
                 "application_input" => self.authorize_desktop_application(resource),
                 "display_input" => self.desktop_display.then_some(()).ok_or_else(|| {
-                    "desktop-wide input is outside the bounded session policy".to_owned()
+                    "desktop-wide input is outside the capability manifest".to_owned()
                 }),
                 _ => refused(),
             },
@@ -240,7 +242,7 @@ impl SessionManifest {
                     Ok(())
                 } else {
                     Err(format!(
-                        "process pid {pid} is outside the bounded session policy"
+                        "process pid {pid} is outside the capability manifest"
                     ))
                 }
             }
@@ -260,7 +262,7 @@ impl SessionManifest {
                         })
                     {
                         return Err(format!(
-                            "driver configuration change '{key}' is outside the bounded session policy"
+                            "driver configuration change '{key}' is outside the capability manifest"
                         ));
                     }
                 }
@@ -286,7 +288,7 @@ impl SessionManifest {
             Ok(())
         } else {
             Err(format!(
-                "desktop pid {pid} window {window_id} is outside the bounded session policy"
+                "desktop pid {pid} window {window_id} is outside the capability manifest"
             ))
         }
     }
@@ -306,7 +308,7 @@ impl SessionManifest {
             Ok(())
         } else {
             Err(format!(
-                "desktop application pid {pid} is outside the bounded session policy"
+                "desktop application pid {pid} is outside the capability manifest"
             ))
         }
     }
@@ -347,7 +349,7 @@ impl SessionManifest {
         if self.browser_origins.contains(origin) {
             Ok(())
         } else {
-            Err("the live browser origin is outside the bounded session policy".to_owned())
+            Err("the live browser origin is outside the capability manifest".to_owned())
         }
     }
 
@@ -376,10 +378,7 @@ impl SessionManifest {
                 ) {
                     Ok(())
                 } else {
-                    Err(
-                        "one or more upload paths are outside the bounded session policy"
-                            .to_owned(),
-                    )
+                    Err("one or more upload paths are outside the capability manifest".to_owned())
                 }
             }
             "trajectory_replay" => self.authorize_exact_path(
@@ -411,7 +410,7 @@ impl SessionManifest {
             // reviewed bounded decision.
             "dependency_install" => Ok(()),
             _ => Err(format!(
-                "file resource kind '{kind}' is outside the bounded session policy"
+                "file resource kind '{kind}' is outside the capability manifest"
             )),
         }
     }
@@ -430,33 +429,74 @@ impl SessionManifest {
         if path_allowed(path, allowed, roots) {
             Ok(())
         } else {
-            Err("the exact path is outside the bounded session policy".to_owned())
+            Err("the exact path is outside the capability manifest".to_owned())
         }
     }
 
     pub fn is_expired(&self) -> bool {
-        self.expires_unix_ms < now_unix_ms()
+        self.expires_unix_ms
+            .is_some_and(|expires_unix_ms| expires_unix_ms < now_unix_ms())
     }
 
     pub fn is_idle_expired(&self) -> bool {
         self.idle_expired.load(Ordering::Acquire)
     }
 
-    /// Refresh the bounded-mode idle lease only after a call passed every
+    /// Check the optional idle lease without refreshing it.
+    pub fn check_lifetime(&self) -> Result<(), String> {
+        if self.is_expired() {
+            return Err("capability manifest expired".to_owned());
+        }
+        let Some(idle_timeout) = self.idle_timeout else {
+            return Ok(());
+        };
+        if self.is_idle_expired() {
+            return Err("capability manifest idle timeout exceeded".to_owned());
+        }
+        let last = self.last_authorized_dispatch.lock().unwrap();
+        if Instant::now().duration_since(*last) > idle_timeout {
+            self.idle_expired.store(true, Ordering::Release);
+            return Err("capability manifest idle timeout exceeded".to_owned());
+        }
+        Ok(())
+    }
+
+    /// Refresh the capability-manifest idle lease only after a call passed every
     /// manifest decision and resource check. Once the idle lease expires it is
     /// terminal for this daemon instance; a tool call cannot revive it.
-    pub fn authorize_dispatch(&self) -> Result<(), String> {
-        if self.is_idle_expired() {
-            return Err("bounded session policy idle timeout exceeded".to_owned());
-        }
+    pub fn commit_authorized_dispatch(&self) -> Result<(), String> {
+        self.check_lifetime()?;
+        let Some(idle_timeout) = self.idle_timeout else {
+            return Ok(());
+        };
         let now = Instant::now();
         let mut last = self.last_authorized_dispatch.lock().unwrap();
-        if now.duration_since(*last) > self.idle_timeout {
+        if now.duration_since(*last) > idle_timeout {
             self.idle_expired.store(true, Ordering::Release);
-            return Err("bounded session policy idle timeout exceeded".to_owned());
+            return Err("capability manifest idle timeout exceeded".to_owned());
         }
         *last = now;
         Ok(())
+    }
+
+    /// Compatibility alias retained for downstream callers during migration.
+    pub fn authorize_dispatch(&self) -> Result<(), String> {
+        self.commit_authorized_dispatch()
+    }
+
+    pub fn validate_for_mode(
+        &self,
+        mode: crate::authorization::PermissionMode,
+    ) -> Result<(), String> {
+        if mode == crate::authorization::PermissionMode::Bounded
+            && (self.expires_unix_ms.is_none() || self.idle_timeout.is_none())
+        {
+            return Err(
+                "bounded mode requires capability manifest expires_after and idle_timeout"
+                    .to_owned(),
+            );
+        }
+        self.check_lifetime()
     }
 }
 
@@ -465,9 +505,12 @@ impl SessionManifest {
 #[serde(deny_unknown_fields)]
 struct RawManifest {
     version: u32,
-    mode: String,
-    expires_after: String,
-    idle_timeout: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    expires_after: Option<String>,
+    #[serde(default)]
+    idle_timeout: Option<String>,
     #[serde(default)]
     resources: RawResources,
     #[serde(default)]
@@ -475,7 +518,7 @@ struct RawManifest {
     #[serde(default)]
     deny: RawToolSet,
     #[serde(default)]
-    ask: RawToolSet,
+    ask: Option<RawToolSet>,
 }
 
 #[cfg(feature = "yaml")]
@@ -622,26 +665,66 @@ pub fn configured_session_manifest() -> Result<Option<&'static SessionManifest>,
     }
 }
 
+pub fn configured_capability_manifest() -> Result<Option<&'static SessionManifest>, String> {
+    configured_session_manifest()
+}
+
+pub fn capability_manifest_configured() -> bool {
+    std::env::var_os(CAPABILITY_MANIFEST_FILE_ENV).is_some()
+        || std::env::var_os(SESSION_POLICY_FILE_ENV).is_some()
+}
+
+pub fn capability_manifest_approved() -> bool {
+    [
+        CAPABILITY_MANIFEST_APPROVED_ENV,
+        SESSION_POLICY_APPROVED_ENV,
+    ]
+    .into_iter()
+    .any(|name| {
+        std::env::var(name).is_ok_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+    })
+}
+
 fn load_configured_manifest() -> Result<Option<SessionManifest>, String> {
-    let Some(path) = std::env::var_os(SESSION_POLICY_FILE_ENV) else {
+    let capability_path = std::env::var_os(CAPABILITY_MANIFEST_FILE_ENV);
+    let legacy_path = std::env::var_os(SESSION_POLICY_FILE_ENV);
+    if capability_path.is_some() && legacy_path.is_some() && capability_path != legacy_path {
+        return Err(format!(
+            "{CAPABILITY_MANIFEST_FILE_ENV} conflicts with deprecated {SESSION_POLICY_FILE_ENV}"
+        ));
+    }
+    let Some(path) = capability_path.or(legacy_path) else {
         return Ok(None);
     };
     load_manifest(Path::new(&path)).map(Some)
 }
 
-/// Load and validate an immutable bounded-session manifest for a trusted
+/// Load and validate an immutable capability manifest for a trusted
 /// runtime/session constructor.
 pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| format!("failed to read session policy {}: {error}", path.display()))?;
+    let bytes = std::fs::read(path).map_err(|error| {
+        format!(
+            "failed to read capability manifest {}: {error}",
+            path.display()
+        )
+    })?;
     if bytes.is_empty() {
-        return Err(format!("session policy {} is empty", path.display()));
+        return Err(format!("capability manifest {} is empty", path.display()));
     }
     #[cfg(feature = "yaml")]
-    let raw: RawManifest = serde_yaml_ng::from_slice(&bytes)
-        .map_err(|error| format!("failed to parse session policy {}: {error}", path.display()))?;
+    let raw: RawManifest = serde_yaml_ng::from_slice(&bytes).map_err(|error| {
+        format!(
+            "failed to parse capability manifest {}: {error}",
+            path.display()
+        )
+    })?;
     #[cfg(not(feature = "yaml"))]
-    return Err("session policy support requires the yaml feature".to_owned());
+    return Err("capability manifest support requires the yaml feature".to_owned());
 
     #[cfg(feature = "yaml")]
     {
@@ -684,42 +767,70 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             changes: raw_configuration_changes,
         } = driver_configuration;
 
-        if !matches!(version, 1 | 2) {
+        if !matches!(version, 1..=3) {
             return Err(format!(
-                "unsupported session policy version {}; expected 1 or 2",
+                "unsupported capability manifest version {}; expected 1, 2, or 3",
                 version
             ));
         }
-        if !matches!(mode.as_str(), "bounded" | "autonomous") {
-            return Err("session policy mode must be bounded".to_owned());
+        if version < 3 {
+            if !mode
+                .as_deref()
+                .is_some_and(|mode| matches!(mode, "bounded" | "autonomous"))
+            {
+                return Err("legacy capability manifest mode must be bounded".to_owned());
+            }
+        } else if mode.is_some() {
+            return Err("capability manifest version 3 must not declare mode".to_owned());
         }
-        let expires_after = parse_duration(&expires_after)?;
-        let idle_timeout = parse_duration(&idle_timeout)?;
-        if expires_after.is_zero() || expires_after > Duration::from_secs(24 * 60 * 60) {
-            return Err("expires_after must be greater than zero and no more than 24h".to_owned());
-        }
-        if idle_timeout.is_zero() || idle_timeout > expires_after {
+        if version < 3 && (expires_after.is_none() || idle_timeout.is_none()) {
             return Err(
-                "idle_timeout must be greater than zero and no more than expires_after".to_owned(),
+                "legacy capability manifests require expires_after and idle_timeout".to_owned(),
             );
         }
+        let expires_after = expires_after.as_deref().map(parse_duration).transpose()?;
+        let idle_timeout = idle_timeout.as_deref().map(parse_duration).transpose()?;
+        if expires_after.is_some_and(|duration| {
+            duration.is_zero() || duration > Duration::from_secs(24 * 60 * 60)
+        }) {
+            return Err("expires_after must be greater than zero and no more than 24h".to_owned());
+        }
+        if idle_timeout.is_some_and(|idle| {
+            idle.is_zero() || expires_after.is_some_and(|expires| idle > expires)
+        }) {
+            return Err("idle_timeout must be greater than zero and no more than expires_after when both are declared".to_owned());
+        }
         let allow = validate_tools("allow", allow.tools)?;
-        let deny = validate_tools("deny", deny.tools)?;
-        let ask = validate_tools("ask", ask.tools)?;
+        let mut deny = validate_tools("deny", deny.tools)?;
+        let legacy_ask = if version < 3 {
+            validate_tools("ask", ask.unwrap_or_default().tools)?
+        } else if ask.is_some() {
+            return Err("capability manifest version 3 does not support ask.tools".to_owned());
+        } else {
+            HashSet::new()
+        };
+        for tool in legacy_ask {
+            if !deny.insert(tool.clone()) {
+                return Err(format!(
+                    "capability manifest tool '{tool}' appears in more than one decision set"
+                ));
+            }
+        }
+        let ask = HashSet::new();
         if allow.is_empty() {
-            return Err("session policy allow.tools must not be empty".to_owned());
+            return Err("capability manifest allow.tools must not be empty".to_owned());
         }
         for tool in &allow {
             if deny.contains(tool) || ask.contains(tool) {
                 return Err(format!(
-                    "session policy tool '{tool}' appears in more than one decision set"
+                    "capability manifest tool '{tool}' appears in more than one decision set"
                 ));
             }
         }
         for tool in &deny {
             if ask.contains(tool) {
                 return Err(format!(
-                    "session policy tool '{tool}' appears in more than one decision set"
+                    "capability manifest tool '{tool}' appears in more than one decision set"
                 ));
             }
         }
@@ -739,7 +850,9 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             }
         }
         if version == 1 && !raw_browser_profiles.is_empty() {
-            return Err("browser profiles require session policy version 2".to_owned());
+            return Err(
+                "browser profiles require capability manifest version 2 or later".to_owned(),
+            );
         }
         let mut existing_profile_kind = false;
         for profile in raw_browser_profiles {
@@ -769,7 +882,8 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             validate_positive_pids("desktop applications", raw_desktop_applications)?;
         if version == 1 && !raw_applications.is_empty() {
             return Err(
-                "application identity resources require session policy version 2".to_owned(),
+                "application identity resources require capability manifest version 2 or later"
+                    .to_owned(),
             );
         }
         let applications = validate_applications(raw_applications)?;
@@ -836,18 +950,23 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 .find(|tool| allow.contains(**tool))
             {
                 return Err(format!(
-                    "origin-scoped bounded manifests cannot allow '{tool}' because it bypasses the typed browser origin adapter"
+                    "origin-scoped capability manifests cannot allow '{tool}' because it bypasses the typed browser origin adapter"
                 ));
             }
         }
 
         let mut digest = Sha256::new();
-        digest.update(format!("cua-driver-session-policy-v{version}\0").as_bytes());
+        let digest_domain = if version == 3 {
+            "cua-driver-capability-manifest"
+        } else {
+            "cua-driver-session-policy"
+        };
+        digest.update(format!("{digest_domain}-v{version}\0").as_bytes());
         digest.update(&bytes);
         Ok(SessionManifest {
             version,
             sha256: format!("{:x}", digest.finalize()),
-            expires_unix_ms: now_unix_ms() + expires_after.as_millis(),
+            expires_unix_ms: expires_after.map(|duration| now_unix_ms() + duration.as_millis()),
             idle_timeout,
             allow,
             deny,
@@ -881,12 +1000,12 @@ fn validate_tools(section: &str, tools: Vec<String>) -> Result<HashSet<String>, 
                 == crate::authorization::RiskClass::Unclassified
         {
             return Err(format!(
-                "session policy {section}.tools contains unknown or unreviewed tool '{tool}'"
+                "capability manifest {section}.tools contains unknown or unreviewed tool '{tool}'"
             ));
         }
         if !validated.insert(canonical.clone()) {
             return Err(format!(
-                "session policy {section}.tools repeats '{canonical}'"
+                "capability manifest {section}.tools repeats '{canonical}'"
             ));
         }
     }
@@ -996,7 +1115,7 @@ fn validate_manifest_path_resources(
             RawPathResource::Directory { dir, recursive } => {
                 if version < 2 {
                     return Err(format!(
-                        "{section} directory roots require session policy version 2"
+                        "{section} directory roots require capability manifest version 2 or later"
                     ));
                 }
                 let canonical = validate_manifest_paths(section, vec![dir])?
@@ -1200,7 +1319,7 @@ mod tests {
 
     #[cfg(feature = "yaml")]
     #[test]
-    fn manifest_is_deny_by_default_and_preserves_ask() {
+    fn legacy_ask_is_deny_and_undeclared_tools_fail_closed() {
         let loaded = manifest(
             r#"
 version: 1
@@ -1219,8 +1338,53 @@ ask:
         .unwrap();
         assert_eq!(loaded.decision("start_session"), ManifestDecision::Allow);
         assert_eq!(loaded.decision("page"), ManifestDecision::Deny);
-        assert_eq!(loaded.decision("browser_download"), ManifestDecision::Ask);
+        assert_eq!(loaded.decision("browser_download"), ManifestDecision::Deny);
         assert_eq!(loaded.decision("click"), ManifestDecision::Undeclared);
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn version_three_removes_mode_and_ask_and_allows_optional_lifetimes() {
+        let loaded =
+            manifest("version: 3\nallow:\n  tools: [get_config]\ndeny:\n  tools: [page]\n")
+                .unwrap();
+        assert_eq!(loaded.version(), 3);
+        assert_eq!(loaded.expires_unix_ms(), None);
+        assert_eq!(loaded.idle_timeout(), None);
+        assert!(loaded
+            .validate_for_mode(crate::authorization::PermissionMode::Standard)
+            .is_ok());
+        assert!(loaded
+            .validate_for_mode(crate::authorization::PermissionMode::Unrestricted)
+            .is_ok());
+        assert!(loaded
+            .validate_for_mode(crate::authorization::PermissionMode::Bounded)
+            .is_err());
+
+        assert!(
+            manifest("version: 3\nmode: bounded\nallow:\n  tools: [get_config]\n")
+                .unwrap_err()
+                .contains("must not declare mode")
+        );
+        assert!(
+            manifest("version: 3\nallow:\n  tools: [get_config]\nask:\n  tools: [page]\n")
+                .unwrap_err()
+                .contains("does not support ask.tools")
+        );
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn version_three_lifetimes_are_enforced_when_declared() {
+        let loaded = manifest(
+            "version: 3\nexpires_after: 1h\nidle_timeout: 5m\nallow:\n  tools: [get_config]\n",
+        )
+        .unwrap();
+        assert!(loaded.expires_unix_ms().is_some());
+        assert_eq!(loaded.idle_timeout(), Some(Duration::from_secs(5 * 60)));
+        assert!(loaded
+            .validate_for_mode(crate::authorization::PermissionMode::Bounded)
+            .is_ok());
     }
 
     #[cfg(feature = "yaml")]
@@ -1652,7 +1816,11 @@ allow:
     #[cfg(feature = "yaml")]
     #[test]
     fn manifest_file_resources_reject_filesystem_roots() {
-        let root = std::path::Path::new(std::path::MAIN_SEPARATOR_STR)
+        let current_dir = std::env::current_dir().unwrap();
+        let root = current_dir
+            .ancestors()
+            .last()
+            .expect("an absolute current directory has a filesystem root")
             .to_string_lossy()
             .into_owned();
         let error = validate_manifest_paths("files.write", vec![root]).unwrap_err();
@@ -1690,9 +1858,19 @@ allow:
         .unwrap();
         *loaded.last_authorized_dispatch.lock().unwrap() =
             Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
-        assert!(loaded.authorize_dispatch().is_err());
+        for mode in [
+            crate::authorization::PermissionMode::Standard,
+            crate::authorization::PermissionMode::Bounded,
+            crate::authorization::PermissionMode::Unrestricted,
+        ] {
+            assert!(
+                loaded.validate_for_mode(mode).is_err(),
+                "declared idle timeout must be enforced in {mode:?}"
+            );
+        }
+        assert!(loaded.commit_authorized_dispatch().is_err());
         assert!(loaded.is_idle_expired());
-        assert!(loaded.authorize_dispatch().is_err());
+        assert!(loaded.commit_authorized_dispatch().is_err());
 
         for bypass_tool in ["page", "verify_state"] {
             let policy = format!(

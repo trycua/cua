@@ -53,7 +53,7 @@ fun main() = runBlocking {
     val pool = client.createPool(CreatePoolRequest("default", spec))
     val claim = client.createClaim(CreateClaimRequest(pool, ClaimSpec(SandboxTemplateRef(pool.metadata.name), null, null, null)))
     val sandbox = client.waitClaim(claim)
-    val service = client.serviceRequest(sandbox, "mcp", "/mcp", HttpRequest("POST", "https://ignored.invalid/mcp", emptyList(), "{\"offline\":true}".encodeToByteArray()))
+    val service = client.serviceRequest(sandbox, "mcp", "/mcp", HttpRequest("POST", "https://ignored.invalid/mcp", emptyList(), "{\"offline\":true}".encodeToByteArray(), null))
     client.deleteClaim(claim)
     client.deletePool(pool)
     check(pool.metadata.name == "default" && claim.metadata.name == "default" && sandbox.name == "offline-sandbox")

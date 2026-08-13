@@ -1,0 +1,135 @@
+---
+title: Create a sandbox pool with Python
+description: Create a reusable warm sandbox pool, claim a sandbox, and run commands with the Cua Sandbox SDK.
+---
+
+Use the Cua Sandbox SDK when you want to create and claim a reusable sandbox
+pool from Python. This guide applies a one-replica pool, connects to a named
+claim, takes a screenshot, and runs a shell command.
+
+## Prerequisites
+
+- Python `>=3.11,<3.14`.
+- [`uv`](https://docs.astral.sh/uv/) to run the self-contained script.
+- A run.cua.ai access token or OAuth user key with permission to manage sandbox
+  pools.
+
+The SDK connects to `https://run.cua.ai` by default. Authenticate with a Fleet
+access token:
+
+```bash
+export FLEETS_TOKEN="<your-access-token>"
+```
+
+Or authenticate with OAuth client credentials:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+```
+
+Set `CUA_FLEET_BASE_URL` only when you need to use a different Fleet API
+endpoint.
+
+## Create and claim the pool
+
+Save the following script as `create_pool.py`:
+
+```python title="create_pool.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox",
+# ]
+# ///
+
+import asyncio
+import os
+from pathlib import Path
+
+from cua_sandbox import Image, Pool
+
+
+IMAGE = (
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
+    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
+)
+
+POOL_NAME = os.environ.get("CUA_POOL_NAME", "cua-live-main-source-manual")
+CLAIM_NAME = os.environ.get("CUA_CLAIM_NAME", POOL_NAME)
+
+
+async def main() -> None:
+    # Create or reconcile the warm pool and its template.
+    pool = await Pool.apply(
+        Image.from_registry(IMAGE),
+        name=POOL_NAME,
+        replicas=1,
+        cpu=4,
+        memory_mb=4096,
+        services={"server": 8000},
+    )
+
+    # Create or reconnect to the named claim.
+    # Exiting this block releases the claim but leaves the pool warm.
+    async with pool.claim(
+        name=CLAIM_NAME,
+        service="server",
+        time_to_start=900,
+    ) as sandbox:
+        print(f"Pool:    {sandbox.pool_name}")
+        print(f"Claim:   {sandbox.claim_name}")
+        print(f"Sandbox: {sandbox.name}")
+
+        screenshot = Path("sandbox.png")
+        screenshot.write_bytes(await sandbox.screenshot())
+        print(f"Screenshot: {screenshot.resolve()}")
+
+        result = await sandbox.shell.run("uname -a")
+        if not result.success:
+            raise RuntimeError(result.stderr)
+
+        print(result.stdout.strip())
+
+
+asyncio.run(main())
+```
+
+Run it with `uv`. The script metadata installs `cua-sandbox` in an isolated
+environment automatically:
+
+```bash
+uv run create_pool.py
+```
+
+`Pool.apply()` creates the pool and its sandbox template when they do not exist.
+If the named pool already exists, it reconciles the pool to the image, replica,
+CPU, memory, and service configuration in the script.
+
+`pool.claim()` creates or reconnects to the named claim and waits up to 900
+seconds for the `server` service on port `8000`. Exiting the `async with` block
+releases the claim, but the pool and its one warm replica remain available for
+the next claim.
+
+The script writes `sandbox.png` in the current directory and raises an error if
+`uname -a` does not complete successfully.
+
+## Choose pool and claim names
+
+The defaults use the same value for the pool and claim. Override either name
+without editing the script:
+
+```bash
+export CUA_POOL_NAME="my-sandbox-pool"
+export CUA_CLAIM_NAME="my-sandbox-claim"
+uv run create_pool.py
+```
+
+Use stable names when later runs should reconcile the same pool and reuse the
+same claim identity. Names must be lowercase DNS labels.
+
+## Delete the pool
+
+The example intentionally leaves the pool warm. If you no longer need it, call
+`await pool.delete()` after the claim context exits. This deletes the pool and
+the template created by that `Pool.apply()` call.

@@ -10,6 +10,6 @@ The apply job uses a dedicated user-owned Fleets key stored as protected reposit
 - `FLEETS_TERRAFORM_CLIENT_SECRET`
 - `FLEETS_TERRAFORM_TOKEN_URL`
 
-The pool autoscaler is bounded from zero to one replica. The daily smoke workflow claims a UUID-suffixed sandbox, runs commands through `cua sb exec`, deletes the claim, and suspends the pool back to zero replicas.
+The pool starts at zero replicas. The daily smoke workflow scales it to one, claims a UUID-suffixed sandbox, runs commands through `cua sb exec`, deletes the claim, and suspends the pool back to zero replicas.
 
 If the pool was previously created with different credentials, manually dispatch the apply workflow once with `recreate_pool` enabled. The recovery deletes only the managed pool with the original bootstrap credentials, then recreates the pool and trust policy under the dedicated owner key.

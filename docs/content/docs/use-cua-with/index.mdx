@@ -1,0 +1,78 @@
+---
+title: Use Cua with
+description: Choose a model provider, agent harness, or local runtime for Cua Driver.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { SiAnthropic, SiGooglegemini, SiMeta, SiOllama, SiOpenai } from 'react-icons/si';
+import {
+  Bot,
+  BrainCircuit,
+  Cpu,
+  MoonStar,
+  Orbit,
+  PanelsTopLeft,
+  Rocket,
+  TerminalSquare,
+  Waypoints,
+} from 'lucide-react';
+
+Cua Driver is the computer-use layer. An agent harness connects to it over MCP or through the Cua Driver CLI, then gives a model screenshots, accessibility state, and input tools. Pick the part of the stack you are starting from.
+
+## Models and providers
+
+These pages show the verified harnesses and local runtimes that can put each model family in front of Cua Driver. Cua Driver does not connect directly to a model API.
+
+<Cards>
+  <Card icon={<SiAnthropic />} title="Anthropic / Claude" href="/use-cua-with/anthropic">
+    Use Claude through Claude Code or another MCP-capable harness.
+  </Card>
+  <Card icon={<SiOpenai />} title="OpenAI" href="/use-cua-with/openai">
+    Connect Codex to Cua Driver through its native MCP support.
+  </Card>
+  <Card icon={<SiGooglegemini />} title="Google / Gemini" href="/use-cua-with/google">
+    Use Antigravity CLI as the MCP-capable harness.
+  </Card>
+  <Card icon={<Orbit />} title="xAI / Grok" href="/use-cua-with/xai">
+    Connect Grok Build or Grok Bot to Cua Driver.
+  </Card>
+  <Card icon={<SiMeta />} title="Meta" href="/use-cua-with/meta">
+    Run Muse Glimmer locally with a harness such as Claude Code.
+  </Card>
+  <Card icon={<BrainCircuit />} title="Qwen" href="/use-cua-with/qwen">
+    Use Qwen Code or serve a Qwen model through a local runtime.
+  </Card>
+  <Card icon={<MoonStar />} title="Kimi" href="/use-cua-with/kimi">
+    Connect Kimi Code CLI through its MCP support.
+  </Card>
+</Cards>
+
+## Agent harnesses
+
+Harnesses own the agent loop and invoke Cua Driver. Some are tied to a model provider; others let you choose the model separately.
+
+<Cards>
+  <Card icon={<SiAnthropic />} title="Claude Code" href="/use-cua-with/claude-code" />
+  <Card icon={<SiOpenai />} title="OpenAI Codex" href="/use-cua-with/codex" />
+  <Card icon={<Rocket />} title="Antigravity CLI" href="/use-cua-with/antigravity-cli" />
+  <Card icon={<TerminalSquare />} title="Grok Build" href="/use-cua-with/grok-build" />
+  <Card icon={<Bot />} title="Grok Bot" href="/use-cua-with/grok-bot" />
+  <Card icon={<Waypoints />} title="Hermes" href="/use-cua-with/hermes" />
+  <Card icon={<Bot />} title="OpenClaw" href="/use-cua-with/openclaw" />
+  <Card icon={<PanelsTopLeft />} title="T3 Code" href="/use-cua-with/t3-code" />
+  <Card icon={<BrainCircuit />} title="Qwen Code" href="/use-cua-with/qwen-code" />
+  <Card icon={<MoonStar />} title="Kimi Code" href="/use-cua-with/kimi-code" />
+</Cards>
+
+## Local runtimes
+
+<Cards>
+  <Card icon={<SiOllama />} title="Ollama" href="/use-cua-with/ollama">
+    Launch a compatible harness against a locally served model.
+  </Card>
+  <Card icon={<Cpu />} title="llama.cpp and Unsloth" href="/use-cua-with/llama-cpp">
+    Use the tested Muse Glimmer GGUF path on Apple Silicon.
+  </Card>
+</Cards>
+
+If you already know which agent you want to use, go straight to [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent).

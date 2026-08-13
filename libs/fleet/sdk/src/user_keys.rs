@@ -75,5 +75,6 @@ fn json_request(method: &str, url: url::Url, body: Option<Vec<u8>>) -> HttpReque
         url: url.into(),
         headers,
         body,
+        timeout_secs: None,
     }
 }

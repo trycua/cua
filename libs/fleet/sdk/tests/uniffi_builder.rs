@@ -1,6 +1,8 @@
 use cyclops_sdk::{
-    CreatePoolRequest, CreatePoolRequestBuilder, CreateTemplateRequest,
-    CreateTemplateRequestBuilder, SdkBuildError,
+    CreateClaimRequestBuilder, CreatePoolRequest, CreatePoolRequestBuilder, CreateTemplateRequest,
+    CreateTemplateRequestBuilder, CreateUserApiKeyRequestBuilder,
+    CyclopsTokenProviderConfigurationBuilder, Pool, ResourceMetadata, SdkBuildError,
+    TemplateBuilder,
 };
 use cyclops_sdk_schema::{
     OSGymSandboxTemplateSpecBuilder, OSGymSandboxWarmPoolSpecBuilder, SandboxTemplateRefBuilder,
@@ -56,4 +58,104 @@ fn request_required_fields_use_stable_error() {
         SdkBuildError::MissingRequiredField { record_type, field }
             if record_type == "CreatePoolRequest" && field == "namespace"
     ));
+}
+
+#[test]
+fn builders_cover_remaining_frontend_sdk_records() {
+    let configuration = CyclopsTokenProviderConfigurationBuilder::new()
+        .base_url("https://api.example.test".into())
+        .pool_poll_interval_ms(5_000)
+        .pool_poll_limit(120)
+        .claim_poll_interval_ms(5_000)
+        .claim_poll_limit(120)
+        .build()
+        .unwrap();
+    let user_key = CreateUserApiKeyRequestBuilder::new()
+        .name("automation".into())
+        .scope(Vec::new())
+        .build()
+        .unwrap();
+    let template_spec = OSGymSandboxTemplateSpecBuilder::new()
+        .vm_template(
+            VmTemplateBuilder::new()
+                .container_disk_image("image".into())
+                .build()
+                .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let pool_spec = OSGymSandboxWarmPoolSpecBuilder::new()
+        .replicas(1)
+        .sandbox_template_ref(
+            SandboxTemplateRefBuilder::new()
+                .name("template".into())
+                .build()
+                .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let metadata = ResourceMetadata {
+        namespace: "default".into(),
+        name: "template".into(),
+        labels: None,
+        creation_timestamp: None,
+    };
+    let template = TemplateBuilder::new()
+        .api_version("osgym.cua.ai/v1alpha1".into())
+        .kind("OSGymSandboxTemplate".into())
+        .metadata(metadata.clone())
+        .spec(template_spec)
+        .build()
+        .unwrap();
+    let pool = Pool {
+        api_version: "osgym.cua.ai/v1alpha1".into(),
+        kind: "OSGymSandboxWarmPool".into(),
+        metadata,
+        spec: pool_spec,
+        status: None,
+    };
+    let claim = CreateClaimRequestBuilder::new().pool(pool).build().unwrap();
+
+    assert_eq!(configuration.pool_poll_interval_ms, 5_000);
+    assert_eq!(configuration.claim_poll_limit, 120);
+    assert_eq!(user_key.scope, Vec::<String>::new());
+    assert_eq!(template.metadata.name, "template");
+    assert!(claim.spec.is_none());
+    assert!(claim.name.is_none());
+}
+
+#[test]
+fn remaining_sdk_builders_use_stable_required_field_errors() {
+    for (error, record_type, field) in [
+        (
+            CyclopsTokenProviderConfigurationBuilder::new()
+                .build()
+                .unwrap_err(),
+            "CyclopsTokenProviderConfiguration",
+            "base_url",
+        ),
+        (
+            CreateUserApiKeyRequestBuilder::new().build().unwrap_err(),
+            "CreateUserApiKeyRequest",
+            "name",
+        ),
+        (
+            TemplateBuilder::new().build().unwrap_err(),
+            "Template",
+            "api_version",
+        ),
+        (
+            CreateClaimRequestBuilder::new().build().unwrap_err(),
+            "CreateClaimRequest",
+            "pool",
+        ),
+    ] {
+        assert!(matches!(
+            error,
+            SdkBuildError::MissingRequiredField {
+                record_type: actual_record,
+                field: actual_field,
+            } if actual_record == record_type && actual_field == field
+        ));
+    }
 }

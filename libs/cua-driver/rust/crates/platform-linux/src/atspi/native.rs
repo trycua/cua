@@ -2029,8 +2029,7 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
 /// updates its renderer-owned focused control. Sending key events immediately
 /// after the acknowledgement can therefore split one string between the old
 /// and new controls. Wait for the target's Focused state to become observable;
-/// if a toolkit does not publish that state, retain the historical successful
-/// result after a bounded settling interval.
+/// an acknowledgement without read-back is not sufficient for global input.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     bounded(
         async {
@@ -2078,7 +2077,7 @@ pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
                     }
                 }
             }
-            Ok(true)
+            Ok(false)
         },
         || Err(anyhow!("focus_element timed out for pid {pid}")),
     )

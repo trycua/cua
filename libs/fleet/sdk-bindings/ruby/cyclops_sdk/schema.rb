@@ -1094,6 +1094,13 @@ class RustBufferStream
     return VmTemplateBuilder.uniffi_allocate(handle)
   end
 
+  # The Object type WarmPoolAutoscalingBuilder.
+
+  def readTypeWarmPoolAutoscalingBuilder
+    handle = unpack_from 8, 'Q>'
+    return WarmPoolAutoscalingBuilder.uniffi_allocate(handle)
+  end
+
   # The Record type ClaimLifecycle.
 
   def readTypeClaimLifecycle
@@ -1799,6 +1806,13 @@ class RustBufferBuilder
 
   def write_TypeVmTemplateBuilder(obj)
     handle = VmTemplateBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
+  # The Object type WarmPoolAutoscalingBuilder.
+
+  def write_TypeWarmPoolAutoscalingBuilder(obj)
+    handle = WarmPoolAutoscalingBuilder.uniffi_lower obj
     pack_into(8, 'Q>', handle)
   end
 
@@ -2512,6 +2526,27 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size,
+    [:uint64, :uint32, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size,
+    [:uint64, :uint32, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size,
+    [:uint64, :uint32, RustCallStatus.by_ref],
+    :uint64
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_alloc,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -2608,6 +2643,18 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new,
     [RustCallStatus.by_ref],
     :uint16
@@ -2624,6 +2671,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :ffi_cyclops_sdk_schema_uniffi_contract_version,
@@ -3591,6 +3641,81 @@ end
         RustBuffer.check_lower_TypeSandboxTemplateRef(value)
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandboxTemplateRef(value))
     return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
+  end
+
+end
+
+  class WarmPoolAutoscalingBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      CyclopsSdkSchema.rust_call(
+        :uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a WarmPoolAutoscalingBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return CyclopsSdkSchema.rust_call(
+      :uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeWarmPoolAutoscaling
+  end
+  def initial_pool_size(value)
+        value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size,uniffi_clone_handle(),value)
+    return WarmPoolAutoscalingBuilder.uniffi_allocate(result)
+  end
+  def max_pool_size(value)
+        value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size,uniffi_clone_handle(),value)
+    return WarmPoolAutoscalingBuilder.uniffi_allocate(result)
+  end
+  def min_pool_size(value)
+        value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size,uniffi_clone_handle(),value)
+    return WarmPoolAutoscalingBuilder.uniffi_allocate(result)
   end
 
 end

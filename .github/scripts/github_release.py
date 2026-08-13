@@ -15,6 +15,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+import release_channels
+
 
 class ReleaseError(RuntimeError):
     """A release lifecycle invariant failed."""
@@ -115,6 +117,9 @@ class GitHubApi:
     def delete(self, path: str) -> None:
         self.request("DELETE", path)
 
+    def post(self, path: str, body: Mapping[str, Any]) -> Any:
+        return self.request("POST", path, json_body=body)
+
     def patch(self, path: str, body: Mapping[str, Any]) -> Any:
         return self.request("PATCH", path, json_body=body)
 
@@ -141,6 +146,75 @@ def unique_release(api: GitHubApi, repository: str, tag: str) -> dict[str, Any]:
         ids = [release.get("id") for release in matches]
         raise ReleaseError(f"expected one GitHub release for {tag}, found {ids}")
     return matches[0]
+
+
+def validate_registered_nightly_tag(tag: str) -> None:
+    # Driver publication runs after its exact nightly version has been staged
+    # into the checkout. Tag validation needs registry shape and namespaces,
+    # not the stable source-state invariant enforced by planning and builds.
+    registry = release_channels.load_registry(require_stable_state=False)
+    matches = []
+    for name, component in registry["components"].items():
+        try:
+            release_channels.parse_tag(component, "nightly", tag)
+        except release_channels.ChannelError:
+            continue
+        matches.append(name)
+    if len(matches) != 1:
+        raise ReleaseError(
+            f"nightly tag {tag!r} must match exactly one registered component; matched {matches}"
+        )
+
+
+def ensure_release(
+    api: GitHubApi,
+    repository: str,
+    tag: str,
+    expected_sha: str,
+    *,
+    channel: str,
+    create_if_missing: bool,
+) -> dict[str, Any]:
+    matches = releases_by_tag(api, repository, tag)
+    if len(matches) > 1:
+        ids = [release.get("id") for release in matches]
+        raise ReleaseError(f"expected one GitHub release for {tag}, found {ids}")
+    if matches:
+        return matches[0]
+    if not create_if_missing:
+        raise ReleaseError(f"Release Please draft for {tag} does not exist")
+    if channel != "nightly":
+        raise ReleaseError("automatic draft creation is allowed only for the nightly channel")
+    validate_registered_nightly_tag(tag)
+    if not release_channels.SHA_RE.fullmatch(expected_sha):
+        raise ReleaseError("nightly draft target must be an exact lowercase commit SHA")
+    commit = api.get(f"repos/{repository}/commits/{expected_sha}")
+    if str(commit.get("sha")) != expected_sha:
+        raise ReleaseError(f"GitHub did not resolve expected commit {expected_sha}")
+    try:
+        created = api.post(
+            f"repos/{repository}/releases",
+            {
+                "tag_name": tag,
+                "target_commitish": expected_sha,
+                "name": tag,
+                "body": "",
+                "draft": True,
+                "prerelease": True,
+                "make_latest": "false",
+            },
+        )
+    except ReleaseError:
+        # A retry or concurrent job may have committed the draft after the
+        # initial read. Reconcile by identity; every other error remains fatal.
+        matches = releases_by_tag(api, repository, tag)
+        if len(matches) != 1:
+            raise
+        created = matches[0]
+    if str(created.get("tag_name")) != tag or not created.get("draft"):
+        raise ReleaseError(f"GitHub did not create the expected draft for {tag}")
+    print(f"created private nightly draft for {tag}")
+    return dict(created)
 
 
 def tag_commit_sha(api: GitHubApi, repository: str, tag: str) -> str:
@@ -237,11 +311,38 @@ def finalize_release(
     asset_dir: Path,
     prerelease: bool,
     make_latest: bool,
+    channel: str = "stable",
+    create_if_missing: bool = False,
 ) -> dict[str, Any]:
-    actual_sha = tag_commit_sha(api, repository, tag)
-    if actual_sha != expected_sha:
-        raise ReleaseError(f"tag {tag} points to {actual_sha}, expected {expected_sha}")
-    release = unique_release(api, repository, tag)
+    if channel not in {"stable", "nightly"}:
+        raise ReleaseError(f"unsupported release channel: {channel}")
+    if channel == "nightly" and (not prerelease or make_latest):
+        raise ReleaseError("nightly releases must be prereleases and must not become latest")
+    release: dict[str, Any] | None = None
+    if create_if_missing:
+        release = ensure_release(
+            api,
+            repository,
+            tag,
+            expected_sha,
+            channel=channel,
+            create_if_missing=True,
+        )
+    if release is None:
+        actual_sha = tag_commit_sha(api, repository, tag)
+        if actual_sha != expected_sha:
+            raise ReleaseError(f"tag {tag} points to {actual_sha}, expected {expected_sha}")
+        release = unique_release(api, repository, tag)
+    elif release.get("draft"):
+        target = str(release.get("target_commitish") or "")
+        if target != expected_sha:
+            raise ReleaseError(
+                f"nightly draft {tag} targets {target or '<missing>'}, expected {expected_sha}"
+            )
+    else:
+        actual_sha = tag_commit_sha(api, repository, tag)
+        if actual_sha != expected_sha:
+            raise ReleaseError(f"tag {tag} points to {actual_sha}, expected {expected_sha}")
     if not release.get("draft"):
         same_state = (
             str(release.get("body") or "") == body and bool(release.get("prerelease")) == prerelease
@@ -269,6 +370,11 @@ def finalize_release(
                 "make_latest": "true" if make_latest else "false",
             },
         )
+        actual_sha = tag_commit_sha(api, repository, tag)
+        if actual_sha != expected_sha:
+            raise ReleaseError(
+                f"published tag {tag} points to {actual_sha}, expected {expected_sha}"
+            )
         print(f"published {tag}: {release.get('html_url')}")
     return dict(release)
 
@@ -282,6 +388,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--asset-dir", type=Path, required=True)
     parser.add_argument("--prerelease", action="store_true")
     parser.add_argument("--make-latest", action="store_true")
+    parser.add_argument("--channel", choices=("stable", "nightly"), default="stable")
+    parser.add_argument("--create-if-missing", action="store_true")
     return parser
 
 
@@ -301,6 +409,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             asset_dir=args.asset_dir,
             prerelease=args.prerelease,
             make_latest=args.make_latest,
+            channel=args.channel,
+            create_if_missing=args.create_if_missing,
         )
     except (OSError, ReleaseError, ValueError) as error:
         print(f"release finalization error: {error}", file=sys.stderr)

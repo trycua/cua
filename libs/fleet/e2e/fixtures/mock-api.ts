@@ -245,6 +245,102 @@ export async function mockUserKeysApi(
 }
 
 // ---------------------------------------------------------------------------
+// GitHub trust policies mocking
+// ---------------------------------------------------------------------------
+
+export interface MockGitHubTrustPolicy {
+  id: string
+  owner_sub: string
+  name: string
+  repository: string
+  allowed_namespaces: string[]
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+const DEFAULT_GITHUB_TRUST_POLICIES: MockGitHubTrustPolicy[] = [
+  {
+    id: "gh-policy-1",
+    owner_sub: "test-user-id",
+    name: "cloud-ci",
+    repository: "trycua/cloud",
+    allowed_namespaces: ["my-workspace", "preview-a"],
+    enabled: true,
+    created_at: "2026-06-26T10:00:00Z",
+    updated_at: "2026-06-26T10:30:00Z",
+  },
+]
+
+export async function mockGitHubTrustPoliciesApi(
+  page: Page,
+  policies: MockGitHubTrustPolicy[] = DEFAULT_GITHUB_TRUST_POLICIES,
+): Promise<void> {
+  await page.route("**/api/github-trust-policies", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          policies,
+          oidc: {
+            issuer: "https://token.actions.githubusercontent.com",
+            audience: "fleets",
+          },
+        }),
+      })
+      return
+    }
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON()
+      const created: MockGitHubTrustPolicy = {
+        id: `gh-policy-${Date.now()}`,
+        owner_sub: "test-user-id",
+        name: body.name,
+        repository: body.repository,
+        allowed_namespaces: body.allowed_namespaces ?? [],
+        enabled: body.enabled ?? true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+      policies.unshift(created)
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(created),
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  await page.route("**/api/github-trust-policies/*", async (route) => {
+    const url = new URL(route.request().url())
+    const id = url.pathname.split("/").pop()
+    const policy = policies.find(item => item.id === id)
+    if (route.request().method() === "PATCH") {
+      if (!policy) {
+        await route.fulfill({ status: 404, body: JSON.stringify({ error: "not found" }) })
+        return
+      }
+      const body = route.request().postDataJSON()
+      Object.assign(policy, body, { updated_at: new Date().toISOString() })
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(policy),
+      })
+      return
+    }
+    if (route.request().method() === "DELETE") {
+      const idx = policies.findIndex(item => item.id === id)
+      if (idx >= 0) policies.splice(idx, 1)
+      await route.fulfill({ status: 204, body: "" })
+      return
+    }
+    await route.continue()
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Pools API mocking (K8s CRD via kubectl-proxy sidecar)
 // ---------------------------------------------------------------------------
 
@@ -402,4 +498,3 @@ export async function mockClaimsApi(page: Page): Promise<void> {
     },
   )
 }
-

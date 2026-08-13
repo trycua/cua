@@ -1,6 +1,6 @@
 """Run a cloud Windows VM in Python with the Cua Sandbox SDK.
 
-    async with Sandbox.ephemeral(Image.windows("11")) as sb:
+    async with Sandbox.ephemeral(Image.windows()) as sb:
         await sb.shell.run("ver")
         screenshot = await sb.screenshot()
 
@@ -8,8 +8,11 @@ Sandbox.ephemeral() without local=True provisions a Windows VM on the Cua cloud.
 Requires CUA_API_KEY environment variable. Works on any host OS — no Windows needed.
 
 Contrast:
-    Image.windows("11")  + local=False -> Cua cloud Windows VM (this file)
-    Image.windows("11")  + local=True  -> Hyper-V or QEMU VM on your machine
+    Image.windows()  + local=False -> Cua cloud Windows VM (this file)
+    Image.windows()  + local=True  -> Hyper-V or QEMU VM on your machine
+
+Image.windows() is Windows Server 2022, which is the version with a pinned
+containerDisk. Image.windows("11") is client Windows 11 and is local-install only.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ def _has_cua_api_key() -> bool:
 @pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
 async def test_windows_cloud_vm():
     async with Sandbox.ephemeral(
-        Image.windows("11"),
+        Image.windows(),
         name="example-windows-cloud-vm",
     ) as sb:
         result = await sb.shell.run("ver")
@@ -42,7 +45,7 @@ async def test_windows_cloud_vm():
 
 async def main():
     async with Sandbox.ephemeral(
-        Image.windows("11"),
+        Image.windows(),
         name="example-windows-cloud-vm",
     ) as sb:
         result = await sb.shell.run("ver")

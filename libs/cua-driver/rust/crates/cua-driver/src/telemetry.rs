@@ -502,6 +502,8 @@ struct AgentSessionState {
     used_cursor_tools: bool,
     used_recording: bool,
     used_config_write: bool,
+    used_window_modality: bool,
+    used_desktop_modality: bool,
 }
 
 impl AgentSessionState {
@@ -529,6 +531,8 @@ impl AgentSessionState {
             used_cursor_tools: false,
             used_recording: false,
             used_config_write: false,
+            used_window_modality: false,
+            used_desktop_modality: false,
         }
     }
 
@@ -536,10 +540,19 @@ impl AgentSessionState {
         &mut self,
         transport: Transport,
         computer_action: bool,
+        capture_modality: Option<cua_driver_core::session::CaptureModality>,
         escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
         self.transport_bits |= transport_bit(transport);
+        self.used_window_modality |= matches!(
+            capture_modality,
+            Some(cua_driver_core::session::CaptureModality::Window)
+        );
+        self.used_desktop_modality |= matches!(
+            capture_modality,
+            Some(cua_driver_core::session::CaptureModality::Desktop)
+        );
         let tool_name = outcome.tool_name.as_str();
         if tool_name == "escalate_session"
             && outcome.success
@@ -608,6 +621,7 @@ impl AgentSessionState {
         let cursor = cursor.unwrap_or(cua_driver_core::session::CursorOutcomeObservation {
             observed: false,
             enabled: false,
+            visible: false,
             theme: CursorThemeCategory::Unknown,
             motion_customized: false,
             active_cursor_count: 0,
@@ -649,6 +663,14 @@ impl AgentSessionState {
             ("used_cursor_tools", Value::Bool(self.used_cursor_tools)),
             ("used_recording", Value::Bool(self.used_recording)),
             ("used_config_write", Value::Bool(self.used_config_write)),
+            (
+                "used_window_modality",
+                Value::Bool(self.used_window_modality),
+            ),
+            (
+                "used_desktop_modality",
+                Value::Bool(self.used_desktop_modality),
+            ),
             ("cursor_outcome_observed", Value::Bool(cursor.observed)),
             ("cursor_overlay_enabled_at_end", Value::Bool(cursor.enabled)),
             ("cursor_theme", Value::String(cursor_theme.into())),
@@ -847,6 +869,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
         session_id: &str,
         transport: cua_driver_core::session::SessionTransport,
         computer_action: bool,
+        capture_modality: Option<cua_driver_core::session::CaptureModality>,
         escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
@@ -860,6 +883,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             state.observe(
                 session_transport(transport),
                 computer_action,
+                capture_modality,
                 escalation_reason,
                 outcome,
             );
@@ -3282,6 +3306,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             true,
+            Some(cua_driver_core::session::CaptureModality::Window),
             None,
             &ToolCompletionObservation {
                 tool_name: "click".into(),
@@ -3298,6 +3323,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::NoWindowTarget),
             &ToolCompletionObservation {
                 tool_name: "escalate_session".into(),
@@ -3314,6 +3340,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            Some(cua_driver_core::session::CaptureModality::Desktop),
             None,
             &ToolCompletionObservation {
                 tool_name: "page".into(),
@@ -3332,6 +3359,7 @@ mod tests {
             Some(cua_driver_core::session::CursorOutcomeObservation {
                 observed: true,
                 enabled: true,
+                visible: true,
                 theme: cua_driver_core::session::CursorThemeCategory::Custom,
                 motion_customized: true,
                 active_cursor_count: 3,
@@ -3351,6 +3379,8 @@ mod tests {
         assert_eq!(properties["multi_cursor_bucket"], "3_5");
         assert_eq!(properties["observed_multiple_transports"], true);
         assert_eq!(properties["client_kind"], "python_sdk");
+        assert_eq!(properties["used_window_modality"], true);
+        assert_eq!(properties["used_desktop_modality"], true);
         assert_eq!(properties["capture_scope"], "auto");
         assert_eq!(properties["auto_escalated_to_desktop"], true);
         assert_eq!(properties["escalation_reason"], "no_window_target");
@@ -3401,6 +3431,7 @@ mod tests {
         auto.observe(
             Transport::Daemon,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::Other),
             &failed,
         );
@@ -3420,6 +3451,7 @@ mod tests {
         desktop.observe(
             Transport::Daemon,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::Other),
             &successful,
         );
@@ -3461,7 +3493,7 @@ mod tests {
             cua_driver_core::session::SessionClientKind::Mcp,
             cua_driver_core::CaptureScope::Window,
         );
-        state.observe(Transport::McpStdio, true, None, &outcome);
+        state.observe(Transport::McpStdio, true, None, None, &outcome);
         let session_properties =
             state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
         assert_eq!(session_properties["computer_action_count_bucket"], "0");
@@ -3499,6 +3531,7 @@ mod tests {
             state.observe(
                 Transport::McpStdio,
                 true,
+                None,
                 None,
                 &ToolCompletionObservation {
                     tool_name: tool_name.into(),

@@ -2,6 +2,7 @@ use cyclops_sdk_schema::{
     OSGymSandboxTemplateSpec, OSGymSandboxTemplateSpecBuilder, OSGymSandboxWarmPoolSpec,
     OSGymSandboxWarmPoolSpecBuilder, SandboxService, SandboxServiceBuilder, SandboxTemplateRef,
     SandboxTemplateRefBuilder, SchemaBuildError, VmTemplate, VmTemplateBuilder,
+    WarmPoolAutoscaling, WarmPoolAutoscalingBuilder,
 };
 
 #[test]
@@ -78,5 +79,28 @@ fn builder_setters_preserve_prior_versions() {
     assert_eq!(
         second.build().unwrap().container_disk_image,
         "registry.example/second:latest"
+    );
+}
+
+#[test]
+fn autoscaling_builder_supports_empty_and_immutable_optional_values() {
+    let base = WarmPoolAutoscalingBuilder::new();
+    let configured = base.min_pool_size(1).initial_pool_size(2).max_pool_size(5);
+
+    assert_eq!(
+        base.build().unwrap(),
+        WarmPoolAutoscaling {
+            min_pool_size: None,
+            initial_pool_size: None,
+            max_pool_size: None,
+        }
+    );
+    assert_eq!(
+        configured.build().unwrap(),
+        WarmPoolAutoscaling {
+            min_pool_size: Some(1),
+            initial_pool_size: Some(2),
+            max_pool_size: Some(5),
+        }
     );
 }

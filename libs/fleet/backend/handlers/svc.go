@@ -78,11 +78,10 @@ func (h Handlers) Svc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tenancy boundary: this proxy dials Service DNS directly (never the
-	// K8s API), so Capsule can't scope it — enforce ownership here.
-	if !h.requireNamespaceAccess(w, r, user, ns) {
-		return
-	}
+	// Tenancy boundary: this proxy dials Service DNS directly (never the K8s
+	// API), so Capsule can't scope it. The boundary is the ownership conjunct
+	// of SvcRoutePolicy, which has already run by the time this handler is
+	// reached — see auth/authz_ownership.rego.
 
 	host := fmt.Sprintf("%s.%s.%s", service, ns, h.GatewayCfg.ClusterDomain)
 	target := &url.URL{Scheme: h.GatewayCfg.Scheme, Host: host + ":" + h.GatewayCfg.Port}

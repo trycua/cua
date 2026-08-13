@@ -1,0 +1,193 @@
+---
+title: Configure a sandbox pool with Terraform
+description: Configure reusable Linux and Windows sandbox pools on run.cua.ai with Terraform.
+---
+
+Use this guide to configure a reusable sandbox pool on run.cua.ai with the
+public Cua Fleets provider. Terraform represents each pool as a `fleets_pool`
+resource.
+
+## Prerequisites
+
+- A run.cua.ai user key or access token with permission to manage sandbox pools.
+  Keep credentials in environment variables or a secret manager, not in source
+  control.
+- Terraform or OpenTofu.
+
+Terraform installs `trycua/fleets` from the public Terraform Registry during
+`terraform init`. The examples pin provider version `0.2.0` so initialization
+and plans use the same release across environments.
+
+For OpenTofu, run the same commands with `tofu` in place of `terraform`.
+
+## Authentication
+
+The provider three OAuth user-key
+variables: `CYCLOPS_CLIENT_ID`, `CYCLOPS_CLIENT_SECRET`, and
+`CYCLOPS_TOKEN_URL`. Configure the run.cua.ai endpoint separately:
+
+```bash
+export CYCLOPS_ENDPOINT="https://run.cua.ai"
+export CYCLOPS_ACCESS_TOKEN="<your-access-token>"
+```
+
+## Choose a sizing mode
+
+Every `fleets_pool` must configure exactly one sizing mode:
+
+- Set `replicas` for a static warm-pool target and omit `autoscaling`.
+- Set an `autoscaling` block for claim-driven scaling and omit `replicas`.
+
+In autoscaling mode, do not configure `replicas`; after apply and refresh it
+reports the current pool target. If you later switch to static mode, review the
+plan because the pool will use the `replicas` value you configure.
+
+## Configure a Linux pool
+
+Create a new directory, save this as `main.tf`, and choose a unique lowercase
+DNS-label pool name. This example creates a KubeVirt Linux pool and exposes SSH.
+
+```hcl title="main.tf"
+terraform {
+  required_providers {
+    fleets = {
+      source  = "trycua/fleets"
+      version = "0.2.0"
+    }
+  }
+}
+
+provider "fleets" {
+  endpoint = "https://run.cua.ai"
+}
+
+resource "fleets_pool" "linux" {
+  name                 = "linux-pool"
+  cpu_cores            = 4
+  memory               = "8Gi"
+  container_disk_image = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-e5d853a9"
+  runtime              = "kubevirt"
+  firmware             = "bios"
+
+  service {
+    name        = "ssh"
+    target_port = 22
+    protocol    = "TCP"
+  }
+
+  autoscaling {
+    min_pool_size     = 0
+    initial_pool_size = 1
+    max_pool_size     = 5
+  }
+}
+
+output "linux_pool" {
+  value = {
+    name             = fleets_pool.linux.name
+    namespace        = fleets_pool.linux.namespace
+    target_replicas  = fleets_pool.linux.replicas
+    current_replicas = fleets_pool.linux.current_replicas
+    ready_replicas   = fleets_pool.linux.ready_replicas
+  }
+}
+```
+
+## Configure a Windows pool
+
+Use a distinct name for Windows. The Windows computer-server image requires
+UEFI, so this example sets `firmware = "efi"` and waits for the service on port
+`8000`.
+
+```hcl title="main.tf"
+terraform {
+  required_providers {
+    fleets = {
+      source  = "trycua/fleets"
+      version = "0.2.0"
+    }
+  }
+}
+
+provider "fleets" {
+  endpoint = "https://run.cua.ai"
+}
+
+resource "fleets_pool" "windows" {
+  name                 = "windows-pool"
+  cpu_cores            = 4
+  memory               = "4Gi"
+  container_disk_image = "public.ecr.aws/k5j5w0x5/cua-windows-2022:latest"
+  runtime              = "kubevirt"
+  firmware             = "efi"
+
+  readiness_probe_json = jsonencode({
+    tcpSocket           = { port = 8000 }
+    initialDelaySeconds = 60
+    periodSeconds       = 5
+    timeoutSeconds      = 3
+    failureThreshold    = 120
+  })
+
+  service {
+    name        = "computer-server"
+    target_port = 8000
+    protocol    = "TCP"
+  }
+
+  autoscaling {
+    min_pool_size     = 0
+    initial_pool_size = 1
+    max_pool_size     = 5
+  }
+}
+
+output "windows_pool" {
+  value = {
+    name             = fleets_pool.windows.name
+    namespace        = fleets_pool.windows.namespace
+    target_replicas  = fleets_pool.windows.replicas
+    current_replicas = fleets_pool.windows.current_replicas
+    ready_replicas   = fleets_pool.windows.ready_replicas
+  }
+}
+```
+
+## Apply, verify, and destroy
+
+Initialize from the public Registry and run one example:
+
+```bash
+terraform init
+terraform fmt -check
+terraform validate
+terraform plan
+terraform apply
+terraform output
+```
+
+Commit `.terraform.lock.hcl` with your configuration so future runs select the
+same provider build. Run `terraform plan` against the existing state before
+applying changes; refresh keeps out-of-band changes to the pool target and
+status visible in the plan and outputs.
+
+The provider returns the backing `namespace` and template name, the live
+`replicas` target, and the `current_replicas` and `ready_replicas` status counts.
+A ready pool has at least one ready sandbox after its warm capacity provisions.
+
+Destroy the pool when finished. This deletes both the pool and its same-named
+namespace:
+
+```bash
+terraform destroy
+```
+
+## Troubleshooting and security
+
+- Use a lowercase DNS label of at most 63 characters for `name`. Changing it
+  replaces the pool because it also owns its namespace.
+- Check the image reference and image-pull-secret policy if creation returns
+  `403`. `image_pull_secret` defaults to `ecr-credentials`.
+- Use `bios` for the Linux workspace image and `efi` for the Windows
+  computer-server image. A firmware mismatch prevents the guest from booting.
+- Protect Terraform state and shell history as operational secrets.

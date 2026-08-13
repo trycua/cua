@@ -55,6 +55,20 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("os: windows-11-arm", workflow)
         self.assertEqual(workflow.count("os: windows-latest"), 1)
 
+    def test_windows_node_runtime_statically_links_and_verifies_the_crt(self) -> None:
+        build_script = self.read("libs/cua-driver/scripts/build-node-runtime.mjs")
+        release_workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn('target.endsWith("-pc-windows-msvc")', build_script)
+        self.assertIn('"-C target-feature=+crt-static"', build_script)
+        self.assertIn("Verify Node runtime is self-contained on Windows", release_workflow)
+        self.assertIn("dumpbin /DEPENDENTS", release_workflow)
+        self.assertIn("VCRUNTIME|MSVCP|CONCRT|UCRTBASE|api-ms-win-crt-", release_workflow)
+        self.assertIn("verify-windows-node-runtime:", release_workflow)
+        self.assertIn("os: windows-11-arm", release_workflow)
+        self.assertIn("Import exact candidate through public SDK", release_workflow)
+        self.assertIn("process.arch !== '${{ matrix.node_arch }}'", release_workflow)
+
     def test_npm_publish_uses_explicit_local_tarball_paths(self) -> None:
         workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
 
@@ -397,6 +411,33 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"args": ["mcp"]', shared_hints)
         self.assertIn("MCP servers load at startup", shared_hints)
 
+    def test_post_install_hints_use_canonical_capability_manifest_flags(self) -> None:
+        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+
+        self.assertIn("--capability-manifest", shared_hints)
+        self.assertIn("--approve-capability-manifest", shared_hints)
+        self.assertNotIn("--session-policy", shared_hints)
+        self.assertNotIn("--approve-session-policy", shared_hints)
+
+    def test_agent_sdk_examples_use_implicit_sessions_and_per_call_targets(self) -> None:
+        example_dir = REPO_ROOT / "libs/cua-driver/examples/agent-sdks"
+        examples = "\n".join(
+            path.read_text()
+            for path in example_dir.iterdir()
+            if path.suffix in {".py", ".ts", ".md"}
+        )
+
+        for forbidden in [
+            "CUA_CAPTURE_SCOPE",
+            "StartSessionInput",
+            "CaptureScope",
+            "capture_scope",
+        ]:
+            self.assertNotIn(forbidden, examples)
+        self.assertIn("implicit lifecycle session", examples)
+        self.assertIn("ActionTarget.DESKTOP", examples)
+        self.assertIn("new ActionTarget.Desktop", examples)
+
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
         signing = self.read("libs/cua-driver/scripts/_local-signing.sh")
 
@@ -450,8 +491,19 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "libs/cua-driver/rust/crates/cua-driver/src/skills.rs"
         )
         self.assertIn(
-            "releases/download/cua-driver-rs-v{version}/"
-            "cua-driver-rs-v{version}-skills.tar.gz",
+            'const STABLE_RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v"',
+            skill_installer,
+        )
+        self.assertIn(
+            'const NIGHTLY_RELEASE_TAG_PREFIX: &str = "nightly-cua-driver-rs-v"',
+            skill_installer,
+        )
+        self.assertIn(
+            "releases/download/{tag_prefix}{version}/",
+            skill_installer,
+        )
+        self.assertIn(
+            "{STABLE_RELEASE_TAG_PREFIX}{version}-skills.tar.gz",
             skill_installer,
         )
         self.assertIn(
@@ -472,7 +524,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' && inputs.publish && "
             "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
         )
-        self.assertEqual(workflow.count(immutable_ref), 5)
+        self.assertEqual(workflow.count(immutable_ref), 6)
         self.assertIn(
             "name: Ensure Rust target is installed\n"
             "        working-directory: libs/cua-driver/rust",
@@ -564,6 +616,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
             "[build-linux, build-windows, build-macos-universal, "
+            "verify-windows-node-runtime, "
             "verify-release-artifacts, verify-mcp-client-discovery]",
             workflow,
         )
@@ -606,10 +659,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 54)
+        self.assertEqual(len(expected["baseTools"]), 56)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 30, "linux": 34, "win32": 30},
+            {"darwin": 32, "linux": 36, "win32": 32},
         )
         self.assertEqual(
             expected["platformTools"],

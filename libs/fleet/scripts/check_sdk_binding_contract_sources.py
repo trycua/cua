@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import io
 import re
 import sys
@@ -164,6 +165,84 @@ def require_lifecycle(source: str, path: Path, label: str, queue_marker: str, ca
     require_all(source, path, checks)
 
 
+def require_python_namespace_lifecycle_contract(path: Path) -> None:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=path)
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+    }
+
+    expected_lifecycle = functions.get("expected_lifecycle")
+    run_lifecycle = functions.get("run_lifecycle")
+    if expected_lifecycle is None or run_lifecycle is None:
+        raise ContractFailure(f"binding contract check failed: Python namespace lifecycle functions ({path})")
+
+    return_statement = next(
+        (node for node in expected_lifecycle.body if isinstance(node, ast.Return)),
+        None,
+    )
+    if not isinstance(return_statement, ast.Return) or not isinstance(return_statement.value, ast.List):
+        raise ContractFailure(f"binding contract check failed: Python namespace lifecycle request queue ({path})")
+
+    requests = []
+    for item in return_statement.value.elts:
+        if not isinstance(item, ast.Call) or not isinstance(item.func, ast.Name) or item.func.id != "Expected":
+            continue
+        if len(item.args) < 5:
+            raise ContractFailure(f"binding contract check failed: Python lifecycle Expected fields ({path})")
+        method = item.args[0].value if isinstance(item.args[0], ast.Constant) else None
+        status = item.args[4].value if isinstance(item.args[4], ast.Constant) else None
+        requests.append((method, ast.unparse(item.args[1]), status))
+
+    required_requests = [
+        ("namespace create", "POST", "f'{BASE}/api/namespaces'", 201),
+        ("namespace get", "GET", "f'{BASE}/api/namespaces/default'", 200),
+        ("pool namespace compatibility create", "POST", "f'{BASE}/api/namespaces'", 409),
+        ("pool create", "POST", "pool_url.removesuffix('/default')", 201),
+        ("pool delete", "DELETE", "pool_url", 204),
+        ("pool namespace cleanup", "DELETE", "f'{BASE}/api/namespaces/default'", 204),
+        ("explicit namespace delete", "DELETE", "f'{BASE}/api/namespaces/default'", 404),
+    ]
+    request_index = -1
+    for label, method, url, status in required_requests:
+        request_index = next(
+            (
+                index
+                for index in range(request_index + 1, len(requests))
+                if requests[index] == (method, url, status)
+            ),
+            None,
+        )
+        if request_index is None:
+            raise ContractFailure(f"binding contract check failed: Python {label} request ordering/status ({path})")
+
+    lifecycle_calls = [
+        node.value.func.attr
+        for node in sorted(ast.walk(run_lifecycle), key=lambda node: (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)))
+        if isinstance(node, ast.Await)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and isinstance(node.value.func.value, ast.Name)
+        and node.value.func.value.id == "sdk"
+    ]
+    required_calls = [
+        "create_namespace",
+        "get_namespace",
+        "create_pool",
+        "delete_pool",
+        "delete_namespace",
+    ]
+    call_index = -1
+    for call in required_calls:
+        call_index = next(
+            (index for index in range(call_index + 1, len(lifecycle_calls)) if lifecycle_calls[index] == call),
+            None,
+        )
+        if call_index is None:
+            raise ContractFailure(f"binding contract check failed: Python lifecycle {call} ordering ({path})")
+
+
 def check(root: Path) -> None:
     bindings = root / "cyclops-cs/sdk-bindings"
     files = {
@@ -180,6 +259,10 @@ def check(root: Path) -> None:
         "python_fixture": bindings / "python/contract_fixture.py",
         "python_example": bindings / "examples/python/app_controlled.py",
         "python_live": bindings / "examples/python/live_app_controlled.py",
+        "python_sdk": bindings / "python/fleet_sdk/_sdk.py",
+        "kotlin_sdk": bindings / "kotlin/ai/cua/cyclops/sdk/fleet_sdk.kt",
+        "swift_sdk": bindings / "swift/CyclopsSdk.swift",
+        "ruby_sdk": bindings / "ruby/cyclops_sdk/sdk.rb",
         "kotlin_build": bindings / "kotlin/build.gradle.kts",
         "swift_runner": root / "cyclops-cs/scripts/run-swift-sdk-binding.sh",
         "ruby_runner": root / "cyclops-cs/scripts/run-ruby-sdk-binding.sh",
@@ -276,6 +359,30 @@ def check(root: Path) -> None:
         ("Python exact headers and body comparison", r"actual_headers.*request\.body.*item\.headers.*item\.body"),
         ("Python service call queue", r"def\s+expected_service_calls\("),
         ("Python absent optional body helper", r"def\s+service_request\(body\)"),
+        ("Python namespace create", r"await\s+sdk\.create_namespace\("),
+        ("Python namespace get", r"await\s+sdk\.get_namespace\("),
+        ("Python namespace delete", r"await\s+sdk\.delete_namespace\("),
+    ])
+    require_python_namespace_lifecycle_contract(files["python_fixture"])
+    require_all(source["python_sdk"], files["python_sdk"], [
+        ("Python create namespace binding", r"async def create_namespace\(self, name: str\) -> Namespace"),
+        ("Python get namespace binding", r"async def get_namespace\(self, name: str\) -> Namespace"),
+        ("Python delete namespace binding", r"async def delete_namespace\(self, name: str\) -> None"),
+    ])
+    require_all(source["kotlin_sdk"], files["kotlin_sdk"], [
+        ("Kotlin create namespace binding", r"suspend\s+fun\s+`createNamespace`\(`name`:\s*kotlin\.String\):\s*Namespace"),
+        ("Kotlin get namespace binding", r"suspend\s+fun\s+`getNamespace`\(`name`:\s*kotlin\.String\):\s*Namespace"),
+        ("Kotlin delete namespace binding", r"suspend\s+fun\s+`deleteNamespace`\(`name`:\s*kotlin\.String\)"),
+    ])
+    require_all(source["swift_sdk"], files["swift_sdk"], [
+        ("Swift create namespace binding", r"func\s+createNamespace\(name:\s*String\)\s+async\s+throws\s*->\s*Namespace"),
+        ("Swift get namespace binding", r"func\s+getNamespace\(name:\s*String\)\s+async\s+throws\s*->\s*Namespace"),
+        ("Swift delete namespace binding", r"func\s+deleteNamespace\(name:\s*String\)\s+async\s+throws"),
+    ])
+    require_all(source["ruby_sdk"], files["ruby_sdk"], [
+        ("Ruby create namespace binding", r"def\s+create_namespace\(name\)"),
+        ("Ruby get namespace binding", r"def\s+get_namespace\(name\)"),
+        ("Ruby delete namespace binding", r"def\s+delete_namespace\(name\)"),
     ])
     require(files["python_live"].read_text(encoding="utf-8"), "Python live environment", r"os\.environ\[\"CUA_CLIENT_ID\"\].*os\.environ\[\"CUA_IMAGE\"\]", files["python_live"])
     require_all(source["python_live"], files["python_live"], [

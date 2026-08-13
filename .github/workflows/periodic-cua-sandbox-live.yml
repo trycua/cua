@@ -29,6 +29,7 @@ permissions:
 
 jobs:
   prepare:
+    if: github.repository == 'trycua/cua'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -50,6 +51,7 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   live:
+    if: github.repository == 'trycua/cua'
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -82,7 +84,7 @@ jobs:
       - name: Checkout main
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
+          ref: ${{ github.event_name == 'push' && github.sha || github.ref }}
 
       - name: Record checked out source SHA
         id: source_sha

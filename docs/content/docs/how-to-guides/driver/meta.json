@@ -11,6 +11,7 @@
     "run-in-macos-lume-vm",
     "run-tests-in-macos-lume-vm",
     "connect-your-agent",
+    "run-with-local-model",
     "drive-a-web-page",
     "record-and-render-a-trajectory",
     "keep-running",

@@ -132,7 +132,11 @@ impl RuntimeSession {
             .runtime
             .invoke_with_context(name, args, self.context.clone())
             .await;
-        if name == "end_session" && result.is_some() {
+        if name == "end_session"
+            && result
+                .as_ref()
+                .is_some_and(|result| result.is_error != Some(true))
+        {
             self.authorization_registry
                 .revoke_connection(&self.connection);
         }
@@ -556,16 +560,17 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
         register_host_tools(&mut registry);
     }
     let recording = Arc::downgrade(&registry.recording);
-    let recording_session_end =
-        cua_driver_core::session::register_scoped_session_end_hook(move |session| {
+    let recording_session_end = cua_driver_core::session::register_scoped_fallible_session_end_hook(
+        "recording",
+        move |session| {
             let Some(recording) = recording.upgrade() else {
-                return;
+                return Ok(());
             };
-            let session = session.to_owned();
-            std::thread::spawn(move || {
-                let _ = recording.stop_owner(Some(&session));
-            });
-        });
+            recording
+                .stop_owner(Some(session))
+                .map_err(|error| error.to_string())
+        },
+    );
     registry.retain_session_end_hook(recording_session_end);
     registry
 }
@@ -718,7 +723,7 @@ mod tests {
         let idle_before_refresh =
             cua_driver_core::session::session_idle_duration(&internal).unwrap();
         runtime
-            .invoke("health_report", serde_json::json!({"session": public}))
+            .invoke("start_session", serde_json::json!({"session": public}))
             .await
             .unwrap();
         let idle_after_refresh =
@@ -781,6 +786,84 @@ mod tests {
         assert!(
             !runtime.registry.recording.current_state().enabled,
             "session-end hook must finalize recording after idle eviction"
+        );
+
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn incomplete_end_keeps_trusted_authorization_live_for_cleanup_retry() {
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let runtime = DriverRuntime::create(standard_options()).unwrap();
+        let public_session = "runtime-end-cleanup-retry";
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts_for_hook = attempts.clone();
+        let _hook = cua_driver_core::session::register_scoped_fallible_session_end_hook(
+            "runtime-end-cleanup-retry-test",
+            move |_| {
+                if attempts_for_hook.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err("synthetic first-attempt failure".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        let session = runtime
+            .create_trusted_session(DelegatedSessionRequest {
+                public_session: public_session.into(),
+                transport_session: "runtime-end-cleanup-retry-transport".into(),
+                mode: PermissionMode::Standard,
+                ttl: Duration::from_secs(60),
+                idle_ttl: Duration::from_secs(30),
+                capability_manifest: None,
+            })
+            .unwrap();
+
+        let started = session
+            .invoke("start_session", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_ne!(started.is_error, Some(true));
+        let runtime_prefix = format!(
+            "__cua_runtime_{}:",
+            runtime.compatibility_context.runtime_scope_key()
+        );
+        let started_sessions = cua_driver_core::session::list_session_snapshots_with_prefix(
+            &runtime_prefix,
+            Duration::from_secs(300),
+        );
+        assert_eq!(started_sessions.len(), 1, "{started_sessions:?}");
+
+        let first_end = session
+            .invoke("end_session", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            first_end.is_error,
+            Some(true),
+            "result={first_end:?} started={started_sessions:?} attempts={}",
+            attempts.load(Ordering::SeqCst)
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        let retried_end = session
+            .invoke("end_session", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_ne!(retried_end.is_error, Some(true));
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+
+        let after_end = session
+            .invoke("health_report", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            after_end
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(Value::as_str),
+            Some("authorization_revoked")
         );
 
         runtime.shutdown().await;

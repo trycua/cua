@@ -11,6 +11,43 @@ name: "CD: Cua Driver (cross-platform)"
 # without needing to unpack a directory structure first.
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Exact artifact version"
+        required: true
+        type: string
+      channel:
+        description: "Release channel"
+        required: false
+        default: stable
+        type: string
+      source_ref:
+        description: "Exact source SHA or immutable ref to build"
+        required: true
+        type: string
+      notarize:
+        description: "Codesign and notarize macOS artifacts"
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      APPLICATION_CERT_BASE64:
+        required: false
+      CERT_PASSWORD:
+        required: false
+      APPLE_ID:
+        required: false
+      APP_SPECIFIC_PASSWORD:
+        required: false
+      DEVELOPER_NAME:
+        required: false
+      TEAM_ID:
+        required: false
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
   push:
     tags:
       - "cua-driver-rs-v*"
@@ -52,7 +89,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
 
       - name: Check out release control tooling
         uses: actions/checkout@v4
@@ -142,12 +179,15 @@ jobs:
           # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
           # in these portable release binaries.
           apt-get install -y --no-install-recommends \
-            git ca-certificates curl build-essential pkg-config \
+            git ca-certificates curl python3 build-essential pkg-config \
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
             libxkbcommon-dev
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - name: Stage nightly artifact version
+        if: inputs.channel == 'nightly'
+        run: python3 .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -157,7 +197,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -232,7 +274,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - name: Stage nightly artifact version
+        if: inputs.channel == 'nightly'
+        shell: bash
+        run: python .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -242,7 +288,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -285,6 +333,31 @@ jobs:
           node scripts/build-node-runtime.mjs \
             --target "${{ matrix.target }}" \
             --output "rust/target/${{ matrix.target }}/release/cua_driver_node_runtime.node"
+      - name: Verify Node runtime is self-contained on Windows
+        working-directory: libs/cua-driver
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installation) { throw "Visual Studio Build Tools were not found" }
+          $dumpbin = Get-ChildItem `
+            "$installation\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+            Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe was not found" }
+
+          $runtime = "rust/target/${{ matrix.target }}/release/cua_driver_node_runtime.node"
+          $imports = & $dumpbin /DEPENDENTS $runtime 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            throw "dumpbin failed for $runtime with exit $LASTEXITCODE"
+          }
+          $imports | Write-Host
+          $dynamicCrt = $imports | Select-String -Pattern `
+            '(?i)\b(?:VCRUNTIME|MSVCP|CONCRT|UCRTBASE|api-ms-win-crt-)[^\s]*\.dll\b'
+          if ($dynamicCrt) {
+            throw "Windows Node runtime has a dynamic VC/UCRT dependency: $($dynamicCrt -join ', ')"
+          }
       - name: Package
         working-directory: libs/cua-driver/rust
         shell: pwsh
@@ -322,6 +395,68 @@ jobs:
           path: libs/cua-driver/rust/release/cua-driver-rs-*-windows-${{ matrix.arch }}*.zip
           if-no-files-found: error
 
+  # Load the exact candidate Node runtime on native x64 and ARM64 Windows.
+  # The build job also rejects dynamic CRT imports, while this job proves the
+  # staged addon and SDK DLL work together through the public TypeScript API.
+  verify-windows-node-runtime:
+    name: Windows ${{ matrix.node_arch }} packaged Node runtime
+    needs: build-windows
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            release_arch: x86_64
+            node_arch: x64
+          - os: windows-11-arm
+            release_arch: arm64
+            node_arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/typescript/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: cua-driver-rs-windows-${{ matrix.release_arch }}
+          path: artifacts
+      - name: Build TypeScript SDK
+        working-directory: libs/cua-driver/typescript
+        run: |
+          npm ci
+          npm run build
+      - name: Stage exact candidate native package
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem artifacts -Recurse `
+            -Filter "*-windows-${{ matrix.release_arch }}-binary.zip")
+          if ($archives.Count -ne 1) {
+            throw "Expected one Windows candidate archive, found $($archives.Count)"
+          }
+          $candidate = Join-Path $env:RUNNER_TEMP "cua-driver-node-candidate"
+          Expand-Archive -LiteralPath $archives[0].FullName -DestinationPath $candidate
+
+          $triple = "win32-${{ matrix.node_arch }}-msvc"
+          $package = "libs/cua-driver/typescript/node_modules/@trycua/cua-driver-$triple"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item (Join-Path $candidate "cua_driver_sdk.dll") $package
+          Copy-Item (Join-Path $candidate "cua_driver_node_runtime.node") $package
+          @{
+            name = "@trycua/cua-driver-$triple"
+            version = "0.0.0-candidate"
+            private = $true
+          } | ConvertTo-Json | Set-Content (Join-Path $package "package.json")
+      - name: Import exact candidate through public SDK
+        shell: pwsh
+        run: |
+          node --input-type=module -e `
+            "if (process.arch !== '${{ matrix.node_arch }}') throw new Error('unexpected Node architecture ' + process.arch); const sdk = await import('./libs/cua-driver/typescript/dist/index.js'); const driver = sdk.CuaDriver.connect(undefined); console.log(process.platform, process.arch, driver.socketPath()); driver.uniffiDestroy();"
+
   # ── macOS universal (arm64 + x86_64 → lipo) ─────────────────────────────────
   # Mirrors cd-swift-cua-driver.yml's approach: build both arches in one job
   # on macos-26, then combine into a universal binary via `lipo -create`.
@@ -348,7 +483,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - name: Stage nightly artifact version
+        if: inputs.channel == 'nightly'
+        run: python3 .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -358,7 +496,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -506,9 +646,10 @@ jobs:
           # checked in. Without this the in-tree Info.plist's
           # CFBundleShortVersionString drifts from the release tag on
           # every cut. CodeRabbit #4.
-          plutil -replace CFBundleShortVersionString -string "$VERSION" \
+          BUNDLE_VERSION="${VERSION%%-*}"
+          plutil -replace CFBundleShortVersionString -string "$BUNDLE_VERSION" \
             release/CuaDriver.app/Contents/Info.plist
-          plutil -replace CFBundleVersion -string "$VERSION" \
+          plutil -replace CFBundleVersion -string "$BUNDLE_VERSION" \
             release/CuaDriver.app/Contents/Info.plist
           # Remove the .gitkeep we use in source control — it's not
           # part of the runtime bundle.
@@ -602,12 +743,14 @@ jobs:
           # immutable tag that predates this script. Candidate artifacts still
           # come from that exact tag; the release control comes from the commit
           # that defined this workflow run.
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.source_ref || github.workflow_sha }}
 
       - name: Determine version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -637,7 +780,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.source_ref || github.workflow_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -647,7 +790,9 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+          if [[ "${{ inputs.channel }}" == "nightly" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
@@ -693,7 +838,7 @@ jobs:
   # evidence exists.
   release:
     needs:
-      [build-linux, build-windows, build-macos-universal, verify-release-artifacts, verify-mcp-client-discovery]
+      [build-linux, build-windows, build-macos-universal, verify-windows-node-runtime, verify-release-artifacts, verify-mcp-client-discovery]
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
     steps:

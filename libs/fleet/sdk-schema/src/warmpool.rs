@@ -27,7 +27,17 @@ fn sandbox_template_ref_schema(_: &mut schemars::SchemaGenerator) -> schemars::S
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct WarmPoolAutoscaling {
     #[schemars(

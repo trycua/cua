@@ -40,6 +40,29 @@ repeatable while the private seed carries grants obtained through the normal
 `CuaDriverLocal.app` prompt flow. The SIP-on check below owns the separate claim that
 the supported permission flow still works with normal platform protection.
 
+## Reuse a prepared private seed
+
+Check the host-local inventory before building from the public base. Reuse a
+seed only when its versioned maintainer log records the expected public base,
+macOS build, toolchain versions, signing-certificate hash, TCC grants, and
+Chrome consent state. The seed and both backups must be stopped:
+
+```bash
+SEED=cua-driver-macos-e2e-seed-26.5.2-YYYYMMDD
+BACKUP_A="${SEED}-backup-a"
+BACKUP_B="${SEED}-backup-b"
+
+for VM in "$SEED" "$BACKUP_A" "$BACKUP_B"; do
+  lume get "$VM" --format json | jq -e '.[0].status == "stopped"'
+done
+```
+
+If those checks and the maintainer log match, skip image creation and clone a
+worker from the seed under [Run the acceptance gate](#run-the-acceptance-gate).
+Never boot a seed to inspect or update it. Clone a disposable worker and let the
+acceptance preflight verify the recorded state there. Build a new versioned seed
+when the inventory is missing, incomplete, or stale.
+
 ## Create the private seed
 
 Pull the versioned public base into a mutable local builder. The initial guest
@@ -86,6 +109,10 @@ brew install node ffmpeg jq rust
 printf '\n%s\n' 'eval "$(/opt/homebrew/bin/brew shellenv)"' \
   >> "$HOME/.zprofile"
 ```
+
+The pinned Homebrew installer pauses for a Return confirmation after its sudo
+check. Keep this step in the VM display and confirm the prompt there. A detached
+SSH run can look stalled while it is waiting for that input.
 
 Open a new Terminal window and require each command to succeed:
 
@@ -164,6 +191,19 @@ bash libs/cua-driver/scripts/install-local.sh \
 ~/.local/bin/cua-driver-local permissions grant
 ```
 
+Record the certificate hash after the successful install and keep that identity
+for the life of the seed:
+
+```bash
+security find-certificate \
+  -c 'CuaDriver Local Signing (cua-driver-rs)' -Z "$SIGNING_KEYCHAIN"
+codesign -d -r- /Applications/CuaDriverLocal.app 2>&1 \
+  | grep 'certificate leaf'
+```
+
+Recreating the certificate changes the app identity and invalidates inherited
+TCC grants, even when the bundle identifier stays the same.
+
 Complete the Accessibility and Screen Recording prompts. Tahoe 26 also asks
 separately for Automation and direct ScreenCaptureKit access. Trigger all
 remaining consent paths before freezing the seed:
@@ -177,19 +217,9 @@ osascript -e \
 # must not require Automation access to System Events.
 ~/.local/bin/cua-driver-local list_apps '{}'
 
-# A desktop screenshot triggers Tahoe's direct-capture/private-window prompt.
-~/.local/bin/cua-driver-local call start_session \
-  '{"session":"seed-desktop-consent","capture_scope":"desktop"}'
-~/.local/bin/cua-driver-local call get_desktop_state \
-  '{"session":"seed-desktop-consent"}' \
-  > /tmp/cua-driver-seed-desktop-state.json
-~/.local/bin/cua-driver-local call end_session '{"session":"seed-desktop-consent"}'
-jq -e '
-  .screenshot_mime_type == "image/png"
-  and .screenshot_width > 0
-  and .screenshot_height > 0
-  and (.screenshot_png_b64 | length) > 0
-' /tmp/cua-driver-seed-desktop-state.json >/dev/null
+# The app-owned grant flow probes a desktop capture and triggers Tahoe's
+# direct-capture/private-window prompt.
+~/.local/bin/cua-driver-local permissions grant
 ```
 
 Choose Allow for `Terminal` -> `System Events` and on the CuaDriverLocal
@@ -198,8 +228,18 @@ Events. Target-specific Automation prompts may still appear later when a user
 explicitly requests an Apple Events-backed browser or app operation; do not
 pre-grant those in the seed. These are normal macOS consent flows; do not edit
 `TCC.db`. Rerun the commands and require them to finish without another prompt.
-Then verify the daemon's own
-identity and the read-only status contract before running the explicit
+Notification banners can cover Tahoe's consent controls; swipe the banners away
+before acting instead of clicking through them. After enabling Screen Recording,
+restart the app-owned daemon once before checking status so the live process
+observes the new grant:
+
+```bash
+~/.local/bin/cua-driver-local stop
+open -a CuaDriverLocal
+```
+
+Then verify the daemon's own identity and the read-only status contract before
+running the explicit
 LaunchServices-hosted grant flow. The first command must not raise a dialog;
 the second is intentionally prompt-capable and must be run by the human:
 
@@ -301,12 +341,14 @@ standard autostart daemon even when a browser row fails.
 On macOS Tahoe, first-use Chrome can present a native local-network discovery
 prompt over `chrome://inspect/#remote-debugging`. The standalone-browser lane
 uses loopback DevTools and does not need LAN discovery. Before freezing a seed
-that will run this optional lane, launch Chrome on that exact page in the VM
-display, choose **Don't Allow**, quit Chrome, then relaunch the page and require
-that the prompt does not return. Do not answer or dismiss OS consent UI while
-the behavior matrix is running. If an existing immutable seed lacks this
-decision, clone it to a new versioned seed, complete this setup there, stop it,
-and use that new seed for workers; never update the original seed in place.
+that will run this optional lane, complete Chrome's welcome screen without
+signing in and leave the default-browser and usage-reporting choices disabled.
+Launch Chrome on that exact page in the VM display, choose **Don't Allow**, quit
+Chrome, then relaunch the page and require that the prompt does not return. Do
+not answer or dismiss OS consent UI while the behavior matrix is running. If an
+existing immutable seed lacks these decisions, clone it to a new versioned seed,
+complete this setup there, stop it, and use that new seed for workers; never
+update the original seed in place.
 
 The entrypoint refuses the wrong OS, user session, SIP state, dirty or
 unidentified source, missing dependencies, ad-hoc signature, stale installed

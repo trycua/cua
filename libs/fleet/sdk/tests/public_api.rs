@@ -176,6 +176,7 @@ async fn foreign_http_client_preserves_ordered_headers_and_byte_bodies() {
                 },
             ],
             body: Some(vec![0, 255]),
+            timeout_secs: None,
         })
         .await
         .unwrap();
@@ -190,14 +191,21 @@ fn http_request_distinguishes_absent_and_empty_bodies() {
         url: "https://run.cua.ai/v1/pools".into(),
         headers: vec![],
         body: None,
+        timeout_secs: None,
     };
     let empty = HttpRequest {
         body: Some(vec![]),
         ..absent.clone()
     };
+    let timed = HttpRequest {
+        timeout_secs: Some(75),
+        ..absent.clone()
+    };
 
     assert_ne!(absent, empty);
     assert_eq!(empty.body, Some(vec![]));
+    assert_ne!(absent, timed);
+    assert_eq!(timed.timeout_secs, Some(75));
 }
 
 #[test]

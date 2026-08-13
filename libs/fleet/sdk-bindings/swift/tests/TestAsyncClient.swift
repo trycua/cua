@@ -111,7 +111,7 @@ private func configuration() -> CyclopsConfiguration {
 
 private let sandbox = Sandbox(namespace: "default", claim: "default", name: "offline-sandbox", services: ["mcp"])
 private func serviceRequest(_ body: Data?) -> HttpRequest {
-    HttpRequest(method: "POST", url: "https://ignored.invalid/mcp", headers: [], body: body)
+    HttpRequest(method: "POST", url: "https://ignored.invalid/mcp", headers: [], body: body, timeoutSecs: nil)
 }
 
 @main struct AppControlled {

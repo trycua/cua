@@ -92,6 +92,68 @@ cua-driver doctor
 
 `doctor` checks the version, install layout, and telemetry setup on every platform. It also runs platform probes for TCC on macOS, the interactive session on Windows, and AT-SPI plus the display server on Linux.
 
+## Follow the nightly channel
+
+Stable is the default. To install the newest nightly and save that preference:
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash
+curl -fsSL https://cua.ai/driver/install.sh | bash -s -- --channel nightly
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+& ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -Channel nightly
+```
+
+  </Tab>
+</Tabs>
+
+Later `cua-driver check-update` and `cua-driver update --apply` stay on nightly.
+Switch back without reinstalling immediately with:
+
+```bash
+cua-driver channel set stable
+cua-driver update --apply
+```
+
+`channel set` saves intent only; `update --apply` performs the binary change.
+
+## Install an exact nightly
+
+Nightlies are immutable builds of exact `main` commits. Copy the full
+`nightly-cua-driver-rs-v…` tag from the component's GitHub release, then pin
+that tag during installation:
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash
+CUA_DRIVER_RS_VERSION=nightly-cua-driver-rs-v0.19.4-nightly.20260812.123456789 \
+  /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+$env:CUA_DRIVER_RS_VERSION = "nightly-cua-driver-rs-v0.19.4-nightly.20260812.123456789"
+irm https://cua.ai/driver/install.ps1 | iex
+Remove-Item Env:CUA_DRIVER_RS_VERSION
+```
+
+  </Tab>
+</Tabs>
+
+The pin is one-shot: it does not change the saved update channel. A machine
+without a saved preference therefore remains on stable; a machine following
+nightly keeps following nightly. Exact pins never fall back to another release
+when an asset is missing, and cannot be combined with `--channel`.
+
 ## Choose a permission mode
 
 Cua Driver authorizes every agent action inside the native runtime, and the mode is fixed when that runtime starts. An agent cannot change it, and neither can you change it on a running daemon — you restart the daemon with different flags. Decide which mode you want before starting the daemon below.
@@ -107,8 +169,8 @@ Cua Driver authorizes every agent action inside the native runtime, and the mode
 ```bash
 cua-driver serve \
   --permission-mode bounded \
-  --session-policy ~/cua-session.yaml \
-  --approve-session-policy
+  --capability-manifest ~/cua-session.yaml \
+  --approve-capability-manifest
 ```
 
 For `unrestricted`, pass the dangerous acknowledgement. `--permission-mode unrestricted` on its own fails closed:
@@ -122,11 +184,11 @@ On macOS, put those flags after `serve` in the app-bundle launch so TCC attribut
 ```bash
 open -n -g -a CuaDriver --args serve \
   --permission-mode bounded \
-  --session-policy ~/cua-session.yaml \
-  --approve-session-policy
+  --capability-manifest ~/cua-session.yaml \
+  --approve-capability-manifest
 ```
 
-See [Permission modes](/reference/cua-driver/permission-modes) for exactly what each mode allows, and [Write a bounded manifest](/how-to-guides/driver/write-a-bounded-manifest) for a tested manifest. To keep a non-default mode across reboots, its flags belong in the autostart entry — see [Pin a permission mode](/how-to-guides/driver/keep-running#pin-a-permission-mode).
+See [Permission modes](/reference/cua-driver/permission-modes) for exactly what each profile allows, and [Write a capability manifest](/how-to-guides/driver/write-a-bounded-manifest) for a tested manifest. To keep a non-default profile across reboots, its flags belong in the autostart entry — see [Pin a permission mode](/how-to-guides/driver/keep-running#pin-a-permission-mode).
 
 ## Grant TCC permissions (macOS only)
 

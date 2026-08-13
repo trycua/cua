@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator
 from release_attribution import (
     CommitRecord,
     LEGACY_RELEASE_BUMP_RE,
+    PUBLISHED_INSTALLER_BUMP_RE,
     ReleaseError,
     _change_contributors,
     build_manifest,
@@ -153,8 +154,7 @@ def test_release_notes_dedupe_contributors_across_roles_and_login_case():
         "repository": "trycua/cua",
         "tag": "cua-driver-rs-v0.13.1",
         "compareUrl": (
-            "https://github.com/trycua/cua/compare/"
-            "cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.1"
+            "https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.1"
         ),
         "visualRequested": False,
         "changes": [
@@ -183,8 +183,7 @@ def test_cua_driver_release_footer_explains_github_prerelease_label():
         "repository": "trycua/cua",
         "tag": "cua-driver-rs-v0.17.0",
         "compareUrl": (
-            "https://github.com/trycua/cua/compare/"
-            "cua-driver-rs-v0.16.0...cua-driver-rs-v0.17.0"
+            "https://github.com/trycua/cua/compare/cua-driver-rs-v0.16.0...cua-driver-rs-v0.17.0"
         ),
         "visualRequested": False,
         "changes": [],
@@ -333,6 +332,18 @@ def test_legacy_release_bump_subject_is_recognized():
     assert LEGACY_RELEASE_BUMP_RE.match("Bump cua-driver-rs to v0.8.3")
     assert LEGACY_RELEASE_BUMP_RE.match("Bump lume to v0.3.16")
     assert not LEGACY_RELEASE_BUMP_RE.match("feat(driver): bump reconnect retries")
+
+
+def test_published_installer_bump_subject_is_recognized_narrowly():
+    assert PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to nightly [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "feat(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
 
 
 def test_changelog_accepts_verified_commit_link_when_pr_suffix_is_missing():
@@ -489,6 +500,85 @@ def test_manifest_is_pr_first_and_renders_deterministically(tmp_path: Path):
     )
     assert preflight["tag"] == "cua-driver-rs-v0.8.2-not-created-yet"
     assert preflight["sha"] == commit_sha
+
+
+def test_nightly_manifest_attributes_maintenance_prs_without_a_versioned_changelog(
+    tmp_path: Path,
+):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    product = tmp_path / "libs/cua-driver/rust"
+    product.mkdir(parents=True)
+    (product / "CHANGELOG.md").write_text("# Changelog\n")
+    (product / "driver.txt").write_text("initial\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-m", "chore: seed fixture")
+    git(tmp_path, "tag", "cua-driver-rs-v0.8.1")
+
+    (product / "driver.txt").write_text("documented\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-m", "docs(driver): explain nightly sessions")
+    commit_sha = git(tmp_path, "rev-parse", "HEAD")
+
+    config = {
+        "bots": [],
+        "coauthorOverrides": {},
+        "ignoredCoauthorEmails": [],
+        "identityOverrides": {},
+        "internalHandles": [],
+        "optOutHandles": [],
+    }
+    manifest = build_manifest(
+        repo_root=tmp_path,
+        repository="trycua/cua",
+        product="cua-driver-rs",
+        display_name="Cua Driver",
+        version="0.8.2-nightly.20260812.42",
+        tag="nightly-cua-driver-rs-v0.8.2-nightly.20260812.42",
+        release_ref=commit_sha,
+        previous_tag="cua-driver-rs-v0.8.1",
+        expected_sha=commit_sha,
+        paths=("libs/cua-driver",),
+        changelog_path=product / "CHANGELOG.md",
+        attribution_config=config,
+        github=FakeGitHub(commit_sha),
+        channel="nightly",
+    )
+
+    assert manifest["channel"] == "nightly"
+    assert manifest["compareUrl"].endswith(f"/compare/cua-driver-rs-v0.8.1...{commit_sha}")
+    assert manifest["visualRequested"] is False
+    assert manifest["changes"][0]["type"] == "docs"
+    assert manifest["changes"][0]["pr"] == 12
+    assert {item["login"] for item in manifest["contributors"]} == {
+        "bug-reporter",
+        "pr-author",
+        "source-author",
+    }
+    schema = json.loads((REPO_ROOT / ".github/release-manifest.schema.json").read_text())
+    validator = Draft202012Validator(schema, format_checker=None)
+    validator.validate(manifest)
+    stable_shaped = dict(manifest)
+    stable_shaped.pop("channel")
+    assert any("is not one of" in error.message for error in validator.iter_errors(stable_shaped))
+
+    with pytest.raises(ReleaseError, match="no releasing pull requests"):
+        build_manifest(
+            repo_root=tmp_path,
+            repository="trycua/cua",
+            product="cua-driver-rs",
+            display_name="Cua Driver",
+            version="0.8.2",
+            tag="cua-driver-rs-v0.8.2",
+            release_ref=commit_sha,
+            previous_tag="cua-driver-rs-v0.8.1",
+            expected_sha=commit_sha,
+            paths=("libs/cua-driver",),
+            changelog_path=product / "CHANGELOG.md",
+            attribution_config=config,
+            github=FakeGitHub(commit_sha),
+        )
 
 
 def test_unresolved_human_coauthor_fails_closed():

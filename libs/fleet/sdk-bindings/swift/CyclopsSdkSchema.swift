@@ -1495,6 +1495,162 @@ public func FfiConverterTypeVmTemplateBuilder_lower(_ value: VmTemplateBuilder) 
 
 
 
+
+
+public protocol WarmPoolAutoscalingBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> WarmPoolAutoscaling
+
+    func initialPoolSize(value: UInt32)  -> WarmPoolAutoscalingBuilder
+
+    func maxPoolSize(value: UInt32)  -> WarmPoolAutoscalingBuilder
+
+    func minPoolSize(value: UInt32)  -> WarmPoolAutoscalingBuilder
+
+}
+open class WarmPoolAutoscalingBuilder: WarmPoolAutoscalingBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> WarmPoolAutoscaling  {
+    return try  FfiConverterTypeWarmPoolAutoscaling_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
+    uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func initialPoolSize(value: UInt32) -> WarmPoolAutoscalingBuilder  {
+    return try!  FfiConverterTypeWarmPoolAutoscalingBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
+open func maxPoolSize(value: UInt32) -> WarmPoolAutoscalingBuilder  {
+    return try!  FfiConverterTypeWarmPoolAutoscalingBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
+open func minPoolSize(value: UInt32) -> WarmPoolAutoscalingBuilder  {
+    return try!  FfiConverterTypeWarmPoolAutoscalingBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWarmPoolAutoscalingBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = WarmPoolAutoscalingBuilder
+
+    public static func lift(_ handle: UInt64) throws -> WarmPoolAutoscalingBuilder {
+        return WarmPoolAutoscalingBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: WarmPoolAutoscalingBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WarmPoolAutoscalingBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: WarmPoolAutoscalingBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWarmPoolAutoscalingBuilder_lift(_ handle: UInt64) throws -> WarmPoolAutoscalingBuilder {
+    return try FfiConverterTypeWarmPoolAutoscalingBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWarmPoolAutoscalingBuilder_lower(_ value: WarmPoolAutoscalingBuilder) -> UInt64 {
+    return FfiConverterTypeWarmPoolAutoscalingBuilder.lower(value)
+}
+
+
+
+
 public struct ClaimLifecycle: Equatable, Hashable {
     public var shutdownTime: String?
     public var shutdownPolicy: String?
@@ -3485,6 +3641,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build() != 17132) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size() != 56913) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size() != 18359) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size() != 46153) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new() != 21082) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3501,6 +3669,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new() != 26063) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new() != 25769) {
         return InitializationResult.apiChecksumMismatch
     }
 

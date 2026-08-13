@@ -1,6 +1,16 @@
-import type { Claim as SdkClaim, CyclopsClient } from "./generated"
+import {
+  CreateClaimRequestBuilder,
+  type Claim as SdkClaim,
+  type CreateClaimRequest,
+  type CyclopsClient,
+  type Pool,
+} from "./generated"
 import { withClient } from "./client"
 import type { Claim } from "./models"
+
+export function buildClaimRequest(pool: Pool): CreateClaimRequest {
+  return new CreateClaimRequestBuilder().pool(pool).build()
+}
 
 function claimModel(claim: SdkClaim): Claim {
   return {
@@ -39,7 +49,7 @@ export async function createClaim(namespace: string, poolName: string): Promise<
     if (pool.metadata.namespace !== namespace) {
       throw new Error(`Pool ${poolName} belongs to namespace ${pool.metadata.namespace}`)
     }
-    return claimModel(await client.createClaim({ pool }))
+    return claimModel(await client.createClaim(buildClaimRequest(pool)))
   })
 }
 

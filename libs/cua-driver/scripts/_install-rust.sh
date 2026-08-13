@@ -21,9 +21,12 @@
 #   --bin-dir <path>     install the visible binary/symlink to <path>
 #                        instead of ~/.local/bin
 #   --no-modify-path     skip auto-appending an `export PATH=...` line
+#   --channel <name>     persist and install the latest stable or nightly release
 #
 # Env overrides:
-#   CUA_DRIVER_RS_VERSION=0.1.2          pin a specific release tag
+#   CUA_DRIVER_RS_VERSION=0.1.2          pin a stable release
+#   CUA_DRIVER_RS_VERSION=nightly-cua-driver-rs-v0.1.3-nightly.20260812.42
+#                                        pin an exact nightly release
 #   CUA_DRIVER_RS_INSTALL_DIR=PATH       same as --bin-dir; sets the visible
 #                                        binary location
 #   CUA_DRIVER_RS_BIN_DIR=PATH           legacy alias for INSTALL_DIR
@@ -112,6 +115,7 @@ fi
 REPO="trycua/cua"
 BINARY_NAME="cua-driver"
 TAG_PREFIX="cua-driver-rs-v"
+NIGHTLY_TAG_PREFIX="nightly-cua-driver-rs-v"
 # CUA_DRIVER_RS_INSTALL_DIR is the documented name; CUA_DRIVER_RS_BIN_DIR is
 # the legacy alias kept for users with the old env in their shell rc.
 BIN_DIR="${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}"
@@ -132,6 +136,8 @@ NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
 # `current` resolves to is always preserved regardless of cutoff.
 KEEP_VERSIONS_DEFAULT=5
 KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
+CHANNEL_ARG=""
+CHANNEL_EXPLICIT=0
 
 # macOS-only: name and install location of the .app bundle that wraps
 # the bare binary so the TCC auto-relaunch path in `cua-driver mcp` has
@@ -149,6 +155,10 @@ while [[ $# -gt 0 ]]; do
         --bin-dir) BIN_DIR="$2"; shift 2 ;;
         --bin-dir=*) BIN_DIR="${1#*=}"; shift ;;
         --no-modify-path) NO_MODIFY_PATH=1; shift ;;
+        --channel)
+            [[ -n "${2:-}" ]] || { printf 'error: --channel requires stable or nightly\n' >&2; exit 2; }
+            CHANNEL_ARG="$2"; CHANNEL_EXPLICIT=1; shift 2 ;;
+        --channel=*) CHANNEL_ARG="${1#*=}"; CHANNEL_EXPLICIT=1; shift ;;
         *) shift ;;
     esac
 done
@@ -513,7 +523,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.19.2" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.19.3" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # Run API requests with an optional token. Keep the header construction here
@@ -535,7 +545,11 @@ github_api_curl() {
 # considering it. GitHub's REST response renders those top-level fields on
 # separate lines in that order; nested author/assets objects have no tag_name.
 extract_published_release_versions() {
-    awk -v prefix="$TAG_PREFIX" '
+    # Keep this helper usable by stable-only callers and extracted test
+    # harnesses that predate persistent channel selection.
+    local selected_channel="${SELECTED_CHANNEL:-stable}"
+    local selected_tag_prefix="${SELECTED_TAG_PREFIX:-$TAG_PREFIX}"
+    awk -v prefix="$selected_tag_prefix" -v channel="$selected_channel" '
         /"tag_name"[[:space:]]*:/ {
             tag = $0
             sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
@@ -547,7 +561,8 @@ extract_published_release_versions() {
                 version = tag
                 if (index(version, prefix) == 1) {
                     version = substr(version, length(prefix) + 1)
-                    if (version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) {
+                    if ((channel == "stable" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) ||
+                        (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*$/)) {
                         print version
                     }
                 }
@@ -572,9 +587,9 @@ resolve_latest_version_from_api() {
         page_json="$(github_api_curl -fsSL \
             "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page")" || return 1
 
-        # Extract only published exact stable x.y.z tags. Cua Driver's stable
-        # tags are marked prerelease in GitHub metadata, so the tag syntax —
-        # not the prerelease flag — decides semantic stability.
+        # Extract only published tags matching the selected channel's strict
+        # grammar. Cua Driver's stable tags are marked prerelease in GitHub
+        # metadata, so tag syntax—not the prerelease flag—defines the channel.
         page_versions="$(printf '%s' "$page_json" | extract_published_release_versions)" || true
         if [[ -n "$page_versions" ]]; then
             versions="${versions}${versions:+$'\n'}${page_versions}"
@@ -594,7 +609,7 @@ resolve_latest_version_from_api() {
     version="$(
         printf '%s\n' "$versions" \
             | sed '/^$/d' \
-            | sort -t. -k1,1nr -k2,2nr -k3,3nr \
+            | sort -t. -k1,1nr -k2,2nr -k3,3nr -k4,4nr -k5,5nr \
             | head -n 1
     )"
     [[ -n "$version" ]] || return 1
@@ -606,27 +621,84 @@ resolve_latest_version_from_api() {
 # CD path advances it only after every staged release asset is public; fallback
 # remains defense in depth for manual edits, asset removal, or an interrupted
 # legacy release flow.
+resolve_explicit_release_tag() {
+    local value="$1" stable_version nightly_version
+    if [[ "$value" =~ ^(cua-driver-rs-v|v)?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+        stable_version="${BASH_REMATCH[2]}"
+        printf '%s%s' "$TAG_PREFIX" "$stable_version"
+        return 0
+    fi
+    if [[ "$value" =~ ^nightly-cua-driver-rs-v([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+        nightly_version="${BASH_REMATCH[1]}"
+        printf '%s%s' "$NIGHTLY_TAG_PREFIX" "$nightly_version"
+        return 0
+    fi
+    if [[ "$value" =~ ^([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+        nightly_version="${BASH_REMATCH[1]}"
+        printf '%s%s' "$NIGHTLY_TAG_PREFIX" "$nightly_version"
+        return 0
+    fi
+    return 1
+}
+
+CHANNEL_STATE_FILE="$HOME_DIR/release-channel"
+if [[ "$CHANNEL_EXPLICIT" == "1" && -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
+    err "--channel cannot be combined with CUA_DRIVER_RS_VERSION; exact pins do not change saved channel state"
+    exit 2
+fi
+if [[ "$CHANNEL_EXPLICIT" == "1" ]]; then
+    SELECTED_CHANNEL="$CHANNEL_ARG"
+elif [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
+    # Exact pins are one-shot and outrank persisted preference. In particular,
+    # a damaged preference file must not make a deliberate recovery pin unusable.
+    SELECTED_CHANNEL="stable"
+elif [[ -f "$CHANNEL_STATE_FILE" ]]; then
+    SELECTED_CHANNEL="$(tr -d '[:space:]' < "$CHANNEL_STATE_FILE")"
+else
+    SELECTED_CHANNEL="stable"
+fi
+case "$SELECTED_CHANNEL" in
+    stable) SELECTED_TAG_PREFIX="$TAG_PREFIX" ;;
+    nightly) SELECTED_TAG_PREFIX="$NIGHTLY_TAG_PREFIX" ;;
+    *)
+        err "invalid release channel '$SELECTED_CHANNEL' in $CHANNEL_STATE_FILE; expected stable or nightly"
+        err "  repair with: cua-driver channel set stable"
+        exit 1
+        ;;
+esac
+
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
     VERSION_SOURCE="pin"
-    TAG="${TAG_PREFIX}${CUA_DRIVER_RS_VERSION#v}"
+    if ! TAG="$(resolve_explicit_release_tag "$CUA_DRIVER_RS_VERSION")"; then
+        err "CUA_DRIVER_RS_VERSION must be an exact x.y.z stable version or canonical nightly tag"
+        exit 1
+    fi
     log "using version from CUA_DRIVER_RS_VERSION: $TAG"
-elif [[ -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
+elif [[ "$SELECTED_CHANNEL" == "stable" && -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
     VERSION_SOURCE="baked"
+    if ! [[ "$CUA_DRIVER_RS_BAKED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        err "baked Cua Driver version must be an exact stable x.y.z version"
+        exit 1
+    fi
     TAG="${TAG_PREFIX}${CUA_DRIVER_RS_BAKED_VERSION#v}"
     log "using baked release: $TAG"
 else
     VERSION_SOURCE="api"
-    log "resolving latest $TAG_PREFIX* release via GitHub API"
+    log "resolving latest $SELECTED_CHANNEL release via GitHub API"
     if ! API_VERSION="$(resolve_latest_version_from_api)"; then
-        err "no release matching ${TAG_PREFIX}* found on $REPO"
+        err "no release matching ${SELECTED_TAG_PREFIX}* found on $REPO"
         err "  (cua-driver-rs is a BETA-stage cross-platform port; releases may not be published yet.)"
         exit 1
     fi
-    TAG="${TAG_PREFIX}${API_VERSION}"
+    TAG="${SELECTED_TAG_PREFIX}${API_VERSION}"
     log "latest release: $TAG"
 fi
 
-VERSION="${TAG#${TAG_PREFIX}}"
+if [[ "$TAG" == "$NIGHTLY_TAG_PREFIX"* ]]; then
+    VERSION="${TAG#${NIGHTLY_TAG_PREFIX}}"
+else
+    VERSION="${TAG#${TAG_PREFIX}}"
+fi
 
 # Releases through 0.12.6 predate semantic cursor themes.
 # Newer releases must contain both packaged copies.
@@ -634,6 +706,7 @@ CURSOR_THEME_REQUIRED_FROM="0.12.7"
 version_is_at_least() {
     local version="$1" minimum="$2"
     local v_major v_minor v_patch m_major m_minor m_patch
+    version="${version%%-*}"
     IFS=. read -r v_major v_minor v_patch <<< "$version"
     IFS=. read -r m_major m_minor m_patch <<< "$minimum"
     if (( v_major != m_major )); then (( v_major > m_major )); return; fi
@@ -671,7 +744,7 @@ release_tarball_name() {
 download_release_tarball() {
     local version="$1" tarball url partial http_code curl_status attempt retryable
     tarball="$(release_tarball_name "$version")"
-    url="https://github.com/$REPO/releases/download/${TAG_PREFIX}${version}/$tarball"
+    url="https://github.com/$REPO/releases/download/${TAG}/$tarball"
     partial="$TMP_DIR/$tarball.partial"
     log "downloading $url"
     for attempt in 1 2 3; do
@@ -792,6 +865,14 @@ fi
 if [[ "$THEME_AVAILABLE" == "0" ]]; then
     printf 'warning: release %s predates cua-cursor-theme; installing without custom cursor themes\n' \
         "$VERSION" >&2
+fi
+
+if [[ "$CHANNEL_EXPLICIT" == "1" ]]; then
+    mkdir -p "$HOME_DIR"
+    CHANNEL_TMP="$HOME_DIR/.release-channel.$$"
+    printf '%s\n' "$SELECTED_CHANNEL" > "$CHANNEL_TMP"
+    mv -f "$CHANNEL_TMP" "$CHANNEL_STATE_FILE"
+    log "saved release channel: $SELECTED_CHANNEL"
 fi
 
 # --- Install ------------------------------------------------------------

@@ -795,6 +795,7 @@ fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> O
     }
     thread::sleep(Duration::from_millis(250));
     assert_fixture_contains(fixture, &format!("mirror={text}"));
+    assert_fixture_value(fixture, "number-input", "42");
     Observation::delivered(passed, Evidence::default())
 }
 
@@ -818,6 +819,7 @@ fn run_type_submit_action(fixture: &mut Fixture, addressing: &str, delivery: &st
         type_response.text()
     );
     assert_fixture_value(fixture, "keyboard-input", &text);
+    assert_fixture_value(fixture, "number-input", "42");
 
     let post_type = snapshot(fixture);
     let mut enter_args =
@@ -837,6 +839,7 @@ fn run_type_submit_action(fixture: &mut Fixture, addressing: &str, delivery: &st
         enter_response.text()
     );
     assert_fixture_contains(fixture, &format!("key_state=submitted:{text}"));
+    assert_fixture_value(fixture, "number-input", "42");
 
     let mut passed = vec![OracleKind::FixtureState];
     if addressing == "px" {
@@ -873,6 +876,7 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
     let mut passed = vec![OracleKind::FixtureState];
     passed.extend(unverified_background_protocol_oracle(&response, delivery));
     assert_fixture_contains(fixture, "key_state=enter");
+    assert_fixture_value(fixture, "number-input", "42");
 
     Observation::delivered(passed, Evidence::default())
 }
@@ -896,6 +900,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text()
     );
     assert_fixture_contains(fixture, "key_state=hotkey");
+    assert_fixture_value(fixture, "number-input", "42");
     #[cfg(target_os = "macos")]
     if fixture.name == "electron" && addressing == "px" && delivery == "foreground" {
         run_macos_selection_hotkeys(fixture);

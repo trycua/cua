@@ -1,29 +1,29 @@
-# Cyclops-CS backend — Go sidecar exposed inside the cyclops-cs Pod via
-# nginx (cyclops-cs/nginx.conf routes /api/{keys,gateway} to 127.0.0.1:8080).
-#
-# Build context is the repo root so the pkg/featureflags module (referenced
-# by cyclops-cs/backend/go.mod via a local `replace`) is reachable. The
-# build-cyclops-cs.yml workflow sets the context to `.` for this image.
-FROM --platform=linux/amd64 golang:1.24-alpine AS builder
+# Cyclops-CS backend and Kubernetes state projector.
+# Build context is the repository root.
+FROM --platform=linux/amd64 golang:1.24-bookworm AS go-builder
 WORKDIR /src
 COPY pkg/featureflags ./pkg/featureflags
 COPY cyclops-cs/backend ./cyclops-cs/backend
 WORKDIR /src/cyclops-cs/backend
 RUN go mod download
-# Ensure go.mod/go.sum are tidy (catches manual edits without `go mod tidy`).
 RUN go mod tidy
-# Regenerate docs/ in CI so the embedded swagger spec stays in sync with
-# annotated source. swag is installed via `go install` rather than added
-# as a runtime dep — we only need its CLI here.
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4 && \
     /go/bin/swag init -g main.go -o ./docs --parseDependency --parseInternal
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cyclops-cs-backend .
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cyclops-cs-backend . \
+    && CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cyclops-db-migrate ./cmd/db-migrate
 
-# Distroless static — Rego policy is embedded into the binary via
-# //go:embed in auth/middlewares.go, so no extra file is shipped here.
-FROM gcr.io/distroless/static:nonroot AS runtime
+FROM --platform=linux/amd64 rust:1.94-bookworm AS rust-builder
+WORKDIR /src/k8s-state-query
+COPY src/services/k8s-state-query/Cargo.toml src/services/k8s-state-query/Cargo.lock ./
+COPY src/services/k8s-state-query/src ./src
+RUN cargo build --release --locked --bin k8s-state-projector && \
+    cp target/release/k8s-state-projector /out-k8s-state-projector
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 WORKDIR /app
-COPY --from=builder /out/cyclops-cs-backend /app/cyclops-cs-backend
+COPY --from=go-builder /out/cyclops-cs-backend /app/cyclops-cs-backend
+COPY --from=go-builder /out/cyclops-db-migrate /app/cyclops-db-migrate
+COPY --from=rust-builder /out-k8s-state-projector /app/k8s-state-projector
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/app/cyclops-cs-backend"]

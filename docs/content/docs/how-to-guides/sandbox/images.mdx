@@ -7,6 +7,14 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Use an **Image** to define the OS and software environment for a sandbox before you start it.
 
+<Callout type="warn">
+  **Customization is local-only today.** `apt_install()`, `pip_install()`, `env()`,
+  `run()`, `copy()` and the other builder methods are applied when you boot the image
+  locally (`local=True`). Cua cloud runs the pinned base image as published, and rejects
+  a customized one with `NotImplementedError: Fleet cloud supports registry images with
+  optional exposed services only`. `expose()` is the one builder method the cloud honors.
+</Callout>
+
 ## Choose a base image
 
 An Image describes the OS and software environment. Images are *immutable* and *chainable*. Each builder method returns a new Image.
@@ -21,17 +29,69 @@ Image.linux(kind='container')        # Ubuntu 24.04 container (lighter, Docker/X
 Image.linux('ubuntu', '22.04')       # Older Ubuntu
 Image.macos()                        # macOS Tahoe (version '26', latest)
 Image.macos('15')                    # macOS Sequoia
-Image.windows()                      # Windows 11
+Image.windows()                      # Windows Server 2022
+Image.windows('11')                  # Windows 11 (local ISO install only)
 Image.android()                      # Android 14
 ```
 
-| Image | Kind | Notes |
-|-------|------|-------|
-| Image.linux() | VM | Default (QEMU), supports /dev/kvm |
-| Image.linux(kind='container') | container | Lighter, Docker/XFCE |
-| Image.macos() | VM | Apple Virtualization / Lume |
-| Image.windows() | VM | QEMU or Hyper-V |
-| Image.android() | VM | QEMU Android emulator |
+| Image | Kind | Runs in cloud | Notes |
+|-------|------|---------------|-------|
+| Image.linux() | VM | yes | Ubuntu 24.04; boots the pinned containerDisk under QEMU, needs qemu-system-x86_64 |
+| Image.linux(kind='container') | container | no | Lighter, Docker/XFCE, no QEMU needed |
+| Image.linux('ubuntu', '22.04') | VM | no | Built locally, no pinned disk |
+| Image.macos() | VM | no | Apple Virtualization / Lume |
+| Image.windows() | VM | yes | QEMU or Hyper-V |
+| Image.windows('11') | VM | no | Local ISO install only |
+| Image.android() | VM | no | QEMU Android emulator |
+
+<Callout type="warn">
+  Only `Image.linux()` and `Image.windows()` have a pinned disk in the registry, so
+  only those two run on Cua cloud. Every other constructor is local-only — in the
+  cloud they raise `NotImplementedError: Fleet cloud sandboxes require a supported
+  built-in image or Image.from_registry(...)`.
+
+  `Image.windows()` in the cloud is additionally blocked today: its containerDisk is
+  UEFI/GPT, while cloud templates default to BIOS firmware, so the guest never boots
+  and the claim ends in `BindDeadlineExceeded`. A firmware fix is in flight.
+</Callout>
+
+<Callout type="error">
+  **`kind='container'` cannot start right now.** The published
+  `trycua/cua-xfce:latest` runs computer-server bound to `127.0.0.1:8000` inside the
+  container (`computer_server/cli.py:34` defaults `--host` to `127.0.0.1`, and the
+  image's start script does not override it), so Docker's published port mapping
+  forwards to nothing and every launch ends in `TimeoutError: Container <name> not
+  ready after 120s`. This needs a rebuild of the image; until then use
+  `Image.linux()`, which runs as a VM and does not go through that image.
+</Callout>
+
+### How a Linux image runs locally
+
+`Image.linux()` is a VM. Locally it boots the same pinned containerDisk that Cua
+cloud boots, under QEMU on the host — so a sandbox behaves the same in both places:
+
+```python
+from cua import Image, Sandbox
+
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+    print((await sb.shell.run('uname -a')).stdout)
+```
+
+That path needs `qemu-system-x86_64` on the host, and uses `/dev/kvm` when it is
+available. Without QEMU the call raises rather than quietly starting something else:
+
+```
+RuntimeError: Image.linux() is a VM and needs QEMU, which was not found on this host.
+```
+
+`Image.linux(kind='container')` is the Docker path instead, and needs no QEMU.
+
+<Callout type="warn">
+  Passing `runtime=QEMURuntime()` explicitly selects `mode='docker'`, which wraps
+  QEMU in a container and does **not** boot the pinned containerDisk. Use
+  `QEMURuntime(mode='bare-metal')` if you are naming a runtime by hand, or leave
+  `runtime=` off and let the default pick it.
+</Callout>
 
 ## Install packages
 
@@ -58,6 +118,15 @@ Set non-sensitive environment variables with `.env()`.
 
 ```python
 Image.linux().env(DATABASE_URL='postgres://localhost/mydb', LOG_LEVEL='debug')
+```
+
+Variables are baked in as `/etc/profile.d/cua-env.sh` on Linux and macOS, and as
+machine-scoped `setx` variables on Windows. On Linux that file is read by *login*
+shells, so a bare `sb.shell.run()` does not see them — ask for a login shell:
+
+```python
+await sb.shell.run("echo $MY_TOKEN")            # empty
+await sb.shell.run("bash -lc 'echo $MY_TOKEN'") # abc123
 ```
 
 <Callout type="warn">
@@ -88,6 +157,12 @@ Expose every port the sandbox workload must listen on.
 Image.linux().expose(8080).expose(5432)
 ```
 
+<Callout type="warn">
+  `expose()` currently affects the cloud path only, where each port becomes a Fleet
+  service. The bare-metal QEMU runtime never reads the exposed ports, so on a local
+  VM they are not forwarded and no error is raised.
+</Callout>
+
 ## Chain builder calls
 
 Chaining: builder calls are composable, each returns a new Image:
@@ -115,12 +190,35 @@ prod = base.pip_install('gunicorn').run('useradd -m appuser')
 
 Use `Image.from_registry()` when your base image already exists in a registry.
 
+The reference must be a **KubeVirt containerDisk** — an image carrying a bootable
+disk at `/disk/disk.img`. An ordinary OCI application image such as `ubuntu:22.04`
+is not one, and fails with
+`FileNotFoundError: OCI image 'ubuntu:22.04' does not contain /disk/disk.img`.
+
 ```python
 Image.from_registry('ghcr.io/trycua/macos-tahoe-cua:latest')
-Image.from_registry('ubuntu:22.04')
+Image.from_registry('public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34')
 # chain builder on top
-img = Image.from_registry('ubuntu:22.04').apt_install('curl')
+img = Image.from_registry('ghcr.io/trycua/macos-tahoe-cua:latest').run('echo hi')
 ```
+
+A registry image has no resolved `kind`, so the SDK cannot pick a runtime for it.
+Pass one explicitly when you boot it locally:
+
+```python
+from cua import QEMURuntime, Sandbox
+
+async with Sandbox.ephemeral(img, local=True, runtime=QEMURuntime(mode='bare-metal')) as sb:
+    ...
+```
+
+<Callout type="warn">
+  Two more limits worth knowing. `Image.from_registry()` records the reference but
+  does not set `os_type` — every registry image reports `os_type='linux'`, including
+  the macOS one above, so pass a runtime matching the real guest. And the puller
+  authenticates anonymously, which works for `public.ecr.aws` and `ghcr.io` but not
+  for Docker Hub. On Cua cloud, only Cua-published images are pullable.
+</Callout>
 
 ## Use a local disk image
 
@@ -132,7 +230,11 @@ Image.from_file('/path/to/windows.vhdx', os_type='windows')
 Image.from_file('https://example.com/disk.qcow2', os_type='linux')
 ```
 
-Images are cached in `~/.cua/cua-sandbox/image-cache/`.
+Disk images downloaded from a URL are cached in `~/.cua/cua-sandbox/image-cache/`,
+keyed by a hash of the URL. This is a different cache from the one used for
+registry containerDisks, which land in
+`~/.cua/cua-sandbox/images/container-disks/<sha256-of-ref>/disk.qcow2`. Delete
+either directory to force a re-download.
 
 ## Inspect an image
 
@@ -141,5 +243,16 @@ Call `.to_dict()` to inspect the final image spec before using it.
 ```python
 img = Image.linux().apt_install('curl').pip_install('requests')
 print(img.to_dict())
-# {'os_type': 'linux', 'distro': 'ubuntu', 'version': '24.04', 'kind': 'container', 'layers': [...]}
+# {'os_type': 'linux', 'distro': 'ubuntu', 'version': '24.04', 'kind': 'vm',
+#  'layers': [{'type': 'apt_install', 'packages': ['curl']},
+#             {'type': 'pip_install', 'packages': ['requests']}]}
+```
+
+`env`, `ports` and `files` keys appear only when you have set them:
+
+```python
+img = Image.linux().env(DEBUG='1').expose(8080).copy('./a.json', '/app/a.json')
+print(img.to_dict())
+# {..., 'kind': 'vm', 'layers': [], 'env': {'DEBUG': '1'},
+#  'ports': [8080], 'files': [['./a.json', '/app/a.json']]}
 ```

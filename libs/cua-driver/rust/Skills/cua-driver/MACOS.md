@@ -324,11 +324,12 @@ _Cross-platform parameter contract_):
 - **`session` always worked on macOS;** the cross-platform change is that
   Windows/Linux stopped _rejecting_ it. No macOS-side change to how you
   pass it.
-- **`scope`** (`window` / `desktop`) selects the action form uniformly on all
-  platforms. Pass `scope:"desktop"` with no pid/window_id for screen-absolute
-  pointer actions or foreground keyboard actions. The session's immutable
-  `capture_scope` policy must permit that form; set it with `start_session`,
-  never persistent config.
+- **`target`** selects the action coordinate space uniformly on all platforms.
+  Use `target:{"kind":"desktop","display_id":"primary"}` for
+  screen-absolute pointer actions or foreground keyboard actions, and
+  `target:{"kind":"window","pid":PID,"window_id":WINDOW_ID}` for exact
+  window coordinates. Legacy flat `scope`, `pid`, and `window_id` fields remain
+  compatibility inputs, but do not combine them with `target`.
 
 ### Canvases, viewports, games (Blender, Unity, GHOST, Qt, wxWidgets)
 

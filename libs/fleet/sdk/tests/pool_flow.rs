@@ -399,7 +399,7 @@ async fn gets_named_pool_and_updates_typed_pools() {
 
     let requests = resource_requests(&http).await;
     assert_request(&requests[0], "GET", ITEM, None);
-    assert_merge_patch_request(&requests[1], ITEM, Some(&json_bytes(&updated)));
+    assert_merge_patch_request(&requests[1], ITEM, Some(&pool_merge_patch_bytes(&updated)));
 }
 
 #[tokio::test]
@@ -433,7 +433,7 @@ async fn reconcile_updates_an_existing_named_pool() {
 
     let requests = resource_requests(&http).await;
     assert_request(&requests[0], "GET", ITEM, None);
-    assert_merge_patch_request(&requests[1], ITEM, Some(&json_bytes(&updated)));
+    assert_merge_patch_request(&requests[1], ITEM, Some(&pool_merge_patch_bytes(&updated)));
 }
 
 #[tokio::test]
@@ -628,7 +628,11 @@ async fn updates_non_lifecycle_pool_resources_without_namespace_cleanup() {
 
     let requests = resource_requests(&http).await;
     assert_eq!(requests.len(), 1);
-    assert_merge_patch_request(&requests[0], &other_item, Some(&json_bytes(&other)));
+    assert_merge_patch_request(
+        &requests[0],
+        &other_item,
+        Some(&pool_merge_patch_bytes(&other)),
+    );
 }
 
 #[tokio::test]
@@ -781,6 +785,14 @@ fn token() -> HttpResponse {
 
 fn json_response(status: u16, value: &impl serde::Serialize) -> HttpResponse {
     response(status, &json_bytes(value))
+}
+
+fn pool_merge_patch_bytes(pool: &Pool) -> Vec<u8> {
+    let mut value = serde_json::to_value(pool).unwrap();
+    if pool.spec.autoscaling.is_none() {
+        value["spec"]["autoscaling"] = serde_json::Value::Null;
+    }
+    serde_json::to_vec(&value).unwrap()
 }
 
 fn json_bytes(value: &impl serde::Serialize) -> Vec<u8> {

@@ -8,7 +8,8 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Cua Driver lets a [computer-use agent](/concepts/what-is-computer-use) drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session. MCP-capable agents connect through `cua-driver mcp`; skill-based agents such as Prime Agent call the CLI directly.
 
 <Callout type="info">
-  This connects an agent to Cua Driver on the current machine. To create a disposable local desktop, use [Cua Sandbox](/tutorials/your-first-local-sandbox) instead.
+  This connects an agent to Cua Driver on the current machine. To create a disposable local desktop,
+  use [Cua Sandbox](/tutorials/your-first-local-sandbox) instead.
 </Callout>
 
 ## Before you start
@@ -42,9 +43,10 @@ default `standard` mode unless you change that process.
   that stick.
 - **Windows and Linux:** bare `cua-driver mcp` owns its own runtime and has no
   `--permission-mode` flag. Either set `CUA_DRIVER_PERMISSION_MODE` — plus
-  `CUA_DRIVER_SESSION_POLICY_FILE` and `CUA_DRIVER_SESSION_POLICY_APPROVED` for
-  `bounded` — in the client's `env` block, or run a `cua-driver serve` daemon in
-  that mode and point the client at it with `--socket`.
+  `CUA_DRIVER_CAPABILITY_MANIFEST_FILE` and
+  `CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED` for `bounded` — in the client's
+  `env` block, or run a `cua-driver serve` daemon in that mode and point the
+  client at it with `--socket`.
 
 `--grant existing-profile` is the one authorization flag `cua-driver mcp` accepts
 directly, and it applies only to a runtime this command launches. An agent cannot
@@ -54,7 +56,7 @@ widen any of this from a tool call.
   A `standard`-mode runtime allows input against every application on the
   desktop. If an agent should reach only a reviewed set of apps, origins, and
   directories, register it against a `bounded` runtime instead — see [Write a
-  bounded manifest](/how-to-guides/driver/write-a-bounded-manifest).
+  capability manifest](/how-to-guides/driver/write-a-bounded-manifest).
 </Callout>
 
 ## Generate the client config
@@ -83,6 +85,12 @@ cua-driver mcp-config --client claude
 ```
 
 That profile exposes the same driver tools under the compatibility server name. It still runs Cua Driver over MCP; Anthropic's native computer-use API is separate.
+
+<Callout type="info" title="Using a local model">
+  Claude Code can also act as the harness for a model served on the same machine. Follow [Run a
+  local model with Cua Driver](/how-to-guides/driver/run-with-local-model) for a tested Muse Glimmer
+  setup and a smaller MCP tool surface.
+</Callout>
 
 ## Codex
 
@@ -162,16 +170,16 @@ Restart Cursor and confirm `cua-driver` appears in the MCP server list.
 
 `mcp-config` also prints the right shape for clients that use a config file or a different add command.
 
-| Client | Generate with | Notes |
-|---|---|---|
-| Antigravity | `cua-driver mcp-config --client antigravity` | Paste into `~/.gemini/config/mcp_config.json`; `--client gemini` is a legacy alias. |
-| OpenClaw | `cua-driver mcp-config --client openclaw` | Normal gateway-spawned MCP does not inherit OpenClaw.app's macOS permission grants; embedded hosts should use [Embedding](/reference/cua-driver/embedding). |
-| OpenCode | `cua-driver mcp-config --client opencode` | Configure a real MCP server so screenshots are preserved in image blocks. |
-| Hermes | `cua-driver mcp-config --client hermes` | Paste under `mcp_servers` and reload MCP servers in Hermes. |
-| Pi | `cua-driver mcp-config --client pi` | Pi does not support MCP natively; use one-shot `cua-driver call …` commands from its shell. |
-| Qwen Code | `cua-driver mcp-config --client qwen` | Supports both a CLI add command and `~/.qwen/settings.json`. |
-| Factory Droid | `cua-driver mcp-config --client droid` | Supports CLI and JSON config forms. |
-| ZCode | `cua-driver mcp-config --client zcode` | Configure MCP in the GUI, or use `zai mcp add` for Z.ai's separate CLI. |
+| Client        | Generate with                                | Notes                                                                                                                                                       |
+| ------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Antigravity   | `cua-driver mcp-config --client antigravity` | Paste into `~/.gemini/config/mcp_config.json`; `--client gemini` is a legacy alias.                                                                         |
+| OpenClaw      | `cua-driver mcp-config --client openclaw`    | Normal gateway-spawned MCP does not inherit OpenClaw.app's macOS permission grants; embedded hosts should use [Embedding](/reference/cua-driver/embedding). |
+| OpenCode      | `cua-driver mcp-config --client opencode`    | Configure a real MCP server so screenshots are preserved in image blocks.                                                                                   |
+| Hermes        | `cua-driver mcp-config --client hermes`      | Paste under `mcp_servers` and reload MCP servers in Hermes.                                                                                                 |
+| Pi            | `cua-driver mcp-config --client pi`          | Pi does not support MCP natively; use one-shot `cua-driver call …` commands from its shell.                                                                 |
+| Qwen Code     | `cua-driver mcp-config --client qwen`        | Supports both a CLI add command and `~/.qwen/settings.json`.                                                                                                |
+| Factory Droid | `cua-driver mcp-config --client droid`       | Supports CLI and JSON config forms.                                                                                                                         |
+| ZCode         | `cua-driver mcp-config --client zcode`       | Configure MCP in the GUI, or use `zai mcp add` for Z.ai's separate CLI.                                                                                     |
 
 ## Generic MCP JSON
 
@@ -195,6 +203,29 @@ It returns:
 ```
 
 After saving the config, restart the client and confirm the `cua-driver` server is connected.
+
+## Clients without a dedicated preset
+
+Some MCP clients can run Cua Driver directly even though `mcp-config` does not yet have a named
+preset for them. Resolve the absolute executable path first with `command -v cua-driver`, then use
+the client's native command:
+
+```bash
+# Grok Build
+grok mcp add cua-driver -- /absolute/path/to/cua-driver mcp
+grok mcp doctor cua-driver
+
+# Kimi Code CLI
+kimi mcp add cua-driver -- /absolute/path/to/cua-driver mcp
+kimi mcp test cua-driver
+```
+
+These commands use each client's documented stdio MCP interface and the standard `cua-driver mcp`
+entry point. See the focused guides for [Grok Build](/use-cua-with/grok-build) and [Kimi
+Code](/use-cua-with/kimi-code).
+
+T3 Code is a control plane for other coding agents rather than a separate MCP client. Configure Cua
+Driver in the underlying harness, then launch that harness from [T3 Code](/use-cua-with/t3-code).
 
 ## Next steps
 

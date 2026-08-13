@@ -52,6 +52,11 @@ testing the current Fleet-backed public SDK contract.
 3. `workflow_dispatch` accepts `both`, `main-source`, or `published-package`,
    plus manual-only `force_failure`.
 
+Both jobs are guarded with `if: github.repository == 'trycua/cua'`. A fork
+that syncs `main` or enables the schedule therefore never runs the live smoke,
+never fails the credential preflight, and never posts a fork-originated
+`PeriodicCuaSandboxLiveE2EFailed` alert to the public Alertmanager endpoint.
+
 The preparation script emits a JSON matrix: every `push` selects only
 `main-source`; every `schedule` selects both lanes; manual runs select their
 requested lane or both. The workflow contract executes this extracted shell
@@ -120,7 +125,7 @@ Event-and-lane concurrency serializes each deterministic claim.
 Provision with the exact certified image:
 
 ```text
-296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d
 ```
 
 Use the public SDK with:
@@ -206,7 +211,8 @@ source regression with a published-package or shared-infrastructure failure.
 ## Workflow Contract Coverage
 
 The repository-side contract parses the workflow with `yaml.BaseLoader` and
-asserts triggers, path filters, the executed preparation matrix, checkout ref,
+asserts triggers, path filters, the upstream-repository fork guard on both
+jobs, the executed preparation matrix, checkout ref,
 event-and-lane concurrency, credential preflight, copied-suite isolation,
 version output handling, controlled-failure diagnostics, failure-only artifacts,
 Alertmanager labels, full-SHA action pins, and absence of explicit deletion.

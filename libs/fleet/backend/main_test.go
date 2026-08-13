@@ -29,10 +29,51 @@ import (
 	"github.com/trycua/cloud/pkg/featureflags"
 )
 
-// TestDeprecatedRoutes asserts that every deprecated batch/label endpoint
-// returns HTTP 410 Gone with the canonical deprecation message.  Each route
-// is exercised individually so a regression on any single path is immediately
-// visible rather than hidden behind a representative sample.
+func TestGatewayRoutesAreRemoved(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+
+	for _, path := range []string{"/api/gateway/mypool", "/api/gateway/mypool/step"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404; body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestHealthAndReadinessRoutes(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+
+	for _, test := range []struct {
+		path       string
+		statusCode int
+	}{
+		{path: "/healthz", statusCode: http.StatusOK},
+		{path: "/readyz", statusCode: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+
+			if response.Code != test.statusCode {
+				t.Fatalf("status = %d, want %d", response.Code, test.statusCode)
+			}
+		})
+	}
+}
+
+func TestSwaggerOmitsGatewayRoute(t *testing.T) {
+	data, err := os.ReadFile("docs/swagger.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"/api/gateway/`) {
+		t.Fatal("swagger.json still exposes the removed gateway route")
+	}
+}
+
 func TestSwaggerUsesBillingSetupSessionRoute(t *testing.T) {
 	data, err := os.ReadFile("docs/swagger.json")
 	if err != nil {
@@ -53,7 +94,12 @@ func TestSwaggerUsesBillingSetupSessionRoute(t *testing.T) {
 	}
 }
 
-func TestDeprecatedRoutes(t *testing.T) {
+// TestBatchAndLabelRoutesAreRemoved pins the client-visible consequence of
+// deleting the surface: these paths used to answer 410 Gone with an explanatory
+// body, and now fall through to the mux's bare 404. Every path is exercised
+// rather than a representative one, so a route restored by accident is visible
+// by name.
+func TestBatchAndLabelRoutesAreRemoved(t *testing.T) {
 	router := setupRouter(handlers.Handlers{})
 
 	cases := []struct {
@@ -75,80 +121,31 @@ func TestDeprecatedRoutes(t *testing.T) {
 		{http.MethodDelete, "/api/label/demo/run-1", nil},
 	}
 
-	const wantMsg = "/api/batch and /api/label are deprecated and unavailable"
-
 	for _, tc := range cases {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			req := authorizedRequest(t, tc.method, tc.path, tc.body)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
-			if w.Code != http.StatusGone {
-				t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusGone, w.Body.String())
-			}
-			if !strings.Contains(w.Body.String(), wantMsg) {
-				t.Fatalf("body = %q, want deprecation message %q", w.Body.String(), wantMsg)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusNotFound, w.Body.String())
 			}
 		})
 	}
 }
 
-func TestSwaggerMentionsBatchRouteDeprecation(t *testing.T) {
+// TestSwaggerOmitsBatchAndLabelRoutes is the generated-artifact half of the
+// same removal: `swag init` reads annotations off handlers, so a wrapper left
+// behind keeps documenting a route the router no longer serves.
+func TestSwaggerOmitsBatchAndLabelRoutes(t *testing.T) {
 	data, err := os.ReadFile("docs/swagger.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(data)
-	if !strings.Contains(body, "\"410\"") {
-		t.Fatalf("swagger.json missing 410 response for deprecated batch routes")
-	}
-	if !strings.Contains(body, "deprecated and unavailable") {
-		t.Fatalf("swagger.json missing deprecation language")
-	}
-
-	var spec struct {
-		Paths map[string]map[string]struct {
-			Description string         `json:"description"`
-			Deprecated  *bool          `json:"deprecated"`
-			Responses   map[string]any `json:"responses"`
-		} `json:"paths"`
-	}
-	if err := json.Unmarshal(data, &spec); err != nil {
-		t.Fatalf("unmarshal swagger.json: %v", err)
-	}
-
-	cases := []struct {
-		path   string
-		method string
-	}{
-		{path: "/api/batch/{pool}/submit", method: "post"},
-		{path: "/api/batch/{pool}/lanes", method: "post"},
-		{path: "/api/batch/{pool}/lanes", method: "delete"},
-		{path: "/api/batch/{pool}/{id}/status", method: "get"},
-		{path: "/api/batch/{pool}/{id}/results", method: "get"},
-		{path: "/api/batch/{pool}/{id}", method: "delete"},
-		{path: "/api/label/{pool}/{label}/batch", method: "post"},
-		{path: "/api/label/{pool}/{label}/status", method: "get"},
-		{path: "/api/label/{pool}/{label}/results", method: "get"},
-		{path: "/api/label/{pool}/{label}", method: "delete"},
-	}
-	for _, tc := range cases {
-		ops, ok := spec.Paths[tc.path]
-		if !ok {
-			t.Fatalf("swagger.json missing path %s", tc.path)
-		}
-		op, ok := ops[tc.method]
-		if !ok {
-			t.Fatalf("swagger.json missing %s %s", strings.ToUpper(tc.method), tc.path)
-		}
-		if !strings.Contains(op.Description, "deprecated and unavailable") {
-			t.Fatalf("%s %s description = %q, want deprecation language", strings.ToUpper(tc.method), tc.path, op.Description)
-		}
-		if op.Deprecated == nil || !*op.Deprecated {
-			t.Fatalf("%s %s deprecated = %v, want true", strings.ToUpper(tc.method), tc.path, op.Deprecated)
-		}
-		if _, ok := op.Responses["410"]; !ok {
-			t.Fatalf("%s %s missing 410 response", strings.ToUpper(tc.method), tc.path)
+	for _, prefix := range []string{`"/api/batch/`, `"/api/label/`} {
+		if strings.Contains(body, prefix) {
+			t.Fatalf("swagger.json still exposes the removed %s routes", strings.Trim(prefix, `"`))
 		}
 	}
 }
@@ -356,5 +353,77 @@ func TestBillingSummaryGeneratedContract(t *testing.T) {
 	}
 	if !card.Nullable {
 		t.Fatal("billing summary card must be explicitly nullable")
+	}
+}
+
+func TestStateQueryRouterUsesQueryMethod(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+
+	queryRequest := authorizedRequest(t, "QUERY", "/api/state/query", strings.NewReader("select 1"))
+	queryRequest.Header.Set("Content-Type", "application/sql")
+	queryResponse := httptest.NewRecorder()
+	router.ServeHTTP(queryResponse, queryRequest)
+	if queryResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("QUERY status = %d, want 503; body = %s", queryResponse.Code, queryResponse.Body.String())
+	}
+
+	postResponse := httptest.NewRecorder()
+	router.ServeHTTP(postResponse, authorizedRequest(t, http.MethodPost, "/api/state/query", strings.NewReader(`{"sql":"select 1"}`)))
+	if postResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want 405; body = %s", postResponse.Code, postResponse.Body.String())
+	}
+	if got := postResponse.Header().Get("Allow"); got != "QUERY" {
+		t.Fatalf("Allow = %q, want QUERY", got)
+	}
+}
+
+func TestWithMiddlewaresAppliesInDeclarationOrder(t *testing.T) {
+	var order []string
+	middleware := func(name string) auth.Middleware {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				order = append(order, name+":before")
+				next.ServeHTTP(w, r)
+				order = append(order, name+":after")
+			})
+		}
+	}
+	handler := withMiddlewares(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			order = append(order, "handler")
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		middleware("first"),
+		middleware("second"),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	want := []string{"first:before", "second:before", "handler", "second:after", "first:after"}
+	if !slices.Equal(order, want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+}
+
+func TestK8sRouteRejectsDisallowedPoolBeforeProxy(t *testing.T) {
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer upstream.Close()
+	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
+
+	router := setupRouter(handlers.Handlers{})
+	body := strings.NewReader(`{"spec":{"template":{"containerDiskImage":"evil.example/workspace:latest","imagePullSecret":"ecr-credentials"}}}`)
+	request := authorizedRequest(t, http.MethodPost, "/api/k8s/apis/cua.ai/v1/namespaces/foo/osgymworkspacepools", body)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+	if upstreamCalled {
+		t.Fatal("disallowed pool request reached kubectl proxy")
 	}
 }

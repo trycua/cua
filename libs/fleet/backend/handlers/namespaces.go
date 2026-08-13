@@ -276,6 +276,9 @@ func (h Handlers) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]NamespaceResponse, 0, len(nsList.Items))
 	for _, ns := range nsList.Items {
+		if isGitHubPrincipal(user) && !namespaceAllowed(user, ns.Metadata.Name) {
+			continue
+		}
 		out = append(out, NamespaceResponse{
 			Name:      ns.Metadata.Name,
 			Status:    ns.Status.Phase,
@@ -288,6 +291,87 @@ func (h Handlers) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("namespaces.count", len(out)),
 	)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// GetNamespace godoc
+//
+//	@Summary		Get a namespace owned by the calling user
+//	@Description	Gets a K8s namespace via impersonation. Capsule restricts access to the caller's Tenant.
+//	@Tags			namespaces
+//	@Produce		json
+//	@Param			name	path	string	true	"Namespace name"
+//	@Success		200	{object}	NamespaceResponse
+//	@Failure		400	{object}	ErrorResponse
+//	@Failure		401	{object}	ErrorResponse
+//	@Failure		403	{object}	ErrorResponse
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		502	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/api/namespaces/{name} [get]
+func (h Handlers) GetNamespace(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if user == nil || user.ID == "" {
+		writeErr(w, http.StatusUnauthorized, "missing user")
+		return
+	}
+
+	name := r.PathValue("name")
+	if !dnsLabel.MatchString(name) || len(name) > 63 {
+		writeErr(w, http.StatusBadRequest, "invalid namespace name")
+		return
+	}
+
+	resp, err := h.k8sImpersonate(
+		r.Context(),
+		http.MethodGet,
+		"/api/v1/namespaces/"+url.PathEscape(name),
+		nil,
+		user.ID,
+	)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "kubectl-proxy unavailable")
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := readBoundedK8sBody(resp.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "bad response from k8s")
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("namespace get: k8s error", "status", resp.StatusCode, "body", string(body))
+		switch resp.StatusCode {
+		case http.StatusForbidden:
+			writeErr(w, http.StatusForbidden, "namespace access denied")
+		case http.StatusNotFound:
+			writeErr(w, http.StatusNotFound, "namespace not found")
+		default:
+			writeErr(w, resp.StatusCode, "k8s request failed")
+		}
+		return
+	}
+
+	var namespace struct {
+		Metadata struct {
+			Name              string            `json:"name"`
+			Labels            map[string]string `json:"labels"`
+			CreationTimestamp string            `json:"creationTimestamp"`
+		} `json:"metadata"`
+		Status struct {
+			Phase string `json:"phase"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(body, &namespace); err != nil {
+		writeErr(w, http.StatusBadGateway, "bad response from k8s")
+		return
+	}
+	writeJSON(w, http.StatusOK, NamespaceResponse{
+		Name:      namespace.Metadata.Name,
+		Status:    namespace.Status.Phase,
+		CreatedAt: namespace.Metadata.CreationTimestamp,
+		Labels:    namespace.Metadata.Labels,
+	})
 }
 
 // CreateNamespace godoc
@@ -323,6 +407,10 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	if !dnsLabel.MatchString(req.Name) || len(req.Name) > 63 {
 		writeErr(w, http.StatusBadRequest, "name must be a DNS-1123 label (lowercase alphanumeric + dashes, max 63 chars)")
+		return
+	}
+	if isGitHubPrincipal(user) && !namespaceAllowed(user, req.Name) {
+		writeErr(w, http.StatusForbidden, "namespace is outside github trust policy scope")
 		return
 	}
 	ctx, span := handlerTracer().Start(r.Context(), "namespaces.create", trace.WithAttributes(
@@ -457,6 +545,10 @@ func (h Handlers) DeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 	if !dnsLabel.MatchString(name) || len(name) > 63 {
 		writeErr(w, http.StatusBadRequest, "invalid namespace name")
+		return
+	}
+	if isGitHubPrincipal(user) && !namespaceAllowed(user, name) {
+		writeErr(w, http.StatusForbidden, "namespace is outside github trust policy scope")
 		return
 	}
 	ctx, span := handlerTracer().Start(r.Context(), "namespaces.delete", trace.WithAttributes(

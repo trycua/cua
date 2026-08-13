@@ -1,0 +1,287 @@
+---
+title: Metal capability unlock
+description: Enable a configured, tested Metal capability profile for one workload inside a Lume macOS VM.
+---
+
+Lume VMs use Apple's paravirtualized GPU bridge, but a stock macOS guest can report conservative
+Metal capabilities. Applications that query those values may skip newer GPU paths even when the
+paravirtualized device can execute the work.
+
+This guide builds a small MIT-licensed shim and activates it for one process. The shim changes
+selected capability answers; it does not pass a physical GPU to the guest, patch the host, or change
+the guest kernel. If you're looking for computer-use automation instead, start with
+[Cua Driver](/tutorials/drive-your-first-app) or
+[Cua Sandbox](/tutorials/your-first-local-sandbox).
+
+Read the [technical writeup](/blog/gpu-passthrough-macos-vms) for the mechanism, benchmark evidence,
+and architectural context. Apple's [Metal capability tables](https://developer.apple.com/metal/capabilities/)
+and [feature-detection guide](https://developer.apple.com/documentation/metal/detecting-gpu-features-and-metal-software-versions)
+explain how applications select behavior from reported device support.
+
+## What the shim changes
+
+The tested profile can raise two values returned to the injected process:
+
+- the result of `supportsFamily:` through a configured Apple-family ceiling; and
+- the reported maximum threadgroup memory.
+
+The release candidate contains no timing or clock interposition, mesh substitution, ray-tracing
+override, private feature-profile hook, argument-layout guard, or pipeline-compilation fallback. It
+leaves the Common, Mac, and Metal family ranges unchanged. A missing, out-of-range, or malformed
+`LUME_METAL_APPLE_FAMILY_MAX` leaves the process on its stock capability path.
+
+Reported support is not proof that every Metal API associated with a family works through
+virtualization. Test each workload and host/guest version independently.
+
+## Requirements
+
+- Apple Silicon host
+- A [Lume macOS VM](/how-to-guides/lume/install-lume)
+- Xcode Command Line Tools on the machine where you build the shim
+- A workload you control; hardened or platform-protected executables may reject injected libraries
+
+Our release-candidate validation used Lume 0.5.1, an Apple M1 Ultra host running macOS 26.6.1, and
+the public Tahoe Cua guest image at macOS 26.5.2. Other combinations are experimental until tested.
+
+## Build and verify the shim
+
+Clone the Cua repository on an Apple Silicon Mac, then build the architecture-specific dylibs and
+capability probe:
+
+```bash
+git clone https://github.com/trycua/cua.git
+cd cua/libs/lume/metal-capability-shim
+./Scripts/build.sh
+./Scripts/verify.sh
+```
+
+`verify.sh` checks the architectures, ad-hoc code signatures, absence of research-only timing and
+compatibility symbols, and the generated checksums. The output is written to `dist/`:
+
+```text
+dist/
+├── LumeMetalCapabilities-arm64.dylib
+├── LumeMetalCapabilities-arm64e.dylib
+├── SHA256SUMS
+└── metal-capabilities
+```
+
+Most guest workloads are `arm64`. Check the target executable before selecting a dylib:
+
+```bash
+lipo -archs /absolute/path/to/your-workload
+shasum -a 256 -c dist/SHA256SUMS
+```
+
+## Enable the host capability path
+
+The preference below applies to VMs launched by your macOS user. Stop the VM before changing it so
+the graphics device is recreated with the requested feature level:
+
+```bash
+lume stop my-vm
+defaults write com.apple.gpusw.ParavirtualizedGraphics \
+  ForceUnrestrictedDeviceFeatureLevel -bool true
+defaults read com.apple.gpusw.ParavirtualizedGraphics \
+  ForceUnrestrictedDeviceFeatureLevel
+lume run my-vm
+```
+
+The `defaults read` command should print `1`.
+
+To restore the stock host setting later, stop the VM, delete the preference, and start the VM again:
+
+```bash
+lume stop my-vm
+defaults delete com.apple.gpusw.ParavirtualizedGraphics \
+  ForceUnrestrictedDeviceFeatureLevel
+lume run my-vm
+```
+
+## Copy and verify the artifact in the guest
+
+Copy the `arm64` dylib and probe into a stable, workload-specific directory. Replace the local path
+below with the path to your Cua checkout:
+
+```bash
+lume ssh my-vm "mkdir -p '/Users/lume/.local/share/lume/metal-capabilities'"
+
+VM_IP=$(lume get my-vm --format json | jq -r '.[0].ipAddress')
+scp ./dist/LumeMetalCapabilities-arm64.dylib ./dist/metal-capabilities \
+  "lume@${VM_IP}:/Users/lume/.local/share/lume/metal-capabilities/"
+```
+
+For a standard unattended Lume image, `scp` prompts for the default guest password, `lume`. Use the
+credentials configured for your image if they differ.
+
+Record the local checksums, then compare them with the guest copies:
+
+```bash
+shasum -a 256 dist/LumeMetalCapabilities-arm64.dylib dist/metal-capabilities
+
+lume ssh my-vm \
+  "shasum -a 256 \
+   '/Users/lume/.local/share/lume/metal-capabilities/LumeMetalCapabilities-arm64.dylib' \
+   '/Users/lume/.local/share/lume/metal-capabilities/metal-capabilities'"
+```
+
+## Verify stock and unlocked capability reporting
+
+Run the probe without injection first:
+
+```bash
+lume ssh my-vm \
+  "'/Users/lume/.local/share/lume/metal-capabilities/metal-capabilities' 1009"
+```
+
+Then run the same probe with the tested profile:
+
+```bash
+lume ssh my-vm \
+  "DYLD_INSERT_LIBRARIES='/Users/lume/.local/share/lume/metal-capabilities/LumeMetalCapabilities-arm64.dylib' \
+   LUME_METAL_APPLE_FAMILY_MAX=1009 \
+   '/Users/lume/.local/share/lume/metal-capabilities/metal-capabilities' 1009"
+```
+
+In our Tahoe guest, `supportsFamily:1009` changed from `false` to `true`, and maximum threadgroup
+memory changed from 32,768 to 65,536 bytes. Your result may differ on another host or guest. Stop if
+the injected process crashes, reports Metal errors, or behaves incorrectly.
+
+The tested command uses these values:
+
+| Variable                                  | Default when active | Behavior                                                                                          |
+| ----------------------------------------- | ------------------: | ------------------------------------------------------------------------------------------------- |
+| `LUME_METAL_APPLE_FAMILY_MAX`             |            required | Answer `supportsFamily:` through this Apple-family ceiling. The tested value is Apple 9 (`1009`). |
+| `LUME_METAL_MAX_THREADGROUP_MEMORY`       |             `65536` | Raise maximum threadgroup memory to at least this many bytes.                                     |
+| `LUME_METAL_RECOMMENDED_WORKING_SET_SIZE` |           unchanged | Raise the reported working-set size only when explicitly set.                                     |
+
+Keep the defaults unless you have isolated evidence for another profile. Do not substitute a Common,
+Mac, or Metal-family enum: the shim intentionally accepts only Apple-family values from `1001` to
+`1999`.
+
+## Run one workload
+
+Injection is per-process, so only the selected workload and its child processes see the changed
+answers:
+
+```bash
+lume ssh my-vm \
+  "DYLD_INSERT_LIBRARIES='/Users/lume/.local/share/lume/metal-capabilities/LumeMetalCapabilities-arm64.dylib' \
+   LUME_METAL_APPLE_FAMILY_MAX=1009 \
+   /absolute/path/to/your-workload first-argument"
+```
+
+Do not use `launchctl setenv DYLD_INSERT_LIBRARIES ...`; that applies injection across the login
+session and can affect unrelated applications.
+
+## Run a workload with launchd
+
+For a long-running inference server, renderer, or worker, create a per-user LaunchAgent inside the
+guest. The environment applies only to that program and its child processes.
+
+Save this as
+`/Users/lume/Library/LaunchAgents/com.trycua.lume.metal-workload.plist`, replacing the executable and
+arguments with absolute paths that exist in the guest:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trycua.lume.metal-workload</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/absolute/path/to/your-workload</string>
+    <string>first-argument</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DYLD_INSERT_LIBRARIES</key>
+    <string>/Users/lume/.local/share/lume/metal-capabilities/LumeMetalCapabilities-arm64.dylib</string>
+    <key>LUME_METAL_APPLE_FAMILY_MAX</key>
+    <string>1009</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/lume/Library/Logs/Lume/metal-workload.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/lume/Library/Logs/Lume/metal-workload.stderr.log</string>
+</dict>
+</plist>
+```
+
+Each `ProgramArguments` entry is one argument. Remove `first-argument` if the program takes no
+arguments, or add one `<string>` per argument. Do not combine the executable and arguments into one
+string.
+
+Create the required directories, validate the plist, and start the LaunchAgent from a logged-in
+guest session:
+
+```bash
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/Lume"
+
+PLIST="$HOME/Library/LaunchAgents/com.trycua.lume.metal-workload.plist"
+SERVICE="gui/$(id -u)/com.trycua.lume.metal-workload"
+
+plutil -lint "$PLIST"
+launchctl bootstrap "gui/$(id -u)" "$PLIST"
+launchctl kickstart -k "$SERVICE"
+launchctl print "$SERVICE"
+```
+
+Inspect the service output:
+
+```bash
+tail -f "$HOME/Library/Logs/Lume/metal-workload.stdout.log"
+tail -f "$HOME/Library/Logs/Lume/metal-workload.stderr.log"
+```
+
+If the program fails after injection, unload the service and run the executable directly without the
+shim before debugging further:
+
+```bash
+launchctl bootout "gui/$(id -u)/com.trycua.lume.metal-workload"
+/absolute/path/to/your-workload first-argument
+```
+
+## Remove the configuration
+
+For a one-shot command, omit `DYLD_INSERT_LIBRARIES` and all `LUME_METAL_*` variables the next time
+you start the workload.
+
+For the LaunchAgent:
+
+```bash
+SERVICE="gui/$(id -u)/com.trycua.lume.metal-workload"
+PLIST="$HOME/Library/LaunchAgents/com.trycua.lume.metal-workload.plist"
+
+launchctl bootout "$SERVICE"
+mv "$PLIST" "$HOME/.Trash/com.trycua.lume.metal-workload.plist"
+```
+
+Restore the host preference with the earlier `defaults delete` sequence if you no longer need the
+unrestricted feature level.
+
+## Limitations
+
+- **Experimental and version-sensitive.** The shim relies on private guest Metal implementation
+  details that may change in any macOS release.
+- **Per-process, not global.** Only an injected process and its children receive changed answers.
+- **Configured profile, not hardware discovery.** The shim raises selected Apple-family values; it
+  does not mirror every property of the physical GPU.
+- **Narrow test scope.** The current release-candidate evidence covers a capability probe, two
+  llama.cpp workloads, and one MLX-LM compatibility run on the documented M1 Ultra/Tahoe
+  configuration. MLX-LM was already fast in the stock VM and showed no material uplift.
+- **Reported support is not complete support.** A positive family response does not establish that
+  every shader, renderer, framework, or API in that family works correctly in the VM.
+- **Still a VM.** Existing `Virtualization.framework` limits remain.
+
+## See also
+
+- [Lume source tree](https://github.com/trycua/cua/tree/main/libs/lume)
+- [Technical writeup and benchmark evidence](/blog/gpu-passthrough-macos-vms)
+- [Install and run Lume](/how-to-guides/lume/install-lume)
+- [How SIP works in Lume VMs](/concepts/how-sip-works-in-lume-vms)

@@ -13,7 +13,10 @@ use cua_driver_core::{
         LEGACY_EXISTING_PROFILE_APPROVAL_ENV, PERMISSION_MODE_ENV,
     },
     session_authorization::{DelegatedSessionRequest, SessionModeCeiling},
-    session_manifest::{load_manifest, SESSION_POLICY_APPROVED_ENV, SESSION_POLICY_FILE_ENV},
+    session_manifest::{
+        load_manifest, CAPABILITY_MANIFEST_APPROVED_ENV, CAPABILITY_MANIFEST_FILE_ENV,
+        SESSION_POLICY_APPROVED_ENV, SESSION_POLICY_FILE_ENV,
+    },
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -176,10 +179,32 @@ struct AbiDriverOptions {
 struct AbiRuntimeAuthorizationOptions {
     allowed_modes: Vec<PermissionMode>,
     compatibility_mode: PermissionMode,
+    #[serde(default)]
+    compatibility_capability_manifest_path: Option<String>,
+    #[serde(default)]
     compatibility_bounded_manifest_path: Option<String>,
     unrestricted_acknowledged: bool,
     max_session_ttl_seconds: u64,
     max_idle_ttl_seconds: u64,
+}
+
+impl AbiRuntimeAuthorizationOptions {
+    fn capability_manifest_path(&self) -> Result<Option<&str>, AbiFailure> {
+        if self.compatibility_capability_manifest_path.is_some()
+            && self.compatibility_bounded_manifest_path.is_some()
+            && self.compatibility_capability_manifest_path
+                != self.compatibility_bounded_manifest_path
+        {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                "compatibility capability manifest path conflicts with its deprecated bounded-manifest alias",
+            ));
+        }
+        Ok(self
+            .compatibility_capability_manifest_path
+            .as_deref()
+            .or(self.compatibility_bounded_manifest_path.as_deref()))
+    }
 }
 
 fn validate_explicit_authorization_sources(
@@ -233,17 +258,28 @@ fn validate_explicit_authorization_sources(
         ));
     }
 
-    let environment_manifest =
-        std::env::var_os(SESSION_POLICY_FILE_ENV).map(std::path::PathBuf::from);
+    let capability_environment_manifest = std::env::var_os(CAPABILITY_MANIFEST_FILE_ENV);
+    let legacy_environment_manifest = std::env::var_os(SESSION_POLICY_FILE_ENV);
+    if capability_environment_manifest.is_some()
+        && legacy_environment_manifest.is_some()
+        && capability_environment_manifest != legacy_environment_manifest
+    {
+        return Err(AbiFailure::new(
+            CuaDriverStatus::InvalidArgument,
+            "capability manifest environment path conflicts with its deprecated session-policy alias",
+        ));
+    }
+    let environment_manifest = capability_environment_manifest
+        .or(legacy_environment_manifest)
+        .map(std::path::PathBuf::from);
     if let Some(environment_manifest) = environment_manifest {
         let Some(explicit_manifest) = authorization
-            .compatibility_bounded_manifest_path
-            .as_deref()
+            .capability_manifest_path()?
             .map(std::path::Path::new)
         else {
             return Err(AbiFailure::new(
                 CuaDriverStatus::InvalidArgument,
-                "explicit runtime authorization conflicts with a compatibility session policy environment value",
+                "explicit runtime authorization conflicts with a compatibility capability-manifest environment value",
             ));
         };
         let environment_manifest =
@@ -251,7 +287,7 @@ fn validate_explicit_authorization_sources(
                 AbiFailure::new(
                     CuaDriverStatus::InvalidArgument,
                     format!(
-                        "canonicalize compatibility session policy {}: {error}",
+                        "canonicalize compatibility capability manifest {}: {error}",
                         environment_manifest.display()
                     ),
                 )
@@ -260,7 +296,7 @@ fn validate_explicit_authorization_sources(
             AbiFailure::new(
                 CuaDriverStatus::InvalidArgument,
                 format!(
-                    "canonicalize explicit compatibility session policy {}: {error}",
+                    "canonicalize explicit compatibility capability manifest {}: {error}",
                     explicit_manifest.display()
                 ),
             )
@@ -268,15 +304,16 @@ fn validate_explicit_authorization_sources(
         if environment_manifest != explicit_manifest {
             return Err(AbiFailure::new(
                 CuaDriverStatus::InvalidArgument,
-                "explicit compatibility session policy conflicts with the trusted environment path",
+                "explicit compatibility capability manifest conflicts with the trusted environment path",
             ));
         }
-    } else if environment_flag(SESSION_POLICY_APPROVED_ENV)
-        && authorization.compatibility_bounded_manifest_path.is_none()
+    } else if (environment_flag(CAPABILITY_MANIFEST_APPROVED_ENV)
+        || environment_flag(SESSION_POLICY_APPROVED_ENV))
+        && authorization.capability_manifest_path()?.is_none()
     {
         return Err(AbiFailure::new(
             CuaDriverStatus::InvalidArgument,
-            "explicit runtime authorization conflicts with a compatibility session-policy approval",
+            "explicit runtime authorization conflicts with a compatibility capability-manifest approval",
         ));
     }
     Ok(())
@@ -294,8 +331,7 @@ fn runtime_options_from_abi(options: AbiDriverOptions) -> Result<RuntimeOptions,
             )
             .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?;
             let manifest = authorization
-                .compatibility_bounded_manifest_path
-                .as_deref()
+                .capability_manifest_path()?
                 .map(std::path::Path::new)
                 .map(load_manifest)
                 .transpose()
@@ -328,7 +364,33 @@ struct AbiTrustedSessionOptions {
     mode: PermissionMode,
     ttl_seconds: u64,
     idle_ttl_seconds: u64,
+    #[serde(default)]
+    capability_manifest_path: Option<String>,
+    #[serde(default)]
     bounded_manifest_path: Option<String>,
+    /// Host-generated lifecycle lease identity. This field is accepted only
+    /// by the in-process Rust bridge; it is not part of the generated public
+    /// TrustedSessionOptions record or any agent-visible tool schema.
+    #[serde(default)]
+    transport_session: Option<String>,
+}
+
+impl AbiTrustedSessionOptions {
+    fn capability_manifest_path(&self) -> Result<Option<&str>, AbiFailure> {
+        if self.capability_manifest_path.is_some()
+            && self.bounded_manifest_path.is_some()
+            && self.capability_manifest_path != self.bounded_manifest_path
+        {
+            return Err(AbiFailure::new(
+                CuaDriverStatus::InvalidArgument,
+                "capability manifest path conflicts with its deprecated bounded-manifest alias",
+            ));
+        }
+        Ok(self
+            .capability_manifest_path
+            .as_deref()
+            .or(self.bounded_manifest_path.as_deref()))
+    }
 }
 
 fn with_ffi_guard(
@@ -758,27 +820,29 @@ pub unsafe extern "C" fn cua_driver_session_create_v1(
                 "public_session must not be empty",
             ));
         }
-        let bounded_manifest = options
-            .bounded_manifest_path
-            .as_deref()
+        let capability_manifest = options
+            .capability_manifest_path()?
             .map(|path| {
                 cua_driver_core::session_manifest::load_manifest(std::path::Path::new(path))
                     .map(Arc::new)
                     .map_err(|error| {
                         AbiFailure::new(
                             CuaDriverStatus::InvalidArgument,
-                            format!("invalid bounded session manifest: {error}"),
+                            format!("invalid capability manifest: {error}"),
                         )
                     })
             })
             .transpose()?;
         let request = DelegatedSessionRequest {
             public_session: options.public_session,
-            transport_session: format!("direct-{}", uuid::Uuid::new_v4()),
+            transport_session: options
+                .transport_session
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| format!("direct-{}", uuid::Uuid::new_v4())),
             mode: options.mode,
             ttl: Duration::from_secs(options.ttl_seconds),
             idle_ttl: Duration::from_secs(options.idle_ttl_seconds),
-            bounded_manifest,
+            capability_manifest,
         };
         let session = driver
             .runtime

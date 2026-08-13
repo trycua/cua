@@ -785,6 +785,7 @@ export type HttpRequest = {
   url: string;
   headers: Array<HttpHeader>;
   body?: ArrayBuffer;
+  timeoutSecs?: bigint;
 };
 
 /**
@@ -813,6 +814,7 @@ const FfiConverterTypeHttpRequest = (() => {
         url: FfiConverterString.read(from),
         headers: FfiConverterSequenceTypeHttpHeader.read(from),
         body: FfiConverterOptionalBytes.read(from),
+        timeoutSecs: FfiConverterOptionalUInt64.read(from),
       };
     }
     write(value: TypeName, into: RustBuffer): void {
@@ -820,13 +822,15 @@ const FfiConverterTypeHttpRequest = (() => {
       FfiConverterString.write(value.url, into);
       FfiConverterSequenceTypeHttpHeader.write(value.headers, into);
       FfiConverterOptionalBytes.write(value.body, into);
+      FfiConverterOptionalUInt64.write(value.timeoutSecs, into);
     }
     allocationSize(value: TypeName): number {
       return (
         FfiConverterString.allocationSize(value.method) +
         FfiConverterString.allocationSize(value.url) +
         FfiConverterSequenceTypeHttpHeader.allocationSize(value.headers) +
-        FfiConverterOptionalBytes.allocationSize(value.body)
+        FfiConverterOptionalBytes.allocationSize(value.body) +
+        FfiConverterOptionalUInt64.allocationSize(value.timeoutSecs)
       );
     }
   }
@@ -1327,6 +1331,112 @@ const FfiConverterTypeHttpError = (() => {
           const inner = value.inner;
           let size = ordinalConverter.allocationSize(1);
           size += FfiConverterString.allocationSize(inner.reason);
+          return size;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Error type: SdkBuildError
+export enum SdkBuildError_Tags {
+  MissingRequiredField = "MissingRequiredField",
+}
+export const SdkBuildError = (() => {
+  type MissingRequiredField__interface = {
+    tag: SdkBuildError_Tags.MissingRequiredField;
+    inner: Readonly<{ recordType: string; field: string }>;
+  };
+  class MissingRequiredField_
+    extends UniffiError
+    implements MissingRequiredField__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "SdkBuildError";
+    readonly tag = SdkBuildError_Tags.MissingRequiredField;
+    readonly inner: Readonly<{ recordType: string; field: string }>;
+    constructor(inner: { recordType: string; field: string }) {
+      super("SdkBuildError", "MissingRequiredField");
+
+      this.inner = Object.freeze(inner);
+    }
+    static new(inner: {
+      recordType: string;
+      field: string;
+    }): MissingRequiredField_ {
+      return new MissingRequiredField_(inner);
+    }
+
+    static instanceOf(obj: any): obj is MissingRequiredField_ {
+      return obj.tag === SdkBuildError_Tags.MissingRequiredField;
+    }
+    static hasInner(obj: any): obj is MissingRequiredField_ {
+      return MissingRequiredField_.instanceOf(obj);
+    }
+
+    static getInner(
+      obj: MissingRequiredField_,
+    ): Readonly<{ recordType: string; field: string }> {
+      return obj.inner;
+    }
+  }
+
+  function instanceOf(obj: any): obj is SdkBuildError {
+    return obj[uniffiTypeNameSymbol] === "SdkBuildError";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    MissingRequiredField: MissingRequiredField_,
+  });
+})();
+export type SdkBuildError = InstanceType<
+  (typeof SdkBuildError)["MissingRequiredField"]
+>;
+
+// FfiConverter for enum SdkBuildError
+const FfiConverterTypeSdkBuildError = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = SdkBuildError;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return new SdkBuildError.MissingRequiredField({
+            recordType: FfiConverterString.read(from),
+            field: FfiConverterString.read(from),
+          });
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value.tag) {
+        case SdkBuildError_Tags.MissingRequiredField: {
+          ordinalConverter.write(1, into);
+          const inner = value.inner;
+          FfiConverterString.write(inner.recordType, into);
+          FfiConverterString.write(inner.field, into);
+          return;
+        }
+        default:
+          // Throwing from here means that SdkBuildError_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case SdkBuildError_Tags.MissingRequiredField: {
+          const inner = value.inner;
+          let size = ordinalConverter.allocationSize(1);
+          size += FfiConverterString.allocationSize(inner.recordType);
+          size += FfiConverterString.allocationSize(inner.field);
           return size;
         }
         default:
@@ -2160,6 +2270,800 @@ const uniffiCallbackInterfaceAccessTokenProvider: {
     );
   },
 };
+
+export interface CreateClaimRequestBuilderLike {
+  build() /*throws*/ : CreateClaimRequest;
+  name(value: string): CreateClaimRequestBuilderLike;
+  pool(value: Pool): CreateClaimRequestBuilderLike;
+  spec(value: ClaimSpec): CreateClaimRequestBuilderLike;
+}
+/**
+ * @deprecated Use `CreateClaimRequestBuilderLike` instead.
+ */
+export type CreateClaimRequestBuilderInterface = CreateClaimRequestBuilderLike;
+
+export class CreateClaimRequestBuilder
+  extends UniffiAbstractObject
+  implements CreateClaimRequestBuilderLike
+{
+  readonly [uniffiTypeNameSymbol] = "CreateClaimRequestBuilder";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  constructor() {
+    super();
+    const pointer = uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createclaimrequestbuilder_new(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeCreateClaimRequestBuilderObjectFactory.bless(pointer);
+  }
+
+  build(): CreateClaimRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterTypeCreateClaimRequest.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
+          FfiConverterTypeSdkBuildError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build(
+            uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  name(value: string): CreateClaimRequestBuilderLike {
+    return FfiConverterTypeCreateClaimRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(
+            uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  pool(value: Pool): CreateClaimRequestBuilderLike {
+    return FfiConverterTypeCreateClaimRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
+            uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterTypePool.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  spec(value: ClaimSpec): CreateClaimRequestBuilderLike {
+    return FfiConverterTypeCreateClaimRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec(
+            uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterTypeClaimSpec.lower(
+              value,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer =
+        uniffiTypeCreateClaimRequestBuilderObjectFactory.pointer(this);
+      uniffiTypeCreateClaimRequestBuilderObjectFactory.freePointer(pointer);
+      uniffiTypeCreateClaimRequestBuilderObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is CreateClaimRequestBuilder {
+    return uniffiTypeCreateClaimRequestBuilderObjectFactory.isConcreteType(
+      obj_,
+    );
+  }
+}
+
+const uniffiTypeCreateClaimRequestBuilderObjectFactory: UniffiObjectFactory<CreateClaimRequestBuilderLike> =
+  (() => {
+    /// <reference lib="es2021" />
+    const registry =
+      typeof FinalizationRegistry !== "undefined"
+        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+            uniffiTypeCreateClaimRequestBuilderObjectFactory.freePointer(
+              heldValue,
+            );
+          })
+        : null;
+
+    return {
+      create(pointer: UniffiHandle): CreateClaimRequestBuilderLike {
+        const instance = Object.create(CreateClaimRequestBuilder.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "CreateClaimRequestBuilder";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+          p, // make sure this object doesn't get optimized away.
+          markDestroyed: () => undefined,
+        };
+        if (registry) {
+          registry.register(ptr, p, ptr);
+        }
+        return ptr;
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+          registry.unregister(ptr_);
+        }
+      },
+
+      pointer(obj_: CreateClaimRequestBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: CreateClaimRequestBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createclaimrequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createclaimrequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is CreateClaimRequestBuilderLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "CreateClaimRequestBuilder"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeCreateClaimRequestBuilder = new FfiConverterObject(
+  uniffiTypeCreateClaimRequestBuilderObjectFactory,
+);
+
+export interface CreatePoolRequestBuilderLike {
+  build() /*throws*/ : CreatePoolRequest;
+  namespace(value: string): CreatePoolRequestBuilderLike;
+  spec(value: OsGymSandboxWarmPoolSpec): CreatePoolRequestBuilderLike;
+}
+/**
+ * @deprecated Use `CreatePoolRequestBuilderLike` instead.
+ */
+export type CreatePoolRequestBuilderInterface = CreatePoolRequestBuilderLike;
+
+export class CreatePoolRequestBuilder
+  extends UniffiAbstractObject
+  implements CreatePoolRequestBuilderLike
+{
+  readonly [uniffiTypeNameSymbol] = "CreatePoolRequestBuilder";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  constructor() {
+    super();
+    const pointer = uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeCreatePoolRequestBuilderObjectFactory.bless(pointer);
+  }
+
+  build(): CreatePoolRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterTypeCreatePoolRequest.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
+          FfiConverterTypeSdkBuildError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build(
+            uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  namespace(value: string): CreatePoolRequestBuilderLike {
+    return FfiConverterTypeCreatePoolRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace(
+            uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  spec(value: OsGymSandboxWarmPoolSpec): CreatePoolRequestBuilderLike {
+    return FfiConverterTypeCreatePoolRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec(
+            uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.lower(
+              value,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer =
+        uniffiTypeCreatePoolRequestBuilderObjectFactory.pointer(this);
+      uniffiTypeCreatePoolRequestBuilderObjectFactory.freePointer(pointer);
+      uniffiTypeCreatePoolRequestBuilderObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is CreatePoolRequestBuilder {
+    return uniffiTypeCreatePoolRequestBuilderObjectFactory.isConcreteType(obj_);
+  }
+}
+
+const uniffiTypeCreatePoolRequestBuilderObjectFactory: UniffiObjectFactory<CreatePoolRequestBuilderLike> =
+  (() => {
+    /// <reference lib="es2021" />
+    const registry =
+      typeof FinalizationRegistry !== "undefined"
+        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+            uniffiTypeCreatePoolRequestBuilderObjectFactory.freePointer(
+              heldValue,
+            );
+          })
+        : null;
+
+    return {
+      create(pointer: UniffiHandle): CreatePoolRequestBuilderLike {
+        const instance = Object.create(CreatePoolRequestBuilder.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "CreatePoolRequestBuilder";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+          p, // make sure this object doesn't get optimized away.
+          markDestroyed: () => undefined,
+        };
+        if (registry) {
+          registry.register(ptr, p, ptr);
+        }
+        return ptr;
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+          registry.unregister(ptr_);
+        }
+      },
+
+      pointer(obj_: CreatePoolRequestBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: CreatePoolRequestBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is CreatePoolRequestBuilderLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "CreatePoolRequestBuilder"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeCreatePoolRequestBuilder = new FfiConverterObject(
+  uniffiTypeCreatePoolRequestBuilderObjectFactory,
+);
+
+export interface CreateTemplateRequestBuilderLike {
+  build() /*throws*/ : CreateTemplateRequest;
+  name(value: string): CreateTemplateRequestBuilderLike;
+  namespace(value: string): CreateTemplateRequestBuilderLike;
+  spec(value: OsGymSandboxTemplateSpec): CreateTemplateRequestBuilderLike;
+}
+/**
+ * @deprecated Use `CreateTemplateRequestBuilderLike` instead.
+ */
+export type CreateTemplateRequestBuilderInterface =
+  CreateTemplateRequestBuilderLike;
+
+export class CreateTemplateRequestBuilder
+  extends UniffiAbstractObject
+  implements CreateTemplateRequestBuilderLike
+{
+  readonly [uniffiTypeNameSymbol] = "CreateTemplateRequestBuilder";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  constructor() {
+    super();
+    const pointer = uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeCreateTemplateRequestBuilderObjectFactory.bless(pointer);
+  }
+
+  build(): CreateTemplateRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterTypeCreateTemplateRequest.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
+          FfiConverterTypeSdkBuildError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build(
+            uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  name(value: string): CreateTemplateRequestBuilderLike {
+    return FfiConverterTypeCreateTemplateRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name(
+            uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  namespace(value: string): CreateTemplateRequestBuilderLike {
+    return FfiConverterTypeCreateTemplateRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace(
+            uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  spec(value: OsGymSandboxTemplateSpec): CreateTemplateRequestBuilderLike {
+    return FfiConverterTypeCreateTemplateRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec(
+            uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterTypeOSGymSandboxTemplateSpec.lower(
+              value,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer =
+        uniffiTypeCreateTemplateRequestBuilderObjectFactory.pointer(this);
+      uniffiTypeCreateTemplateRequestBuilderObjectFactory.freePointer(pointer);
+      uniffiTypeCreateTemplateRequestBuilderObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is CreateTemplateRequestBuilder {
+    return uniffiTypeCreateTemplateRequestBuilderObjectFactory.isConcreteType(
+      obj_,
+    );
+  }
+}
+
+const uniffiTypeCreateTemplateRequestBuilderObjectFactory: UniffiObjectFactory<CreateTemplateRequestBuilderLike> =
+  (() => {
+    /// <reference lib="es2021" />
+    const registry =
+      typeof FinalizationRegistry !== "undefined"
+        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+            uniffiTypeCreateTemplateRequestBuilderObjectFactory.freePointer(
+              heldValue,
+            );
+          })
+        : null;
+
+    return {
+      create(pointer: UniffiHandle): CreateTemplateRequestBuilderLike {
+        const instance = Object.create(CreateTemplateRequestBuilder.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "CreateTemplateRequestBuilder";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+          p, // make sure this object doesn't get optimized away.
+          markDestroyed: () => undefined,
+        };
+        if (registry) {
+          registry.register(ptr, p, ptr);
+        }
+        return ptr;
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+          registry.unregister(ptr_);
+        }
+      },
+
+      pointer(obj_: CreateTemplateRequestBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: CreateTemplateRequestBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is CreateTemplateRequestBuilderLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "CreateTemplateRequestBuilder"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeCreateTemplateRequestBuilder = new FfiConverterObject(
+  uniffiTypeCreateTemplateRequestBuilderObjectFactory,
+);
+
+export interface CreateUserApiKeyRequestBuilderLike {
+  build() /*throws*/ : CreateUserApiKeyRequest;
+  name(value: string): CreateUserApiKeyRequestBuilderLike;
+  scope(value: Array<string>): CreateUserApiKeyRequestBuilderLike;
+}
+/**
+ * @deprecated Use `CreateUserApiKeyRequestBuilderLike` instead.
+ */
+export type CreateUserApiKeyRequestBuilderInterface =
+  CreateUserApiKeyRequestBuilderLike;
+
+export class CreateUserApiKeyRequestBuilder
+  extends UniffiAbstractObject
+  implements CreateUserApiKeyRequestBuilderLike
+{
+  readonly [uniffiTypeNameSymbol] = "CreateUserApiKeyRequestBuilder";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  constructor() {
+    super();
+    const pointer = uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createuserapikeyrequestbuilder_new(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.bless(pointer);
+  }
+
+  build(): CreateUserApiKeyRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterTypeCreateUserApiKeyRequest.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
+          FfiConverterTypeSdkBuildError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_build(
+            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  name(value: string): CreateUserApiKeyRequestBuilderLike {
+    return FfiConverterTypeCreateUserApiKeyRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_name(
+            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  scope(value: Array<string>): CreateUserApiKeyRequestBuilderLike {
+    return FfiConverterTypeCreateUserApiKeyRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_scope(
+            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterSequenceString.lower(
+              value,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer =
+        uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.pointer(this);
+      uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.freePointer(
+        pointer,
+      );
+      uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is CreateUserApiKeyRequestBuilder {
+    return uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.isConcreteType(
+      obj_,
+    );
+  }
+}
+
+const uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory: UniffiObjectFactory<CreateUserApiKeyRequestBuilderLike> =
+  (() => {
+    /// <reference lib="es2021" />
+    const registry =
+      typeof FinalizationRegistry !== "undefined"
+        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.freePointer(
+              heldValue,
+            );
+          })
+        : null;
+
+    return {
+      create(pointer: UniffiHandle): CreateUserApiKeyRequestBuilderLike {
+        const instance = Object.create(
+          CreateUserApiKeyRequestBuilder.prototype,
+        );
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "CreateUserApiKeyRequestBuilder";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+          p, // make sure this object doesn't get optimized away.
+          markDestroyed: () => undefined,
+        };
+        if (registry) {
+          registry.register(ptr, p, ptr);
+        }
+        return ptr;
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+          registry.unregister(ptr_);
+        }
+      },
+
+      pointer(obj_: CreateUserApiKeyRequestBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: CreateUserApiKeyRequestBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createuserapikeyrequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createuserapikeyrequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is CreateUserApiKeyRequestBuilderLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "CreateUserApiKeyRequestBuilder"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeCreateUserApiKeyRequestBuilder = new FfiConverterObject(
+  uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory,
+);
 
 export interface CyclopsClientLike {
   createClaim(
@@ -3396,6 +4300,281 @@ const FfiConverterTypeCyclopsClient = new FfiConverterObject(
   uniffiTypeCyclopsClientObjectFactory,
 );
 
+export interface CyclopsTokenProviderConfigurationBuilderLike {
+  baseUrl(value: string): CyclopsTokenProviderConfigurationBuilderLike;
+  build() /*throws*/ : CyclopsTokenProviderConfiguration;
+  claimPollIntervalMs(
+    value: bigint,
+  ): CyclopsTokenProviderConfigurationBuilderLike;
+  claimPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike;
+  poolPollIntervalMs(
+    value: bigint,
+  ): CyclopsTokenProviderConfigurationBuilderLike;
+  poolPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike;
+}
+/**
+ * @deprecated Use `CyclopsTokenProviderConfigurationBuilderLike` instead.
+ */
+export type CyclopsTokenProviderConfigurationBuilderInterface =
+  CyclopsTokenProviderConfigurationBuilderLike;
+
+export class CyclopsTokenProviderConfigurationBuilder
+  extends UniffiAbstractObject
+  implements CyclopsTokenProviderConfigurationBuilderLike
+{
+  readonly [uniffiTypeNameSymbol] = "CyclopsTokenProviderConfigurationBuilder";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  constructor() {
+    super();
+    const pointer = uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopstokenproviderconfigurationbuilder_new(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.bless(
+        pointer,
+      );
+  }
+
+  baseUrl(value: string): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_base_url(
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  build(): CyclopsTokenProviderConfiguration /*throws*/ {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterTypeCyclopsTokenProviderConfiguration.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
+          FfiConverterTypeSdkBuildError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_build(
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  claimPollIntervalMs(
+    value: bigint,
+  ): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms(
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterUInt64.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  claimPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit(
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  poolPollIntervalMs(
+    value: bigint,
+  ): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms(
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterUInt64.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  poolPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit(
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer =
+        uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.pointer(
+          this,
+        );
+      uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.freePointer(
+        pointer,
+      );
+      uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.unbless(
+        ptr,
+      );
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(
+    obj_: any,
+  ): obj_ is CyclopsTokenProviderConfigurationBuilder {
+    return uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.isConcreteType(
+      obj_,
+    );
+  }
+}
+
+const uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory: UniffiObjectFactory<CyclopsTokenProviderConfigurationBuilderLike> =
+  (() => {
+    /// <reference lib="es2021" />
+    const registry =
+      typeof FinalizationRegistry !== "undefined"
+        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.freePointer(
+              heldValue,
+            );
+          })
+        : null;
+
+    return {
+      create(
+        pointer: UniffiHandle,
+      ): CyclopsTokenProviderConfigurationBuilderLike {
+        const instance = Object.create(
+          CyclopsTokenProviderConfigurationBuilder.prototype,
+        );
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] =
+          "CyclopsTokenProviderConfigurationBuilder";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+          p, // make sure this object doesn't get optimized away.
+          markDestroyed: () => undefined,
+        };
+        if (registry) {
+          registry.register(ptr, p, ptr);
+        }
+        return ptr;
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+          registry.unregister(ptr_);
+        }
+      },
+
+      pointer(
+        obj_: CyclopsTokenProviderConfigurationBuilderLike,
+      ): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(
+        obj_: CyclopsTokenProviderConfigurationBuilderLike,
+      ): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_cyclopstokenproviderconfigurationbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_cyclopstokenproviderconfigurationbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(
+        obj_: any,
+      ): obj_ is CyclopsTokenProviderConfigurationBuilderLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] ===
+            "CyclopsTokenProviderConfigurationBuilder"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeCyclopsTokenProviderConfigurationBuilder =
+  new FfiConverterObject(
+    uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory,
+  );
+
 export interface HttpClient {
   execute(
     request: HttpRequest,
@@ -3622,6 +4801,222 @@ const uniffiCallbackInterfaceHttpClient: { vtable: any; register: () => void } =
     },
   };
 
+export interface TemplateBuilderLike {
+  apiVersion(value: string): TemplateBuilderLike;
+  build() /*throws*/ : Template;
+  kind(value: string): TemplateBuilderLike;
+  metadata(value: ResourceMetadata): TemplateBuilderLike;
+  spec(value: OsGymSandboxTemplateSpec): TemplateBuilderLike;
+}
+/**
+ * @deprecated Use `TemplateBuilderLike` instead.
+ */
+export type TemplateBuilderInterface = TemplateBuilderLike;
+
+export class TemplateBuilder
+  extends UniffiAbstractObject
+  implements TemplateBuilderLike
+{
+  readonly [uniffiTypeNameSymbol] = "TemplateBuilder";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  constructor() {
+    super();
+    const pointer = uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_templatebuilder_new(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeTemplateBuilderObjectFactory.bless(pointer);
+  }
+
+  apiVersion(value: string): TemplateBuilderLike {
+    return FfiConverterTypeTemplateBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_api_version(
+            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  build(): Template /*throws*/ {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterTypeTemplate.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
+          FfiConverterTypeSdkBuildError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_build(
+            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  kind(value: string): TemplateBuilderLike {
+    return FfiConverterTypeTemplateBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_kind(
+            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  metadata(value: ResourceMetadata): TemplateBuilderLike {
+    return FfiConverterTypeTemplateBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(
+            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+            FfiConverterTypeResourceMetadata.lower(
+              value,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  spec(value: OsGymSandboxTemplateSpec): TemplateBuilderLike {
+    return FfiConverterTypeTemplateBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_spec(
+            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+            FfiConverterTypeOSGymSandboxTemplateSpec.lower(
+              value,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer = uniffiTypeTemplateBuilderObjectFactory.pointer(this);
+      uniffiTypeTemplateBuilderObjectFactory.freePointer(pointer);
+      uniffiTypeTemplateBuilderObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is TemplateBuilder {
+    return uniffiTypeTemplateBuilderObjectFactory.isConcreteType(obj_);
+  }
+}
+
+const uniffiTypeTemplateBuilderObjectFactory: UniffiObjectFactory<TemplateBuilderLike> =
+  (() => {
+    /// <reference lib="es2021" />
+    const registry =
+      typeof FinalizationRegistry !== "undefined"
+        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+            uniffiTypeTemplateBuilderObjectFactory.freePointer(heldValue);
+          })
+        : null;
+
+    return {
+      create(pointer: UniffiHandle): TemplateBuilderLike {
+        const instance = Object.create(TemplateBuilder.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "TemplateBuilder";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+          p, // make sure this object doesn't get optimized away.
+          markDestroyed: () => undefined,
+        };
+        if (registry) {
+          registry.register(ptr, p, ptr);
+        }
+        return ptr;
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+          registry.unregister(ptr_);
+        }
+      },
+
+      pointer(obj_: TemplateBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: TemplateBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_templatebuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_templatebuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is TemplateBuilderLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "TemplateBuilder"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeTemplateBuilder = new FfiConverterObject(
+  uniffiTypeTemplateBuilderObjectFactory,
+);
+
 // FfiConverter for Map<string, string>
 const FfiConverterMapStringString = new FfiConverterMap(
   FfiConverterString,
@@ -3661,6 +5056,9 @@ const FfiConverterSequenceTypeHttpHeader = new FfiConverterArray(
 const FfiConverterOptionalBytes = new FfiConverterOptional(
   FfiConverterArrayBuffer,
 );
+
+// FfiConverter for bigint | undefined
+const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
 // FfiConverter for Array<Claim>
 const FfiConverterSequenceTypeClaim = new FfiConverterArray(
@@ -3715,6 +5113,150 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() !==
+    10967
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() !==
+    10518
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() !==
+    19762
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() !==
+    7405
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() !==
+    28263
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new() !==
+    33658
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build() !==
+    60558
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace() !==
+    18934
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() !==
+    7566
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new() !==
+    6787
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build() !==
+    46749
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name() !==
+    38970
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace() !==
+    38181
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec() !==
+    29902
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new() !==
+    47741
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build() !==
+    18677
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name() !==
+    53365
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope() !==
+    26616
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope",
     );
   }
   if (
@@ -3966,11 +5508,115 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new() !==
+    43069
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url() !==
+    48016
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build() !==
+    28182
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms() !==
+    50054
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit() !==
+    7533
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms() !==
+    16373
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit() !==
+    6865
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httpclient_execute() !==
     38803
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_cyclops_sdk_checksum_method_httpclient_execute",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new() !==
+    19815
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version() !==
+    65471
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_build() !==
+    2046
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_templatebuilder_build",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_kind() !==
+    14122
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_templatebuilder_kind",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata() !==
+    25572
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_spec() !==
+    43128
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_templatebuilder_spec",
     );
   }
 
@@ -3985,13 +5631,18 @@ export default Object.freeze({
     FfiConverterTypeAccessTokenProviderError,
     FfiConverterTypeClaim,
     FfiConverterTypeCreateClaimRequest,
+    FfiConverterTypeCreateClaimRequestBuilder,
     FfiConverterTypeCreatePoolRequest,
+    FfiConverterTypeCreatePoolRequestBuilder,
     FfiConverterTypeCreateTemplateRequest,
+    FfiConverterTypeCreateTemplateRequestBuilder,
     FfiConverterTypeCreateUserApiKeyRequest,
+    FfiConverterTypeCreateUserApiKeyRequestBuilder,
     FfiConverterTypeCyclopsClient,
     FfiConverterTypeCyclopsConfiguration,
     FfiConverterTypeCyclopsCredentials,
     FfiConverterTypeCyclopsTokenProviderConfiguration,
+    FfiConverterTypeCyclopsTokenProviderConfigurationBuilder,
     FfiConverterTypeHttpClient,
     FfiConverterTypeHttpError,
     FfiConverterTypeHttpHeader,
@@ -4002,8 +5653,10 @@ export default Object.freeze({
     FfiConverterTypePool,
     FfiConverterTypeResourceMetadata,
     FfiConverterTypeSandbox,
+    FfiConverterTypeSdkBuildError,
     FfiConverterTypeSdkError,
     FfiConverterTypeTemplate,
+    FfiConverterTypeTemplateBuilder,
     FfiConverterTypeUserApiKey,
   },
 });

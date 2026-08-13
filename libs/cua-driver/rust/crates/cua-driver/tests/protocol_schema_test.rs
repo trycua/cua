@@ -157,9 +157,8 @@ fn tools_list_schema_shape() {
         list_resp["result"]["capability_version"], "1",
         "adding one capability token is additive and must not bump the vocabulary version"
     );
-    // Capture scope belongs to the session lifecycle on every platform. The
-    // action-level `scope` selects a coordinate/transport form but cannot
-    // override the session policy enforced by the registry.
+    // Session capture scope remains advertised only for compatibility. New
+    // clients choose one typed window or desktop target on each action.
     let capture_scope = &properties("start_session")["capture_scope"];
     for expected in ["auto", "window", "desktop"] {
         assert!(

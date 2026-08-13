@@ -11,6 +11,43 @@ from keyring.errors import KeyringError, PasswordDeleteError
 KEYRING_SERVICE = "run.cua.ai"
 KEYRING_ACCOUNT = "cua-cli"
 
+# Headless Linux (servers, CI, containers) usually has no D-Bus Secret Service, so
+# `keyring` resolves to its no-op fail backend and every command dead-ends here.
+# We deliberately do not fall back to on-disk storage on the user's behalf: that
+# would silently downgrade an OAuth refresh token to cleartext. Instead, say what
+# to run to opt in to it.
+#
+# Every command below was run end to end in a clean venv before being suggested.
+# keyrings.cryptfile rather than keyrings.alt's EncryptedKeyring because the
+# latter imports Crypto at construction and keyrings.alt does not depend on a
+# crypto library, so recommending it lands the reader on a second dead end
+# (ModuleNotFoundError: No module named 'Crypto'); keyrings.cryptfile pulls in
+# pycryptodome itself and works from a single install.
+_NO_STORE_MESSAGE = (
+    "No secure credential store is available.\n"
+    "\n"
+    "On a desktop, install and unlock an OS keyring (GNOME Keyring, KWallet, macOS "
+    "Keychain, Windows Credential Manager).\n"
+    "\n"
+    "On a headless host, pick one:\n"
+    "\n"
+    "  1. Unattended (CI, containers, scripts) — skip the credential store and\n"
+    "     supply a token per run. An encrypted store cannot be unlocked without a\n"
+    "     prompt, so this is the only option that works without a terminal:\n"
+    "       export FLEETS_TOKEN=<token>\n"
+    "\n"
+    "  2. Interactive headless (a server you log into) — encrypted file store.\n"
+    "     Asks for a passphrase on every command:\n"
+    "       pip install keyrings.cryptfile\n"
+    "       export PYTHON_KEYRING_BACKEND=keyrings.cryptfile.cryptfile.CryptFileKeyring\n"
+    "\n"
+    "  3. Unencrypted file store — only where a recoverable token on disk is\n"
+    "     acceptable. The file is mode 600, but the token is plainly readable by\n"
+    "     anyone who can read it, including backups and snapshots:\n"
+    "       pip install keyrings.alt\n"
+    "       export PYTHON_KEYRING_BACKEND=keyrings.alt.file.PlaintextKeyring"
+)
+
 
 class CredentialStorageError(RuntimeError):
     """Raised when the operating system credential vault is unavailable."""
@@ -54,9 +91,7 @@ def _read() -> str | None:
     try:
         return keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
     except KeyringError as error:
-        raise CredentialStorageError(
-            "No secure credential store is available. Configure an OS keyring before logging in."
-        ) from error
+        raise CredentialStorageError(_NO_STORE_MESSAGE) from error
 
 
 def load_credentials() -> OAuthCredentials | None:
@@ -78,9 +113,7 @@ def save_credentials(credentials: OAuthCredentials) -> None:
     try:
         keyring.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, json.dumps(credentials.to_dict()))
     except KeyringError as error:
-        raise CredentialStorageError(
-            "No secure credential store is available. Configure an OS keyring before logging in."
-        ) from error
+        raise CredentialStorageError(_NO_STORE_MESSAGE) from error
 
 
 def clear_credentials() -> bool:

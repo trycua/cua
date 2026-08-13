@@ -19,7 +19,11 @@ def copy_release_sources(destination: Path) -> None:
         source = REPO_ROOT / relative
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, target)
+        shutil.copytree(
+            source,
+            target,
+            ignore=shutil.ignore_patterns(".build", ".swiftpm", "target", "node_modules"),
+        )
     for product in ("cua-driver", "lume"):
         docs = f"docs/content/docs/reference/{product}"
         shutil.copytree(REPO_ROOT / docs, destination / docs)

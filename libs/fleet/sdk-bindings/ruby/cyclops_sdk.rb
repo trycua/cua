@@ -6,6 +6,7 @@ module FleetSdk
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end
   SCHEMA_ALLOC_METHODS = %i[
+    alloc_from_TypeClaimSpec
     alloc_from_TypeOSGymSandboxTemplateSpec
     alloc_from_TypeOSGymSandboxWarmPoolSpec
   ].freeze

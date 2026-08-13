@@ -18,19 +18,25 @@ surface through their runtime's existing MCP client.
 The typed slice covers the cross-platform session lifecycle tools:
 
 - `start_session`
-- `escalate_session`
-- `get_session_state`
+- `get_session`
+- `list_sessions`
 - `end_session`
+
+Ordinary calls do not need `start_session`. The runtime creates one implicit
+session for the authenticated transport lease and reuses it until transport
+close, explicit end, or five minutes of inactivity. `escalate_session` and
+`get_session_state` remain deprecated compatibility tools for legacy
+capture-scope sessions. There is no `deescalate_session` tool.
 
 It also covers the portable whole-desktop loop:
 
 - `get_desktop_state`
 - `get_screen_size`
 - `get_cursor_position`
-- `move_cursor` with the required `scope="desktop"`
+- `move_cursor` with an exact per-call window or desktop `target`
 - `set_window_frame` for exact, read-back-verified top-level window geometry
 - `invoke_menu` for an exact native application-menu path resolved live at each hop
-- `click` with the required `scope="desktop"`
+- `click` with an exact per-call window or desktop `target`
 - `drag` and `scroll` in native desktop coordinates
 - `type_text`, `press_key`, and `hotkey` against the foreground application
 - `clipboard_read` for available types and opt-in plain-text readback
@@ -61,7 +67,11 @@ The checked-observation slice is also shared by MCP and both generated SDKs:
   harness to interpret. Cua Driver does not OCR or assign task meaning to it.
 
 Session contracts are marked `canonical_runtime`: the same typed Rust input,
-output, and metadata declaration builds the live MCP tool. Desktop contracts
+output, and metadata declaration builds the live MCP tool. The preferred action
+target is a tagged union: `{kind:"window", pid, window_id}` or
+`{kind:"desktop", display_id:"primary"}`. Legacy flat `scope`, `pid`, and
+`window_id` fields remain accepted during the compatibility window but cannot
+be mixed with `target`. Desktop contracts
 are marked `portable_subset`: their typed Rust inputs are a deliberately
 narrower projection of the richer macOS, Linux, and Windows runtime schemas.
 Each platform's desktop branch deserializes that projection before acting,
@@ -89,7 +99,7 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.6.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.7.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |

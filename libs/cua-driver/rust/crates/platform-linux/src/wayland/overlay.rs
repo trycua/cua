@@ -98,6 +98,11 @@ pub fn forward(msg: &OverlayMsg) -> bool {
     if !should_forward(CONFIG_ENABLED.load(Ordering::Acquire), msg) {
         return false;
     }
+    // The native Wayland path owns one cursor and does not keep keyed session
+    // tombstones. Accept revival without starting the compositor thread.
+    if matches!(msg, OverlayMsg::Revive(_)) {
+        return true;
+    }
     // Lazy startup: spawning the layer-shell owner thread + connecting to
     // the Wayland compositor takes 100-300ms. Doing that at cua-driver mcp
     // boot (the old eager-init path) was tipping the borderline CI
@@ -123,6 +128,7 @@ pub fn forward(msg: &OverlayMsg) -> bool {
             });
             true
         }
+        OverlayMsg::Revive(_) => true,
     }
 }
 

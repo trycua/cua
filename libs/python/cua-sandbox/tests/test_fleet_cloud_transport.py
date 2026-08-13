@@ -6,6 +6,7 @@ from cua_sandbox import Sandbox as CuaSandbox
 from cua_sandbox.transport import fleet_cloud
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 from fleet_sdk import (
+    Firmware,
     OsGymSandboxWarmPoolSpecBuilder,
     OsGymSandboxWarmPoolStatus,
     Pool,
@@ -72,6 +73,34 @@ def test_registry_image_becomes_typed_template_request():
     ]
 
 
+def test_default_linux_image_becomes_typed_template_request():
+    request = FleetCloudTransport(image=Image.linux(), name="demo")._template_request()
+
+    assert request.spec.vm_template.container_disk_image == (
+        "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34"
+    )
+
+
+def test_default_windows_image_becomes_typed_template_request():
+    request = FleetCloudTransport(image=Image.windows(), name="demo")._template_request()
+
+    assert request.spec.vm_template.container_disk_image == (
+        "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
+    )
+
+
+def test_windows_image_boots_uefi():
+    request = FleetCloudTransport(image=Image.windows(), name="demo")._template_request()
+
+    assert request.spec.vm_template.firmware == Firmware.EFI
+
+
+def test_linux_image_leaves_firmware_at_the_schema_default():
+    request = FleetCloudTransport(image=Image.linux(), name="demo")._template_request()
+
+    assert request.spec.vm_template.firmware is None
+
+
 def test_pool_request_uses_the_single_sandbox_name_and_requested_replicas():
     request = FleetCloudTransport(
         image=Image.from_registry("registry.example/workspace@sha256:abc"),
@@ -133,10 +162,17 @@ async def test_fleet_client_lookup_uses_bounded_deterministic_claim_name():
 
 
 @pytest.mark.parametrize(
-    "image", [Image.linux(), Image.from_registry("example:latest").apt_install("curl")]
+    "image",
+    [
+        Image.linux("debian", "12"),
+        # Client Windows has no pinned containerDisk, so the cloud cannot serve it.
+        Image.windows("11"),
+        Image.windows("10"),
+        Image.from_registry("example:latest").apt_install("curl"),
+    ],
 )
 def test_rejects_unsupported_images(image):
-    with pytest.raises(ValueError):
+    with pytest.raises(NotImplementedError):
         FleetCloudTransport._validate_image(image)
 
 

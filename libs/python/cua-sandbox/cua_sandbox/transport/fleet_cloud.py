@@ -19,7 +19,7 @@ from cua_sandbox._config import (
     get_fleet_token,
     get_token_url,
 )
-from cua_sandbox.image import Image
+from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport
 from fleet_sdk import (
@@ -34,6 +34,7 @@ from fleet_sdk import (
     CyclopsConfiguration,
     CyclopsCredentials,
     CyclopsTokenProviderConfiguration,
+    Firmware,
     HttpRequest,
     OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpecBuilder,
@@ -154,6 +155,7 @@ class _FleetClient:
     """Thin async facade over the generated Cyclops SDK."""
 
     def __init__(self) -> None:
+        self._closed = False
         fleet_token = get_fleet_token()
         if not fleet_token:
             client_id = get_client_id()
@@ -196,7 +198,10 @@ class _FleetClient:
         self._client = CyclopsClient.connect(configuration, self._http_client)
 
     async def close(self) -> None:
+        if self._closed:
+            return
         await self._http_client.aclose()
+        self._closed = True
 
     async def create_pool(self, request: CreatePoolRequest) -> Any:
         return await self._client.create_pool(request)
@@ -247,6 +252,15 @@ class _FleetClient:
     async def wait_claim(self, claim: Any) -> Any:
         return await self._client.wait_claim(claim)
 
+    async def renew_claim(self, claim: Any, shutdown_time: str) -> Any:
+        renew = getattr(self._client, "renew_claim", None)
+        if renew is None:
+            raise RuntimeError(
+                "the installed cua-fleet release does not support claim renewal; "
+                "upgrade to a build whose CyclopsClient exposes renew_claim"
+            )
+        return await renew(claim, shutdown_time)
+
     async def delete_claim(self, claim: Any) -> None:
         await self._client.delete_claim(claim)
 
@@ -263,6 +277,9 @@ class _FleetClient:
 
     async def get_pool(self, name: str) -> Any:
         return await self._client.get_pool(name)
+
+    async def list_claims(self, namespace: str) -> list[Any]:
+        return await self._client.list_claims(namespace)
 
     async def get_claim(self, pool: Any, name: str | None = None) -> Any:
         expected = name or _claim_name(pool.metadata.name)
@@ -549,7 +566,7 @@ class FleetCloudTransport(FleetTransport):
         ]
         vm_template_builder = (
             VmTemplateBuilder()
-            .container_disk_image(self._image._registry)
+            .container_disk_image(cloud_registry_image(self._image))
             .image_pull_secret("ecr-credentials")
             .probes(
                 PreservedJson.from_json(
@@ -558,6 +575,12 @@ class FleetCloudTransport(FleetTransport):
             )
             .services(services)
         )
+        # Windows guest disks are built UEFI-only (see registry/qemu_builder.py), and the
+        # Fleet schema defaults firmware to BIOS, so a Windows image left at the default
+        # boots SeaBIOS against a GPT/ESP disk and never reaches the readiness probe.
+        # The local QEMU runtime keys off the same os_type check.
+        if self._image.os_type == "windows":
+            vm_template_builder = vm_template_builder.firmware(Firmware.EFI)
         if self._cpu is not None:
             vm_template_builder = vm_template_builder.cpu_cores(self._cpu)
         if self._memory_mb is not None:
@@ -590,8 +613,10 @@ class FleetCloudTransport(FleetTransport):
 
     @staticmethod
     def _validate_image(image: Image) -> None:
-        if not image._registry:
-            raise ValueError("Fleet cloud sandboxes require Image.from_registry(...)")
+        if not cloud_registry_image(image):
+            raise NotImplementedError(
+                "Fleet cloud sandboxes require a supported built-in image or Image.from_registry(...)"
+            )
         if (
             image._layers
             or image._env
@@ -599,6 +624,6 @@ class FleetCloudTransport(FleetTransport):
             or image._snapshot_source
             or image._disk_path
         ):
-            raise ValueError(
+            raise NotImplementedError(
                 "Fleet cloud supports registry images with optional exposed services only"
             )

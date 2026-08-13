@@ -23,10 +23,20 @@ import (
 // OSGymSandboxTemplate it references, both named after the pool.
 const templateNameSuffix = "-template"
 
+const defaultMaxPoolSize uint32 = 50
+
+const (
+	poolScalingModeDiagnosticSummary     = "Invalid pool scaling configuration"
+	poolScalingModeExactlyOneMessage     = "exactly one of replicas or autoscaling must be configured"
+	poolScalingModeUnknownAtApplyMessage = "replicas and autoscaling must be known before apply"
+)
+
 type poolResource struct {
 	client     *fleet_sdk.CyclopsClient
 	legacyType bool
 }
+
+var _ resource.ResourceWithValidateConfig = (*poolResource)(nil)
 
 func NewPoolResource() resource.Resource { return &poolResource{} }
 
@@ -54,10 +64,65 @@ func (r *poolResource) Configure(_ context.Context, req resource.ConfigureReques
 	r.client = apiClient
 }
 
+func (r *poolResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var config poolResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := validatePoolScalingModeDuringPlan(config); err != nil {
+		addPoolScalingModeDiagnostic(&resp.Diagnostics, err)
+	}
+}
+
+func validatePoolScalingModeDuringPlan(config poolResourceModel) error {
+	if config.Replicas.IsUnknown() || config.Autoscaling.IsUnknown() {
+		return nil
+	}
+	if config.Replicas.IsNull() == config.Autoscaling.IsNull() {
+		return errors.New(poolScalingModeExactlyOneMessage)
+	}
+	return nil
+}
+
+func validatePoolScalingModeAtApply(config, plan poolResourceModel) error {
+	replicasPresent, replicasKnown := resolvedConfigurationPresence(config.Replicas, plan.Replicas)
+	autoscalingPresent, autoscalingKnown := resolvedConfigurationPresence(config.Autoscaling, plan.Autoscaling)
+	if !replicasKnown || !autoscalingKnown {
+		return errors.New(poolScalingModeUnknownAtApplyMessage)
+	}
+	if replicasPresent == autoscalingPresent {
+		return errors.New(poolScalingModeExactlyOneMessage)
+	}
+	return nil
+}
+
+func resolvedConfigurationPresence(config, plan attr.Value) (present, known bool) {
+	if config.IsNull() {
+		return false, true
+	}
+	if !config.IsUnknown() {
+		return true, true
+	}
+	if plan.IsUnknown() {
+		return false, false
+	}
+	return !plan.IsNull(), true
+}
+
+func addPoolScalingModeDiagnostic(diagnostics *diag.Diagnostics, err error) {
+	diagnostics.AddError(poolScalingModeDiagnosticSummary, err.Error())
+}
+
 func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan poolResourceModel
+	var config, plan poolResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := validatePoolScalingModeAtApply(config, plan); err != nil {
+		addPoolScalingModeDiagnostic(&resp.Diagnostics, err)
 		return
 	}
 	poolRequest := plan.toSDKCreatePoolRequest(ctx, &resp.Diagnostics)
@@ -118,8 +183,16 @@ func (r *poolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state poolResourceModel
+	var config, plan, state poolResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := validatePoolScalingModeAtApply(config, plan); err != nil {
+		addPoolScalingModeDiagnostic(&resp.Diagnostics, err)
+		return
+	}
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -223,18 +296,23 @@ func (m poolResourceModel) toSDKPool(ctx context.Context, diagnostics *diag.Diag
 }
 
 func (m poolResourceModel) toSDKPoolSpec(ctx context.Context, diagnostics *diag.Diagnostics) cyclops_sdk_schema.OsGymSandboxWarmPoolSpec {
+	replicas := uint32(m.Replicas.ValueInt64())
 	var autoscaling *cyclops_sdk_schema.WarmPoolAutoscaling
 	var autoscalingValue autoscalingModel
 	if objectValue(ctx, m.Autoscaling, &autoscalingValue, diagnostics) {
 		minPoolSize := uint32(autoscalingValue.MinPoolSize.ValueInt64())
 		initialPoolSize := uint32(autoscalingValue.InitialPoolSize.ValueInt64())
-		maxPoolSize := uint32(autoscalingValue.MaxPoolSize.ValueInt64())
+		maxPoolSize := defaultMaxPoolSize
+		if !autoscalingValue.MaxPoolSize.IsNull() && !autoscalingValue.MaxPoolSize.IsUnknown() {
+			maxPoolSize = uint32(autoscalingValue.MaxPoolSize.ValueInt64())
+		}
 		autoscaling = &cyclops_sdk_schema.WarmPoolAutoscaling{
 			MinPoolSize: &minPoolSize, InitialPoolSize: &initialPoolSize, MaxPoolSize: &maxPoolSize,
 		}
+		replicas = initialPoolSize
 	}
 	return cyclops_sdk_schema.OsGymSandboxWarmPoolSpec{
-		Replicas:           uint32(m.Replicas.ValueInt64()),
+		Replicas:           replicas,
 		SandboxTemplateRef: cyclops_sdk_schema.SandboxTemplateRef{Name: m.templateName()},
 		Autoscaling:        autoscaling,
 	}
@@ -336,8 +414,8 @@ func (m *poolResourceModel) fromSDKPool(pool fleet_sdk.Pool, diagnostics *diag.D
 	m.ID = types.StringValue(pool.Metadata.Name)
 	m.Name = types.StringValue(pool.Metadata.Name)
 	m.Namespace = types.StringValue(pool.Metadata.Namespace)
-	m.Replicas = types.Int64Value(int64(pool.Spec.Replicas))
 	m.TemplateName = types.StringValue(pool.Spec.SandboxTemplateRef.Name)
+	m.Replicas = types.Int64Value(int64(pool.Spec.Replicas))
 	if pool.Spec.Autoscaling == nil {
 		m.Autoscaling = types.ObjectNull(autoscalingObjectType())
 	} else {

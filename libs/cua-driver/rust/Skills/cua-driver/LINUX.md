@@ -127,11 +127,13 @@ CI so the three surfaces can't drift. Linux-relevant notes:
   Linux builds rejected it via `additionalProperties:false` (it was
   effectively macOS-only); it is now uniformly schema-accepted — Linux
   glides a per-session cursor on X11 where the overlay is available.
-- **Windowless screen-absolute actions** pass `scope:"desktop"` with no
-  pid/window_id, uniformly with macOS and Windows. The session must have
-  effective desktop scope (`start_session(..., capture_scope:"desktop")`, or
-  an explicitly escalated `auto` session). Strict window sessions receive
-  `desktop_scope_disabled`; no persistent config is read or written.
+- **Windowless screen-absolute actions** use
+  `target:{"kind":"desktop","display_id":"primary"}`, uniformly with macOS
+  and Windows. Exact window actions use
+  `target:{"kind":"window","pid":PID,"window_id":WINDOW_ID}`. Legacy flat
+  `scope`, `pid`, and `window_id` fields remain compatibility inputs, but do
+  not combine them with `target`; capture modality no longer changes lifecycle
+  session state.
 
 ## Native application menus
 

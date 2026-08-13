@@ -87,8 +87,7 @@ origins, and typed browser tools. This avoids prompts without granting every
 Cua capability. For example:
 
 ```yaml
-version: 2
-mode: bounded
+version: 3
 expires_after: 2h
 idle_timeout: 20m
 
@@ -124,8 +123,8 @@ Launch Cua Driver with that reviewed scope:
 ```bash
 cua-driver serve \
   --permission-mode bounded \
-  --session-policy ./browser-session.yaml \
-  --approve-session-policy
+  --capability-manifest ./browser-session.yaml \
+  --approve-capability-manifest
 ```
 
 Bounded attachment does not display a Cua modal or banner. The manifest is the
@@ -161,7 +160,7 @@ A trusted embedding host can install the authorization callback described
 in [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes).
 In `standard`, the host may authorize the exact browser resource once. A
 standalone CLI or MCP launch can instead use `--grant existing-profile`.
-`bounded` uses the approved session manifest.
+`bounded` uses the approved capability manifest.
 
 The browser may display its own remote-debugging consent prompt. Cua Driver will
 press only the exact browser-owned semantic allow action for this approved

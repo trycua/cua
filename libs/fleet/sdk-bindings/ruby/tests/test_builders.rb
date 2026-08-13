@@ -16,3 +16,26 @@ rescue FleetSdk::SchemaBuildError::MissingRequiredField => error
 end
 legacy = FleetSdk::SandboxTemplateRef.new(name: 'legacy')
 raise 'legacy constructor changed' unless legacy.name == 'legacy'
+configuration = FleetSdk::CyclopsTokenProviderConfigurationBuilder.new
+  .base_url('https://api.example.test')
+  .pool_poll_interval_ms(5000)
+  .pool_poll_limit(120)
+  .claim_poll_interval_ms(5000)
+  .claim_poll_limit(120)
+  .build
+user_key = FleetSdk::CreateUserApiKeyRequestBuilder.new.name('automation').scope([]).build
+autoscaling = FleetSdk::WarmPoolAutoscalingBuilder.new
+  .min_pool_size(1).initial_pool_size(2).max_pool_size(5).build
+raise 'wrong polling value' unless configuration.pool_poll_interval_ms == 5000
+raise 'scope default changed' unless user_key.scope.empty?
+raise 'wrong autoscaling maximum' unless autoscaling.max_pool_size == 5
+begin
+  FleetSdk::TemplateBuilder.new.build
+  raise 'missing Template field did not fail'
+rescue FleetSdk::SdkBuildError::MissingRequiredField
+end
+begin
+  FleetSdk::CreateClaimRequestBuilder.new.build
+  raise 'missing claim pool did not fail'
+rescue FleetSdk::SdkBuildError::MissingRequiredField
+end

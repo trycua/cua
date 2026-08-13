@@ -386,6 +386,7 @@ mod tests {
             selected: None,
             focused: None,
             description: None,
+            document_uri: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             element_key: 0,
             depth: 0,

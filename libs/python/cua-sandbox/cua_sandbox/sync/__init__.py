@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Mapping, Optional
 
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost as _AsyncLocalhost
@@ -122,7 +122,8 @@ class Pool:
         image: Image,
         *,
         name: str | None = None,
-        replicas: int = 1,
+        replicas: int | None = None,
+        autoscaling: Mapping[str, int] | None = None,
         cpu: int | None = None,
         memory_mb: int | None = None,
         services: dict[str, int] | None = None,
@@ -134,6 +135,7 @@ class Pool:
                     image,
                     name=name,
                     replicas=replicas,
+                    autoscaling=autoscaling,
                     cpu=cpu,
                     memory_mb=memory_mb,
                     services=services,

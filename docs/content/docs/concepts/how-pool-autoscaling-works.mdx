@@ -1,0 +1,68 @@
+---
+title: "How pool autoscaling works"
+description: "How a sandbox pool measures demand from claims and keeps warm capacity ahead of your agents so GPUs never wait on sandbox boot."
+---
+
+GPU time dominates the cost of training a computer-use model. Every second the model waits for a sandbox to boot, an expensive GPU sits idle, and larger models multiply that loss across every GPU they occupy. Technologies exist that boot virtual machines in milliseconds, but a computer-use environment does not always package that way, especially across Windows, Android, Linux, and macOS runtimes. These environments boot in tens of seconds, not milliseconds.
+
+A **pool** removes that boot time from the GPU's critical path. The pool keeps sandboxes running ahead of demand, and an agent that asks for a sandbox claims one that is already booted. The pool then measures demand continuously and resizes itself: it grows when agents are waiting, sheds capacity when turnover slows, and scales to zero when the run ends.
+
+For the model of what a single sandbox is, read [How sandboxes work](/concepts/how-sandboxes-work).
+
+## Warm sandboxes take boot off the critical path
+
+A pool is a set of identical sandboxes started from one template, kept running and ready before any agent asks for them. Boot still happens, but it happens in the background while the pool provisions warm capacity, not while a GPU waits. When an agent claims a sandbox, the pool hands it one that is already running, so the agent's time-to-sandbox is a bind, not a boot.
+
+## Claims are the demand signal
+
+You do not tell the pool how big to be over time. Demand is calculated from **claims**. One claim is one sandbox an agent wants right now, and the pool's demand is its count of live claims.
+
+A *pending* claim is an agent waiting for a sandbox. That is unmet demand, so the pool grows until the claim can bind. A *bound* claim is a sandbox in use, which is demand the pool must keep serving. Releasing a claim drops demand, and the pool shrinks to match. There is no schedule or forecast to configure: the pool follows what your agents actually ask for.
+
+## The buffer follows turnover
+
+The autoscaler does not chase the instantaneous claim count. It holds the recent peak of demand over a short window, and it also counts claims created within that window, so a sandbox that is claimed and released quickly still registers as demand. The effect is that warm capacity tracks turnover, not just occupancy.
+
+This matches how demand shifts across a training run. Early in a run, short trajectories churn through sandboxes quickly. That churn keeps the recent peak and the claim-creation rate high, so the pool holds a deep buffer of warm spares and every new claim binds instantly. As the agent improves, trajectories grow longer and sandboxes turn over more slowly. The churn signal decays, demand settles toward the number of sandboxes actually in use, and the pool sheds the redundancy that has lost its value. When the run ends and the last claims are released, demand reads zero and the pool scales to zero.
+
+## Floor, head start, and ceiling
+
+Autoscaling is bounded by three settings:
+
+- **Minimum pool size** is the durable warm floor kept while autoscaling is enabled. A floor of `0`, the default, lets the pool scale to zero when there are no claims. A positive floor keeps spares warm so the first claims of the next run bind without a cold start.
+- **Initial pool size** is a one-time head start. The pool seeds this many sandboxes when it is created so the first claims bind warm, then the value decays toward live demand, never below the floor, once the autoscaler takes over.
+- **Maximum pool size** is a hard ceiling on warm capacity, `50` by default. Demand above the ceiling waits as pending claims instead of provisioning more sandboxes, which makes the ceiling a spend guard.
+
+## Scale-down never takes a sandbox from an agent
+
+Shrinking is drain-safe. Scale-down removes only warm, unclaimed sandboxes; a sandbox bound to a claim lives as long as its claim does, so a running trajectory is never interrupted by the pool resizing under it.
+
+The recent-peak window also means brief dips do not thrash the pool: a momentary gap between trajectories does not tear down capacity that the next batch of claims would immediately rebuild. And if the demand signal itself becomes unavailable, which is a metrics outage rather than real zero demand, the pool degrades to its warm floor instead of freezing or stranding new claims.
+
+## Two sizing modes, one declarative call
+
+Every pool uses exactly one sizing mode. A **static** pool holds a fixed number of warm sandboxes regardless of claims. An **autoscaling** pool replaces that fixed target with the demand-following behavior described on this page, bounded by the floor and ceiling.
+
+Either way, a pool is declared, not scripted. `Pool.apply` describes the desired state of the pool, and the engine resolves how to reach it from whatever the current state is. The same call creates a pool that does not exist and reconciles one that does:
+
+```python
+from cua_sandbox import Image, Pool
+
+pool = await Pool.apply(
+    Image.windows(),
+    name="windows-pool",
+    autoscaling={"min_pool_size": 0, "initial_pool_size": 3, "max_pool_size": 20},
+    cpu=4,
+    memory_mb=4096,
+    services={"server": 8000},
+)
+
+async with pool.claim() as sandbox:
+    await sandbox.screenshot()
+```
+
+Pass `replicas` instead of `autoscaling` for a static pool; `Pool.apply` accepts exactly one of the two. Start with [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python). The same bounds are available as the `autoscaling` block in Terraform, following [Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform), and from the run.cua.ai dashboard.
+
+## Warm sandboxes instead of idle GPUs
+
+The economic trade is deliberate. A warm sandbox costs orders of magnitude less per hour than the GPU it unblocks, so paying for a buffer of running sandboxes is cheap insurance against paying for idle GPU time. Autoscaling keeps even that cost proportional: the buffer is deep only while churn makes it valuable, and when the run ends, it is gone.

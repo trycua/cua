@@ -5,12 +5,16 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any, Callable, Coroutine, Generic, TypeVar, cast
+from typing import Any, Callable, Coroutine, Generic, Mapping, TypeVar, cast
 
 from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.fleet import FleetTransport
-from cua_sandbox.transport.fleet_cloud import FleetCloudTransport, _FleetClient
+from cua_sandbox.transport.fleet_cloud import (
+    FleetCloudTransport,
+    _FleetClient,
+    _normalized_autoscaling,
+)
 from fleet_sdk import (
     Claim,
     ClaimSpec,
@@ -231,25 +235,39 @@ class Pool:
         image: Image,
         *,
         name: str | None = None,
-        replicas: int = 1,
+        replicas: int | None = None,
+        autoscaling: Mapping[str, int] | None = None,
         cpu: int | None = None,
         memory_mb: int | None = None,
         services: dict[str, int] | None = None,
     ) -> "Pool":
+        if replicas is not None and autoscaling is not None:
+            raise ValueError("configure exactly one of replicas or autoscaling")
+        normalized_autoscaling = (
+            _normalized_autoscaling(autoscaling) if autoscaling is not None else None
+        )
+        if replicas is None and normalized_autoscaling is None:
+            replicas = 1
         FleetCloudTransport._validate_image(image)
         effective_services = services or {
             "server": 8000,
             **{f"port-{port}": port for port in image._ports if port != 8000},
         }
         if name is None:
+            identity_fields: dict[str, Any] = {
+                "image": cloud_registry_image(image),
+                "cpu": cpu,
+                "memory_mb": memory_mb,
+                "services": sorted(effective_services.items()),
+            }
+            # Static pools keep their pre-autoscaling identity so existing
+            # unnamed pools reconcile instead of duplicating.
+            if normalized_autoscaling is None:
+                identity_fields["replicas"] = replicas
+            else:
+                identity_fields["autoscaling"] = sorted(normalized_autoscaling.items())
             identity = json.dumps(
-                {
-                    "image": cloud_registry_image(image),
-                    "replicas": replicas,
-                    "cpu": cpu,
-                    "memory_mb": memory_mb,
-                    "services": sorted(effective_services.items()),
-                },
+                identity_fields,
                 separators=(",", ":"),
                 sort_keys=True,
             )
@@ -257,7 +275,8 @@ class Pool:
         transport = FleetCloudTransport(
             image=image,
             name=name,
-            replicas=replicas,
+            replicas=replicas if replicas is not None else 1,
+            autoscaling=normalized_autoscaling,
             cpu=cpu,
             memory_mb=memory_mb,
             services=effective_services,

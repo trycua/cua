@@ -43,6 +43,7 @@ from fleet_sdk import (
     SandboxTemplateRefBuilder,
     ServiceProtocol,
     VmTemplateBuilder,
+    WarmPoolAutoscalingBuilder,
 )
 
 if TYPE_CHECKING:
@@ -64,6 +65,35 @@ def _claim_name(pool_name: str) -> str:
     prefix_length = _DNS_LABEL_MAX_LENGTH - len(hash_suffix) - 1
     prefix = normalized_name[:prefix_length].rstrip("-")
     return f"{prefix}-{hash_suffix}"
+
+
+# Defaults mirror the WarmPoolAutoscaling schema so an omitted bound hashes
+# and reconciles the same as an explicitly-default one.
+_AUTOSCALING_DEFAULTS = {"min_pool_size": 0, "initial_pool_size": 0, "max_pool_size": 50}
+
+
+def _normalized_autoscaling(autoscaling: Mapping[str, int]) -> dict[str, int]:
+    if not isinstance(autoscaling, Mapping):
+        raise ValueError("autoscaling must be a mapping of pool-size bounds")
+    unknown = set(autoscaling) - set(_AUTOSCALING_DEFAULTS)
+    if unknown:
+        raise ValueError(
+            "unknown autoscaling keys: "
+            + ", ".join(sorted(str(key) for key in unknown))
+            + "; expected min_pool_size, initial_pool_size, max_pool_size"
+        )
+    normalized = dict(_AUTOSCALING_DEFAULTS)
+    for key, value in autoscaling.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"autoscaling {key} must be a non-negative integer")
+        normalized[key] = value
+    if normalized["max_pool_size"] < 1:
+        raise ValueError("autoscaling max_pool_size must be a positive integer")
+    if normalized["min_pool_size"] > normalized["max_pool_size"]:
+        raise ValueError("autoscaling min_pool_size must not exceed max_pool_size")
+    if normalized["initial_pool_size"] > normalized["max_pool_size"]:
+        raise ValueError("autoscaling initial_pool_size must not exceed max_pool_size")
+    return normalized
 
 
 _GITHUB_WIF_AUDIENCE = "fleets"
@@ -360,6 +390,7 @@ class FleetCloudTransport(FleetTransport):
         pool_name: str | None = None,
         create_claim: bool = False,
         replicas: int = 1,
+        autoscaling: Mapping[str, int] | None = None,
         services: Mapping[str, int] | None = None,
     ) -> None:
         if (
@@ -375,6 +406,9 @@ class FleetCloudTransport(FleetTransport):
             raise ValueError("Fleet cloud sandboxes currently support only region='us-east-1'")
         if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
             raise ValueError("replicas must be a positive integer")
+        self._autoscaling = (
+            _normalized_autoscaling(autoscaling) if autoscaling is not None else None
+        )
         if services is not None and (
             not isinstance(services, Mapping)
             or not services
@@ -623,12 +657,22 @@ class FleetCloudTransport(FleetTransport):
 
     def _pool_request(self) -> CreatePoolRequest:
         template_ref = SandboxTemplateRefBuilder().name(self._pool_name).build()
-        pool_spec = (
-            OsGymSandboxWarmPoolSpecBuilder()
-            .replicas(self._replicas)
-            .sandbox_template_ref(template_ref)
-            .build()
-        )
+        spec_builder = OsGymSandboxWarmPoolSpecBuilder().sandbox_template_ref(template_ref)
+        if self._autoscaling is None:
+            spec_builder = spec_builder.replicas(self._replicas)
+        else:
+            # Seed spec.replicas to the head start; the autoscaler owns the
+            # value once it starts polling. Mirrors the Terraform provider.
+            spec_builder = spec_builder.replicas(
+                self._autoscaling["initial_pool_size"]
+            ).autoscaling(
+                WarmPoolAutoscalingBuilder()
+                .min_pool_size(self._autoscaling["min_pool_size"])
+                .initial_pool_size(self._autoscaling["initial_pool_size"])
+                .max_pool_size(self._autoscaling["max_pool_size"])
+                .build()
+            )
+        pool_spec = spec_builder.build()
         return CreatePoolRequestBuilder().namespace(self._pool_name).spec(pool_spec).build()
 
     @staticmethod

@@ -174,9 +174,26 @@ class Image:
         return cls(os_type="android", distro="android", version=version, kind=kind)
 
     @classmethod
-    def from_registry(cls, ref: str) -> Image:
-        """Create an image from a registry reference. kind is resolved after pull."""
-        return cls(os_type="linux", distro="registry", version="latest", kind=None, _registry=ref)
+    def from_registry(
+        cls,
+        ref: str,
+        *,
+        os_type: str = "linux",
+        kind: Optional[str] = None,
+    ) -> Image:
+        """Create an image from a registry reference.
+
+        os_type selects the firmware: Windows guest disks are built UEFI-only,
+        so a Windows containerDisk pulled from a registry must say so or it is
+        handed BIOS and will not boot. kind is resolved after pull when omitted.
+        """
+        return cls(
+            os_type=os_type,
+            distro="registry",
+            version="latest",
+            kind=kind,
+            _registry=ref,
+        )
 
     @classmethod
     def from_file(

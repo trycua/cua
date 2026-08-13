@@ -164,7 +164,9 @@ async def test_cloud_local_creation_never_routes_to_fleet(monkeypatch):
     calls = []
 
     class Runtime:
-        async def start(self, image, name):
+        # Sandbox._create tells the runtime whether the sandbox is ephemeral;
+        # a double that omits it fails the call rather than the assertion.
+        async def start(self, image, name, *, ephemeral=True):
             calls.append(("start", image, name))
             return RuntimeInfo(host="127.0.0.1", api_port=8000, name=name, environment="linux")
 

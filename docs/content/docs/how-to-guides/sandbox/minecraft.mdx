@@ -367,7 +367,7 @@ The session disk is a qcow2 overlay on the base containerDisk. `qemu-img convert
 qemu-img convert -O qcow2 -c ~/.cua/cua-sandbox/images/sessions/mc-win.qcow2 disk.img
 ```
 
-Expect it to be slow and CPU-bound rather than I/O-bound — `-c` is single-threaded zlib. For the image built here it took **8 min 44 s** and produced **7,697,072,128 bytes (7.14 GiB)** from a 3.40 GB overlay on the 5.62 GiB base disk, 64 GiB virtual. Peak RSS was 19 MB, so the host size does not matter.
+Expect it to be slow and CPU-bound rather than I/O-bound — `-c` is single-threaded zlib. For the image built here it took **8 min 44 s** and produced **7,697,072,128 bytes (7.14 GiB)** from a 3.40 GB overlay on the 5.62 GiB base disk, 64 GiB virtual. `qemu-img` itself needs almost nothing resident — under 20 MB — so the size of the host does not matter.
 
 <Callout type="info">
   Zero-filling the volume's free space from inside Windows before shutting down makes the export smaller, but only if QEMU is told to discard the zeroes instead of storing them. Attach the disk with `discard=unmap,detect-zeroes=unmap` and the writes are dropped, so the source qcow2 *shrinks* rather than growing toward its 64 GiB virtual size.
@@ -376,7 +376,7 @@ Expect it to be slow and CPU-bound rather than I/O-bound — `-c` is single-thre
   -drive file=<session>.qcow2,format=qcow2,if=virtio,discard=unmap,detect-zeroes=unmap
   ```
 
-  Inside the guest, write zeroes to a file until the volume is nearly full and then delete it. Leave about a gigabyte of headroom; filling `C:` completely destabilises Windows. On the disk here this took about 90 seconds for 46 GB of free space.
+  Inside the guest, write zeroes to a file until the volume is nearly full and then delete it. Leave about a gigabyte of headroom; filling `C:` completely destabilises Windows. Zeroing roughly 46 GB took under two minutes on the disks here, because QEMU drops the writes rather than committing them.
 </Callout>
 
 ### Build the OCI image and push it

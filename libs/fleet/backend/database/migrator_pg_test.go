@@ -570,6 +570,40 @@ func TestRunFailsClosedForStaticRoleCreateDBDrift(t *testing.T) {
 	}
 }
 
+func TestValidateStaticRoleContractsAllowsMissingCreatorAdminMembership(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	migrationOwner := currentRole(t, ctx, migrationURL)
+	maintenance := connect(t, ctx, maintenanceURLForDatabase(t, maintenanceURL, migrationURL))
+	defer maintenance.Close(ctx)
+	migrationOwnerIdentifier := pgx.Identifier{migrationOwner}.Sanitize()
+	maintenanceRole := currentRole(t, ctx, maintenanceURL)
+	maintenanceIdentifier := pgx.Identifier{maintenanceRole}.Sanitize()
+	const role = "cyclops_app"
+	if _, err := maintenance.Exec(ctx, "revoke "+pgx.Identifier{role}.Sanitize()+" from "+migrationOwnerIdentifier+" granted by "+maintenanceIdentifier+" restrict"); err != nil {
+		t.Fatalf("remove creator-admin membership for %s: %v", role, err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transaction.Rollback(ctx)
+	if err := validateStaticRoleMemberships(ctx, transaction, migrationOwner, staticMembershipContracts(migrationOwner)); err != nil {
+		t.Fatal(err)
+	}
+	if rows := staticMembershipRows(t, ctx, maintenance, role, migrationOwner); len(rows) != 0 {
+		t.Fatalf("role %s creator memberships = %+v, want none", role, rows)
+	}
+}
+
 func TestRunPreservesMaintenanceSuperuserStaticMembershipGrant(t *testing.T) {
 	maintenanceURL := requireMigratorIntegration(t)
 	ctx := context.Background()

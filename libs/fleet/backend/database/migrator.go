@@ -1100,11 +1100,11 @@ func staticCreatorAdminMembershipsAreExact(member string, grants []staticMembers
 			return false
 		}
 	}
-	return foreignCount == 1 && ownerCount <= 1 && (allowOwnerGrant || ownerCount == 0)
+	return foreignCount <= 1 && ownerCount <= 1 && (allowOwnerGrant || ownerCount == 0)
 }
 
 func staticCreatorAdminMembershipError(role, member string) error {
-	return fmt.Errorf("role %s must have exactly one foreign creator-admin membership for %s granted by a true PostgreSQL superuser with admin=true inherit=false set=false", role, member)
+	return fmt.Errorf("role %s must have at most one foreign creator-admin membership for %s granted by a true PostgreSQL superuser with admin=true inherit=false set=false", role, member)
 }
 
 func creatorAdminMembershipsAreExact(member string, grants []staticMembershipGrant) bool {

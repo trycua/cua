@@ -173,8 +173,11 @@ func TestAllowsRegisteredTenantCreatorAdminMembership(t *testing.T) {
 	}
 }
 
-func TestStaticCreatorAdminMembershipsRequireOneForeignSuperuserGrant(t *testing.T) {
+func TestStaticCreatorAdminMembershipsAllowAbsentOrOneForeignSuperuserGrant(t *testing.T) {
 	foreign := staticMembershipGrant{grantor: "bootstrap_owner", grantorSuperuser: true, admin: true, inherit: false, set: false}
+	if !staticCreatorAdminMembershipsAreExact("migration_owner", nil, false, nil) {
+		t.Fatal("expected absent creator-admin membership to be allowed")
+	}
 	ownerDrift := staticMembershipGrant{grantor: "migration_owner", admin: true, inherit: true, set: true}
 	if !staticCreatorAdminMembershipsAreExact("migration_owner", []staticMembershipGrant{foreign}, false, nil) {
 		t.Fatal("expected one foreign superuser creator row to be allowed")
@@ -195,7 +198,6 @@ func TestStaticCreatorAdminMembershipsRequireOneForeignSuperuserGrant(t *testing
 		grants          []staticMembershipGrant
 		allowOwnerGrant bool
 	}{
-		{name: "missing foreign creator", grants: nil},
 		{name: "non-superuser foreign creator", grants: []staticMembershipGrant{{grantor: "foreign_owner", admin: true, inherit: false, set: false}}},
 		{name: "wrong foreign options", grants: []staticMembershipGrant{{grantor: "bootstrap_owner", grantorSuperuser: true, admin: true, inherit: true, set: false}}},
 		{name: "second foreign creator", grants: []staticMembershipGrant{foreign, {grantor: "other_bootstrap_owner", grantorSuperuser: true, admin: true, inherit: false, set: false}}},

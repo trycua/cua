@@ -338,7 +338,7 @@ Notice there is no `-cpu host` here. That flag exists on the local path because 
 <Callout type="warn">
   **On Fleet the game needs one extra environment variable: `GALLIUM_DRIVER=softpipe`.** With Mesa's default llvmpipe renderer, Minecraft dies during resource loading every time — `Process crashed with exitcode -2147024809`, no Java exception, no `hs_err` file, nothing in the Windows event log, the log simply stopping after `Reloading ResourceManager`. Switching Mesa to its `softpipe` rasteriser fixes it, and the game runs.
 
-  Set the variable in the process that launches the launcher, so the game inherits it — a machine-level variable does not reach an already-running process, and a test that silently did not apply looks exactly like a test that failed.
+  Set the variable in the process that launches the launcher, so the game inherits it — a machine-level variable does not reach an already-running process, and a test that silently did not apply looks exactly like a test that failed. `setup.ps1` above already started Prism without it, so close the running launcher first and start it again like this.
 
   ```powershell
   $env:GALLIUM_DRIVER = 'softpipe'
@@ -362,6 +362,7 @@ What that crash is *not*, since each obvious explanation was tested and eliminat
 | Launcher never appears, no error | MSVC build without the VC++ redistributable | use the MinGW portable build |
 | Guest has an IP address but cannot resolve names | both user-mode NICs offered the same address | give the second NIC its own subnet |
 | `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |
-| Game exits during resource loading with no Java exception | default `qemu64` CPU model | append `-cpu host` to `extra_args` |
+| Game exits during resource loading with no Java exception, **local** | default `qemu64` CPU model | append `-cpu host` to `extra_args` |
+| Game exits during resource loading with `exitcode -2147024809`, **Fleet** | Mesa's default llvmpipe renderer | set `GALLIUM_DRIVER=softpipe` in the process that starts the launcher, and restart the launcher if it is already running |
 | `Permission denied: user policy: tool 'X' is not allowed` | cua-driver's YAML policy refuses that tool even though `list_tools()` lists it | use an allowed tool — `get_desktop_state` instead of `get_screen_size`, `list_windows` instead of `get_accessibility_tree` |
 | Model replies with empty output on the first call | endpoint is streaming-only | issue `stream=True` and rebuild with `litellm.stream_chunk_builder` |

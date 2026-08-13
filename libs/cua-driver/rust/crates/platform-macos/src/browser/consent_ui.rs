@@ -433,6 +433,7 @@ mod tests {
             ("e\u{301}", ["हिन्दी", "ไทย"]),
             ("\u{2067}العربية\u{2069}", ["עברית", "فارسی"]),
             ("日本語", ["한국어", "简体中文"]),
+            ("Հայերեն", ["ქართული", "አማርኛ"]),
             ("A\u{200d}B", ["👩🏽‍💻", "✅"]),
         ] {
             let nodes = prompt(title, labels);
@@ -441,6 +442,19 @@ mod tests {
                 Some(8)
             );
         }
+    }
+
+    #[test]
+    fn matcher_refuses_when_accessible_text_cannot_prove_the_native_sheet() {
+        let mut nodes = prompt("placeholder", ["A", "B"]);
+        for node in &mut nodes {
+            node.title = None;
+        }
+
+        assert_eq!(
+            exact_allow_button_with(&nodes, |pointer| pointer == 7).unwrap(),
+            None
+        );
     }
 
     #[test]

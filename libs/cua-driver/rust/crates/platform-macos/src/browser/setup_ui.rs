@@ -1692,7 +1692,9 @@ mod tests {
             ("e\u{301}", "हिन्दी", "ไทย"),
             ("\u{2067}العربية\u{2069}", "עברית", "فارسی"),
             ("日本語", "한국어", "简体中文"),
+            ("Հայերեն", "ქართული", "አማርኛ"),
             ("A\u{200d}B", "👩🏽‍💻", "✅"),
+            ("", "", ""),
         ] {
             let nodes = vec![
                 web_node("AXWebArea", Some(document_name), None, &[]),
@@ -1704,6 +1706,20 @@ mod tests {
                 .unwrap()
                 .is_some());
         }
+    }
+
+    #[test]
+    fn setup_page_does_not_require_accessible_names() {
+        let nodes = vec![
+            web_node("AXWebArea", None, None, &[]),
+            web_node("AXHeading", None, None, &[]),
+            node("AXTextField", None, Some(chrome().setup_url), &["AXPress"]),
+            web_node("AXCheckBox", None, None, &["AXPress"]),
+        ];
+
+        assert!(exact_setup_checkbox(&tree(nodes), chrome())
+            .unwrap()
+            .is_some());
     }
 
     #[test]

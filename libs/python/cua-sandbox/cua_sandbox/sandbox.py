@@ -190,6 +190,29 @@ class _ConnectResult:
             await self._instance.disconnect()
 
 
+def _remove_orphan_container(name: str) -> bool:
+    """Remove a container left behind by a launch that never wrote state.
+
+    A local launch that times out during the readiness probe leaves a running
+    container and no state file, which put it beyond the reach of
+    ``Sandbox.delete``. Returns whether a container was actually removed.
+    """
+    import subprocess
+
+    try:
+        exists = subprocess.run(
+            ["docker", "inspect", "--type", "container", name],
+            capture_output=True,
+        )
+        if exists.returncode != 0:
+            return False
+        removed = subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        return removed.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        # Docker missing or unusable — no orphan we can claim to have removed.
+        return False
+
+
 def _auto_runtime(image: Image) -> "Runtime":
     """Pick a runtime automatically based on image.os_type and image.kind."""
     import platform as _plat
@@ -233,6 +256,24 @@ def _auto_runtime(image: Image) -> "Runtime":
 
     # Linux VM or Windows VM → prefer Docker-wrapped QEMU; fall back to bare-metal
     from cua_sandbox.runtime.qemu import QEMURuntime
+
+    if image.os_type == "linux":
+        # A Linux VM boots the pinned containerDisk under bare-metal QEMU — the
+        # same disk Fleet cloud boots. Docker-wrapped QEMU cannot reach that path
+        # at all: resolve_image() hands it the XFCE *container* image, so asking
+        # for a VM used to quietly get you a container.
+        from cua_sandbox.runtime.compat import _has_qemu
+
+        if not _has_qemu():
+            raise RuntimeError(
+                "Image.linux() is a VM and needs QEMU, which was not found on "
+                "this host. Install it:\n"
+                "  Debian/Ubuntu:  sudo apt install qemu-system-x86\n"
+                "  Fedora/RHEL:    sudo dnf install qemu-system-x86\n"
+                "  macOS:          brew install qemu\n"
+                "Or pass an explicit runtime= if you want a different one."
+            )
+        return QEMURuntime(mode="bare-metal")
 
     if image.os_type == "windows":
         # Windows bare-metal QEMU works on any host with qemu-system-x86_64
@@ -1298,6 +1339,10 @@ class Sandbox:
 
             subprocess.run(["docker", "stop", name], capture_output=True)
             subprocess.run(["docker", "rm", name], capture_output=True)
+        elif not _remove_orphan_container(name):
+            # No state file and no container by that name — deleting nothing at
+            # all used to report success, so a typo looked like a deletion.
+            raise ValueError(f"No local sandbox named {name!r}")
         sandbox_state.delete(name)
 
     # ── Internal factory ─────────────────────────────────────────────────
@@ -1452,6 +1497,7 @@ class Sandbox:
             if not any([ws_url, http_url]):
                 transport = _make_transport(
                     api_key=api_key,
+                    image=image,
                     name=name,
                     cpu=cpu,
                     memory_mb=memory_mb,
@@ -1837,6 +1883,7 @@ def _make_transport(
     http_url: Optional[str] = None,
     api_key: Optional[str] = None,
     container_name: Optional[str] = None,
+    image: Optional[Image] = None,
     name: Optional[str] = None,
     cpu: Optional[int] = None,
     memory_mb: Optional[int] = None,
@@ -1850,6 +1897,7 @@ def _make_transport(
     return CloudTransport(
         name=name,
         api_key=api_key,
+        image=image,
         cpu=cpu,
         memory_mb=memory_mb,
         disk_gb=disk_gb,

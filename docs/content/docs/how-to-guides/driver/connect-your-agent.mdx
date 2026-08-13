@@ -5,7 +5,7 @@ description: Connect an agent to Cua Driver through MCP or the Cua Driver skill 
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver lets a [computer-use agent](/concepts/what-is-computer-use) drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session. MCP-capable agents connect through `cua-driver mcp`; skill-based agents such as Prime Agent call the CLI directly.
+Cua Driver lets a [computer-use agent](/concepts/what-is-computer-use) drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session. MCP-capable agents connect through `cua-driver mcp`; skill-based agents such as Prime Agent call the CLI directly. [Grok Bot](/use-cua-with/grok-bot) is a separate path; it is not Grok Build and does not use stdio MCP.
 
 <Callout type="info">
   This connects an agent to Cua Driver on the current machine. To create a disposable local desktop,
@@ -204,6 +204,19 @@ It returns:
 
 After saving the config, restart the client and confirm the `cua-driver` server is connected.
 
+## Grok Bot
+
+Grok Bot is not Grok Build. It has no `mcp-config` preset and does not use stdio
+MCP. See [Grok Bot](/use-cua-with/grok-bot).
+
+Two valid setups:
+
+1. **Your local Mac or Windows computer.** Install Cua Driver there. Grok Bot
+   uses local-command execution (`cua-driver call …`) behind its local-computer
+   approval policy.
+2. **Grok Bot's persistent cloud Linux computer.** If that machine is the
+   desktop being driven, install Cua Driver there and call `cua-driver` on it.
+
 ## Clients without a dedicated preset
 
 Some MCP clients can run Cua Driver directly even though `mcp-config` does not yet have a named
@@ -211,7 +224,7 @@ preset for them. Resolve the absolute executable path first with `command -v cua
 the client's native command:
 
 ```bash
-# Grok Build
+# Grok Build (xAI coding CLI, not Grok Bot)
 grok mcp add cua-driver -- /absolute/path/to/cua-driver mcp
 grok mcp doctor cua-driver
 

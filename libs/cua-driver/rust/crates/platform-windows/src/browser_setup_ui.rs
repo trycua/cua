@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Mutex, OnceLock},
 };
 
@@ -22,22 +22,12 @@ use crate::uia::UiaNode;
 // text rather than a stable automation contract. Bootstrap against the exact
 // approved HWND, native-vs-renderer boundary, control type, supported action,
 // uniqueness, and exact post-action state instead of maintaining language
-// allowlists or accepting fuzzy labels.
+// allowlists or accepting fuzzy labels. The internal setup page follows the
+// same rule: its native URL and web-control topology are contracts; its
+// localized document, heading, and checkbox names are not.
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
-}
-
-fn field_equals(node: &UiaNode, expected: &str) -> bool {
-    [
-        node.name.as_deref(),
-        node.value.as_deref(),
-        node.automation_id.as_deref(),
-        node.help_text.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|value| value.trim().eq_ignore_ascii_case(expected))
 }
 
 fn release_nodes(nodes: &[UiaNode]) {
@@ -46,27 +36,30 @@ fn release_nodes(nodes: &[UiaNode]) {
     }
 }
 
-fn unique_actionable(
+fn unique_web_actionable(
     nodes: &[UiaNode],
     control_type: &str,
-    label: &str,
     action: &str,
 ) -> Result<Option<usize>, BrowserRefusal> {
     let matches = nodes
         .iter()
         .filter(|node| {
-            node.control_type == control_type
-                && field_equals(node, label)
+            node.in_web_content
+                && node.control_type == control_type
                 && node.actions.iter().any(|value| value == action)
+                && node.enabled != Some(false)
+                && node.element_ptr != 0
         })
         .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [] => Ok(None),
-        [element] => Ok(Some(*element)),
+        .collect::<HashSet<_>>();
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.into_iter().next()),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            format!("multiple exact {control_type} controls matched {label:?}"),
+            format!(
+                "multiple web {control_type} controls expose the exact {action} action on the setup page"
+            ),
         )),
     }
 }
@@ -139,18 +132,11 @@ fn setup_page_proven(nodes: &[UiaNode], descriptor: &BrowserSetupDescriptor) -> 
                     .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
         })
         .count();
-    let exact_heading = nodes.iter().any(|node| {
-        matches!(node.control_type.as_str(), "Header" | "Text")
-            && field_equals(node, descriptor.page_heading)
-    });
-    let exact_page = nodes.iter().any(|node| {
-        node.control_type == "Document"
-            && descriptor
-                .page_titles
-                .iter()
-                .any(|title| field_equals(node, title))
-    });
-    exact_url_count == 1 && exact_page && exact_heading
+    let document_count = nodes
+        .iter()
+        .filter(|node| node.control_type == "Document" && !node.in_web_content)
+        .count();
+    exact_url_count == 1 && document_count == 1
 }
 
 fn exact_setup_checkbox(
@@ -160,7 +146,7 @@ fn exact_setup_checkbox(
     if !setup_page_proven(nodes, descriptor) {
         return Ok(None);
     }
-    unique_actionable(nodes, "CheckBox", descriptor.checkbox_label, "toggle")
+    unique_web_actionable(nodes, "CheckBox", "toggle")
 }
 
 unsafe fn set_value(element_ptr: usize, value: &str) -> Result<(), BrowserRefusal> {
@@ -642,7 +628,9 @@ mod tests {
     }
 
     #[test]
-    fn checkbox_requires_exact_url_heading_and_unique_toggle() {
+    fn checkbox_requires_exact_internal_url_and_unique_web_toggle() {
+        let mut checkbox = node("CheckBox", descriptor().checkbox_label, None, &["toggle"]);
+        checkbox.in_web_content = true;
         let nodes = vec![
             node(
                 "Edit",
@@ -652,14 +640,18 @@ mod tests {
             ),
             node("Document", descriptor().page_titles[0], None, &[]),
             node("Header", descriptor().page_heading, None, &[]),
-            node("CheckBox", descriptor().checkbox_label, None, &["toggle"]),
+            checkbox,
         ];
         assert_eq!(exact_setup_checkbox(&nodes, descriptor()).unwrap(), Some(7));
 
-        let mut localized_address = nodes.clone();
-        localized_address[0].name = Some("アドレス検索バー".to_owned());
+        let mut localized = nodes.clone();
+        localized[0].name = Some("アドレス検索バー".to_owned());
+        localized[1].name = Some("远程调试页面".to_owned());
+        localized[2].name = Some("Удалённая отладка".to_owned());
+        localized[3].name = Some("السماح بتصحيح الأخطاء لهذا المتصفح".to_owned());
+        localized[3].in_web_content = true;
         assert_eq!(
-            exact_setup_checkbox(&localized_address, descriptor()).unwrap(),
+            exact_setup_checkbox(&localized, descriptor()).unwrap(),
             Some(7)
         );
 
@@ -668,6 +660,59 @@ mod tests {
         assert_eq!(
             exact_setup_checkbox(&wrong_url, descriptor()).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn setup_page_names_are_opaque_across_unicode_scripts_and_normalization() {
+        let samples = [
+            ("e\u{301}", "é", "✅"),
+            ("हिन्दी", "ไทย", "עברית"),
+            ("日本語", "한국어", "简体中文"),
+            ("\u{2067}العربية\u{2069}", "فارسی", "اردو"),
+            ("👩🏽‍💻", "A\u{200d}B", "𐐷"),
+        ];
+        for (document_name, heading_name, checkbox_name) in samples {
+            let mut checkbox = node("CheckBox", checkbox_name, None, &["toggle"]);
+            checkbox.in_web_content = true;
+            let nodes = vec![
+                node(
+                    "Edit",
+                    "opaque native address field",
+                    Some(descriptor().setup_url),
+                    &["set_value"],
+                ),
+                node("Document", document_name, None, &[]),
+                node("Header", heading_name, None, &[]),
+                checkbox,
+            ];
+            assert_eq!(exact_setup_checkbox(&nodes, descriptor()).unwrap(), Some(7));
+        }
+    }
+
+    #[test]
+    fn setup_page_refuses_ambiguous_web_toggles_without_reading_their_names() {
+        let mut first = node("CheckBox", "A", None, &["toggle"]);
+        first.element_ptr = 41;
+        first.in_web_content = true;
+        let mut second = node("CheckBox", "B", None, &["toggle"]);
+        second.element_ptr = 42;
+        second.in_web_content = true;
+        let nodes = vec![
+            node(
+                "Edit",
+                "address",
+                Some(descriptor().setup_url),
+                &["set_value"],
+            ),
+            node("Document", "opaque", None, &[]),
+            first,
+            second,
+        ];
+
+        assert_eq!(
+            exact_setup_checkbox(&nodes, descriptor()).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }
 

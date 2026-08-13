@@ -424,6 +424,22 @@ mod tests {
     }
 
     #[test]
+    fn matcher_treats_nonempty_unicode_names_as_opaque_data() {
+        for (title, labels) in [
+            ("e\u{301}", ["é", "E\u{301}", "ë"]),
+            ("हिन्दी", ["ไทย", "עברית", "فارسی"]),
+            ("日本語", ["한국어", "简体中文", "繁體中文"]),
+            ("\u{2067}العربية\u{2069}", ["\u{2066}A\u{2069}", "👩🏽‍💻", "𐐷"]),
+            ("A\u{200d}B", ["無", "⠿", "✅"]),
+        ] {
+            assert_eq!(
+                exact_allow_button_with(&prompt(title, labels), properties).unwrap(),
+                Some(12)
+            );
+        }
+    }
+
+    #[test]
     fn matcher_deduplicates_repeated_uia_walk_rows_by_exact_geometry() {
         let mut nodes = prompt("任何语言", ["A", "B", "C"]);
         let mut duplicate = nodes[4].clone();

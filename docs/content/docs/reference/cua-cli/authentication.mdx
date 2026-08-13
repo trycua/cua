@@ -184,6 +184,30 @@ host is retired.
 own session token explicitly on every cloud call, and an explicitly passed key
 takes precedence over the environment.
 
+## Fleet pools need their own credentials
+
+`cua auth login` covers the CLI's own cloud calls, but it does not cover Fleet.
+`cua sb launch --pool` invokes the SDK without passing the interactive session
+through, and the SDK resolves Fleet credentials only from `FLEETS_TOKEN`, or
+from `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`. With a perfectly valid session and
+none of those exported, the command fails:
+
+```console
+$ cua sb launch --pool my-pool --name my-sandbox
+Error: Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, or cua.configure(client_id=..., client_secret=...).
+```
+
+`cua auth status` still reports a live session at that point, so the message is
+easy to misread as an authentication failure. It is not — it is a different
+credential for a different API. Export a client id and secret for interactive
+use, or use `cua wif-token github` in CI:
+
+```bash
+export CUA_CLIENT_ID=...
+export CUA_CLIENT_SECRET=...
+cua sb launch --pool my-pool --name my-sandbox
+```
+
 ## GitHub Actions
 
 `cua wif-token github` exchanges the job's GitHub OIDC identity for a Fleets

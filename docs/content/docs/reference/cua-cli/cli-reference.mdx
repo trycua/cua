@@ -151,6 +151,22 @@ Bare image names are expanded before the request is made:
 A tag after a colon overrides the default version, so `ubuntu:22.04`,
 `windows:11`, and `macos:sequoia` all work.
 
+<Callout type="warn">
+  **`--pool` needs Fleet credentials in the environment; logging in is not
+  enough.** Every other cloud command reuses your `cua auth login` session, but
+  the Fleet path does not pass that session through. Without either
+  `FLEETS_TOKEN` or a `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET` pair exported,
+  `cua sb launch --pool` fails with:
+
+  ```
+  Error: Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, or cua.configure(client_id=..., client_secret=...).
+  ```
+
+  This is easy to misread as "you are not logged in" when `cua auth status`
+  cheerfully reports a valid session. Export the credentials, or use
+  `cua wif-token github` in CI, before reaching for `--pool`.
+</Callout>
+
 ### `cua sb ls`
 
 List sandboxes. With no flags, lists cloud sandboxes.

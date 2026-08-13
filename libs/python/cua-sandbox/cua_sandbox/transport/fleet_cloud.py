@@ -43,6 +43,7 @@ from fleet_sdk import (
     SandboxTemplateRefBuilder,
     ServiceProtocol,
     VmTemplateBuilder,
+    WarmPoolAutoscaling,
 )
 
 if TYPE_CHECKING:
@@ -361,6 +362,7 @@ class FleetCloudTransport(FleetTransport):
         create_claim: bool = False,
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
+        autoscaling: Optional[WarmPoolAutoscaling] = None,
     ) -> None:
         if (
             isinstance(server_port, bool)
@@ -388,6 +390,27 @@ class FleetCloudTransport(FleetTransport):
             )
         ):
             raise ValueError("services must map non-empty names to TCP ports")
+        if autoscaling is not None:
+            if not isinstance(autoscaling, WarmPoolAutoscaling):
+                raise TypeError("autoscaling must be a fleet_sdk.WarmPoolAutoscaling")
+            for field, minimum in (
+                ("min_pool_size", 0),
+                ("initial_pool_size", 0),
+                ("max_pool_size", 1),
+            ):
+                value = getattr(autoscaling, field)
+                if value is not None and (
+                    isinstance(value, bool) or not isinstance(value, int) or value < minimum
+                ):
+                    raise ValueError(f"autoscaling.{field} must be an integer >= {minimum}")
+            if (
+                autoscaling.min_pool_size is not None
+                and autoscaling.max_pool_size is not None
+                and autoscaling.min_pool_size > autoscaling.max_pool_size
+            ):
+                raise ValueError(
+                    "autoscaling.min_pool_size must not exceed autoscaling.max_pool_size"
+                )
         self._image = image
         self._name = name
         self._explicit_pool = pool_name is not None
@@ -401,6 +424,7 @@ class FleetCloudTransport(FleetTransport):
         self._server_port = server_port
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
+        self._autoscaling = autoscaling
         self._provisioned = False
         self._owns_resources = image is not None or create_claim
         self._template: Any = None
@@ -623,13 +647,19 @@ class FleetCloudTransport(FleetTransport):
 
     def _pool_request(self) -> CreatePoolRequest:
         template_ref = SandboxTemplateRefBuilder().name(self._pool_name).build()
-        pool_spec = (
+        pool_spec_builder = (
             OsGymSandboxWarmPoolSpecBuilder()
             .replicas(self._replicas)
             .sandbox_template_ref(template_ref)
+        )
+        if self._autoscaling is not None:
+            pool_spec_builder = pool_spec_builder.autoscaling(self._autoscaling)
+        return (
+            CreatePoolRequestBuilder()
+            .namespace(self._pool_name)
+            .spec(pool_spec_builder.build())
             .build()
         )
-        return CreatePoolRequestBuilder().namespace(self._pool_name).spec(pool_spec).build()
 
     @staticmethod
     def _service_names(template: Any) -> list[str]:

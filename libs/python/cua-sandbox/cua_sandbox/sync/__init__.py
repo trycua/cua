@@ -25,7 +25,12 @@ from cua_sandbox.localhost import Localhost as _AsyncLocalhost
 from cua_sandbox.pool import Pool as _AsyncPool
 from cua_sandbox.pool import Template as _AsyncTemplate
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
-from fleet_sdk import ClaimSpec, CreatePoolRequest, CreateTemplateRequest
+from fleet_sdk import (
+    ClaimSpec,
+    CreatePoolRequest,
+    CreateTemplateRequest,
+    WarmPoolAutoscaling,
+)
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -126,6 +131,7 @@ class Pool:
         cpu: int | None = None,
         memory_mb: int | None = None,
         services: dict[str, int] | None = None,
+        autoscaling: WarmPoolAutoscaling | None = None,
     ) -> "Pool":
         """Synchronously apply an image-backed Fleet pool."""
         return cls(
@@ -137,6 +143,7 @@ class Pool:
                     cpu=cpu,
                     memory_mb=memory_mb,
                     services=services,
+                    autoscaling=autoscaling,
                 )
             )
         )

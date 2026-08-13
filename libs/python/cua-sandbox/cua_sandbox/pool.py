@@ -20,6 +20,7 @@ from fleet_sdk import (
     ResourceMetadata,
     SandboxTemplateRefBuilder,
     SdkError,
+    WarmPoolAutoscaling,
 )
 
 _T = TypeVar("_T")
@@ -235,6 +236,7 @@ class Pool:
         cpu: int | None = None,
         memory_mb: int | None = None,
         services: dict[str, int] | None = None,
+        autoscaling: WarmPoolAutoscaling | None = None,
     ) -> "Pool":
         FleetCloudTransport._validate_image(image)
         effective_services = services or {
@@ -242,14 +244,23 @@ class Pool:
             **{f"port-{port}": port for port in image._ports if port != 8000},
         }
         if name is None:
+            identity_fields: dict[str, Any] = {
+                "image": cloud_registry_image(image),
+                "replicas": replicas,
+                "cpu": cpu,
+                "memory_mb": memory_mb,
+                "services": sorted(effective_services.items()),
+            }
+            # Included only when set so pools created before autoscaling
+            # support keep their deterministic names.
+            if autoscaling is not None:
+                identity_fields["autoscaling"] = {
+                    "min_pool_size": autoscaling.min_pool_size,
+                    "initial_pool_size": autoscaling.initial_pool_size,
+                    "max_pool_size": autoscaling.max_pool_size,
+                }
             identity = json.dumps(
-                {
-                    "image": cloud_registry_image(image),
-                    "replicas": replicas,
-                    "cpu": cpu,
-                    "memory_mb": memory_mb,
-                    "services": sorted(effective_services.items()),
-                },
+                identity_fields,
                 separators=(",", ":"),
                 sort_keys=True,
             )
@@ -261,6 +272,7 @@ class Pool:
             cpu=cpu,
             memory_mb=memory_mb,
             services=effective_services,
+            autoscaling=autoscaling,
         )
         pool = await cls.reconcile(transport._pool_request())
         try:

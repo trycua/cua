@@ -167,9 +167,29 @@ async with pool.claim(name="job-123") as sb:
     await sb.shell.run("echo hello")
 ```
 
+Instead of a static `replicas` count, a pool can scale with claim demand by
+passing `autoscaling=`. The pool then grows toward `max_pool_size` while claims
+are pending and shrinks back to `min_pool_size` as they are released;
+`initial_pool_size` seeds a one-time warm head start at creation:
+
+```python
+from cua_sandbox import Image, Pool, WarmPoolAutoscaling
+
+pool = await Pool.apply(
+    Image.from_registry("registry.example/desktop-workspace@sha256:..."),
+    cpu=4,
+    memory_mb=4096,
+    autoscaling=WarmPoolAutoscaling(
+        min_pool_size=0,
+        initial_pool_size=2,
+        max_pool_size=10,
+    ),
+)
+```
+
 `Pool.reconcile(CreatePoolRequest(...))` and `Template.reconcile(CreateTemplateRequest(...))` remain available for advanced generated-schema configuration. The public generated builders should be used instead of constructing builder-enabled Fleet records directly.
 
 The image must run the CUA computer-server `/cmd` API on the configured `server_port`.
 Windows computer-server images continue to use the default port `8000`.
 
-Fleet currently supports registry images, CPU, memory, replica count, and named TCP services. Local image builds, layers, injected files or environment, snapshots, custom disks, unsupported regions, and provider-crossing serialization raise `NotImplementedError`.
+Fleet currently supports registry images, CPU, memory, replica count, claim-demand autoscaling, and named TCP services. Local image builds, layers, injected files or environment, snapshots, custom disks, unsupported regions, and provider-crossing serialization raise `NotImplementedError`.

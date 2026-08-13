@@ -114,6 +114,33 @@ the next claim.
 The script writes `sandbox.png` in the current directory and raises an error if
 `uname -a` does not complete successfully.
 
+## Scale the pool with claim demand
+
+Instead of a static `replicas` count, pass `autoscaling=` to let the pool grow
+and shrink with claim demand. The pool scales toward `max_pool_size` while
+claims are pending and back down to `min_pool_size` as claims are released;
+`initial_pool_size` seeds a one-time warm head start when the pool is created:
+
+```python
+from cua_sandbox import Image, Pool, WarmPoolAutoscaling
+
+pool = await Pool.apply(
+    Image.from_registry(IMAGE),
+    name=POOL_NAME,
+    cpu=4,
+    memory_mb=4096,
+    autoscaling=WarmPoolAutoscaling(
+        min_pool_size=0,
+        initial_pool_size=2,
+        max_pool_size=10,
+    ),
+)
+```
+
+Each field is optional (pass `None` to accept the server default). With
+`min_pool_size=0` the pool scales to zero when no claims are held, so the
+first claim after an idle period cold-starts a sandbox.
+
 ## Choose pool and claim names
 
 The defaults use the same value for the pool and claim. Override either name

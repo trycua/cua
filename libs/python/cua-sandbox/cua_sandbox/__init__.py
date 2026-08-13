@@ -52,6 +52,8 @@ from fleet_sdk import Template as TemplateResource
 from fleet_sdk import (
     VmTemplate,
     VmTemplateBuilder,
+    WarmPoolAutoscaling,
+    WarmPoolAutoscalingBuilder,
 )
 
 __all__ = [
@@ -71,6 +73,8 @@ __all__ = [
     "SandboxTemplateRefBuilder",
     "OsGymSandboxWarmPoolSpec",
     "OsGymSandboxWarmPoolSpecBuilder",
+    "WarmPoolAutoscaling",
+    "WarmPoolAutoscalingBuilder",
     "OsGymSandboxTemplateSpec",
     "OsGymSandboxTemplateSpecBuilder",
     "RuntimeKind",

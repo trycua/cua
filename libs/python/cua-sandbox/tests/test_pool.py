@@ -27,7 +27,7 @@ from cua_sandbox.sync import Pool as SyncPool
 from cua_sandbox.sync import Template as SyncTemplate
 from cua_sandbox.transport.fleet_cloud import _FleetClient
 from fleet_sdk import Sandbox as FleetSandbox
-from fleet_sdk import SdkError
+from fleet_sdk import SdkError, WarmPoolAutoscaling
 
 
 def test_public_pool_schema_exports_runtime_kind() -> None:
@@ -884,6 +884,72 @@ async def test_pool_apply_rolls_back_pool_when_template_reconcile_fails(monkeypa
 
     assert clients[2].deleted_pools == ["workspace"]
     assert clients[2].deleted_templates == []
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_forwards_autoscaling_to_the_pool_request(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    autoscaling = WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10)
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+        autoscaling=autoscaling,
+    )
+
+    assert clients[0].reconciled[0].spec.autoscaling == autoscaling
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_without_autoscaling_leaves_the_pool_spec_static(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+    )
+
+    assert clients[0].reconciled[0].spec.autoscaling is None
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_autoscaling_extends_the_deterministic_name(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(6)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    image = Image.from_registry("registry.example/workspace:latest")
+    autoscaling = WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10)
+
+    static = await Pool.apply(image)
+    scaled = await Pool.apply(image, autoscaling=autoscaling)
+    scaled_again = await Pool.apply(
+        image,
+        autoscaling=WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10),
+    )
+
+    assert scaled.name != static.name
+    assert scaled.name == scaled_again.name
+    assert scaled.name.startswith("cua-")
+
+
+def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    autoscaling = WarmPoolAutoscaling(min_pool_size=1, initial_pool_size=1, max_pool_size=5)
+
+    pool = SyncPool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+        autoscaling=autoscaling,
+    )
+
+    assert pool.name == "workspace"
+    assert clients[0].reconciled[0].spec.autoscaling == autoscaling
 
 
 @pytest.mark.asyncio

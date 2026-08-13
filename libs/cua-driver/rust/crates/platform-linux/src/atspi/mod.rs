@@ -28,6 +28,10 @@ pub struct AtspiNode {
     pub enabled: Option<bool>,
     /// Toggle/selection state for selectable controls.
     pub selected: Option<bool>,
+    /// Keyboard-focus state when the native AT-SPI state set is available.
+    /// Browser consent uses this as structural contradiction evidence; it is
+    /// never inferred from a localized accessible name.
+    pub focused: Option<bool>,
     pub description: Option<String>,
     pub actions: Vec<String>,
     /// For AT-SPI: element_key = element_index as u64.
@@ -289,6 +293,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         checked: None,
         enabled: None,
         selected: None,
+        focused: None,
         description: if wm_class.is_empty() {
             None
         } else {

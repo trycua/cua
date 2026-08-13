@@ -1023,6 +1023,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 checked: v.checked,
                 enabled: v.enabled,
                 selected: v.selected,
+                focused: Some(v.focused),
                 description: None,
                 actions: v.actions.clone(),
                 element_key: idx as u64,

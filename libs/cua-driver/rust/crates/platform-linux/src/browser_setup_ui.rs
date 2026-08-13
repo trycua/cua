@@ -17,7 +17,7 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
-fn field_equals(node: &AtspiNode, expected: &str) -> bool {
+fn field_has_exact_value(node: &AtspiNode, expected: &str) -> bool {
     [
         node.name.as_deref(),
         node.value.as_deref(),
@@ -38,36 +38,34 @@ fn setup_page_proven(
     descriptor: &BrowserSetupDescriptor,
     trusted_navigation: bool,
 ) -> bool {
-    let has_contradictory_address_bar = nodes.iter().any(|node| {
-        role_is(node, &["entry", "text"])
-            && field_equals(node, "Address and search bar")
-            && node.value.as_deref().is_some_and(|value| {
-                !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case(descriptor.setup_url)
-            })
-    });
-    let exact_url = nodes.iter().any(|node| {
-        role_is(node, &["entry", "text"])
-            && field_equals(node, "Address and search bar")
-            && node
-                .value
-                .as_deref()
-                .or(node.name.as_deref())
-                .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-    });
-    let exact_heading = nodes.iter().any(|node| {
-        role_is(node, &["heading", "section", "static"])
-            && field_equals(node, descriptor.page_heading)
-    });
-    let exact_page = nodes.iter().any(|node| {
-        role_is(node, &["document web", "document frame"])
-            && descriptor
-                .page_titles
-                .iter()
-                .any(|title| field_equals(node, title))
-    });
-    let exact_identity =
-        exact_url || (trusted_navigation && !has_contradictory_address_bar && exact_page);
-    exact_identity && exact_heading
+    let native_fields = nodes
+        .iter()
+        .filter(|node| {
+            !node.in_web_content
+                && role_is(node, &["entry", "text"])
+                && node.element_index.is_some()
+                && !node.actions.is_empty()
+        })
+        .collect::<Vec<_>>();
+    let exact_url_count = native_fields
+        .iter()
+        .filter(|node| field_has_exact_value(node, descriptor.setup_url))
+        .count();
+    let contradictory_native_field = matches!(native_fields.as_slice(), [field]
+    if field.value.as_deref().is_some_and(|value| {
+        !value.trim().is_empty()
+            && !value.trim().eq_ignore_ascii_case(descriptor.setup_url)
+    }));
+    let document_count = nodes
+        .iter()
+        .filter(|node| role_is(node, &["document web", "document frame"]))
+        .count();
+    let web_heading_present = nodes
+        .iter()
+        .any(|node| node.in_web_content && role_is(node, &["heading", "section", "static"]));
+    let exact_identity = exact_url_count == 1
+        || (trusted_navigation && !contradictory_native_field && document_count == 1);
+    exact_identity && web_heading_present
 }
 
 fn exact_setup_checkbox<'a>(
@@ -82,8 +80,9 @@ fn exact_setup_checkbox<'a>(
         .iter()
         .filter(|node| {
             role_is(node, &["check box", "checkbox"])
-                && field_equals(node, descriptor.checkbox_label)
+                && node.in_web_content
                 && !node.actions.is_empty()
+                && node.enabled != Some(false)
                 && node.element_index.is_some()
         })
         .collect::<Vec<_>>();
@@ -92,7 +91,7 @@ fn exact_setup_checkbox<'a>(
         [node] => Ok(Some(*node)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple exact remote-debugging checkboxes were exposed",
+            "multiple renderer checkboxes exposed an actionable setup toggle",
         )),
     }
 }
@@ -143,8 +142,9 @@ fn exact_omnibox<'a>(
     let matches = nodes
         .iter()
         .filter(|node| {
-            role_is(node, &["entry", "text"])
-                && field_equals(node, "Address and search bar")
+            !node.in_web_content
+                && role_is(node, &["entry", "text"])
+                && !node.actions.is_empty()
                 && node.element_index.is_some()
         })
         .collect::<Vec<_>>();
@@ -163,10 +163,7 @@ fn exact_omnibox<'a>(
 
 /// Whether the omnibox currently holds exactly the fixed setup URL.
 fn omnibox_holds_setup_url(node: &AtspiNode, descriptor: &BrowserSetupDescriptor) -> bool {
-    node.value
-        .as_deref()
-        .or(node.name.as_deref())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
+    field_has_exact_value(node, descriptor.setup_url)
 }
 
 /// Navigate the approved window to its fixed setup page.
@@ -290,14 +287,10 @@ fn trusted_setup_navigation(
     loop {
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
-        if tree.nodes.iter().any(|node| {
-            role_is(node, &["document web", "document frame"])
-                && descriptor
-                    .page_titles
-                    .iter()
-                    .any(|title| field_equals(node, title))
-        }) {
-            return Ok(());
+        match exact_setup_checkbox(&tree.nodes, descriptor, true) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(error) => anyhow::bail!(error.message),
         }
         if Instant::now() >= deadline {
             let landed = tree
@@ -662,6 +655,7 @@ mod tests {
             checked: None,
             enabled: None,
             selected: None,
+            focused: None,
             description: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             element_key: 0,
@@ -673,17 +667,20 @@ mod tests {
 
     #[test]
     fn checkbox_requires_exact_url_heading_and_unique_action() {
-        let mut checkbox = node("check box", descriptor().checkbox_label, None, &["toggle"]);
+        let mut checkbox = node("check box", "opaque toggle", None, &["toggle"]);
         checkbox.checked = Some(false);
+        checkbox.in_web_content = true;
+        let mut heading = node("heading", "opaque heading", None, &[]);
+        heading.in_web_content = true;
         let nodes = vec![
             node(
                 "entry",
-                "Address and search bar",
+                "opaque native field",
                 Some(descriptor().setup_url),
                 &["activate"],
             ),
-            node("document web", descriptor().page_titles[0], None, &[]),
-            node("heading", descriptor().page_heading, None, &[]),
+            node("document web", "opaque document", None, &[]),
+            heading,
             checkbox,
         ];
         assert_eq!(
@@ -743,7 +740,31 @@ mod tests {
     }
 
     fn omnibox(value: Option<&str>) -> AtspiNode {
-        node("entry", "Address and search bar", value, &["activate"])
+        node("entry", "opaque native field", value, &["activate"])
+    }
+
+    #[test]
+    fn setup_names_are_opaque_across_scripts_and_missing_labels() {
+        for (document_name, heading_name, checkbox_name) in [
+            ("e\u{301}", "हिन्दी", "ไทย"),
+            ("\u{2067}العربية\u{2069}", "עברית", "فارسی"),
+            ("日本語", "한국어", "简体中文"),
+            ("A\u{200d}B", "👩🏽‍💻", "✅"),
+        ] {
+            let mut heading = node("heading", heading_name, None, &[]);
+            heading.in_web_content = true;
+            let mut checkbox = node("check box", checkbox_name, None, &["toggle"]);
+            checkbox.in_web_content = true;
+            let nodes = vec![
+                omnibox(Some(descriptor().setup_url)),
+                node("document web", document_name, None, &[]),
+                heading,
+                checkbox,
+            ];
+            assert!(exact_setup_checkbox(&nodes, descriptor(), false)
+                .unwrap()
+                .is_some());
+        }
     }
 
     #[test]

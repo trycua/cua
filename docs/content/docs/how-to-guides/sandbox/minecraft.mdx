@@ -56,6 +56,10 @@ asyncio.run(main())
 A warm boot takes about 30 seconds. `exposed_ports` maps each exposed guest port to the host port it landed on, and `GET /healthz` on that port answers `ok` once cua-driver is up.
 
 <Callout type="warn">
+  **Keep that port number.** On the local runtime it is only available from the object `Sandbox.create` returns. `sb.tunnel.forward(3000)` — the usual way to get a forwarded port, and the one the Fleet section below uses — raises `NotImplementedError: HTTPTransport does not support port forwarding` on this transport, and the port is not in the saved sandbox state either, so a later `Sandbox.connect()` cannot recover it. Either run the agent in the same script that created the sandbox, or print the port and pass it in.
+</Callout>
+
+<Callout type="warn">
   Give the second NIC its own subnet. Both user-mode networks default to `10.0.2.0/24` and both offer the guest `10.0.2.15`, so Windows drops one interface to a `169.254.x.x` link-local address with no gateway and no working DNS.
 </Callout>
 
@@ -165,12 +169,12 @@ The sandbox already runs **cua-driver**, which serves an MCP endpoint on guest p
 
 Three things about cua-driver's tools shape the loop:
 
-- **A YAML policy governs which tools may actually run.** `list_tools()` advertises everything, but calls to tools outside the policy come back with `Permission denied: user policy: tool 'X' is not allowed by the YAML policy`. In this image `get_desktop_state`, `list_apps`, `list_windows`, `get_window_state`, `click`, `double_click`, `type_text`, `press_key`, `hotkey`, `launch_app`, `bring_to_front`, `scroll` and `drag` are allowed, while `get_screen_size`, `get_accessibility_tree`, `get_config`, `check_permissions`, `get_cursor_position` and `zoom` are refused.
+- **A YAML policy governs which tools may actually run.** `list_tools()` advertises the full surface — 55 tools on this image, identically over the local and Fleet transports — but calls to tools outside the policy come back with `Permission denied: user policy: tool 'X' is not allowed by the YAML policy`. On the image used here `get_desktop_state`, `list_apps`, `list_windows`, `get_window_state`, `click`, `double_click`, `type_text`, `press_key`, `hotkey`, `launch_app`, `bring_to_front`, `scroll` and `drag` were allowed, while `get_screen_size`, `get_accessibility_tree`, `get_config`, `check_permissions`, `get_cursor_position` and `zoom` were refused. Treat the split as something to discover on your image rather than a fixed list: a policy denial surfaces before the tool executes, so probing is cheap.
 - **Clicks are addressed to an application, not the screen.** `click(pid=..., x=..., y=...)` targets a window belonging to that pid, which you find with `list_windows`. Add `delivery_mode='foreground'` when a background-delivered click does not land.
 - **There is no wait tool.** The loop waits by calling `get_desktop_state` again, so say that in the system prompt or the model will invent something worse.
 
 ```python
-import asyncio, base64, json, os
+import asyncio, json, os
 import litellm
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
@@ -187,10 +191,52 @@ get_desktop_state, decide one action, call one tool, then look again.
 
 Call exactly one tool per turn. When the task is complete, reply DONE."""
 
-async def run(mcp_url, task, model, max_steps=60):
-    client = Client(StreamableHttpTransport(mcp_url))
+async def complete(**kwargs):
+    """Two workarounds for the endpoint used here — yours may need neither.
+
+    It is streaming-only (a plain request comes back with empty output), and it
+    rejects role=system, so the system prompt travels as the first user turn.
+    """
+    messages, system = [], []
+    for m in kwargs['messages']:
+        (system if m.get('role') == 'system' else messages).append(m)
+    if system:
+        text = '\n\n'.join(m['content'] for m in system)
+        messages = [{'role': 'user', 'content': text}] + messages
+    kwargs['messages'] = messages
+
+    stream = await litellm.acompletion(**kwargs, stream=True)
+    chunks = [c async for c in stream]
+    return litellm.stream_chunk_builder(chunks, messages=messages)
+
+def prune_images(messages, keep=3):
+    """Each get_desktop_state returns a full screenshot; keep only the newest."""
+    seen = 0
+    for msg in reversed(messages):
+        if not isinstance(msg.get('content'), list):
+            continue
+        for part in msg['content']:
+            if part.get('type') == 'image_url':
+                seen += 1
+                if seen > keep:
+                    part.clear()
+                    part.update({'type': 'text', 'text': '[older screenshot dropped]'})
+    return messages
+
+async def run(mcp_url, task, model, max_steps=60, headers=None):
+    client = Client(StreamableHttpTransport(mcp_url, headers=headers))
     async with client:
-        mcp_tools = await client.list_tools()
+        # list_tools() advertises everything cua-driver has — 55 tools on this
+        # image, most of them browser and recording plumbing this task never
+        # needs. Hand the model only what the job requires; 55 schemas is a lot
+        # of context to spend, and a shorter menu is a shorter list of ways to
+        # go wrong.
+        wanted = {
+            'get_desktop_state', 'list_windows', 'list_apps', 'click',
+            'double_click', 'type_text', 'press_key', 'hotkey', 'launch_app',
+            'bring_to_front', 'scroll',
+        }
+        mcp_tools = [t for t in await client.list_tools() if t.name in wanted]
         tools = [{
             'type': 'function',
             'function': {
@@ -204,8 +250,8 @@ async def run(mcp_url, task, model, max_steps=60):
                     {'role': 'user', 'content': task}]
 
         for _ in range(max_steps):
-            resp = await litellm.acompletion(
-                model=model, messages=messages, tools=tools,
+            resp = await complete(
+                model=model, messages=prune_images(messages), tools=tools,
                 tool_choice='auto', temperature=0.0,
             )
             msg = resp.choices[0].message
@@ -247,13 +293,9 @@ visible) and reply DONE. Never press Escape while Minecraft is in the foreground
 asyncio.run(run(f'http://127.0.0.1:{mcp_port}/mcp', TASK, 'your-model'))
 ```
 
-<Callout type="warn">
-  Prune old screenshots out of the message history — keep the newest two or three and replace the rest with a placeholder. Each `get_desktop_state` returns a full-screen PNG, and a run that waits for a slow renderer accumulates dozens.
-</Callout>
-
 Because the MCP tools are presented as **ordinary function tools**, this works against endpoints that reject the provider-native computer-use tool types. That is not hypothetical: on the gateway used here, the same model with the same image in the same second returned 200 for an ordinary function tool and 403 for Anthropic's `computer_20250124`, and `computer_use_preview` was refused outright.
 
-Two adjustments were needed for that gateway, and a different endpoint may need neither: it is streaming-only, so the loop issues `stream=True` and reassembles the reply with `litellm.stream_chunk_builder`, and it rejects `role: system`, so the system prompt is carried as the first user turn instead.
+The `complete()` wrapper above exists only for that gateway — it is streaming-only, and it rejects `role: system`. Against an endpoint without those quirks, call `litellm.acompletion` directly.
 
 A full run — launcher to standing in a new world — took 52 steps and about twenty minutes, most of it waiting on the software renderer. Expect the model to spend long stretches doing nothing but re-screenshotting.
 
@@ -263,9 +305,9 @@ A full run — launcher to standing in a new world — took 52 steps and about t
 
 ## Run the same thing on Fleet
 
-The image and the agent loop are identical on Fleet. Only two things change: there is no `local=True`, and the MCP endpoint is reached through Fleet's service proxy rather than a forwarded localhost port.
+The image and the agent loop are identical on Fleet. Two things change: there is no `local=True` and no `runtime=`, and the MCP endpoint is reached through Fleet's service proxy rather than a forwarded localhost port.
 
-`.expose(3000)` becomes a Fleet **service** named `port-3000`, served at `https://run.cua.ai/api/svc/<namespace>/<sandbox>-port-3000/`.
+`.expose(3000)` becomes a Fleet **service** named `port-3000`, and `sb.tunnel.forward()` hands you its URL — the same call documented in [Forward a port from a sandbox](/docs/how-to-guides/sandbox/tunneling), so there is nothing Fleet-specific to hand-assemble.
 
 ```python
 import httpx
@@ -273,8 +315,8 @@ from cua import Image, Sandbox
 
 sb = await Sandbox.create(Image.windows().expose(3000), name='mc-fleet', time_to_start=900)
 
-bound = sb._transport._bound
-base = f'https://run.cua.ai/api/svc/{bound.namespace}/{bound.name}-port-3000/'
+tunnel = await sb.tunnel.forward(3000)
+# https://run.cua.ai/api/svc/<namespace>/<sandbox>-port-3000/
 
 token = httpx.post(
     'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token',
@@ -283,14 +325,16 @@ token = httpx.post(
           'client_secret': os.environ['CUA_CLIENT_SECRET']},
 ).json()['access_token']
 
-client = Client(StreamableHttpTransport(base + 'mcp',
-                                        headers={'Authorization': f'Bearer {token}'}))
+await run(tunnel.url + 'mcp', TASK, 'your-model',
+          headers={'Authorization': f'Bearer {token}'})
 ```
 
-That client goes into the same `run()` loop as above. A Fleet Windows sandbox takes about three minutes to become ready, against about thirty seconds for a warm local one, and `GET healthz` on that service URL answers `ok` when cua-driver is up.
+That is the same `run()` as above, with only the URL and an auth header changed. A Fleet Windows sandbox takes about three minutes to become ready, against about thirty seconds for a warm local one, and `GET healthz` on that service URL answers `ok` when cua-driver is up.
+
+Notice there is no `-cpu host` here. That flag exists on the local path because the bare-metal runtime defaults to the thin `qemu64` model; a Fleet sandbox is provisioned for you and already reports a full host CPU — `Intel Xeon Processor (SapphireRapids)` on the machine used here — so there is nothing to override, and no QEMU arguments to pass.
 
 <Callout type="warn">
-  Use client credentials, not a `cua auth login` session token. The session token is short-lived and is held without refresh, so a long provisioning wait dies partway with `401 auth token is invalid`. Client-credential tokens still expire — the ones here last 900 seconds — so a run longer than that must re-mint the token and rebuild the MCP client.
+  Use client credentials, not a `cua auth login` session token. The session token is short-lived and is held without refresh, so a long provisioning wait dies partway with `401 auth token is invalid`. Client-credential tokens expire too — the ones issued here came back with `expires_in` of 900 seconds — so a run longer than that has to re-mint the token and rebuild the MCP client.
 </Callout>
 
 ## Troubleshooting

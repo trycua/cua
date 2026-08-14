@@ -1,4 +1,4 @@
-﻿# cua-driver-rs uninstaller (Windows) — removes the runtime installed by install.ps1
+# cua-driver-rs uninstaller (Windows) — removes the runtime installed by install.ps1
 # laid down: the Scheduled Task autostart entry, running daemon
 # processes, the directory junctions wiring the visible bin dir back to
 # a per-version release dir, the entire package home tree, and any skill

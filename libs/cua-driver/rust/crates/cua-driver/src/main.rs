@@ -22,6 +22,7 @@ mod bundle;
 mod check_update_tool;
 mod cli;
 mod doctor;
+mod history_runtime;
 mod mcp_http;
 mod private_worker;
 mod proxy;
@@ -291,7 +292,7 @@ fn build_driver(
         host_bundle_id: std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok(),
         claude_code_compatibility: compatibility_mode,
         prepare_desktop_environment: true,
-        register_host_tools: Some(check_update_tool::register_into),
+        register_host_tools: Some(history_runtime::register_host_tools),
         authorization_host: None,
         activity_observer: None,
     })
@@ -325,7 +326,7 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         host_bundle_id: None,
         claude_code_compatibility: false,
         prepare_desktop_environment: false,
-        register_host_tools: Some(check_update_tool::register_into),
+        register_host_tools: Some(history_runtime::register_host_tools),
         authorization_host: None,
         activity_observer: None,
     })
@@ -431,6 +432,11 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
+    // The packaged uninstaller needs a truly offline, pre-telemetry purge
+    // path while this exact signed executable still exists on disk.
+    if let Some(code) = history_runtime::run_offline_purge_if_requested() {
+        std::process::exit(code);
+    }
     init_logging();
     if let Some(code) = cli::run_permissions_host_request_if_requested() {
         std::process::exit(code);
@@ -510,6 +516,7 @@ fn main() {
             no_permissions_gate,
             claude_code_compat,
             grants,
+            experimental_history,
         } => {
             if let Err(error) = configure_startup_permission_mode(
                 permission_mode.as_deref(),
@@ -522,6 +529,11 @@ fn main() {
                 std::process::exit(64);
             }
             responsibility::reexec_disclaimed_if_needed();
+            if let Err(error) = history_runtime::configure_admission(experimental_history) {
+                eprintln!("cua-driver: Computer History admission error: {error}");
+                std::process::exit(1);
+            }
+            history_runtime::configure_daemon_launch_state(claude_code_compat, &grants);
             let gate_opts =
                 platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
             if let Some((progress, context)) =
@@ -706,6 +718,15 @@ fn main() {
             socket,
         } => {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
+        }
+        cli::Command::History {
+            subcommand,
+            args,
+            socket,
+            json,
+            confirmed,
+        } => {
+            cli::run_history_cmd(&subcommand, &args, socket.as_deref(), json, confirmed);
         }
         cli::Command::DumpDocs { pretty, doc_type } => {
             let tools = inspect_tools_without_runtime();

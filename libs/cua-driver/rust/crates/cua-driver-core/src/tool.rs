@@ -273,6 +273,7 @@ fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
 ///   `browser.input.click`, `browser.input.type`, `browser.input.files`,
 ///   `browser.dialog`
 /// - `driver.update_check`, `driver.probe`
+/// - `history.status`, `history.query`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
 /// downstream consumers fall back to matching by tool name for them.
@@ -413,6 +414,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
         "probe" => &["driver.probe"],
+
+        // ── encrypted local Computer History ─────────────────────────
+        "history_status" => &["history.status"],
+        "history_query" => &["history.query"],
 
         // ── unsupported_platform stub & anything else ────────────────
         _ => &[],
@@ -574,6 +579,9 @@ pub struct ToolRegistry {
     order: Vec<String>,
     /// Shared recording session — auto-records each non-read-only tool call.
     pub recording: Arc<RecordingSession>,
+    /// Optional encrypted Computer History runtime. It is installed only by a
+    /// trusted host that admitted the experimental preview.
+    history: Option<Arc<crate::history::HistoryManager>>,
     replay_registry: ReplayRegistrySlot,
     session_end_hooks: Vec<crate::session::SessionEndHookRegistration>,
     session_revive_hooks: Vec<crate::session::SessionReviveHookRegistration>,
@@ -640,6 +648,7 @@ impl ToolRegistry {
             tools: HashMap::new(),
             order: Vec::new(),
             recording,
+            history: None,
             replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
             session_end_hooks: vec![session_end_hook],
             session_revive_hooks: Vec::new(),
@@ -773,6 +782,20 @@ impl ToolRegistry {
             self.replay_registry.clone(),
         )));
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
+    }
+
+    /// Install the encrypted history hook and its two permission-gated,
+    /// read-only agent tools. Lifecycle mutation remains daemon-private.
+    pub fn register_history_tools(&mut self, manager: Arc<crate::history::HistoryManager>) {
+        self.history = Some(manager.clone());
+        self.register(Box::new(crate::history::HistoryStatusTool::new(
+            manager.clone(),
+        )));
+        self.register(Box::new(crate::history::HistoryQueryTool::new(manager)));
+    }
+
+    pub fn history(&self) -> Option<Arc<crate::history::HistoryManager>> {
+        self.history.clone()
     }
 
     /// Register the platform-independent lifecycle and compatibility tools
@@ -1156,12 +1179,14 @@ impl ToolRegistry {
         // avoids prompting for a call the capability manifest will refuse, while
         // preserving the public arguments in the grant scope and the private
         // runtime session key in its revocation lifecycle.
-        if has_adapter("private_observation")
-            && ((!runtime_proves_driver_owned
-                && tool
-                    .protected_resource_ownership("private_observation", &public_args)
-                    .await
-                    != ProtectedResourceOwnership::DriverOwned)
+        let history_observation = has_adapter("computer_history");
+        if (has_adapter("private_observation") || history_observation)
+            && (history_observation
+                || (!runtime_proves_driver_owned
+                    && tool
+                        .protected_resource_ownership("private_observation", &public_args)
+                        .await
+                        != ProtectedResourceOwnership::DriverOwned)
                 || context.capability_manifest().is_some())
         {
             if let Err(error) = self
@@ -1171,6 +1196,11 @@ impl ToolRegistry {
                     &public_args,
                     context,
                     runtime_session.as_deref(),
+                    if history_observation {
+                        "computer_history"
+                    } else {
+                        "private_observation"
+                    },
                 )
                 .await
             {
@@ -1406,6 +1436,9 @@ impl ToolRegistry {
         };
         let start_ms = now_ms();
         let cursor_event = crate::cursor_events::begin_tool(resolved_name, &args);
+        let pending_history = self.history.as_ref().and_then(|history| {
+            history.begin_action(resolved_name, &public_args, runtime_session.as_deref())
+        });
 
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
@@ -1533,6 +1566,25 @@ impl ToolRegistry {
         // as a distinct call site.
         let name = resolved_name;
 
+        if let (Some(history), Some(pending)) = (self.history.as_ref(), pending_history) {
+            history.finish_action(
+                pending,
+                result.action_record.as_ref(),
+                result.is_error == Some(true),
+            );
+        }
+        if result.is_error != Some(true) && matches!(name, "start_session" | "end_session") {
+            self.history.as_ref().map(|history| {
+                history.session_event(
+                    public_args
+                        .get("session")
+                        .and_then(Value::as_str)
+                        .or(runtime_session.as_deref()),
+                    name == "start_session",
+                )
+            });
+        }
+
         // Record non-read-only, non-recording tool calls. The recording-
         // control tools themselves are excluded so the recorded turn
         // stream stays the actual user-action sequence (not the meta
@@ -1575,6 +1627,7 @@ impl ToolRegistry {
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
+        adapter_id: &str,
     ) -> Result<(), crate::consent::ConsentError> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
@@ -1583,7 +1636,8 @@ impl ToolRegistry {
         }
         let browser_target = args.get("target_id").and_then(Value::as_str);
         let browser_tab = args.get("tab_id").and_then(Value::as_str);
-        if context.mode() == crate::authorization::PermissionMode::Standard
+        if adapter_id == "private_observation"
+            && context.mode() == crate::authorization::PermissionMode::Standard
             && context.capability_manifest().is_none()
         {
             // Standard observation is promptless, but browser observations
@@ -1604,11 +1658,17 @@ impl ToolRegistry {
             // promptless operation into a pure-Wayland failure.
             return Ok(());
         }
-        let browser_scope = tool
-            .protected_resource_scope("private_observation", args)
-            .await
-            .map_err(crate::consent::ConsentError::Provider)?;
-        let (mut resource, summary) = if let Some(resource) = browser_scope {
+        let history_resource = history_observation_resource(tool_name);
+        let browser_scope = if history_resource.is_none() {
+            tool.protected_resource_scope("private_observation", args)
+                .await
+                .map_err(crate::consent::ConsentError::Provider)?
+        } else {
+            None
+        };
+        let (mut resource, summary) = if let Some((resource, summary)) = history_resource {
+            (resource, summary.to_owned())
+        } else if let Some(resource) = browser_scope {
             let target_id = browser_target.unwrap_or("unknown");
             (
                 resource,
@@ -1714,7 +1774,7 @@ impl ToolRegistry {
         self.protected_resource_grants
             .authorize(
                 context,
-                "private_observation",
+                adapter_id,
                 crate::authorization::RiskClass::R2,
                 lifecycle_session,
                 resource,
@@ -2226,6 +2286,46 @@ impl ToolRegistry {
             .await
             .map_err(protected_consent_refusal)?;
         Ok(())
+    }
+}
+
+fn history_observation_resource(tool_name: &str) -> Option<(Value, &'static str)> {
+    match tool_name {
+        "history_status" => Some((
+            serde_json::json!({"kind": "computer_history", "operation": "status"}),
+            "Allow Cua to inspect Computer History status",
+        )),
+        "history_query" => Some((
+            serde_json::json!({"kind": "computer_history", "operation": "query"}),
+            "Allow Cua to read encrypted Computer History metadata",
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod history_observation_tests {
+    use super::*;
+
+    #[test]
+    fn history_grants_are_display_independent_and_operation_specific() {
+        let (status, _) = history_observation_resource("history_status").unwrap();
+        let (query, _) = history_observation_resource("history_query").unwrap();
+        assert_eq!(
+            status,
+            serde_json::json!({"kind":"computer_history","operation":"status"})
+        );
+        assert_eq!(
+            query,
+            serde_json::json!({"kind":"computer_history","operation":"query"})
+        );
+        assert_ne!(status, query);
+        for resource in [status, query] {
+            assert!(resource.get("width").is_none());
+            assert!(resource.get("pid").is_none());
+            assert!(resource.get("session").is_none());
+            assert!(resource.get("since_sequence").is_none());
+        }
     }
 }
 
@@ -3021,6 +3121,75 @@ mod runtime_isolation_tests {
 
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_ne!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn standard_history_requires_an_explicit_protected_host_grant() {
+        let denied_hits = Arc::new(AtomicUsize::new(0));
+        let denied_registry = observation_registry_for("history_query", None, denied_hits.clone());
+        let denied = denied_registry
+            .invoke_with_context(
+                "history_query",
+                serde_json::json!({"session": "review"}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            denied
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_required")
+        );
+
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let allowed_hits = Arc::new(AtomicUsize::new(0));
+        let allowed_registry = observation_registry_for(
+            "history_query",
+            Some(provider.clone()),
+            allowed_hits.clone(),
+        );
+        let allowed = allowed_registry
+            .invoke_with_context(
+                "history_query",
+                serde_json::json!({"session": "review"}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(allowed.is_error, Some(true));
+        assert_eq!(allowed_hits.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn bounded_history_requires_the_matching_operation_resource() {
+        for (operations, expected_allowed) in
+            [(["status"].as_slice(), false), (["query"].as_slice(), true)]
+        {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = observation_registry_for("history_query", None, hits.clone());
+            let operations = operations
+                .iter()
+                .map(|operation| format!("      - {operation}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let context = bounded_context(&format!(
+                "version: 3\nexpires_after: 1h\nidle_timeout: 30m\nresources:\n  computer_history:\n    operations:\n{operations}\nallow:\n  tools: [history_query]\n"
+            ));
+            let result = registry
+                .invoke_with_context(
+                    "history_query",
+                    serde_json::json!({"session": "review"}),
+                    context,
+                )
+                .await;
+            assert_eq!(result.is_error != Some(true), expected_allowed);
+            assert_eq!(hits.load(Ordering::SeqCst), usize::from(expected_allowed));
+        }
     }
 
     #[tokio::test]
@@ -4704,6 +4873,8 @@ mod capability_tests {
         "browser_set_input_files",
         "browser_download",
         "browser_pointer",
+        "history_status",
+        "history_query",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -4790,6 +4961,9 @@ mod capability_tests {
         // driver self
         "driver.update_check",
         "driver.probe",
+        // encrypted local history
+        "history.status",
+        "history.query",
     ];
 
     #[test]

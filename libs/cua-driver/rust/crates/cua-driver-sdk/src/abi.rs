@@ -1301,6 +1301,15 @@ impl NativeAbiDriver {
         &self.runtime_scope_key
     }
 
+    pub(crate) fn history(&self) -> Option<Arc<cua_driver_core::history::HistoryManager>> {
+        unsafe {
+            self.raw_handle()
+                .cast::<CuaDriverHandle>()
+                .as_ref()
+                .and_then(|handle| handle.runtime.history())
+        }
+    }
+
     pub(crate) fn is_available(&self) -> bool {
         let mut available = false;
         let mut error = CuaDriverBuffer::empty();

@@ -235,6 +235,10 @@ impl DriverRuntime {
         self.is_running().then(|| self.registry.tools_list())
     }
 
+    pub(crate) fn history(&self) -> Option<Arc<cua_driver_core::history::HistoryManager>> {
+        self.is_running().then(|| self.registry.history()).flatten()
+    }
+
     pub(crate) async fn invoke(&self, name: &str, args: Value) -> Option<CoreToolResult> {
         self.invoke_with_context(name, args, self.compatibility_context.clone())
             .await

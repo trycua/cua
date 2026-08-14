@@ -39,6 +39,18 @@ ensure_local_signing_identity() {
     kc="$(local_signing_keychain)"
     [ -f "$kc" ] || { printf -- '-'; return; }
     local identity
+    if [ -n "${CUA_DRIVER_LOCAL_SIGNING_IDENTITY:-}" ]; then
+        case "$CUA_DRIVER_LOCAL_SIGNING_IDENTITY" in
+            *[!0-9A-Fa-f]*|'') printf -- '-'; return ;;
+        esac
+        [ "${#CUA_DRIVER_LOCAL_SIGNING_IDENTITY}" -eq 40 ] \
+            || { printf -- '-'; return; }
+        identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+            | awk -v wanted="$CUA_DRIVER_LOCAL_SIGNING_IDENTITY" \
+                'toupper($2) == toupper(wanted) { print $2; exit }')"
+        [ -n "$identity" ] && printf '%s' "$identity" || printf -- '-'
+        return
+    fi
     identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
         | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
     if [ -n "$identity" ]; then

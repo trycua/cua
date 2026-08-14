@@ -6,6 +6,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $TaskName = "cua-driver-local-serve"
+$LocalProcessNames = @("cua-driver-local", "cua-driver-uia-local")
 $HomeDir = if ($env:CUA_DRIVER_LOCAL_HOME) { $env:CUA_DRIVER_LOCAL_HOME } else { Join-Path $env:USERPROFILE ".cua-driver-local" }
 $VisibleBinDir = if ($env:CUA_DRIVER_LOCAL_INSTALL_DIR) { $env:CUA_DRIVER_LOCAL_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver-local\bin" }
 $RuntimeDir = Join-Path $env:LOCALAPPDATA "cua-driver-local"
@@ -37,6 +38,55 @@ function Test-LocalLinkTarget([string]$Path) {
     return $false
 }
 
+# ---------- Elevation helpers ---------------------------------------------
+#
+# install-local.ps1 registers autostart through `cua-driver-local autostart
+# enable`, which self-elevates via ShellExecute 'runas' (autostart.rs) and
+# registers the task at RunLevel=Highest. A non-elevated process can neither
+# delete that task nor stop the High-IL daemon it spawned. Tearing the local
+# install down must therefore be able to elevate the same way installing it
+# did: see the pre-check below, which mirrors uninstall.ps1's.
+
+function Test-IsElevated {
+    ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-LocalTaskExists {
+    # schtasks /Query exits non-zero and writes to stderr when the task is
+    # absent. Under $ErrorActionPreference = 'Stop' that stderr becomes a
+    # terminating error even with 2>$null, so lower it around the native call.
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & schtasks.exe /Query /TN $TaskName 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+}
+
+function Test-LocalDaemonRunning {
+    return (@(Get-Process -Name $LocalProcessNames -ErrorAction SilentlyContinue).Count -gt 0)
+}
+
+function Test-NeedsElevation {
+    # Either condition requires admin: deleting the RunLevel=Highest task, or
+    # terminating the High-IL daemon that task spawned. Both are checked
+    # before any teardown so elevation happens up front rather than after a
+    # partial pass.
+    return ((Test-LocalTaskExists) -or (Test-LocalDaemonRunning))
+}
+
+function Get-ElevationArgumentList([string]$ScriptPath, [bool]$ForceMode) {
+    $argumentList = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', $ScriptPath)
+    # uninstall.ps1 reads force-mode from an env var because `irm | iex`
+    # cannot carry a param block. This script is always invoked from a file
+    # path, so the switch is forwarded explicitly instead. Dropping it would
+    # strand the elevated child on the Read-Host confirmation.
+    if ($ForceMode) { $argumentList += '-Force' }
+    return , $argumentList
+}
+
 if ($ValidateOnly) {
     Write-Output "cli=$(Join-Path $VisibleBinDir 'cua-driver-local.exe')"
     Write-Output "home=$HomeDir"
@@ -46,22 +96,54 @@ if ($ValidateOnly) {
     exit 0
 }
 
+# Consent is collected here, in the console the user is looking at, before any
+# elevation. The elevated child is then always started with -Force: a second
+# prompt would land in the child's own window while this process sits in
+# Start-Process -Wait behind it.
 if (-not $Force) {
     $reply = Read-Host "Remove the local cua-driver identity and its state? [y/N]"
     if ($reply -notmatch '^(y|yes)$') { Write-Step "cancelled"; exit 0 }
 }
 
-# The local task may be Highest IL. Fail safely with an actionable message
-# instead of falling through into a partial removal.
-$previousErrorAction = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-try {
-    & schtasks.exe /Query /TN $TaskName 2>$null | Out-Null
-    $taskExists = ($LASTEXITCODE -eq 0)
-} finally {
-    $ErrorActionPreference = $previousErrorAction
+# ---------- Elevation pre-check -------------------------------------------
+#
+# Detected before any teardown begins: nothing has been removed at this point,
+# so declining the UAC prompt leaves the install exactly as it was.
+if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
+    Write-Step "removing $TaskName needs admin (registered at RunLevel=Highest); triggering UAC prompt"
+
+    # uninstall.ps1 has to materialize its own body to a tempfile because the
+    # canonical `irm ... | iex` one-liner leaves $MyInvocation.MyCommand.Path
+    # empty. This script is always invoked from a file path in the checkout,
+    # so the path is populated and can be re-executed directly.
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if (-not $scriptPath) {
+        Write-Step "cannot locate this script on disk to re-exec; nothing was removed"
+        Write-Step "rerun this script from an elevated PowerShell"
+        exit 1
+    }
+
+    # Removal is already confirmed above, so the child never needs to prompt.
+    $argumentList = Get-ElevationArgumentList -ScriptPath $scriptPath -ForceMode $true
+    try {
+        $elevated = Start-Process -FilePath powershell.exe -ArgumentList $argumentList -Verb RunAs -PassThru -Wait -ErrorAction Stop
+    } catch {
+        # A declined UAC prompt surfaces as an InvalidOperationException from
+        # Start-Process ("The operation was canceled by the user"). Keep the
+        # pre-existing fail-safe: refuse cleanly, having changed nothing.
+        Write-Step "elevation declined or unavailable ($($_.Exception.Message)); nothing was removed"
+        Write-Step "rerun this script from an elevated PowerShell"
+        exit 1
+    }
+    exit $elevated.ExitCode
 }
+
+# The local task may be Highest IL. If elevation was unavailable above, fail
+# safely with an actionable message instead of falling through into a partial
+# removal.
+$taskExists = Test-LocalTaskExists
 if ($taskExists) {
+    $previousErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
@@ -74,7 +156,7 @@ if ($taskExists) {
     Write-Step "removed scheduled task $TaskName"
 }
 
-Get-Process -Name "cua-driver-local","cua-driver-uia-local" -ErrorAction SilentlyContinue |
+Get-Process -Name $LocalProcessNames -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
 # The visible bin path is local-only, but still require the junction shape the

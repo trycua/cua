@@ -114,8 +114,8 @@ fn try_send_x11_message(
     sender.is_some_and(|tx| tx.try_send(msg).is_ok())
 }
 
-fn should_start_x11_overlay(native_wayland: bool) -> bool {
-    !native_wayland
+fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
+    !wayland_display_present
 }
 
 #[cfg(target_os = "linux")]
@@ -303,13 +303,15 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         cmd: cmd.clone(),
     });
     let native_wayland = crate::wayland::is_wayland();
-    let x11_queued = !native_wayland && try_send_x11_message(CMD_TX.get(), msg.clone());
+    let x11_overlay_allowed =
+        should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some());
+    let x11_queued = x11_overlay_allowed && try_send_x11_message(CMD_TX.get(), msg.clone());
     // Also forward to the native-Wayland layer-shell overlay when Wayland
     // is opted in. The wayland overlay's `forward` is a no-op when its
     // owner thread isn't started yet (which is the normal X11-only case).
     #[cfg(target_os = "linux")]
     {
-        if crate::wayland::is_wayland() {
+        if native_wayland {
             if crate::wayland::shell_helper::semantic_cursor_available() {
                 crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(
                     &key,
@@ -556,12 +558,14 @@ pub fn run_on_thread() {
         return;
     }
 
-    // A native Wayland session may also expose DISPLAY through XWayland, but
-    // that does not make the legacy full-root X11 overlay authoritative. The
-    // command path below forwards to the layer-shell backend; running both
-    // produces two independently scaled cursors and lets X11 save-unders leak
-    // into Wayland desktop captures.
-    if !should_start_x11_overlay(crate::wayland::is_wayland()) {
+    // A Wayland session normally also exposes DISPLAY through XWayland, but
+    // that does not make the legacy full-root X11 overlay safe. This decision
+    // must be independent of the experimental native-Wayland feature opt-in:
+    // without that opt-in there is no layer-shell fallback, but showing no
+    // overlay is preferable to mapping an opaque black X11 root window over
+    // the Wayland desktop. With the opt-in enabled, commands are forwarded to
+    // the native layer-shell backend below.
+    if !should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some()) {
         return;
     }
 
@@ -2654,7 +2658,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_wayland_does_not_start_legacy_x11_overlay() {
+    fn wayland_display_does_not_start_legacy_x11_overlay() {
         assert!(!should_start_x11_overlay(true));
         assert!(should_start_x11_overlay(false));
     }

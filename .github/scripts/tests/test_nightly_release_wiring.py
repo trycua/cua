@@ -42,6 +42,11 @@ def test_driver_nightly_reuses_builder_without_stable_state_mutation():
     assert "needs.plan.outputs.attribution_base_tag" in nightly
     assert "issues: read" in nightly
     assert "pull-requests: read" in nightly
+    assert "release_channels.py apply-version" not in nightly
+    assert "release_channels.py stage-versioned-tree" in nightly
+    assert nightly.index("stage-versioned-tree") < nightly.index(
+        "Collect PR-first attribution and render nightly body"
+    )
 
 
 def test_lume_nightly_reuses_notarized_builder_and_never_becomes_latest():

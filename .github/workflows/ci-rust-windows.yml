@@ -93,6 +93,13 @@ jobs:
       - name: Run Windows app-name lookup tests
         working-directory: libs/cua-driver/rust
         run: "cargo test -p platform-windows launch_uwp::tests:: --lib --locked"
+      - name: Run autostart registration and self-elevation tests
+        # The elevation tests drive the shipped PowerShell against a stubbed
+        # Start-Process, so they prove the exit-code contract (a declined UAC
+        # prompt must not exit 0 — trycua/cua#3179) without any real UAC
+        # prompt or an interactive desktop.
+        working-directory: libs/cua-driver/rust
+        run: "cargo test -p cua-driver --bin cua-driver autostart::tests:: --locked"
       - name: Prove unknown app launch stays bounded and responsive
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --test protocol_tools_call_test launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive --locked -- --exact --nocapture"

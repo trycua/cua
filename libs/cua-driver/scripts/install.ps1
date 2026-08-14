@@ -1678,11 +1678,18 @@ Write-Host "Stopping any previous cua-driver processes (best-effort; High-IL nee
 # instructions, same as the previous behavior.
 $null = Repair-CuaDriverStaleDaemon
 
+# Tracks whether registration actually happened, so the closing summary
+# reports the outcome instead of merely restating that -AutoStart was
+# requested. A declined UAC prompt used to leave the summary claiming the
+# task was registered (trycua/cua#3179).
+$AutoStartRegistered = $false
+
 if ($AutoStart) {
     Write-Host ""
     Write-Host "Registering auto-start (cua-driver autostart enable)..." -ForegroundColor Cyan
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
+        $AutoStartRegistered = $true
         Write-Host "  cua-driver serve will auto-start at every interactive logon (RunLevel=Highest)." -ForegroundColor Green
     }
     catch {
@@ -1738,11 +1745,17 @@ catch {
 
 # Windows-specific autostart hint (kept inline; OS-natural location).
 Write-Host ""
-if ($AutoStart) {
+if ($AutoStartRegistered) {
     Write-Host "Auto-start: 'cua-driver-serve' is registered at RunLevel=Highest." -ForegroundColor Cyan
     Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+} elseif ($AutoStart) {
+    # Requested but not registered — the failure was already reported above.
+    # Never claim the task exists here (trycua/cua#3179).
+    Write-Host "Auto-start: 'cua-driver-serve' is NOT registered - registration failed above." -ForegroundColor Yellow
+    Write-Host "  cua-driver autostart enable    (retry; accept the UAC prompt)" -ForegroundColor Yellow
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Yellow
 } else {
     Write-Host "Auto-start at logon (NOT enabled - re-run without -NoAutoStart to register, or:):" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart enable    (Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan

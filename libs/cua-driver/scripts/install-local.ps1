@@ -309,10 +309,17 @@ Write-Host "  exe:    $(Join-Path $VisibleBinDir $BinaryName)"
 Write-Host "  source: $installedBinary"
 Write-Host ""
 
+# Tracks whether registration actually happened, so the closing summary
+# reports the outcome instead of merely restating that -AutoStart was
+# requested. A declined UAC prompt used to leave the summary claiming the
+# task was registered (trycua/cua#3179).
+$AutoStartRegistered = $false
+
 if ($AutoStart) {
     Write-Step "registering Scheduled Task 'cua-driver-local-serve'"
     try {
         Register-CuaDriverAutostart -InstalledBinary (Join-Path $VisibleBinDir $BinaryName)
+        $AutoStartRegistered = $true
         Write-Host "  Registered. cua-driver-local serve auto-starts at every interactive logon." -ForegroundColor Green
     }
     catch {
@@ -388,15 +395,24 @@ if (-not (Test-Path -LiteralPath $releaseBinary -PathType Leaf)) {
 }
 
 # Windows-specific autostart hint (kept inline; per-shell natural location).
-if ($AutoStart) {
-    # Default branch: autostart was enabled (either by default or explicitly).
-    # Surface the management subcommands so the user knows how to inspect /
-    # disable later without digging through Task Scheduler.
+if ($AutoStartRegistered) {
+    # Registration was requested AND succeeded. Surface the management
+    # subcommands so the user knows how to inspect / disable later without
+    # digging through Task Scheduler.
     Write-Host ""
     Write-Host "Auto-start: 'cua-driver-local-serve' is registered at RunLevel=Highest." -ForegroundColor Cyan
     Write-Host "  cua-driver-local autostart status    (inspect)" -ForegroundColor Cyan
     Write-Host "  cua-driver-local autostart disable   (remove)" -ForegroundColor Cyan
     Write-Host "  cua-driver-local autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+    Write-Host ""
+} elseif ($AutoStart) {
+    # Requested but not registered — the failure was already reported above
+    # (declined UAC prompt, or the registration itself errored). Never claim
+    # the task exists here (trycua/cua#3179).
+    Write-Host ""
+    Write-Host "Auto-start: 'cua-driver-local-serve' is NOT registered - registration failed above." -ForegroundColor Yellow
+    Write-Host "  cua-driver-local autostart enable    (retry; accept the UAC prompt)" -ForegroundColor Yellow
+    Write-Host "  cua-driver-local autostart status    (inspect)" -ForegroundColor Yellow
     Write-Host ""
 } else {
     # Opt-out branch (-NoAutoStart or -AutoStart:`$false`).

@@ -124,6 +124,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cursor theme compiler tests failed with exit $LASTEXITCODE" }
       - name: Validate Windows Computer History uninstall ordering
         run: .\libs\cua-driver\scripts\tests\uninstall-windows-history-regression.ps1
+      - name: Run autostart registration and self-elevation tests
+        # The elevation tests drive the shipped PowerShell against a stubbed
+        # Start-Process, so they prove the exit-code contract (a declined UAC
+        # prompt must not exit 0 — trycua/cua#3179) without any real UAC
+        # prompt or an interactive desktop.
+        working-directory: libs/cua-driver/rust
+        run: "cargo test -p cua-driver --bin cua-driver autostart::tests:: --locked"
       - name: Prove unknown app launch stays bounded and responsive
         working-directory: libs/cua-driver/rust
         env:

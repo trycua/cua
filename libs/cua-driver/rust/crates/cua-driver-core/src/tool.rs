@@ -3035,6 +3035,45 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
+    async fn first_ordinary_call_lazily_creates_a_fresh_named_session() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = observation_registry(None, hits.clone());
+        let context = standard_context();
+        let label = "lazy-first-action";
+        let runtime_session = context.runtime_session_key(label);
+
+        let runtime_prefix = context.runtime_session_key("");
+        assert!(!crate::session::list_session_snapshots_with_prefix(
+            &runtime_prefix,
+            crate::session::DEFAULT_SESSION_IDLE_TTL,
+        )
+        .iter()
+        .any(|snapshot| snapshot.runtime_id == runtime_session));
+
+        let result = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"pid": 42, "window_id": 7, "session": label}),
+                context,
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        let snapshot = crate::session::list_session_snapshots_with_prefix(
+            &runtime_prefix,
+            crate::session::DEFAULT_SESSION_IDLE_TTL,
+        )
+        .into_iter()
+        .find(|snapshot| snapshot.runtime_id == runtime_session)
+        .expect("first ordinary call should create the named session");
+        assert_eq!(snapshot.public_label.as_deref(), Some(label));
+        assert!(!snapshot.implicit);
+
+        crate::session::end_session(&runtime_session);
+    }
+
+    #[tokio::test]
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("get_window_state", None, hits.clone(), false);

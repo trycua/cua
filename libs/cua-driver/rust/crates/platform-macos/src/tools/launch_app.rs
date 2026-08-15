@@ -1,22 +1,30 @@
 use async_trait::async_trait;
 use cua_driver_core::{
+    launch_state_json,
     protocol::ToolResult,
+    resolve_instance_policy,
     tool::{Tool, ToolDef},
+    InstancePolicy, ProcessDisposition, WindowDisposition,
 };
 use serde_json::Value;
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 pub struct LaunchAppTool;
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+static APP_ACQUISITION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "launch_app".into(),
         description:
-            "Launch a macOS app in the background — the target does NOT come to the foreground.\n\n\
+            "Resolve or launch a macOS app in the background — the target does NOT come to the foreground.\n\n\
              Provide either `bundle_id` (preferred — unambiguous, e.g. `com.apple.calculator`) \
              or `name` (e.g. \"Calculator\"). If both are given, bundle_id wins.\n\n\
+             `instance_policy` controls acquisition: `reuse_or_launch` (default) atomically \
+             reuses one exact existing app window before sending a launch request, `reuse_only` \
+             refuses rather than launching, and `new` requests an isolated process. Multiple \
+             exact running candidates are reported as ambiguous instead of guessing.\n\n\
              Optional `urls` are handed to the app as open targets — for Finder, pass a folder \
              path to open a backgrounded Finder window there.\n\n\
              Browser DevTools setup belongs to `browser_prepare`, which can prove that a \
@@ -24,19 +32,15 @@ fn def() -> &'static ToolDef {
              Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified \
              port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). \
              Use this for Tauri/WebKit-based apps.\n\n\
-             Optional `creates_new_application_instance`: when true, requests a new app instance \
-             even if one is already running. Reach for this when another \
-             agent or session may drive the SAME app concurrently — it returns a fresh pid + \
-             window so each session acts on its own isolated window instead of clobbering one \
-             shared instance. Without it, single-instance apps (Calculator, many utilities) hand \
-             every caller the same window, so two sessions fight over it. Apps that cannot create \
-             an isolated process return `NEW_APPLICATION_INSTANCE_UNAVAILABLE`; retry without the \
-             option only when sharing the existing process is safe.\n\n\
+             `creates_new_application_instance` is a deprecated compatibility alias: true maps \
+             to `instance_policy: \"new\"`. Apps that cannot create an isolated process return \
+             `NEW_APPLICATION_INSTANCE_UNAVAILABLE`; retry with reuse only when sharing is safe.\n\n\
              Optional `additional_arguments`: extra argv strings appended after --args.\n\n\
              Returns the launched app's pid, bundle_id, name, and a `windows` array \
              (same shape as `list_windows`) so callers can skip an extra round-trip before \
              `get_window_state(pid, window_id)`. `launch_state` distinguishes whether the \
-             request was sent, the process is running, and a window is ready. When the \
+             request was sent, whether the process/window was reused or created/materialized, \
+             and whether a window is ready. When the \
              focus-steal belt-and-braces \
              demotion check ran (target pid ≠ prior frontmost), the response also includes \
              `self_activation_suppressed: bool` — true if focus stayed with the prior \
@@ -62,9 +66,12 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var)."
                 },
+                "session": cua_driver_core::tool_schema::session_schema(),
+                "instance_policy": cua_driver_core::tool_schema::instance_policy_schema(),
                 "creates_new_application_instance": {
                     "type": "boolean",
-                    "description": "When true, request a new app instance even if already running. Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one. Apps that cannot create an isolated process return NEW_APPLICATION_INSTANCE_UNAVAILABLE; retry without this option only when sharing the existing process is safe."
+                    "deprecated": true,
+                    "description": "Deprecated compatibility alias. True maps to instance_policy=\"new\"; false maps to the default reuse_or_launch when instance_policy is omitted."
                 },
                 "additional_arguments": {
                     "type": "array",
@@ -104,7 +111,11 @@ impl Tool for LaunchAppTool {
             );
         }
         let webkit_inspector_port = args.opt_u64("webkit_inspector_port").map(|v| v as u16);
-        let creates_new_instance = args.bool_or("creates_new_application_instance", false);
+        let instance_policy = match resolve_instance_policy(&args) {
+            Ok(policy) => policy,
+            Err(error) => return error,
+        };
+        let creates_new_instance = matches!(&instance_policy, InstancePolicy::New);
         let additional_arguments: Vec<String> = args.str_array("additional_arguments");
         if additional_arguments
             .iter()
@@ -129,31 +140,25 @@ impl Tool for LaunchAppTool {
         if bundle_id.as_deref().is_some_and(is_cua_driver_bundle_id) {
             return protected_host_launch_refusal();
         }
-        if let Some(ref bid) = bundle_id {
-            if crate::apps::resolve_bundle_id_to_locator(bid).is_none() {
-                return structured_launch_error(
-                    "APP_NOT_INSTALLED",
-                    format!("No installed macOS app found for bundle_id '{bid}'."),
-                    serde_json::json!({ "bundle_id": bid }),
-                );
-            }
+        let target_is_launchable = if let Some(ref bid) = bundle_id {
+            crate::apps::resolve_bundle_id_to_locator(bid).is_some()
         } else if let Some(ref n) = name {
-            let Some(locator) = crate::apps::locate_by_name(n) else {
-                return structured_launch_error(
-                    "APP_NOT_INSTALLED",
-                    format!("No installed macOS app found for name '{n}'."),
-                    serde_json::json!({ "name": n }),
-                );
-            };
-            let (_, resolved_bundle_id) = locator.app_ref_and_bundle_id();
-            response_bundle_id = resolved_bundle_id.clone();
-            if resolved_bundle_id
-                .as_deref()
-                .is_some_and(is_cua_driver_bundle_id)
-            {
-                return protected_host_launch_refusal();
+            if let Some(locator) = crate::apps::locate_by_name(n) {
+                let (_, resolved_bundle_id) = locator.app_ref_and_bundle_id();
+                response_bundle_id = resolved_bundle_id.clone();
+                if resolved_bundle_id
+                    .as_deref()
+                    .is_some_and(is_cua_driver_bundle_id)
+                {
+                    return protected_host_launch_refusal();
+                }
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            false
+        };
         if let Some(err) = preflight_file_urls(&urls) {
             return err;
         }
@@ -175,6 +180,91 @@ impl Tool for LaunchAppTool {
             }
             s
         };
+
+        // Serialize the exact resolve/reuse/launch decision inside one driver
+        // runtime. Without this critical section, two concurrent MCP calls can
+        // both observe "not running" and issue duplicate launches.
+        let acquisition_guard = APP_ACQUISITION_LOCK.lock().await;
+        let existing_apps = matching_running_apps(
+            crate::apps::list_running_apps(),
+            response_bundle_id.as_deref(),
+            response_requested_name.as_deref(),
+        );
+        let existing_candidates: Vec<_> = existing_apps
+            .iter()
+            .map(|app| (app.clone(), windows_for_pid(app.pid)))
+            .collect();
+        let has_launch_directives = !urls.is_empty()
+            || !additional_arguments.is_empty()
+            || !env.is_empty()
+            || webkit_inspector_port.is_some();
+
+        match prelaunch_decision(
+            &instance_policy,
+            has_launch_directives,
+            &existing_candidates,
+        ) {
+            PrelaunchDecision::Ambiguous => {
+                return ambiguous_app_target(&instance_policy, &existing_candidates);
+            }
+            PrelaunchDecision::Reuse => {
+                let (app, windows) = existing_candidates
+                    .first()
+                    .expect("reuse decision requires exactly one reusable candidate");
+                let (app_name, bid) = response_identity(
+                    Some(app),
+                    response_bundle_id.as_deref(),
+                    response_requested_name.as_deref(),
+                );
+                return successful_acquisition(
+                    app.pid,
+                    app_name,
+                    bid,
+                    windows,
+                    &port_summary,
+                    false,
+                    ProcessDisposition::Reused,
+                    WindowDisposition::Reused,
+                    None,
+                    &instance_policy,
+                );
+            }
+            PrelaunchDecision::ReuseUnavailable => {
+                return reuse_only_unavailable(
+                    existing_candidates.first(),
+                    has_launch_directives,
+                    &instance_policy,
+                );
+            }
+            PrelaunchDecision::SendRequest => {}
+        }
+
+        // A running app can still be reused even when LaunchServices cannot
+        // currently resolve its installed bundle (for example, an app on an
+        // unmounted registration path). Only require an installed launch
+        // target once this call actually needs to send a request.
+        if !target_is_launchable {
+            return if let Some(ref bid) = bundle_id {
+                structured_launch_error(
+                    "APP_NOT_INSTALLED",
+                    format!("No installed macOS app found for bundle_id '{bid}'."),
+                    serde_json::json!({ "bundle_id": bid }),
+                )
+            } else {
+                let requested_name = name.as_deref().unwrap_or("?");
+                structured_launch_error(
+                    "APP_NOT_INSTALLED",
+                    format!("No installed macOS app found for name '{requested_name}'."),
+                    serde_json::json!({ "name": requested_name }),
+                )
+            };
+        }
+
+        let preexisting_pids: HashSet<i32> = existing_apps.iter().map(|app| app.pid).collect();
+        let preexisting_window_ids: HashSet<u32> = existing_candidates
+            .iter()
+            .flat_map(|(_, windows)| windows.iter().map(|window| window.window_id))
+            .collect();
 
         // ── Layer-3 focus-steal suppression (3-phase wrap) ───────────────
         //
@@ -228,6 +318,7 @@ impl Tool for LaunchAppTool {
         // blocking task returns (pid, app_info, windows). Suppression
         // upgrade happens AFTER the blocking call returns (back on the
         // async runtime), then we sleep holding the targeted lease.
+        let validation_pids = preexisting_pids.clone();
         let launch_result = tokio::task::spawn_blocking(move || {
             let pid = if let Some(ref bid) = bundle_id {
                 if urls.is_empty()
@@ -264,7 +355,7 @@ impl Tool for LaunchAppTool {
                 }
             };
 
-            let pid = validate_launched_pid(pid, creates_new_instance)?;
+            let pid = validate_launched_pid(pid, creates_new_instance, &validation_pids)?;
 
             // Retry loop: LaunchServices returns before WindowServer has
             // registered the new windows. Poll up to 5x100ms.
@@ -278,6 +369,7 @@ impl Tool for LaunchAppTool {
             Ok::<_, anyhow::Error>((pid, app_info, windows))
         })
         .await;
+        drop(acquisition_guard);
 
         // Upgrade to targeted suppression now that we know the real pid.
         // Keep the wildcard lease alive until immediately AFTER we've
@@ -456,56 +548,40 @@ impl Tool for LaunchAppTool {
                     response_requested_name.as_deref(),
                 );
 
-                let mut summary =
-                    format!("Launched {app_name} (pid {pid}) in background.{port_summary}");
-
-                if !windows.is_empty() {
-                    summary.push_str("\n\nWindows:");
-                    for w in &windows {
-                        let title = if w.title.is_empty() {
-                            "(no title)".to_owned()
-                        } else {
-                            format!("\"{}\"", w.title)
-                        };
-                        summary.push_str(&format!("\n- {title} [window_id: {}]", w.window_id));
-                    }
-                    summary.push_str(&format!(
-                        "\n→ Call get_window_state(pid: {pid}, window_id) to inspect."
-                    ));
-                }
-
-                let windows_json: Vec<Value> = windows
+                let process_disposition = if preexisting_pids.contains(&pid) {
+                    ProcessDisposition::Reused
+                } else {
+                    ProcessDisposition::Created
+                };
+                let window_disposition = if windows.is_empty() {
+                    WindowDisposition::None
+                } else if windows
                     .iter()
-                    .map(super::list_windows::window_record_json)
-                    .collect();
+                    .any(|window| !preexisting_window_ids.contains(&window.window_id))
+                {
+                    WindowDisposition::Materialized
+                } else {
+                    WindowDisposition::Reused
+                };
 
-                let mut structured = serde_json::json!({
-                    "pid": pid,
-                    "bundle_id": bid,
-                    "name": app_name,
-                    "windows": windows_json,
-                    "launch_state": launch_state(true, true, !windows.is_empty()),
-                });
-                // Only emit `self_activation_suppressed` when the
-                // belt-and-braces demotion check actually ran. `None`
-                // means the launch didn't enter the focus-steal path
-                // (no prior frontmost, or pid == prior) — surfacing
-                // a stale `false` would be misleading.
-                if let Some(suppressed) = self_activation_suppressed {
-                    structured["self_activation_suppressed"] = serde_json::Value::Bool(suppressed);
-                }
-                ToolResult::text(summary).with_structured(structured)
+                successful_acquisition(
+                    pid,
+                    app_name,
+                    bid,
+                    &windows,
+                    &port_summary,
+                    true,
+                    process_disposition,
+                    window_disposition,
+                    self_activation_suppressed,
+                    &instance_policy,
+                )
             }
             Ok(Err(e)) => {
                 let existing_app = creates_new_instance
-                    .then(|| {
-                        existing_running_app(
-                            response_bundle_id.as_deref(),
-                            response_requested_name.as_deref(),
-                        )
-                    })
+                    .then(|| existing_apps.first())
                     .flatten();
-                structured_launch_failure(&e, existing_app.as_ref())
+                structured_launch_failure(&e, existing_app)
             }
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -535,11 +611,7 @@ fn protected_host_launch_refusal() -> ToolResult {
 /// LaunchServices → WindowServer latency (mirrors the Swift reference).
 fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
     for attempt in 0..5 {
-        let found: Vec<_> = crate::windows::all_windows()
-            .into_iter()
-            .filter(|w| w.pid == pid && w.layer == 0)
-            .filter(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0)
-            .collect();
+        let found = windows_for_pid(pid);
         if !found.is_empty() {
             return found;
         }
@@ -548,6 +620,14 @@ fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
         }
     }
     vec![]
+}
+
+fn windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
+    crate::windows::all_windows()
+        .into_iter()
+        .filter(|window| window.pid == pid && window.layer == 0)
+        .filter(|window| window.bounds.width > 1.0 && window.bounds.height > 1.0)
+        .collect()
 }
 
 fn structured_launch_error(code: &str, message: String, details: serde_json::Value) -> ToolResult {
@@ -571,12 +651,191 @@ fn structured_launch_error(code: &str, message: String, details: serde_json::Val
     ToolResult::error(message).with_structured(payload)
 }
 
-fn launch_state(requested: bool, process_running: bool, window_ready: bool) -> serde_json::Value {
+fn matching_running_apps(
+    apps: Vec<crate::apps::AppInfo>,
+    requested_bundle_id: Option<&str>,
+    requested_name: Option<&str>,
+) -> Vec<crate::apps::AppInfo> {
+    let normalized_name = requested_app_name(requested_name, requested_bundle_id);
+    apps.into_iter()
+        .filter(|app| {
+            requested_bundle_id.map_or_else(
+                || app.name.eq_ignore_ascii_case(&normalized_name),
+                |bundle_id| {
+                    app.bundle_id.as_deref().is_some_and(|running_bundle_id| {
+                        running_bundle_id.eq_ignore_ascii_case(bundle_id)
+                    })
+                },
+            )
+        })
+        .collect()
+}
+
+fn candidate_json(app: &crate::apps::AppInfo, windows: &[crate::windows::WindowInfo]) -> Value {
     serde_json::json!({
-        "requested": requested,
-        "process_running": process_running,
-        "window_ready": window_ready,
+        "pid": app.pid,
+        "bundle_id": app.bundle_id,
+        "name": app.name,
+        "windows": windows
+            .iter()
+            .map(super::list_windows::window_record_json)
+            .collect::<Vec<_>>(),
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrelaunchDecision {
+    Reuse,
+    Ambiguous,
+    ReuseUnavailable,
+    SendRequest,
+}
+
+fn prelaunch_decision(
+    policy: &InstancePolicy,
+    has_launch_directives: bool,
+    candidates: &[(crate::apps::AppInfo, Vec<crate::windows::WindowInfo>)],
+) -> PrelaunchDecision {
+    if matches!(policy, InstancePolicy::New) {
+        return PrelaunchDecision::SendRequest;
+    }
+    if candidates.len() > 1 {
+        return PrelaunchDecision::Ambiguous;
+    }
+    if candidates
+        .first()
+        .is_some_and(|(_, windows)| !has_launch_directives && !windows.is_empty())
+    {
+        return PrelaunchDecision::Reuse;
+    }
+    if matches!(policy, InstancePolicy::ReuseOnly) {
+        return PrelaunchDecision::ReuseUnavailable;
+    }
+    PrelaunchDecision::SendRequest
+}
+
+fn ambiguous_app_target(
+    policy: &InstancePolicy,
+    candidates: &[(crate::apps::AppInfo, Vec<crate::windows::WindowInfo>)],
+) -> ToolResult {
+    structured_launch_error(
+        "APP_TARGET_AMBIGUOUS",
+        format!(
+            "launch_app found {} exact running app processes. Choose an explicit pid/window from candidates or use instance_policy=\"new\" when isolation is required.",
+            candidates.len()
+        ),
+        serde_json::json!({
+            "instance_policy": policy.as_str(),
+            "candidates": candidates
+                .iter()
+                .map(|(app, windows)| candidate_json(app, windows))
+                .collect::<Vec<_>>(),
+            "launch_state": launch_state_json(
+                false,
+                true,
+                false,
+                ProcessDisposition::None,
+                WindowDisposition::None,
+            ),
+        }),
+    )
+}
+
+fn reuse_only_unavailable(
+    candidate: Option<&(crate::apps::AppInfo, Vec<crate::windows::WindowInfo>)>,
+    has_launch_directives: bool,
+    policy: &InstancePolicy,
+) -> ToolResult {
+    let message = match candidate {
+        Some(_) if has_launch_directives => {
+            "instance_policy=\"reuse_only\" cannot deliver urls, arguments, or environment without sending an app-open request. No request was sent."
+        }
+        Some(_) => {
+            "The exact app process is running but has no reusable layer-0 window, and instance_policy=\"reuse_only\" forbids an app-open request."
+        }
+        None => {
+            "No exact running app process with a reusable window was found, and instance_policy=\"reuse_only\" forbids launching one."
+        }
+    };
+    let process_running = candidate.is_some();
+    let mut details = serde_json::json!({
+        "instance_policy": policy.as_str(),
+        "launch_state": launch_state_json(
+            false,
+            process_running,
+            false,
+            if process_running {
+                ProcessDisposition::Reused
+            } else {
+                ProcessDisposition::None
+            },
+            WindowDisposition::None,
+        ),
+    });
+    if let Some((app, windows)) = candidate {
+        details["candidate"] = candidate_json(app, windows);
+    }
+    structured_launch_error("APP_REUSE_UNAVAILABLE", message.to_owned(), details)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn successful_acquisition(
+    pid: i32,
+    app_name: String,
+    bundle_id: String,
+    windows: &[crate::windows::WindowInfo],
+    port_summary: &str,
+    request_sent: bool,
+    process_disposition: ProcessDisposition,
+    window_disposition: WindowDisposition,
+    self_activation_suppressed: Option<bool>,
+    policy: &InstancePolicy,
+) -> ToolResult {
+    let mut summary = match (request_sent, process_disposition) {
+        (false, _) => format!("Reused {app_name} (pid {pid}) without sending a launch request."),
+        (true, ProcessDisposition::Reused) => {
+            format!("Opened {app_name} through its existing process (pid {pid}) in background.{port_summary}")
+        }
+        _ => format!("Launched {app_name} (pid {pid}) in background.{port_summary}"),
+    };
+
+    if !windows.is_empty() {
+        summary.push_str("\n\nWindows:");
+        for window in windows {
+            let title = if window.title.is_empty() {
+                "(no title)".to_owned()
+            } else {
+                format!("\"{}\"", window.title)
+            };
+            summary.push_str(&format!("\n- {title} [window_id: {}]", window.window_id));
+        }
+        summary.push_str(&format!(
+            "\n→ Call get_window_state(pid: {pid}, window_id) to inspect."
+        ));
+    }
+
+    let windows_json: Vec<Value> = windows
+        .iter()
+        .map(super::list_windows::window_record_json)
+        .collect();
+    let mut structured = serde_json::json!({
+        "pid": pid,
+        "bundle_id": bundle_id,
+        "name": app_name,
+        "windows": windows_json,
+        "instance_policy": policy.as_str(),
+        "launch_state": launch_state_json(
+            request_sent,
+            true,
+            !windows.is_empty(),
+            process_disposition,
+            window_disposition,
+        ),
+    });
+    if let Some(suppressed) = self_activation_suppressed {
+        structured["self_activation_suppressed"] = Value::Bool(suppressed);
+    }
+    ToolResult::text(summary).with_structured(structured)
 }
 
 fn response_identity(
@@ -619,24 +878,19 @@ fn requested_app_name(requested_name: Option<&str>, requested_bundle_id: Option<
         .to_owned()
 }
 
-fn existing_running_app(
-    requested_bundle_id: Option<&str>,
-    requested_name: Option<&str>,
-) -> Option<crate::apps::AppInfo> {
-    crate::apps::list_running_apps().into_iter().find(|app| {
-        requested_bundle_id.is_some_and(|bundle_id| {
-            app.bundle_id
-                .as_deref()
-                .is_some_and(|running_bundle_id| running_bundle_id.eq_ignore_ascii_case(bundle_id))
-        }) || (requested_bundle_id.is_none()
-            && requested_name.is_some_and(|name| app.name.eq_ignore_ascii_case(name)))
-    })
-}
-
-fn validate_launched_pid(pid: i32, creates_new_instance: bool) -> anyhow::Result<i32> {
+fn validate_launched_pid(
+    pid: i32,
+    creates_new_instance: bool,
+    preexisting_pids: &HashSet<i32>,
+) -> anyhow::Result<i32> {
     if creates_new_instance && pid <= 0 {
         anyhow::bail!(
             "macOS returned invalid process identifier {pid} for the requested new application instance"
+        );
+    }
+    if creates_new_instance && preexisting_pids.contains(&pid) {
+        anyhow::bail!(
+            "macOS returned existing process identifier {pid} instead of creating the requested new application instance"
         );
     }
     Ok(pid)
@@ -663,7 +917,14 @@ fn structured_launch_failure(
                     "name": existing_app.name,
                     "pid": existing_app.pid,
                     "creates_new_application_instance": true,
-                    "launch_state": launch_state(true, true, false),
+                    "instance_policy": "new",
+                    "launch_state": launch_state_json(
+                        true,
+                        true,
+                        false,
+                        ProcessDisposition::Reused,
+                        WindowDisposition::None,
+                    ),
                 }),
             );
         }
@@ -684,7 +945,13 @@ fn structured_launch_failure(
         code,
         format!("Launch failed: {error:#}"),
         serde_json::json!({
-            "launch_state": launch_state(requested, false, false),
+            "launch_state": launch_state_json(
+                requested,
+                false,
+                false,
+                ProcessDisposition::None,
+                WindowDisposition::None,
+            ),
         }),
     )
 }
@@ -780,14 +1047,192 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
-        normalize_launch_url, preflight_file_urls, response_identity, structured_launch_failure,
-        validate_launched_pid,
-        LaunchAppTool,
+        matching_running_apps, normalize_launch_url, preflight_file_urls, prelaunch_decision,
+        response_identity, reuse_only_unavailable, structured_launch_failure,
+        successful_acquisition, validate_launched_pid, LaunchAppTool, PrelaunchDecision,
     };
     use cua_driver_core::protocol::Content;
+    use cua_driver_core::resolve_instance_policy;
     use cua_driver_core::tool::Tool;
+    use cua_driver_core::{InstancePolicy, ProcessDisposition, WindowDisposition};
     use serde_json::json;
-    use std::path::PathBuf;
+    use std::{collections::HashSet, path::PathBuf};
+
+    fn app(name: &str, pid: i32, bundle_id: Option<&str>) -> crate::apps::AppInfo {
+        crate::apps::AppInfo {
+            name: name.to_owned(),
+            pid,
+            bundle_id: bundle_id.map(str::to_owned),
+            running: true,
+            active: false,
+            launch_path: None,
+            kind: Some("desktop".to_owned()),
+            last_used: None,
+        }
+    }
+
+    fn window(pid: i32, window_id: u32) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: "Example".to_owned(),
+            title: "Document".to_owned(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            },
+            layer: 0,
+            z_index: 0,
+            is_on_screen: true,
+            current_space_id: Some(1),
+            on_current_space: Some(true),
+            space_ids: Some(vec![1]),
+        }
+    }
+
+    #[test]
+    fn launch_schema_exposes_session_and_canonical_instance_policy() {
+        let properties = LaunchAppTool
+            .def()
+            .input_schema
+            .get("properties")
+            .expect("properties");
+        assert_eq!(
+            properties["session"],
+            cua_driver_core::tool_schema::session_schema()
+        );
+        assert_eq!(
+            properties["instance_policy"],
+            cua_driver_core::tool_schema::instance_policy_schema()
+        );
+    }
+
+    #[test]
+    fn instance_policy_maps_legacy_new_and_rejects_conflicts() {
+        assert_eq!(
+            resolve_instance_policy(&json!({}))
+                .expect("default policy")
+                .as_str(),
+            "reuse_or_launch"
+        );
+        assert_eq!(
+            resolve_instance_policy(&json!({"creates_new_application_instance": true}))
+                .expect("legacy true")
+                .as_str(),
+            "new"
+        );
+        assert_eq!(
+            resolve_instance_policy(&json!({
+                "instance_policy": "new",
+                "creates_new_application_instance": false
+            }))
+            .expect("explicit policy wins over legacy false")
+            .as_str(),
+            "new"
+        );
+
+        let error = resolve_instance_policy(&json!({
+            "instance_policy": "reuse_only",
+            "creates_new_application_instance": true
+        }))
+        .expect_err("conflicting policy must fail");
+        assert_eq!(
+            error.structured_content.expect("structured error")["error"],
+            "INSTANCE_POLICY_CONFLICT"
+        );
+    }
+
+    #[test]
+    fn exact_running_match_prefers_bundle_id_and_normalizes_app_name() {
+        let apps = vec![
+            app("Example", 10, Some("com.example.Editor")),
+            app("Example Helper", 11, Some("com.example.Editor.Helper")),
+        ];
+        let matched =
+            matching_running_apps(apps.clone(), Some("COM.EXAMPLE.EDITOR"), Some("Wrong Name"));
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].pid, 10);
+
+        let matched = matching_running_apps(apps, None, Some("/Applications/Example.app"));
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].pid, 10);
+    }
+
+    #[test]
+    fn reuse_first_decision_avoids_requests_and_refuses_ambiguity() {
+        let one_window = vec![(
+            app("Example", 10, Some("com.example.Editor")),
+            vec![window(10, 20)],
+        )];
+        assert_eq!(
+            prelaunch_decision(&InstancePolicy::ReuseOrLaunch, false, &one_window),
+            PrelaunchDecision::Reuse
+        );
+        assert_eq!(
+            prelaunch_decision(&InstancePolicy::ReuseOnly, false, &one_window),
+            PrelaunchDecision::Reuse
+        );
+        assert_eq!(
+            prelaunch_decision(&InstancePolicy::ReuseOnly, true, &one_window),
+            PrelaunchDecision::ReuseUnavailable
+        );
+
+        let multiple = vec![
+            (
+                app("Example", 10, Some("com.example.Editor")),
+                vec![window(10, 20)],
+            ),
+            (
+                app("Example", 11, Some("com.example.Editor")),
+                vec![window(11, 21)],
+            ),
+        ];
+        assert_eq!(
+            prelaunch_decision(&InstancePolicy::ReuseOrLaunch, false, &multiple),
+            PrelaunchDecision::Ambiguous
+        );
+        assert_eq!(
+            prelaunch_decision(&InstancePolicy::New, false, &multiple),
+            PrelaunchDecision::SendRequest
+        );
+    }
+
+    #[test]
+    fn reused_success_reports_that_no_launch_request_was_sent() {
+        let result = successful_acquisition(
+            10,
+            "Example".to_owned(),
+            "com.example.Editor".to_owned(),
+            &[window(10, 20)],
+            "",
+            false,
+            ProcessDisposition::Reused,
+            WindowDisposition::Reused,
+            None,
+            &InstancePolicy::ReuseOrLaunch,
+        );
+        let structured = result.structured_content.expect("structured result");
+        assert_eq!(structured["launch_state"]["requested"], false);
+        assert_eq!(structured["launch_state"]["request_sent"], false);
+        assert_eq!(structured["launch_state"]["process_disposition"], "reused");
+        assert_eq!(structured["launch_state"]["window_disposition"], "reused");
+        assert!(result.content.iter().any(|content| matches!(
+            content,
+            Content::Text { text, .. } if text.contains("Reused Example")
+        )));
+    }
+
+    #[test]
+    fn reuse_only_refusal_never_claims_a_request_was_sent() {
+        let candidate = (app("Example", 10, Some("com.example.Editor")), vec![]);
+        let result = reuse_only_unavailable(Some(&candidate), false, &InstancePolicy::ReuseOnly);
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(structured["error"], "APP_REUSE_UNAVAILABLE");
+        assert_eq!(structured["launch_state"]["request_sent"], false);
+        assert_eq!(structured["launch_state"]["process_running"], true);
+    }
 
     #[test]
     fn local_file_target_treats_plain_paths_as_files() {
@@ -930,11 +1375,17 @@ mod tests {
 
     #[test]
     fn new_instance_cannot_report_success_without_a_process() {
-        let error = validate_launched_pid(-1, true).expect_err("invalid pid must fail");
+        let existing = HashSet::from([4242]);
+        let error = validate_launched_pid(-1, true, &existing).expect_err("invalid pid must fail");
         assert!(error
             .to_string()
             .contains("invalid process identifier -1 for the requested new application instance"));
-        assert_eq!(validate_launched_pid(4242, true).unwrap(), 4242);
+        let error = validate_launched_pid(4242, true, &existing)
+            .expect_err("existing pid cannot satisfy an isolated launch");
+        assert!(error
+            .to_string()
+            .contains("existing process identifier 4242"));
+        assert_eq!(validate_launched_pid(4243, true, &existing).unwrap(), 4243);
     }
 
     #[test]

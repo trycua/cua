@@ -968,10 +968,11 @@ mod tests {
         for required in [
             "Choose the target on each action",
             "transport's implicit session",
-            "prefer a short public",
-            "pass the same label on every call that accepts it",
+            "pass a short public `session` label on the first ordinary",
+            "creates a fresh named session lazily",
+            "do not call `start_session` merely to",
             "Passing it once is not sticky",
-            "revive a name after",
+            "Use `start_session(session)` only when initial configuration",
             "There is no `deescalate_session`",
             "--capability-manifest",
             "--approve-capability-manifest",
@@ -986,7 +987,7 @@ mod tests {
         for forbidden in [
             "one-way session phase",
             "if session policy allows",
-            "Pass `session` on the first action",
+            "Call `start_session(session)` when you need to name",
         ] {
             assert!(
                 !skill.contains(forbidden),
@@ -994,17 +995,53 @@ mod tests {
             );
         }
         for required in [
-            "start_session(session?)",
-            "optional; can name before acting",
-            "prefer a short `session` label",
-            "Passing it once is not sticky",
-            "one-shot CLI calls use disposable transports",
+            "first named call creates session lazily",
+            "do not call `start_session` merely",
+            "Use `start_session` only for initial configuration",
+            "Passing a label once is not sticky",
+            "Direct one-shot CLI calls use disposable transports",
         ] {
             assert!(
                 browser.contains(required),
                 "browser skill lost required session guidance: {required}"
             );
         }
+    }
+
+    #[test]
+    fn bundled_skill_prefers_atomic_reuse_before_launch() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let macos = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/MACOS.md"))
+            .expect("canonical macOS skill must be readable");
+        let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
+            .expect("canonical browser skill must be readable");
+
+        for required in [
+            "instance_policy: \"reuse_or_launch\"",
+            "Do not preflight with `list_apps` or",
+            "`reuse_only` when launching is forbidden",
+            "verified need for a distinct process",
+            "Do not request `new` merely because an earlier",
+        ] {
+            assert!(
+                skill.contains(required),
+                "skill lost required reuse-first acquisition guidance: {required}"
+            );
+        }
+        for required in [
+            "an exact reusable app/window and returns it without a launch request",
+            "without a racy `list_apps` / `list_windows` preflight",
+            "NEW_APPLICATION_INSTANCE_UNAVAILABLE",
+        ] {
+            assert!(
+                macos.contains(required),
+                "macOS skill lost required reuse-first acquisition guidance: {required}"
+            );
+        }
+        assert!(browser.contains("Do not call `list_apps` or `list_windows` merely"));
+        assert!(browser.contains("performs that acquisition atomically"));
     }
 
     #[test]

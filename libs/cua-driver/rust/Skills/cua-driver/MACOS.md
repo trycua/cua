@@ -88,9 +88,11 @@ element action when the same command has an ordinary control, and prefer
 menu bars” below.
 
 **"Open \<app\>" in user speech means launch, not activate.**
-`cua-driver launch_app` is the one correct path for process
-startup — it's idempotent (no-op on a running app), returns the
-pid, and has an internal `FocusRestoreGuard` that catches
+`cua-driver launch_app` is the one correct path for acquiring the target. Its
+default `reuse_or_launch` policy returns an exact existing app/window without
+sending a launch request when the requested inputs permit reuse. Otherwise it
+starts or opens through the background launch path, returns the pid, and uses
+an internal `FocusRestoreGuard` that catches
 `NSApp.activate(ignoringOtherApps:)` calls the target makes during
 `application(_:open:)` and clobbers the frontmost back to what it
 was before the launch. That guard is why `launch_app` with `urls`
@@ -243,23 +245,31 @@ editor state.
      the user should click **+**, add `/Applications/CuaDriver.app` (or
      `/Applications/CuaDriverLocal.app`), enable it, and rerun the command.
 
-## Resolve target pid — always via `launch_app`
+## Acquire the target — always via `launch_app`
 
 **Always start with `launch_app`**, whether or not the target is already
-running. It's idempotent (relaunching returns the existing pid with no
-side effects) and gives you the pid in one call — no `list_apps` hop.
+running. Its default `instance_policy: "reuse_or_launch"` atomically checks for
+an exact reusable app/window and returns it without a launch request; only when
+none is reusable does it ask macOS to launch. This gives you the pid and windows
+in one call without a racy `list_apps` / `list_windows` preflight.
 
 - `launch_app({bundle_id: "com.apple.finder"})` — preferred, unambiguous.
 - `launch_app({name: "Calculator"})` — when bundle_id isn't known.
 
-`launch_app` is a **hidden-launch primitive by design** — that's the
-entire point of cua-driver: agents drive apps in the background while
-the user keeps typing in their real foreground app. The target's
-window is initialized (AX tree fully populated, clickable via
-`element_index`, the pid appears in `list_apps`) but not drawn on
-screen. The driver never activates or unhides apps on its own; that
-would violate the no-foreground contract the whole driver exists to
-protect.
+Use `instance_policy: "reuse_only"` when the task must not start anything. Use
+`instance_policy: "new"` only after verifying that another live run must drive
+the same app concurrently. If macOS or the app cannot create a distinct
+process, the tool returns `NEW_APPLICATION_INSTANCE_UNAVAILABLE`; never pretend
+the shared existing instance is isolated. The legacy
+`creates_new_application_instance: true` spelling remains compatible.
+
+When a launch request is necessary, `launch_app` is a **hidden-launch primitive
+by design** — that's the entire point of cua-driver: agents drive apps in the
+background while the user keeps typing in their real foreground app. A reused
+window keeps its existing visibility and geometry; a newly materialized target
+is initialized for background control. The driver never intentionally activates
+or unhides apps on its own; that would violate the no-foreground contract the
+whole driver exists to protect.
 
 If the user explicitly wants the window visible (usually for a demo
 or recording), they unhide it themselves — Dock click, Cmd-Tab, or
@@ -496,9 +506,10 @@ starting point for new browser workflows.
 
 1. `launch_app({bundle_id: "com.apple.finder", urls: ["~/Downloads"]})`
    → `{pid: 844, windows: [{window_id: 6123, title: "Downloads", ...}]}`.
-   Idempotent launch; plus Finder opens a hidden window rooted at
-   `~/Downloads` via `application(_:open:)` — zero activation, no
-   focus steal. The `windows` array lets you skip a `list_windows` hop.
+   Because the URL must be delivered, Finder opens a background window rooted
+   at `~/Downloads` via `application(_:open:)`; the result reports whether the
+   process was reused and whether a request was sent. The `windows` array lets
+   you skip a `list_windows` hop.
 2. `get_window_state({pid: 844, window_id: 6123})` → verify an
    `AXWindow` whose title contains "Downloads" is present with a
    populated AX subtree (sidebar, list view, files).

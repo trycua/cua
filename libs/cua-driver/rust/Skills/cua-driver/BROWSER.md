@@ -15,8 +15,7 @@ mints session-scoped tab and element capabilities.
 The canonical loop is:
 
 ```text
-start_session(session?)                                  # optional; can name before acting
-list_windows or launch_app
+launch_app(..., session?, instance_policy=reuse_or_launch) # first named call creates session lazily
 get_browser_state(pid, window_id, session?)               # bind
 get_browser_state(target_id, tab_id, session?,
                   snapshot_format=semantic_v2)            # snapshot
@@ -28,13 +27,16 @@ end_session(session?)                                     # optional cleanup
 ```
 
 For a multi-call browser workflow, prefer a short `session` label and pass the
-same value on every call that accepts it. Passing it once is not sticky; a later
-omitted value uses the transport's implicit session. One long-lived MCP or SDK
-transport may omit `session` for one-off or deliberately unlabeled work; its
-first admitted call creates one implicit session and later unnamed calls reuse
-it. Direct one-shot CLI calls use disposable transports. Never substitute a raw
-CDP target id, tab ordinal, URL match, or remembered ref for a capability
-returned by `get_browser_state`.
+same value on the first ordinary call and every later call that accepts it. The
+first named call creates that session lazily; do not call `start_session` merely
+to begin. Passing a label once is not sticky; a later omitted value uses the
+transport's implicit session. Use `start_session` only for initial configuration
+or to revive an ended label. One long-lived MCP or SDK transport may omit
+`session` for one-off or deliberately unlabeled work; its first admitted call
+creates one implicit session and later unnamed calls reuse it.
+Direct one-shot CLI calls use disposable transports. Never substitute a raw CDP target id, tab
+ordinal, URL match, or remembered ref for a capability returned by
+`get_browser_state`.
 
 ### Copy page content to the system clipboard
 
@@ -78,11 +80,18 @@ Start or discover the app with the native tools and select one returned
 `window_id`:
 
 ```bash
-cua-driver start_session '{"session":"browser-run-1"}'
-cua-driver list_windows '{"pid":4242}'
+cua-driver launch_app \
+  '{"bundle_id":"com.google.Chrome","session":"browser-run-1"}'
+# Use pid and window_id from launch_app's reuse-or-launch result.
 cua-driver get_browser_state \
   '{"pid":4242,"window_id":991,"session":"browser-run-1"}'
 ```
+
+Do not call `list_apps` or `list_windows` merely to decide whether to launch.
+`launch_app` performs that acquisition atomically: its default
+`instance_policy:"reuse_or_launch"` returns an exact existing app/window when
+available, then requests a launch only when needed. Use `list_windows` when you
+already have a long-lived pid and need to choose among its current windows.
 
 Continue to mutation only when the bind result reports:
 

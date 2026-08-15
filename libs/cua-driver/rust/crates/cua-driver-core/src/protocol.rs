@@ -367,17 +367,17 @@ fn agent_instructions() -> String {
     };
 
     format!(
-        r#"cua-driver: cross-platform background computer-use automation.
+        r#"cua-driver: native GUI automation.
 
-Before starting UI work, classify the desired postcondition. For a non-GUI outcome, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
+For a non-GUI outcome, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation, then read it back in that semantic domain. This server has no shell.
 
-For an app or window outcome, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
+Use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback, typed browser tools for supported page content, or clipboard tools for clipboard state. Then try background `element_index` ({tree_kind})/pixels, foreground, desktop. Never advance on transport success alone.
 
 Workflow per turn:
-0. `start_session` is optional. For multi-call work, prefer a short `session` label and repeat it on every call that accepts it. Unnamed calls use the transport's implicit session. Only `start_session` revives an ended name; `end_session` explicitly cleans up.
-1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
+0. Pass a short `session` label on the first ordinary call and repeat it on every call that accepts it; the first call creates the session lazily. Do not call `start_session` merely to begin. Use it only for initial configuration or to revive an ended label. Omission uses the transport's implicit session; `end_session` explicitly cleans up.
+1. `launch_app`'s default `reuse_or_launch` policy reuses an exact existing app/window before launch. Do not preflight with `list_apps`/`list_windows`. Reserve `new` for verified concurrent isolation. Then call `get_window_state(pid, window_id)` to refresh indices.
 2. Act with the fresh index.
-3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
+3. `verify_state(pid, window_id, expect)` checks postconditions. `unknown` is not success; `include_screenshot:true` gives the multimodal agent visual evidence.
 
 If the `cua-driver` skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
     )
@@ -475,7 +475,7 @@ mod agent_instruction_tests {
         assert!(instructions.contains("multimodal agent"));
         assert!(instructions.contains("client-provided app API/SDK"));
         assert!(instructions.contains("headless/background interface"));
-        assert!(instructions.contains("read the result back in that semantic domain"));
+        assert!(instructions.contains("then read it back in that semantic domain"));
         assert!(instructions.contains("narrowest semantic Cua route first"));
         assert!(instructions.contains("`set_window_frame` plus `list_windows` readback"));
         assert!(instructions.contains("typed browser tools for supported page content"));
@@ -498,16 +498,26 @@ mod agent_instruction_tests {
             .as_str()
             .expect("initialize result should carry agent instructions");
 
-        assert!(instructions.contains("`start_session` is optional"));
-        assert!(instructions.contains("prefer a short `session` label"));
+        assert!(instructions.contains("Pass a short `session` label on the first ordinary call"));
         assert!(instructions.contains("repeat it on every call that accepts it"));
+        assert!(instructions.contains("first call creates the session lazily"));
+        assert!(instructions.contains("Do not call `start_session` merely to begin"));
         assert!(instructions.contains("transport's implicit session"));
-        assert!(instructions.contains("Only `start_session` revives an ended name"));
+        assert!(instructions.contains("revive an ended label"));
         assert!(instructions.contains("`end_session` explicitly cleans up"));
         assert!(
             !instructions.contains("`start_session(session)` once"),
             "initialize instructions must not require explicit session setup"
         );
+    }
+
+    #[test]
+    fn initialize_instructions_prefer_atomic_reuse_before_launch() {
+        let instructions = agent_instructions();
+        assert!(instructions.contains("default `reuse_or_launch` policy"));
+        assert!(instructions.contains("reuses an exact existing app/window"));
+        assert!(instructions.contains("Do not preflight with `list_apps`/`list_windows`"));
+        assert!(instructions.contains("Reserve `new` for verified concurrent isolation"));
     }
 }
 

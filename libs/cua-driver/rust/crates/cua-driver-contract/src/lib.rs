@@ -30,9 +30,9 @@ pub use inputs::{
     action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClipboardReadInput,
     ClipboardWriteInput, DesktopScope, DragInput, EndSessionInput, EscalateSessionInput,
     EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput, InvokeMenuInput,
-    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
-    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput, InstancePolicy,
+    InvokeMenuInput, ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection,
+    ScrollInput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
     SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
     MULTI_CALL_SESSION_DESCRIPTION,
 };

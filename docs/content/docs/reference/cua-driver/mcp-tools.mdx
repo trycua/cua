@@ -150,7 +150,11 @@ Return the session cursor's theme, semantic playback, position, visibility, and 
 
 ### `launch_app`
 
-Launch a macOS app in the background — the target does NOT come to the foreground.
+Atomically acquire a macOS app in the background. The default
+`instance_policy: "reuse_or_launch"` first returns an exact existing app/window
+without sending a launch request; only when no candidate can satisfy the input
+does it ask macOS to launch. The target does NOT intentionally come to the
+foreground.
 
 Provide either `bundle_id` (preferred — unambiguous, e.g. `com.apple.calculator`) or `name` (e.g. "Calculator"). If both are given, bundle_id wins.
 
@@ -160,18 +164,40 @@ Browser DevTools setup belongs to `browser_prepare`, which can prove that a sepa
 
 Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). Use this for Tauri/WebKit-based apps.
 
-Optional `creates_new_application_instance`: when true, requests a new app instance even if one is already running. Reach for this when another agent or session may drive the SAME app concurrently — it returns a fresh pid + window so each session acts on its own isolated window instead of clobbering one shared instance. Without it, single-instance apps (Calculator, many utilities) hand every caller the same window, so two sessions fight over it. Apps that cannot create an isolated process return `NEW_APPLICATION_INSTANCE_UNAVAILABLE`; retry without the option only when sharing the existing process is safe.
+Optional `instance_policy` controls acquisition: `reuse_or_launch` (default)
+reuses an exact candidate before launching; `reuse_only` never sends a launch
+request; and `new` requires a distinct application instance. Reserve `new` for
+a verified need to drive the same app concurrently, not merely because an
+earlier or sequential session used it. Apps that cannot create an isolated
+process return `NEW_APPLICATION_INSTANCE_UNAVAILABLE`; retry with
+`reuse_or_launch` only when sharing the existing process is safe.
+
+`creates_new_application_instance: true` is the deprecated compatibility
+spelling for `instance_policy: "new"`.
 
 Optional `additional_arguments`: extra argv strings appended after --args.
 
-Returns the launched app's pid, bundle_id, name, and a `windows` array (same shape as `list_windows`) so callers can skip an extra round-trip before `get_window_state(pid, window_id)`. `launch_state` distinguishes whether the request was sent, the process is running, and a window is ready. When the focus-steal belt-and-braces demotion check ran (target pid ≠ prior frontmost), the response also includes `self_activation_suppressed: bool` — true if focus stayed with the prior frontmost, false if the launched app held focus despite the re-demote attempt.
+Returns the acquired app's pid, bundle_id, name, canonical `instance_policy`,
+and a `windows` array (same shape as `list_windows`) so callers can skip an
+extra round-trip before `get_window_state(pid, window_id)`. `launch_state`
+retains the legacy `requested`, `process_running`, and `window_ready` booleans
+and adds `request_sent`, `process_disposition`
+(`reused` | `created` | `none`), and `window_disposition`
+(`reused` | `materialized` | `none`). These fields distinguish a true reuse
+from a launch request and newly materialized state. When the focus-steal
+belt-and-braces demotion check ran (target pid ≠ prior frontmost), the response
+also includes `self_activation_suppressed: bool` — true if focus stayed with the
+prior frontmost, false if the launched app held focus despite the re-demote
+attempt.
 
 **Arguments:**
 
 - `additional_arguments` (array of string, optional): Extra arguments appended after --args when launching.
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
-- `creates_new_application_instance` (boolean, optional): When true, request a new app instance even if already running. Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one. Apps that cannot create an isolated process return NEW_APPLICATION_INSTANCE_UNAVAILABLE; retry without this option only when sharing the existing process is safe.
+- `creates_new_application_instance` (boolean, optional, deprecated): Compatibility alias for `instance_policy: "new"`.
+- `instance_policy` (string, optional): `reuse_or_launch` (default), `reuse_only`, or `new`. Unsupported `new` requests return NEW_APPLICATION_INSTANCE_UNAVAILABLE rather than silently reusing an instance.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
+- `session` (string, optional): Public lifecycle label. A first ordinary call with a fresh label creates that session lazily; repeat it on every later call that accepts it. Do not call `start_session` merely to begin.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
 - `webkit_inspector_port` (integer, optional): Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var).
 

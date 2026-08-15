@@ -321,10 +321,13 @@ use cua_driver_contract::{
     ScrollDirection, ScrollInput, TypeTextInput,
 };
 use cua_driver_core::{
+    launch_state_json,
     protocol::ToolResult,
+    resolve_instance_policy,
     tool::{Tool, ToolDef, ToolRegistry},
     tool_args::{parse_typed_input, parse_typed_projection},
     window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
+    InstancePolicy, ProcessDisposition, WindowDisposition,
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
@@ -1865,10 +1868,244 @@ async fn restore_foreground_polling_best_effort(prior_foreground_addr: usize, sp
 
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+static LAUNCH_ACQUISITION_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
 
 fn contains_remote_debugging_flag(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
+}
+
+fn launch_policy_error(
+    code: &str,
+    message: impl Into<String>,
+    policy: InstancePolicy,
+) -> ToolResult {
+    ToolResult::error(message.into()).with_structured(json!({
+        "error": code,
+        "instance_policy": policy.as_str(),
+        "platform": "windows",
+        "launch_state": launch_state_json(
+            false,
+            false,
+            false,
+            ProcessDisposition::None,
+            WindowDisposition::None,
+        ),
+    }))
+}
+
+fn launch_request_error(
+    code: &str,
+    message: impl Into<String>,
+    policy: InstancePolicy,
+) -> ToolResult {
+    ToolResult::error(message.into()).with_structured(json!({
+        "error": code,
+        "instance_policy": policy.as_str(),
+        "platform": "windows",
+        "launch_state": launch_state_json(
+            true,
+            false,
+            false,
+            ProcessDisposition::None,
+            WindowDisposition::None,
+        ),
+    }))
+}
+
+fn windows_process_stem(target: &str) -> Option<String> {
+    if target.to_ascii_lowercase().starts_with("shell:") || target.contains('!') {
+        return None;
+    }
+    let (file, _) = split_launchable_target(target);
+    let basename = file
+        .rsplit(|character| character == '\\' || character == '/')
+        .next()?
+        .trim_matches(|character| character == '\'' || character == '"')
+        .trim();
+    let lowercase = basename.to_ascii_lowercase();
+    let stem = lowercase
+        .strip_suffix(".exe")
+        .unwrap_or(&lowercase)
+        .to_owned();
+    (!stem.is_empty()).then_some(stem)
+}
+
+fn process_matches_windows_target(process: &crate::win32::ProcessInfo, target: &str) -> bool {
+    let Some(target_stem) = windows_process_stem(target) else {
+        return false;
+    };
+    let lowercase = process.name.to_ascii_lowercase();
+    let process_stem = lowercase.strip_suffix(".exe").unwrap_or(&lowercase);
+    process_stem == target_stem.as_str()
+}
+
+fn windows_records_json(windows: &[crate::win32::WindowInfo]) -> Vec<Value> {
+    let window_count = windows.len();
+    windows
+        .iter()
+        .enumerate()
+        .map(|(position, window)| {
+            json!({
+                "window_id": window.hwnd,
+                "title": window.title,
+                "bounds": {
+                    "x": window.x,
+                    "y": window.y,
+                    "width": window.width,
+                    "height": window.height,
+                },
+                "layer": 0,
+                "z_index": z_index_from_front_to_back(window_count, position),
+                "is_on_screen": window.is_on_screen,
+            })
+        })
+        .collect()
+}
+
+fn reusable_windows_processes(target: &str) -> Vec<(u32, String, Vec<Value>)> {
+    let processes: Vec<_> = crate::win32::list_processes()
+        .into_iter()
+        .filter(|process| process_matches_windows_target(process, target))
+        .collect();
+    if processes.is_empty() {
+        return Vec::new();
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        let candidates: Vec<_> = processes
+            .iter()
+            .map(|process| {
+                let windows = crate::win32::list_windows(Some(process.pid));
+                (
+                    process.pid,
+                    process.name.clone(),
+                    windows_records_json(&windows),
+                )
+            })
+            .collect();
+        if candidates.len() > 1
+            || candidates
+                .first()
+                .is_some_and(|(_, _, windows): &(u32, String, Vec<Value>)| !windows.is_empty())
+            || std::time::Instant::now() >= deadline
+        {
+            return candidates;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn reused_windows_app_result(
+    pid: u32,
+    name: String,
+    windows: Vec<Value>,
+    instance_policy: InstancePolicy,
+) -> ToolResult {
+    let mut summary = format!("✅ Reused {name} (pid {pid}); no launch request was sent.");
+    summary.push_str("\n\nWindows:");
+    for window in &windows {
+        let title = window["title"].as_str().unwrap_or("");
+        let window_id = window["window_id"].as_u64().unwrap_or(0);
+        summary.push_str(&format!("\n- \"{title}\" [window_id: {window_id}]"));
+    }
+    summary.push_str(&format!(
+        "\n→ Call get_window_state(pid: {pid}, window_id) to inspect."
+    ));
+    ToolResult::text(summary).with_structured(json!({
+        "pid": pid,
+        "bundle_id": Value::Null,
+        "name": name,
+        "running": true,
+        "active": false,
+        "windows": windows,
+        "instance_policy": instance_policy.as_str(),
+        "launch_state": launch_state_json(
+            false,
+            true,
+            true,
+            ProcessDisposition::Reused,
+            WindowDisposition::Reused,
+        ),
+    }))
+}
+
+#[cfg(test)]
+mod launch_acquisition_tests {
+    use super::*;
+
+    #[test]
+    fn process_matching_uses_exact_executable_stem() {
+        let process = crate::win32::ProcessInfo {
+            pid: 41,
+            parent_pid: 1,
+            name: "notepad.exe".to_owned(),
+        };
+        assert!(process_matches_windows_target(
+            &process,
+            r#"C:\Windows\System32\notepad.exe"#
+        ));
+        assert!(process_matches_windows_target(&process, "Notepad"));
+        assert!(!process_matches_windows_target(&process, "Notepad++"));
+        assert!(!process_matches_windows_target(
+            &process,
+            "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"
+        ));
+    }
+
+    #[test]
+    fn launch_schema_exposes_lazy_session_and_instance_policy() {
+        let schema = LaunchAppTool.def().input_schema.clone();
+        assert_eq!(schema["properties"]["session"]["type"], "string");
+        assert_eq!(
+            schema["properties"]["instance_policy"]["default"],
+            "reuse_or_launch"
+        );
+        assert_eq!(
+            schema["properties"]["instance_policy"]["enum"],
+            json!(["reuse_or_launch", "reuse_only", "new"])
+        );
+        assert_eq!(
+            schema["properties"]["creates_new_application_instance"]["deprecated"],
+            true
+        );
+    }
+
+    #[test]
+    fn legacy_new_conflicts_with_explicit_reuse() {
+        let result = resolve_instance_policy(&json!({
+            "instance_policy": "reuse_only",
+            "creates_new_application_instance": true,
+        }));
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn explicit_new_fails_before_sending_a_launch_request() {
+        let result = LaunchAppTool
+            .invoke(json!({"name": "notepad", "instance_policy": "new"}))
+            .await;
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["error"], "NEW_APPLICATION_INSTANCE_UNAVAILABLE");
+        assert_eq!(structured["launch_state"]["request_sent"], false);
+    }
+
+    #[tokio::test]
+    async fn reuse_only_with_arguments_fails_before_sending_a_request() {
+        let result = LaunchAppTool
+            .invoke(json!({
+                "name": "notepad",
+                "instance_policy": "reuse_only",
+                "additional_arguments": ["example.txt"],
+            }))
+            .await;
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["error"], "APP_REUSE_UNAVAILABLE");
+        assert_eq!(structured["launch_state"]["request_sent"], false);
+    }
 }
 
 #[async_trait]
@@ -1884,7 +2121,9 @@ impl Tool for LaunchAppTool {
             // route through `IApplicationActivationManager` so packaged
             // (Microsoft Store / UWP / MSIX) apps return the real
             // process pid instead of a stub-redirect pid.
-            description: "Launch a Windows app hidden — the driver never brings the target to \
+            description: "Resolve or launch a Windows app hidden. By default, reuse one exact \
+                running desktop process with a window when its executable identity is available \
+                without ambiguity; otherwise send a launch request. The driver never brings the target to \
                 the foreground, the target's window is launched with SW_SHOWNOACTIVATE so it \
                 does not steal focus from whatever is currently frontmost.\n\n\
                 Provide either `bundle_id` / `name` / `aumid` (resolved as below) or `path` \
@@ -1906,11 +2145,10 @@ impl Tool for LaunchAppTool {
                 `null` for ShellExecuteEx launches.\n\n\
                 Windows-only field: `path` (Swift uses `bundle_id` since macOS apps resolve via \
                 LaunchServices; Windows has no LaunchServices, so `path` is the canonical form). \
-                The macOS-specific `webkit_inspector_port`, \
-                `creates_new_application_instance`, and `additional_arguments` fields are \
-                accepted; `additional_arguments` is honored (forwarded as ShellExecuteEx \
-                parameters or as the AUMID activation arguments string). \
-                The remaining macOS-only fields currently no-op on Windows.".into(),
+                `additional_arguments` is honored (forwarded as ShellExecuteEx parameters or as \
+                the AUMID activation arguments string). Windows shell activation cannot guarantee \
+                a distinct live process for single-instance desktop or packaged apps, so \
+                instance_policy=new fails before sending a request instead of silently degrading.".into(),
             input_schema: json!({"type":"object","properties":{
                 "bundle_id":{"type":"string","description":"App User Model ID (AUMID) for a packaged app — pattern `{PackageFamilyName}!{ApplicationId}`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Falls back to a `name` alias if no `!` is present. Either bundle_id, name, aumid, path, or launch_path must be provided."},
                 "aumid":{"type":"string","description":"Explicit AUMID for a packaged app. Cleaner alternative to overloading `bundle_id`. Takes precedence over `bundle_id` / `name` when present."},
@@ -1920,7 +2158,9 @@ impl Tool for LaunchAppTool {
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
-                "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
+                "session": cua_driver_core::tool_schema::session_schema(),
+                "instance_policy": cua_driver_core::tool_schema::instance_policy_schema(),
+                "creates_new_application_instance":{"type":"boolean","deprecated":true,"description":"Deprecated compatibility alias. true maps to instance_policy=new; false maps to reuse_or_launch. Windows cannot guarantee a distinct live process and returns NEW_APPLICATION_INSTANCE_UNAVAILABLE before sending a request."},
                 "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: true,
@@ -1951,6 +2191,10 @@ impl Tool for LaunchAppTool {
                     .collect()
             })
             .unwrap_or_default();
+        let instance_policy = match resolve_instance_policy(&args) {
+            Ok(policy) => policy,
+            Err(error) => return error,
+        };
         let start_minimized = args
             .get("start_minimized")
             .and_then(|v| v.as_bool())
@@ -1968,25 +2212,6 @@ impl Tool for LaunchAppTool {
         } else {
             windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE.0
         };
-        // Snapshot the set of currently-running pids BEFORE we launch. The
-        // detached start_minimized polling task uses this to detect "any
-        // process that came into existence as a result of our launch", so
-        // it can minimize their windows too — covers the launcher-stub
-        // case (LibreOffice swriter.exe → soffice.bin, GIMP gimp-3.exe →
-        // gimp-3.2.exe, etc.) where the launched pid exits and a child
-        // process with a different name owns the actual window. Captured
-        // here (before the launch) so the new soffice.bin pid won't be
-        // in the snapshot.
-        let pre_launch_pids: std::sync::Arc<std::collections::HashSet<u32>> = if start_minimized {
-            let pids: std::collections::HashSet<u32> = crate::win32::list_processes()
-                .into_iter()
-                .map(|p| p.pid)
-                .collect();
-            std::sync::Arc::new(pids)
-        } else {
-            std::sync::Arc::new(std::collections::HashSet::new())
-        };
-
         // Capture the foreground window BEFORE any launch path runs so the
         // post-spawn polling restore (below) has a target HWND to flip back
         // to. Mirrors the macOS `FocusRestoreGuard` behavior. Best-effort —
@@ -2025,6 +2250,7 @@ impl Tool for LaunchAppTool {
                     .collect()
             })
             .unwrap_or_default();
+        let caller_has_additional_arguments = !extra_args.is_empty();
         if args.get("cdp_debugging_port").is_some() {
             return ToolResult::error(
                 "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
@@ -2086,6 +2312,100 @@ impl Tool for LaunchAppTool {
             );
         }
 
+        // Serialize the resolve/reuse-or-launch decision through request
+        // dispatch. Otherwise two concurrent calls can both observe no
+        // reusable window and launch before either new window is enumerable.
+        let acquisition_guard = LAUNCH_ACQUISITION_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        if instance_policy == InstancePolicy::New {
+            return launch_policy_error(
+                "NEW_APPLICATION_INSTANCE_UNAVAILABLE",
+                "Windows shell and packaged-app activation may route to an existing single-instance process, so Cua Driver cannot guarantee instance_policy=\"new\". No launch request was sent.",
+                instance_policy,
+            );
+        }
+
+        let carries_launch_modifiers = !urls.is_empty()
+            || caller_has_additional_arguments
+            || start_minimized
+            || args.get("webkit_inspector_port").is_some();
+        if instance_policy == InstancePolicy::ReuseOnly && carries_launch_modifiers {
+            return launch_policy_error(
+                "APP_REUSE_UNAVAILABLE",
+                "instance_policy=\"reuse_only\" cannot deliver URLs, launch arguments, inspector settings, or start_minimized without a launch request. No launch request was sent.",
+                instance_policy,
+            );
+        }
+
+        // Snapshot only after acquiring the mutex and validating fail-closed
+        // policies: a prior serialized call may have launched while this call
+        // was waiting. These identities anchor both the process/window
+        // disposition and the minimized launcher-family guard below.
+        let pre_launch_pids: std::sync::Arc<std::collections::HashSet<u32>> = std::sync::Arc::new(
+            crate::win32::list_processes()
+                .into_iter()
+                .map(|process| process.pid)
+                .collect(),
+        );
+        let pre_launch_hwnds: std::collections::HashSet<u64> = crate::win32::list_windows(None)
+            .into_iter()
+            .map(|window| window.hwnd)
+            .collect();
+
+        if !carries_launch_modifiers {
+            if let Some(reuse_target) = target.clone() {
+                let candidates =
+                    tokio::task::spawn_blocking(move || reusable_windows_processes(&reuse_target))
+                        .await
+                        .unwrap_or_default();
+                match candidates.as_slice() {
+                    [(pid, name, windows)] if !windows.is_empty() => {
+                        return reused_windows_app_result(
+                            *pid,
+                            name.clone(),
+                            windows.clone(),
+                            instance_policy,
+                        )
+                    }
+                    [] | [(_, _, _)] => {}
+                    _ => {
+                        let candidate_payload: Vec<Value> = candidates
+                            .iter()
+                            .map(|(pid, name, windows)| {
+                                json!({"pid": pid, "name": name, "windows": windows})
+                            })
+                            .collect();
+                        return ToolResult::error(
+                            "More than one exact running Windows process matches the requested app; choose a candidate pid/window_id instead of launching another instance.",
+                        )
+                        .with_structured(json!({
+                            "error": "APP_TARGET_AMBIGUOUS",
+                            "instance_policy": instance_policy.as_str(),
+                            "platform": "windows",
+                            "candidates": candidate_payload,
+                            "launch_state": launch_state_json(
+                                false,
+                                true,
+                                false,
+                                ProcessDisposition::None,
+                                WindowDisposition::None,
+                            ),
+                        }));
+                    }
+                }
+            }
+        }
+
+        if instance_policy == InstancePolicy::ReuseOnly {
+            return launch_policy_error(
+                "APP_REUSE_UNAVAILABLE",
+                "No exact running Windows desktop process with a reusable window matched the requested app. AUMID targets cannot be correlated to a process without activating the package. No launch request was sent.",
+                instance_policy,
+            );
+        }
+
         // ── Packaged-app (UWP / MSIX) routing decision ──────────────────────
         //
         // Routing precedence — most explicit signal wins:
@@ -2137,19 +2457,25 @@ impl Tool for LaunchAppTool {
                     None
                 }
                 Err(crate::launch_uwp::AppsFolderLookupError::Timeout) => {
-                    return ToolResult::error(format!(
-                        "App name lookup for {n:?} is temporarily unavailable: Windows did not respond to the shell:AppsFolder query within 4s. No app was launched; retry after the shell recovers, or pass an explicit path or aumid."
-                    ))
+                    return launch_policy_error(
+                        "APP_TARGET_RESOLUTION_UNAVAILABLE",
+                        format!("App name lookup for {n:?} is temporarily unavailable: Windows did not respond to the shell:AppsFolder query within 4s. No app was launched; retry after the shell recovers, or pass an explicit path or aumid."),
+                        instance_policy,
+                    )
                 }
                 Err(crate::launch_uwp::AppsFolderLookupError::Busy) => {
-                    return ToolResult::error(format!(
-                        "App name lookup for {n:?} is temporarily unavailable because a prior Windows shell lookup is still running or cooling down. No app was launched; retry later, or pass an explicit path or aumid."
-                    ))
+                    return launch_policy_error(
+                        "APP_TARGET_RESOLUTION_UNAVAILABLE",
+                        format!("App name lookup for {n:?} is temporarily unavailable because a prior Windows shell lookup is still running or cooling down. No app was launched; retry later, or pass an explicit path or aumid."),
+                        instance_policy,
+                    )
                 }
                 Err(crate::launch_uwp::AppsFolderLookupError::Unavailable) => {
-                    return ToolResult::error(format!(
-                        "App name lookup for {n:?} is unavailable because the Windows shell lookup worker failed. No app was launched; pass an explicit path or aumid."
-                    ))
+                    return launch_policy_error(
+                        "APP_TARGET_RESOLUTION_UNAVAILABLE",
+                        format!("App name lookup for {n:?} is unavailable because the Windows shell lookup worker failed. No app was launched; pass an explicit path or aumid."),
+                        instance_policy,
+                    )
                 }
             }
         } else {
@@ -2214,8 +2540,18 @@ impl Tool for LaunchAppTool {
             )
             .with_structured(json!({
                 "code": "background_unavailable",
+                "error": "BACKGROUND_LAUNCH_UNAVAILABLE",
                 "delivery_mode": "background",
                 "event_kind": "app_launch",
+                "instance_policy": instance_policy.as_str(),
+                "platform": "windows",
+                "launch_state": launch_state_json(
+                    false,
+                    false,
+                    false,
+                    ProcessDisposition::None,
+                    WindowDisposition::None,
+                ),
             }));
         }
 
@@ -2233,11 +2569,19 @@ impl Tool for LaunchAppTool {
             match activation {
                 Ok(Ok(p)) => p,
                 Ok(Err(e)) => {
-                    return ToolResult::error(format!(
-                        "Failed to activate packaged app {aumid:?}: {e}"
-                    ))
+                    return launch_request_error(
+                        "APP_LAUNCH_FAILED",
+                        format!("Failed to activate packaged app {aumid:?}: {e}"),
+                        instance_policy,
+                    )
                 }
-                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+                Err(e) => {
+                    return launch_request_error(
+                        "APP_LAUNCH_TASK_FAILED",
+                        format!("Packaged-app launch task failed: {e}"),
+                        instance_policy,
+                    )
+                }
             }
         } else {
             // Legacy ShellExecuteExW path — unchanged behavior for plain
@@ -2382,25 +2726,53 @@ impl Tool for LaunchAppTool {
             match result {
                 Ok(Ok(Ok(p))) => p,
                 Ok(Ok(Err(e))) if name_lookup_missed => {
-                    return ToolResult::error(format!(
-                        "App {:?} was not found in shell:AppsFolder or by Windows PATH/association lookup: {e}",
-                        name_opt.as_deref().unwrap_or("")
-                    ))
+                    return launch_request_error(
+                        "APP_LAUNCH_FAILED",
+                        format!(
+                            "App {:?} was not found in shell:AppsFolder or by Windows PATH/association lookup: {e}",
+                            name_opt.as_deref().unwrap_or("")
+                        ),
+                        instance_policy,
+                    )
                 }
-                Ok(Ok(Err(e))) => return ToolResult::error(format!("Failed to launch: {e}")),
-                Ok(Err(e)) => return ToolResult::error(format!("Task error: {e}")),
+                Ok(Ok(Err(e))) => {
+                    return launch_request_error(
+                        "APP_LAUNCH_FAILED",
+                        format!("Failed to launch: {e}"),
+                        instance_policy,
+                    )
+                }
+                Ok(Err(e)) => {
+                    return launch_request_error(
+                        "APP_LAUNCH_TASK_FAILED",
+                        format!("Launch task failed: {e}"),
+                        instance_policy,
+                    )
+                }
                 Err(_elapsed) => {
-                    return ToolResult::error(format!(
-                        "Launch of {:?} timed out after 15s — the target likely has no \
+                    return launch_request_error(
+                        "APP_LAUNCH_TIMEOUT",
+                        format!(
+                            "Launch of {:?} timed out after 15s — the target likely has no \
                      registered handler and a blocking shell dialog appeared on the \
                      session desktop; aborted to keep the daemon responsive.",
-                        target_file_opt
-                            .as_deref()
-                            .or_else(|| urls.first().map(|s| s.as_str()))
-                            .unwrap_or("")
-                    ))
+                            target_file_opt
+                                .as_deref()
+                                .or_else(|| urls.first().map(|s| s.as_str()))
+                                .unwrap_or("")
+                        ),
+                        instance_policy,
+                    )
                 }
             }
+        };
+        drop(acquisition_guard);
+        let process_disposition = if pid == 0 {
+            ProcessDisposition::None
+        } else if pre_launch_pids.contains(&pid) {
+            ProcessDisposition::Reused
+        } else {
+            ProcessDisposition::Created
         };
 
         // Best-effort foreground-restore for the legacy ShellExecuteExW
@@ -2768,7 +3140,17 @@ impl Tool for LaunchAppTool {
         }
 
         // Match Swift text format 1:1.
-        let mut summary = format!("✅ Launched {display} (pid {pid}) in background.");
+        let mut summary = match process_disposition {
+            ProcessDisposition::Created => {
+                format!("✅ Launched {display} (pid {pid}) in background.")
+            }
+            ProcessDisposition::Reused => format!(
+                "✅ Sent a Windows launch request for {display} and reused process {pid} in background."
+            ),
+            ProcessDisposition::None => {
+                format!("✅ Sent a Windows launch request for {display}.")
+            }
+        };
         if !windows_json.is_empty() {
             summary.push_str("\n\nWindows:");
             for w in &windows_json {
@@ -2793,13 +3175,44 @@ impl Tool for LaunchAppTool {
             Some(a) => serde_json::Value::String(a.clone()),
             None => serde_json::Value::Null,
         };
+        let window_ready = !windows_json.is_empty();
+        let process_running = if pid == 0 {
+            false
+        } else {
+            tokio::task::spawn_blocking(move || {
+                crate::win32::list_processes()
+                    .into_iter()
+                    .any(|process| process.pid == pid)
+            })
+            .await
+            .unwrap_or(false)
+        };
+        let window_disposition = if !window_ready {
+            WindowDisposition::None
+        } else if windows_json.iter().any(|window| {
+            window["window_id"]
+                .as_u64()
+                .is_some_and(|hwnd| !pre_launch_hwnds.contains(&hwnd))
+        }) {
+            WindowDisposition::Materialized
+        } else {
+            WindowDisposition::Reused
+        };
         let structured = json!({
             "pid":       pid,
             "bundle_id": bundle_id_response,
             "name":      display,
-            "running":   true,
+            "running":   process_running,
             "active":    false,  // SW_SHOWNOACTIVATE — Swift's background-launch invariant
             "windows":   windows_json,
+            "instance_policy": instance_policy.as_str(),
+            "launch_state": launch_state_json(
+                true,
+                process_running,
+                window_ready,
+                process_disposition,
+                window_disposition,
+            ),
         });
         ToolResult::text(summary).with_structured(structured)
     }

@@ -45,7 +45,7 @@ ensure_local_signing_identity() {
         esac
         [ "${#CUA_DRIVER_LOCAL_SIGNING_IDENTITY}" -eq 40 ] \
             || { printf -- '-'; return; }
-        identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+        identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
             | awk -v wanted="$CUA_DRIVER_LOCAL_SIGNING_IDENTITY" \
                 'toupper($2) == toupper(wanted) { print $2; exit }')"
         [ -n "$identity" ] && printf '%s' "$identity" || printf -- '-'

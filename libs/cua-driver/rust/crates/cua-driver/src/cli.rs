@@ -1345,6 +1345,14 @@ fn launch_daemon_with_state_and_wait(
             use std::os::windows::process::CommandExt as _;
             command.creation_flags(0x0000_0200 | 0x0000_0008);
         }
+        // A Windows CLI invoked through `Command::output` owns inheritable
+        // stdout/stderr pipe handles. CreateProcess otherwise gives those
+        // unrelated handles to this long-lived daemon even though its standard
+        // streams are redirected to NUL, keeping the caller's capture open
+        // until the daemon exits. Mask inheritance only for the spawn and then
+        // restore the CLI's original handle flags.
+        #[cfg(target_os = "windows")]
+        let _stdio_inheritance = WindowsStdioInheritanceGuard::new()?;
         command.spawn().map_err(|error| LaunchDaemonError {
             kind: LaunchDaemonErrorKind::Failed,
             message: format!("failed to launch {} serve: {error}", executable.display()),
@@ -1362,6 +1370,65 @@ fn launch_daemon_with_state_and_wait(
         kind: LaunchDaemonErrorKind::Timeout,
         message: format!("daemon did not appear on {socket_path} within {timeout_secs}s"),
     })
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsStdioInheritanceGuard {
+    handles: Vec<(windows::Win32::Foundation::HANDLE, u32)>,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsStdioInheritanceGuard {
+    fn new() -> Result<Self, LaunchDaemonError> {
+        use windows::Win32::Foundation::{
+            GetHandleInformation, SetHandleInformation, HANDLE_FLAGS, HANDLE_FLAG_INHERIT,
+        };
+        use windows::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+
+        let mut guard = Self {
+            handles: Vec::new(),
+        };
+        for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            let Ok(handle) = (unsafe { GetStdHandle(stream) }) else {
+                continue;
+            };
+            let mut flags = 0_u32;
+            if unsafe { GetHandleInformation(handle, &mut flags) }.is_err() {
+                continue;
+            }
+            if flags & HANDLE_FLAG_INHERIT.0 == 0 {
+                continue;
+            }
+            unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) }
+                .map_err(|error| LaunchDaemonError {
+                    kind: LaunchDaemonErrorKind::Failed,
+                    message: format!(
+                        "could not isolate daemon standard handles from the calling CLI: {error}"
+                    ),
+                })?;
+            guard.handles.push((handle, flags));
+        }
+        Ok(guard)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsStdioInheritanceGuard {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::{SetHandleInformation, HANDLE_FLAGS, HANDLE_FLAG_INHERIT};
+
+        for (handle, flags) in self.handles.drain(..) {
+            let _ = unsafe {
+                SetHandleInformation(
+                    handle,
+                    HANDLE_FLAG_INHERIT.0,
+                    HANDLE_FLAGS(flags & HANDLE_FLAG_INHERIT.0),
+                )
+            };
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

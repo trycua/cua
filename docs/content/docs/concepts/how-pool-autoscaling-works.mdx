@@ -1,0 +1,110 @@
+---
+title: "How pool autoscaling works"
+description: "How a sandbox pool sizes itself to claim demand, and what the minimum, initial, and maximum pool sizes actually control."
+---
+
+A sandbox pool keeps sandboxes booted before anyone asks for them. When a client
+claims from the pool, it attaches to a machine that is already running, so the
+claim takes seconds instead of a full boot. The question a pool must answer
+continuously is how many sandboxes to keep alive: too few and claims wait for
+boots, too many and idle machines burn capacity.
+
+A pool answers that question in one of two ways, and every pool uses exactly
+one. A *static* pool holds a fixed replica target that changes only when you
+change it. An *autoscaled* pool derives its target from claim demand and keeps
+re-deriving it as demand moves.
+
+<VideoDemo
+  className="my-8"
+  src="/videos/pool-autoscaling.mp4"
+  webmSrc="/videos/pool-autoscaling.webm"
+  poster="/videos/pool-autoscaling.jpg"
+  title="A static pool and an autoscaled pool under the same demand"
+>
+  The static pool on the left holds eight sandboxes no matter what. The
+  autoscaled pool on the right provisions new sandboxes as claims arrive: blue
+  sandboxes are ready, red are claimed, green are still booting, and the dashed
+  outlines are unprovisioned capacity up to the pool's maximum. Demand never
+  reaches the maximum, so the last slots are never paid for.
+</VideoDemo>
+
+## Claims are the demand signal
+
+An autoscaled pool watches one number: the count of live claims against it,
+counting both claims already bound to a sandbox and claims still waiting for
+one. The desired pool size is that count, clamped between the pool's minimum
+and maximum. Ten live claims ask for a pool of ten. When they release, the ask
+falls back toward the minimum.
+
+Two refinements keep this signal honest. The pool acts on its recent peak
+rather than the instantaneous value, so a brief dip between two bursts does not
+tear capacity down and rebuild it. And claims are counted even when they are
+created and released quickly, so short-lived sessions still register as demand
+instead of slipping between measurements.
+
+A claim that arrives while no sandbox is ready does not fail immediately. It
+waits, and the waiting claim is itself the demand that raises the target and
+provisions the sandbox it is waiting for. The claim keeps trying to bind until
+its bind deadline, five minutes by default and configurable per claim, and only
+fails when the deadline passes.
+
+## A claimed sandbox still counts
+
+The least obvious property of the model is that a claimed sandbox continues to
+occupy a slot in the pool's accounting. Binding a claim removes the sandbox
+from the warm set, but not from the pool's size. Claiming therefore does not
+directly spawn a replacement. The replacement appears because the new claim
+raised demand by one, which raised the target by one, and the pool tops up to
+the target.
+
+The consequence is worth stating plainly: a pool whose target equals its live
+claims holds zero warm spares. Warm spares exist only where the target exceeds
+current demand, which is exactly what the minimum pool size buys. Autoscaling
+reacts within seconds, but a fresh sandbox still takes a boot to become ready,
+and no reactive policy can conjure a booted machine inside a claim's bind
+window. When the latency of the next claim matters, a nonzero minimum is the
+only guarantee.
+
+## How capacity returns
+
+A pooled sandbox is born booting, becomes ready, and waits to be claimed. What
+happens after release depends on the claim's shutdown policy. With the default
+`Retain` policy the sandbox restarts in place to a clean state and rejoins the
+warm set, which is far cheaper than booting new capacity, so a busy pool mostly
+recycles the same machines. With the `Delete` policy the sandbox is destroyed,
+and the pool boots a fresh replacement only if the target still calls for one.
+
+## How the pool shrinks
+
+Scale-down is deliberately slower than scale-up. Because the pool acts on its
+held peak, capacity drains roughly five minutes after demand falls, not the
+instant a claim releases.
+
+Only unclaimed sandboxes are candidates for removal. A claimed sandbox left the
+warm set when it was bound, so shrinking can never touch a machine someone is
+using. Among the candidates, sandboxes that are still booting are removed
+before ready ones, so a shrinking pool sheds the capacity that was least useful
+first. Each removal also checks that a claim did not grab the sandbox at the
+last moment; if one did, the sandbox survives and the pool re-evaluates on the
+next cycle.
+
+A pool with a minimum of zero drains completely once its last claim clears and
+the held peak expires. That means "nothing idle", not "stranded at zero": the
+next claim reactivates the pool, at the cost of waiting for the first boot.
+
+## What the three parameters control
+
+The autoscaling configuration is three numbers. The *minimum pool size*
+(default 0) is the durable floor and the only setting that guarantees warm
+spares; raising it trades idle capacity for instant claims. The *initial pool
+size* (default 0) seeds the pool once at creation so its first users do not
+wait for the first scale-up to react; it is not a floor, and after creation the
+target belongs to demand and decays toward the minimum. The *maximum pool size*
+(default 50) is the hard ceiling on capacity and cost; demand beyond it waits
+as pending claims until capacity frees up or bind deadlines expire.
+
+To put pools into practice, read
+[Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python)
+for the SDK path, or
+[Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform)
+for declarative configuration of both sizing modes.

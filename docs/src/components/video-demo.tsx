@@ -4,6 +4,7 @@ interface VideoDemoProps {
   src: string;
   poster: string;
   title: string;
+  webmSrc?: string;
   sourceUrl?: string;
   className?: string;
   children?: ReactNode;
@@ -14,9 +15,10 @@ function withDocsBasePath(path: string) {
   return `/docs${path}`;
 }
 
-export function VideoDemo({ src, poster, title, sourceUrl, className, children }: VideoDemoProps) {
+export function VideoDemo({ src, poster, title, webmSrc, sourceUrl, className, children }: VideoDemoProps) {
   const mediaSrc = withDocsBasePath(src);
   const mediaPoster = withDocsBasePath(poster);
+  const mediaWebmSrc = webmSrc ? withDocsBasePath(webmSrc) : undefined;
 
   return (
     <figure
@@ -35,6 +37,7 @@ export function VideoDemo({ src, poster, title, sourceUrl, className, children }
         poster={mediaPoster}
         preload="metadata"
       >
+        {mediaWebmSrc ? <source src={mediaWebmSrc} type="video/webm" /> : null}
         <source src={mediaSrc} type="video/mp4" />
         <a href={mediaSrc}>Open the video.</a>
       </video>

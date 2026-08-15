@@ -414,29 +414,36 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
     write_declaration_from_env(&case).expect("write history E2E declaration");
 
     assert_forged_cli_control_is_rejected();
+    eprintln!("[history-e2e] forged control denied");
     assert!(
         key_references().is_empty(),
         "runner preflight retained the history key"
     );
+    eprintln!("[history-e2e] native key store starts empty");
     assert!(
         ciphertext_paths(&history_root()).is_empty(),
         "runner preflight retained history ciphertext"
     );
 
+    eprintln!("[history-e2e] enabling preview");
     let enabled = history_cli("enable", &[]);
     assert_ready(&enabled);
+    eprintln!("[history-e2e] preview enabled");
     assert_daemon_remains_unrestricted();
+    eprintln!("[history-e2e] authorization mode preserved");
     assert_eq!(
         key_references().len(),
         1,
         "enable did not create one native key"
     );
+    eprintln!("[history-e2e] native key created");
 
     let mut driver = McpDriver::spawn_daemon_proxy_named(
         &daemon_socket(),
         &format!("{}-computer-history-continuity", std::env::consts::OS),
     )
     .expect("start installed daemon proxy");
+    eprintln!("[history-e2e] MCP proxy attached");
     let evidence = recording_evidence(driver.recording_dir());
     let status = driver.call("history_status", json!({}));
     assert!(

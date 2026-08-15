@@ -30,9 +30,14 @@ pub struct McpDriver {
     next_id: u32,
     recording_dir: Option<PathBuf>,
     recording_started: bool,
+    recording_started_at: Option<Instant>,
 }
 
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+// ScreenCaptureKit can acknowledge capture before SCRecordingOutput has
+// durably emitted its first sample. This total includes the 300 ms baseline
+// settle and keeps immediate-refusal trajectories from finalizing empty.
+const MIN_BEHAVIOR_RECORDING_DURATION: Duration = Duration::from_millis(750);
 
 impl McpDriver {
     /// Spawn the driver, start the stdout reader thread, and `initialize`.
@@ -159,6 +164,7 @@ impl McpDriver {
             next_id: 2,
             recording_dir: None,
             recording_started: false,
+            recording_started_at: None,
         };
         d.initialize();
         d.prepare_e2e_recording(recording_label);
@@ -235,7 +241,8 @@ impl McpDriver {
             "sequence": sequence,
             "behavior_video": {
                 "status": "pending",
-                "baseline_settle_ms": 300
+                "baseline_settle_ms": 300,
+                "minimum_duration_ms": MIN_BEHAVIOR_RECORDING_DURATION.as_millis() as u64
             },
             "hosted_runner_console": {
                 "status": runner_console_status
@@ -285,6 +292,7 @@ impl McpDriver {
             );
         }
         self.recording_started = true;
+        self.recording_started_at = Some(Instant::now());
         update_behavior_video_status(&output_dir, "started");
         std::thread::sleep(Duration::from_millis(300));
         mark_behavior_video_baseline_ready(&output_dir);
@@ -303,6 +311,12 @@ impl McpDriver {
             eprintln!("[testkit] {message}");
             let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
             return;
+        }
+        if let Some(started_at) = self.recording_started_at.take() {
+            let remaining = remaining_behavior_recording_time(started_at.elapsed());
+            if !remaining.is_zero() {
+                std::thread::sleep(remaining);
+            }
         }
         let response = self.call("stop_recording", serde_json::json!({}));
         let video_path = output_dir.join("recording.mp4");
@@ -407,6 +421,10 @@ fn recording_label(name: &str) -> String {
     }
 }
 
+fn remaining_behavior_recording_time(elapsed: Duration) -> Duration {
+    MIN_BEHAVIOR_RECORDING_DURATION.saturating_sub(elapsed)
+}
+
 impl Driver for McpDriver {
     fn call(&mut self, tool: &str, args: Value) -> ToolResponse {
         ToolResponse::from_mcp(self.call_raw(tool, args))
@@ -467,7 +485,8 @@ fn unix_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::recording_label;
+    use super::{recording_label, remaining_behavior_recording_time};
+    use std::time::Duration;
 
     #[test]
     fn recording_label_is_artifact_safe() {
@@ -476,5 +495,15 @@ mod tests {
             "module--test-name-windows"
         );
         assert_eq!(recording_label("///"), "unnamed-test");
+    }
+
+    #[test]
+    fn short_behavior_recordings_receive_a_settle_interval() {
+        assert_eq!(
+            remaining_behavior_recording_time(Duration::from_millis(300)),
+            Duration::from_millis(450)
+        );
+        assert!(remaining_behavior_recording_time(Duration::from_millis(750)).is_zero());
+        assert!(remaining_behavior_recording_time(Duration::from_secs(2)).is_zero());
     }
 }

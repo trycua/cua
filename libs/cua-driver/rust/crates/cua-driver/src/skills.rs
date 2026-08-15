@@ -957,6 +957,70 @@ mod tests {
         }
     }
 
+    const HISTORY_CONSULTATION_POLICY: &[&str] = &[
+        "continue, resume, or recall prior Cua work",
+        "call `history_status` first",
+        "one bounded initial",
+        "before broad application or window discovery",
+        "metadata only as a lead",
+        "verify current state",
+        "Content, geometry, arguments, results, and user intent",
+        "remain unknown",
+        "session or sequence boundary",
+        "never broaden a query to reconstruct excluded fields",
+        "either tool is absent",
+        "access is denied",
+        "query is empty",
+        "history is unhealthy",
+        "unrelated tasks merely because the tools are advertised",
+        "never mutate history",
+        "lifecycle or settings",
+    ];
+
+    fn assert_history_consultation_policy(skill: &str, source: &str) {
+        let normalized = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for required in HISTORY_CONSULTATION_POLICY {
+            assert!(
+                normalized.contains(required),
+                "{source} lost required history consultation guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_skill_keeps_conditional_history_consultation_policy() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+
+        assert!(
+            skill.lines().any(|line| {
+                line.starts_with("description:")
+                    && line.contains("continue, resume, or recall recent Cua activity")
+            }),
+            "skill frontmatter must trigger for recent Cua activity continuation"
+        );
+        assert_history_consultation_policy(&skill, "canonical skill");
+    }
+
+    #[test]
+    fn extracted_skill_pack_keeps_history_consultation_policy() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let canonical = std::fs::read(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let bytes = build_tarball(&[(
+            "cua-driver-rs-v0.19.3-skills/SKILL.md",
+            canonical.as_slice(),
+        )]);
+        let dest = tempdir().unwrap();
+
+        extract_tar_gz(&bytes, dest.path(), false).unwrap();
+
+        let packaged = std::fs::read_to_string(dest.path().join("SKILL.md"))
+            .expect("extracted skill must be readable");
+        assert_history_consultation_policy(&packaged, "extracted skill pack");
+    }
+
     #[test]
     fn bundled_skill_keeps_sessions_and_authorization_as_separate_concepts() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

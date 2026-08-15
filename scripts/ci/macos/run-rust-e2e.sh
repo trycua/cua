@@ -133,6 +133,29 @@ run_test() {
   fi
 }
 
+filter_contains_exact() {
+  local filter="$1"
+  local expected="$2"
+  local value
+  [[ -z "${filter}" ]] && return 0
+  while IFS= read -r value; do
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    [[ "${value}" == "${expected}" ]] && return 0
+  done < <(tr ',' '\n' <<< "${filter}")
+  return 1
+}
+
+native_retry_filter_active() {
+  [[ -n "${CUA_E2E_CELL_FILTER:-}" || -n "${CUA_E2E_HARNESS_FILTER:-}" ]]
+}
+
+native_swiftui_test_selected() {
+  local cell="$1"
+  filter_contains_exact "${CUA_E2E_HARNESS_FILTER:-}" swiftui \
+    && filter_contains_exact "${CUA_E2E_CELL_FILTER:-}" "${cell}"
+}
+
 if [[ "${CUA_E2E_RUNNER_LIB_ONLY:-0}" == 1 ]]; then
   # Sourced by the focused runner tests, which exercise the helpers above
   # without a live macOS desktop.
@@ -313,10 +336,12 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  run_test agent-cursor-showcase cargo test -p cua-driver \
-    --test agent_cursor_showcase_test -- \
-    --ignored --nocapture --test-threads=1
-  for appkit_test in \
+  NATIVE_FILTER_MATCHES=0
+  if ! native_retry_filter_active; then
+    run_test agent-cursor-showcase cargo test -p cua-driver \
+      --test agent_cursor_showcase_test -- \
+      --ignored --nocapture --test-threads=1
+    for appkit_test in \
     harness_appkit_smoke \
     harness_appkit_query_projects_structured_elements \
     harness_appkit_stale_element_token_fails_closed \
@@ -334,24 +359,38 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_double_click_px_foreground \
     harness_appkit_double_click_px_background \
     harness_appkit_slider_drag_px_foreground \
-    harness_appkit_slider_drag_px_background; do
-    run_test "appkit-${appkit_test}" cargo test -p cua-driver --test harness_appkit_test -- \
-      --ignored --exact "${appkit_test}" --nocapture --test-threads=1
-  done
-  for swiftui_test in \
-    harness_swiftui_smoke \
-    harness_swiftui_counter_background \
-    harness_swiftui_set_value_background \
-    harness_swiftui_popover_foreground \
-    harness_swiftui_verify_state; do
-    run_test "swiftui-${swiftui_test}" cargo test -p cua-driver --test harness_swiftui_test -- \
-      --ignored --exact "${swiftui_test}" --nocapture --test-threads=1
-  done
-  run_test installed-app-launch cargo test -p cua-driver --test installed_app_launch_macos_test -- \
-    --ignored --nocapture --test-threads=1
-  run_test installed-app-textedit cargo test -p cua-driver --test installed_app_textedit_macos_test -- \
-    --ignored --exact background_type_on_native_cocoa_is_ax_verified \
-    --nocapture --test-threads=1
+      harness_appkit_slider_drag_px_background; do
+      run_test "appkit-${appkit_test}" cargo test -p cua-driver --test harness_appkit_test -- \
+        --ignored --exact "${appkit_test}" --nocapture --test-threads=1
+    done
+  fi
+
+  while IFS='|' read -r swiftui_cell swiftui_test; do
+    if native_swiftui_test_selected "${swiftui_cell}"; then
+      NATIVE_FILTER_MATCHES=$((NATIVE_FILTER_MATCHES + 1))
+      run_test "swiftui-${swiftui_test}" cargo test -p cua-driver --test harness_swiftui_test -- \
+        --ignored --exact "${swiftui_test}" --nocapture --test-threads=1
+    fi
+  done <<'EOF'
+macos-swiftui-ax-tree-ax-not-applicable|harness_swiftui_smoke
+macos-swiftui-left-click-ax-background|harness_swiftui_counter_background
+macos-swiftui-set-value-ax-background|harness_swiftui_set_value_background
+macos-swiftui-popover-open-ax-foreground|harness_swiftui_popover_foreground
+macos-swiftui-verify-state-ax-not-applicable|harness_swiftui_verify_state
+EOF
+
+  if native_retry_filter_active; then
+    if ((NATIVE_FILTER_MATCHES == 0)); then
+      echo "No native test owns the requested harness/cell filter" >&2
+      note_lane_failure native-filter-selection
+    fi
+  else
+    run_test installed-app-launch cargo test -p cua-driver --test installed_app_launch_macos_test -- \
+      --ignored --nocapture --test-threads=1
+    run_test installed-app-textedit cargo test -p cua-driver --test installed_app_textedit_macos_test -- \
+      --ignored --exact background_type_on_native_cocoa_is_ax_verified \
+      --nocapture --test-threads=1
+  fi
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \

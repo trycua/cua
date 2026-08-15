@@ -64,6 +64,7 @@ pub mod element_token;
 pub mod expectation;
 pub mod ffmpeg_install;
 pub mod health_report;
+pub mod history;
 pub mod image_utils;
 pub mod page;
 pub mod pip_hook;

@@ -255,6 +255,16 @@ const PRIVATE_OBSERVATION_SCOPE_KEYS: &[&str] = &[
     "user_policy_sha256",
 ];
 
+const COMPUTER_HISTORY_OPERATIONS: &[&str] = &["history_status", "history_query"];
+const COMPUTER_HISTORY_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "operation",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
+
 const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "click",
     "double_click",
@@ -427,6 +437,23 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
         profile_behavior: AdapterProfileBehavior::Routine,
+    },
+    EnforcementAdapterDescriptor {
+        id: "computer_history",
+        operations: COMPUTER_HISTORY_OPERATIONS,
+        state: RiskEnforcement::Active,
+        risk_class: RiskClass::R2,
+        resource_kind: "computer_history_metadata",
+        scope_keys: COMPUTER_HISTORY_SCOPE_KEYS,
+        grant_type: Some("protected_resource_grant"),
+        idle_ttl_seconds: Some(30 * 60),
+        absolute_ttl_seconds: Some(8 * 60 * 60),
+        authorization_requirement: "explicit_standard_grant_or_approved_capability_manifest",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: Some("authorization_required"),
+        authorization_source: "authorization_host_in_standard; approved_capability_manifest_in_bounded; trusted_unrestricted_mode",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        profile_behavior: AdapterProfileBehavior::GrantInStandard,
     },
     EnforcementAdapterDescriptor {
         id: "desktop_input",
@@ -729,6 +756,10 @@ pub fn enforcement_adapters_for_call(
         add("private_observation");
     }
 
+    if matches!(tool, "history_status" | "history_query") {
+        add("computer_history");
+    }
+
     if DESKTOP_INPUT_OPERATIONS.contains(&tool) {
         add("desktop_input");
     }
@@ -889,7 +920,9 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_navigate"
         | "browser_click"
         | "browser_type"
-        | "browser_pointer" => RiskClass::R2,
+        | "browser_pointer"
+        | "history_status"
+        | "history_query" => RiskClass::R2,
 
         // External/file side effects or generic compound action surfaces.
         "get_desktop_state"
@@ -995,6 +1028,11 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
         | "escalate_session"
         | "zoom"
         | "clipboard_read" => RiskAssessment {
+            class: RiskClass::R2,
+            enforcement: RiskEnforcement::Active,
+            operation_sensitive: true,
+        },
+        "history_status" | "history_query" => RiskAssessment {
             class: RiskClass::R2,
             enforcement: RiskEnforcement::Active,
             operation_sensitive: true,
@@ -1482,6 +1520,38 @@ mod tests {
     }
 
     #[test]
+    fn history_reads_are_distinct_explicit_history_capabilities() {
+        for (tool, capability) in [
+            ("history_status", "history.status"),
+            ("history_query", "history.query"),
+        ] {
+            let risk = classify_tool_call(tool, &serde_json::json!({}));
+            assert_eq!(risk.class, RiskClass::R2);
+            assert_eq!(risk.enforcement, RiskEnforcement::Active);
+            assert_eq!(crate::tool::default_capabilities_for(tool), &[capability]);
+            assert_eq!(
+                enforcement_adapters_for_call(tool, &serde_json::json!({}))
+                    .into_iter()
+                    .map(|adapter| adapter.id)
+                    .collect::<Vec<_>>(),
+                vec!["computer_history"]
+            );
+        }
+        let adapter = ENFORCEMENT_ADAPTERS
+            .iter()
+            .find(|adapter| adapter.id == "computer_history")
+            .unwrap();
+        assert_eq!(
+            adapter.profile_behavior.for_mode(PermissionMode::Standard),
+            ModeBehavior::RequireGrant
+        );
+        assert_eq!(
+            adapter.profile_behavior.for_mode(PermissionMode::Bounded),
+            ModeBehavior::AllowWithoutGrant
+        );
+    }
+
+    #[test]
     fn native_menu_invocation_matches_local_gui_action_risk() {
         let risk = advertised_risk_for("invoke_menu");
         assert_eq!(risk.class, RiskClass::R1);
@@ -1597,6 +1667,7 @@ mod tests {
                 "browser_prepare.isolated",
                 "browser_prepare.existing_profile",
                 "private_observation",
+                "computer_history",
                 "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",
@@ -1622,6 +1693,7 @@ mod tests {
                 "browser_prepare.isolated",
                 "browser_prepare.existing_profile",
                 "private_observation",
+                "computer_history",
                 "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",
@@ -1897,6 +1969,7 @@ mod tests {
                 "browser_prepare.isolated",
                 "browser_prepare.existing_profile",
                 "private_observation",
+                "computer_history",
                 "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",
@@ -1922,6 +1995,7 @@ mod tests {
                 "browser_prepare.isolated",
                 "browser_prepare.existing_profile",
                 "private_observation",
+                "computer_history",
                 "desktop_input",
                 "file_transfer_and_output",
                 "browser_consequential_action",

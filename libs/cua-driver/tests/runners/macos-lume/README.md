@@ -312,8 +312,11 @@ libs/cua-driver/scripts/sync-vm-worktree.sh push "lume@${VM_IP}" '~/cua'
 
 Open Terminal in the VM display and run the single guest entrypoint. Do not run
 it over SSH: GUI fixtures must inherit the logged-in console session. The
-runner asks once for the dedicated keychain password after each worker boot;
-do not put that password in the repository or VM image.
+runner asks for the dedicated keychain password and then the console user's
+login Keychain password after each worker boot. The explicit second unlock is
+required because a fresh public image can leave the login Keychain locked even
+after automatic GUI login. Use the same local VM credential for both prompts,
+and do not put it in the repository, image, logs, or artifacts.
 
 ```bash
 cd ~/cua
@@ -351,9 +354,10 @@ complete this setup there, stop it, and use that new seed for workers; never
 update the original seed in place.
 
 The entrypoint refuses the wrong OS, user session, SIP state, dirty or
-unidentified source, missing dependencies, ad-hoc signature, stale installed
-daemon, unusable TCC grants, or missing Terminal/CuaDriver Automation grants.
-It reinstalls the exact source commit and then runs the canonical macOS matrix.
+unidentified source, missing dependencies, ad-hoc signature, unavailable login
+Keychain, stale installed daemon, unusable TCC grants, or missing
+Terminal/CuaDriver Automation grants. It reinstalls the exact source commit and
+then runs the canonical macOS matrix.
 
 ## Build isolation across reruns
 
@@ -404,15 +408,17 @@ to 1. `--retry-harness` is optional and must match the failing row's harness.
 After a failing full matrix the runner retries only when all of these hold:
 
 - exactly one typed cell did not pass, and it is the `--retry-cell` selection;
-- the only failing lane is `shared-app-matrix`;
+- the only failing lane is `shared-app-matrix` or the one SwiftUI test that
+  owns the selected cell;
 - the environment preflight, typed report validation, and trajectory-video
   checks all passed;
 - the failure record contains exactly one failure signal.
 
 Otherwise it prints why the retry was refused and exits with the matrix's
-failure. Only shared web-action cells are retryable: they are the cells a
-single-cell filter can select without leaving another lane with no cells to run.
-Reproduce a native, capture, or embedded-browser failure with a full rerun.
+failure. Shared web-action cells and the five typed SwiftUI cells are retryable.
+The runner routes a `macos-swiftui-*` selection to the native lane and invokes
+only the test that owns that exact cell. Reproduce other native, capture, or
+embedded-browser failures with a full rerun.
 
 To rerun just that cell later in the same booted worker after the first run
 already restored standard mode, use `--retry-only`. It reinstalls the exact
@@ -423,8 +429,8 @@ the selection, so the retry cannot silently execute against the standard daemon:
 cd ~/cua
 libs/cua-driver/tests/runners/macos-lume/run-all.sh \
   --retry-only \
-  --retry-cell macos-electron-drag-px-foreground \
-  --retry-harness electron \
+  --retry-cell macos-swiftui-left-click-ax-background \
+  --retry-harness swiftui \
   --retry-attempts 3
 ```
 

@@ -24,7 +24,6 @@ const RELEASE_TEAM_IDENTIFIER: &str = "YCK386LBJ7";
 pub struct DaemonLaunchState {
     pub permission_mode: Option<String>,
     pub dangerously_bypass_approvals: bool,
-    pub allow_legacy_existing_profile_approval: bool,
     pub capability_manifest: Option<String>,
     pub approve_capability_manifest: bool,
     pub no_permissions_gate: bool,
@@ -45,7 +44,6 @@ pub fn configure_admission(admitted: bool) -> anyhow::Result<()> {
 pub fn configure_daemon_launch_state(
     permission_mode: Option<&str>,
     dangerously_bypass_approvals: bool,
-    allow_legacy_existing_profile_approval: bool,
     capability_manifest: Option<&str>,
     approve_capability_manifest: bool,
     no_permissions_gate: bool,
@@ -56,7 +54,6 @@ pub fn configure_daemon_launch_state(
     *state.lock().unwrap() = DaemonLaunchState {
         permission_mode: permission_mode.map(str::to_owned),
         dangerously_bypass_approvals,
-        allow_legacy_existing_profile_approval,
         capability_manifest: capability_manifest.map(str::to_owned),
         approve_capability_manifest,
         no_permissions_gate,

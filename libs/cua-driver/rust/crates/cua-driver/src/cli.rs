@@ -1305,9 +1305,6 @@ fn daemon_launch_arguments(
     if state.dangerously_bypass_approvals {
         args.push("--dangerously-bypass-approvals".to_owned());
     }
-    if state.allow_legacy_existing_profile_approval {
-        args.push("--allow-legacy-existing-profile-approval".to_owned());
-    }
     if let Some(manifest) = &state.capability_manifest {
         args.extend(["--capability-manifest".to_owned(), manifest.clone()]);
     }
@@ -4405,7 +4402,6 @@ mod tests {
         let state = crate::history_runtime::DaemonLaunchState {
             permission_mode: Some("bounded".to_owned()),
             dangerously_bypass_approvals: false,
-            allow_legacy_existing_profile_approval: true,
             capability_manifest: Some("/tmp/capabilities.yaml".to_owned()),
             approve_capability_manifest: true,
             no_permissions_gate: true,
@@ -4420,7 +4416,6 @@ mod tests {
             .windows(2)
             .any(|pair| { pair == ["--capability-manifest", "/tmp/capabilities.yaml"] }));
         assert!(launch.contains(&"--approve-capability-manifest".to_owned()));
-        assert!(launch.contains(&"--allow-legacy-existing-profile-approval".to_owned()));
         assert!(launch.contains(&"--no-permissions-gate".to_owned()));
         assert!(launch.contains(&"--claude-code-computer-use-compat".to_owned()));
         assert!(launch.contains(&"--experimental-history".to_owned()));

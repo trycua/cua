@@ -7,6 +7,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Driver lets a [computer-use agent](/concepts/what-is-computer-use) drive the **host desktop**: installed apps, signed-in browser sessions, local files opened in apps, and the current OS user session. MCP-capable agents connect through `cua-driver mcp`; skill-based agents such as Prime Agent call the CLI directly. [Grok Bot](/use-cua-with/grok-bot) is a separate path; it is not Grok Build and does not use stdio MCP.
 
+Building Cua Driver into an application instead? Start with [Choose a Cua
+Driver integration](/concepts/choose-a-cua-driver-integration) to compare MCP,
+the direct SDK, private workers, and app-hosted services.
+
 <Callout type="info">
   This connects an agent to Cua Driver on the current machine. To create a disposable local desktop,
   use [Cua Sandbox](/tutorials/your-first-local-sandbox) instead.

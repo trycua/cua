@@ -3,9 +3,9 @@ title: 'Cua Driver Computer History: Agent Integration Contract'
 authors:
   - Cua maintainers
 created: 2026-08-14
-last_updated: 2026-08-14
+last_updated: 2026-08-15
 status: draft
-target: Experimental macOS nightly preview
+target: Cua Driver desktop preview
 ---
 
 # RFC: Cua Driver Computer History Agent Integration Contract
@@ -23,8 +23,9 @@ Agents can check its state and request a bounded metadata-only event slice. They
 cannot enable capture, change retention, export encrypted chunks, delete data,
 or obtain encryption keys.
 
-The first release target is an experimental macOS nightly. Agent integrations
-must discover the tools at runtime and tolerate their absence.
+Agent integrations must discover the tools at runtime and tolerate their
+absence, including on a supported operating system whose daemon did not admit
+the preview.
 
 ## Motivation
 
@@ -48,7 +49,7 @@ The integration contract needs a narrow answer to four questions:
 - Return bounded, typed data with an explicit model-context disclosure.
 - Preserve the user's local encryption and retention boundaries.
 - Let clients degrade safely when the feature, permission, or data is absent.
-- Keep the tool and capability names usable by a later policy adapter.
+- Keep the tool and capability names usable by a later NVIDIA OpenShell adapter.
 
 ## Non-goals
 
@@ -59,10 +60,20 @@ The integration contract needs a narrow answer to four questions:
   results, accessibility trees, window titles, or URLs.
 - Add model-generated summaries in the first preview.
 - Require NVIDIA OpenShell for the first preview.
-- Claim Windows or Linux support before native adapters pass their release
-  gates.
+- Claim support for an unqualified operating-system version, desktop session,
+  or native credential-store configuration.
 - Define product pricing, account eligibility, or release dates for other
   platforms.
+
+## Community feedback themes
+
+Anonymous community feedback consistently favors local data ownership, local
+control, and code and format auditability. Respondents also emphasized a hard
+boundary against capturing typed text, individual keystrokes, or passwords.
+There is interest in Windows support and a broader cross-platform roadmap, but
+this RFC makes no delivery-date promises. A recurring use case is giving agents
+useful prior-run context while keeping that context bounded, permission-gated,
+and private to the user's machine.
 
 ## Terminology
 
@@ -89,9 +100,9 @@ The integration contract needs a narrow answer to four questions:
 
 ## Availability and feature detection
 
-The preview registers the two history tools only when the macOS daemon admits
-the experimental feature. Clients must inspect the runtime tool list before
-calling either tool.
+The preview registers the two history tools only when a supported desktop
+daemon admits the experimental feature. Clients must inspect the runtime tool
+list before calling either tool.
 
 | Observed state | Meaning | Client behavior |
 | --- | --- | --- |
@@ -136,6 +147,53 @@ sequenceDiagram
 The access record is appended when a successful query returns at least one
 event. It is encrypted under the same history profile and is not included in
 the response that caused it.
+
+## Agent consultation policy
+
+Tool discovery makes Computer History available to an agent, but it does not
+by itself cause a model to call either tool. An agent host that supports
+history-assisted continuation must add an explicit consultation policy through
+a bundled skill, trusted system instruction, or deterministic host preflight.
+
+The policy applies when the user asks the agent to continue, resume, recall
+recent Cua activity, explain what a prior Cua run did, or find where a prior
+Cua-mediated workflow stopped. It does not apply to unrelated tasks merely
+because history is available.
+
+For a matching request, the host must:
+
+1. discover the history tools before broader desktop inspection;
+2. call `history_status` and preserve any disabled, paused, unhealthy, or
+   dropped-event state in its reasoning;
+3. when useful and authorized, call `history_query` with a bounded recent
+   slice before enumerating the live desktop;
+4. treat returned events as metadata-only evidence rather than a transcript;
+5. keep omitted content, geometry, arguments, results, and user intent unknown;
+6. use an identified application or capability as a lead, then verify current
+   state through the least intrusive appropriate source; and
+7. continue without history after absence, denial, empty results, or a
+   recoverable history failure.
+
+A host may make more bounded queries when an initial slice contains a relevant
+session or sequence boundary. It must not broaden the query merely to fill in
+fields that the schema intentionally excludes.
+
+A new agent process repeats this flow. History is not continuously injected
+into every model request, and enabling capture does not grant any agent read
+access. Query results enter only the current authorized model context unless
+the host separately defines and obtains consent for another memory boundary.
+
+The following integration levels keep product claims precise:
+
+| Integration level | Required behavior | Accurate claim |
+| --- | --- | --- |
+| Tool-capable | The runtime advertises the tools and schemas. | Agents can query Computer History. |
+| History-aware | A bundled policy instructs the agent to consult history for matching requests, with deterministic tests of the policy and fallbacks. | The agent checks Computer History for recent-work and continuation requests. |
+| Deterministic consultation | The trusted host performs or enforces the status and bounded-query preflight before the model begins broader discovery. | The agent automatically checks Computer History for matching requests. |
+
+Prompt wording alone can guide model behavior but cannot establish the
+deterministic-consultation claim. A host making that claim must own the
+preflight and prove it independently of model tool-selection variance.
 
 ## Tool contract
 
@@ -285,6 +343,12 @@ Unknown fields are rejected. If both sequence bounds are present,
 
 All sample identifiers and application values are synthetic.
 
+The current schema has no `unavailable_fields` member or fixed platform
+limitation codes. The `application` object is optional; when present, it may
+contain only the optional `bundle_id` and `display_name` fields shown above.
+Clients must treat omitted application fields as unavailable context. Adding
+explicit limitation metadata would require a future schema revision.
+
 ### Ordering and bounded reads
 
 Events are ordered by `data.sequence` in ascending order. A query applies all
@@ -370,10 +434,10 @@ Clients must surface a denial and continue without history. They must not retry
 with a broader tool, read the store directly, switch permission modes, or ask
 the model to reconstruct denied history through another observation tool.
 
-NVIDIA OpenShell is outside the first preview. A later OpenShell adapter will
-feed the same `history.status` and `history.query` decisions into the native
-host authorization broker. It will not receive direct access to Keychain items,
-history files, or vault keys.
+A future NVIDIA OpenShell policy adapter may feed the same `history.status` and
+`history.query` decisions into the native host authorization broker. It will
+not receive direct access to native credential-store items, history files, or
+vault keys.
 
 ## Error contract
 
@@ -404,7 +468,7 @@ The first preview stores only allowlisted structured metadata:
 - event type and timestamp;
 - opaque event, stream, session, and action identifiers;
 - Cua capability name and fixed caller category;
-- macOS application bundle ID and display name when available;
+- fixed-field platform application identifier and display name when available;
 - fixed action outcome, route, delivery, and evidence categories; and
 - fixed lifecycle, access, and health payloads.
 
@@ -425,9 +489,9 @@ history events.
 
 **How does it know an action happened?** The record comes from Cua Driver's own
 action lifecycle and fixed delivery and evidence categories. When an action
-uses the macOS Accessibility route, history may record that fixed route and
-outcome, but it never stores or later scans an accessibility tree to infer
-ambient activity.
+uses an Accessibility, UI Automation, AT-SPI, or native window-management
+route, history may record that fixed route and outcome, but it never stores or
+later scans an accessibility tree to infer ambient activity.
 
 **What happens when Cua types into a text field?** History may record that a
 typing capability ran, which application received it, and whether delivery was
@@ -436,8 +500,9 @@ arguments, or clipboard contents. The same rule applies to passwords and other
 sensitive text.
 
 **Where does the data live?** The encrypted records stay in the local user
-account on the host. The macOS key stays in Keychain. Agents cannot request the
-key, encrypted chunks, or a filesystem path through this contract. Users can
+account on the host. The namespace key stays in macOS Keychain, Windows
+Credential Manager, or Linux Secret Service. Agents cannot request the key,
+encrypted chunks, or a filesystem path through this contract. Users can
 inspect bounded metadata through the local CLI and delete the history with an
 explicit local command.
 
@@ -447,15 +512,16 @@ repository, and this RFC defines the complete agent-visible field set. Direct
 store access remains unsupported because it would bypass permission checks and
 key custody.
 
-**Is the contract portable beyond macOS?** The CloudEvents schema, COSE and
-CBOR Sequence profile, tool names, and capability names are platform-neutral.
-Preview 0 ships a macOS key and storage adapter first. Windows and Linux need
-native adapters and their own release evidence before Cua advertises support.
+**Is the contract portable across desktop systems?** Yes. The CloudEvents
+schema, COSE and CBOR Sequence profile, tool names, and capability names are
+platform-neutral. macOS, Windows, and Linux use separate native credential and
+application-identity adapters while returning the same agent-visible contract.
 
 History payloads stay local. Each CloudEvent is encrypted and authenticated
 inside a COSE_Encrypt0 record before it reaches disk. Records use RFC 8742 CBOR
-Sequence framing. The macOS root key is protected by Keychain, and each chunk
-uses a separate HKDF-derived key.
+Sequence framing. The namespace root key is protected by the operating
+system's native credential store, and each chunk uses a separate HKDF-derived
+key.
 
 History tools are excluded from per-tool product telemetry and agent-session
 aggregate telemetry. Product telemetry may contain a fixed CLI command counter
@@ -481,8 +547,8 @@ cannot safely ignore requires a new `dataschema` identifier. A storage-format
 change requires a new profile identifier.
 
 Clients must use runtime tool discovery and the advertised input schemas. They
-must tolerate a history tool disappearing after a daemon restart, channel
-change, rollback, or move to an unsupported platform.
+must tolerate a history tool disappearing after a daemon restart,
+configuration change, rollback, or move to an unsupported platform.
 
 Disabling capture preserves the encrypted store. Returning to a release that
 does not understand this preview also preserves the store unless the user runs
@@ -513,24 +579,30 @@ read-only.
 Deferred. A summary adds a model trust boundary and may require network egress.
 The first preview returns deterministic structured events.
 
-## Delivery plan
+## Implementation roadmap
 
 ### Preview 0
 
-- macOS nightly distribution;
+- independent native verification on macOS, Windows, and Linux;
 - explicit daemon admission and separate user opt-in;
 - `history_status` and `history_query` through existing Cua permissions;
 - seven-day retention and a 100 MiB encrypted quota; and
 - event schema v0 with the Cua History Profile v1.
 
-### Integration readiness
+### Integration requirements
 
-- publish generated tool schemas for MCP and SDK consumers;
-- publish synthetic status, event, denial, corruption, and gap fixtures;
+- provide generated tool schemas for MCP and SDK consumers;
+- provide a bundled, product-neutral consultation policy for the main Cua
+  agent with explicit recent-work and continuation triggers;
+- keep lifecycle and settings mutation outside the agent consultation policy;
+- make the policy call `history_status` before one bounded `history_query` and
+  before broader desktop discovery for matching requests;
+- require the policy to preserve unknown content, geometry, and intent rather
+  than reconstructing excluded fields;
+- provide synthetic status, event, denial, corruption, and gap fixtures;
 - provide one bounded capability-manifest example;
 - add transport-parity tests for MCP and the native SDK; and
-- document the exact nightly version and installation path that contains the
-  preview.
+- document runtime discovery and supported-platform requirements.
 
 ### Later stages
 
@@ -538,7 +610,8 @@ The first preview returns deterministic structured events.
 - an isolated no-network vault process;
 - an NVIDIA OpenShell policy adapter;
 - optional model brokers with separate consent; and
-- native Windows and Linux key-provider and capture adapters.
+- additional native application-identity fidelity where a desktop exposes a
+  stable identifier without titles, paths, or other disallowed content.
 
 Each later stage requires its own privacy and compatibility review.
 
@@ -564,6 +637,16 @@ The public integration contract is ready when all of the following pass:
     remain valid.
 12. Clients can continue their primary task after absence, denial, empty
     results, or a recoverable history failure.
+13. The main Cua agent's consultation policy selects `history_status` and then
+    a bounded `history_query` for a fresh continuation or recent-work request
+    before broader desktop discovery.
+14. The same policy does not query history for an unrelated task solely
+    because the tools are present.
+15. A hydrated agent can recover synthetic application, capability, effect,
+    route, and lifecycle metadata while preserving excluded content, geometry,
+    arguments, results, and user intent as unknown.
+16. A representative fresh-agent run proves the history-aware behavior through
+    the public tool surface and makes no desktop mutation during consultation.
 
 ## Feedback requested
 
@@ -578,9 +661,5 @@ Reviewers should focus on the public integration boundary:
 - Should an empty successful query append an access record?
 - Does the structured error set support MCP, native SDKs, and embedded hosts
   without transport-specific interpretation?
-- Which parts of schema v0 must remain stable before Windows and Linux adapters
-  ship?
-
-## Decision record
-
-No decision has been recorded. This draft is open for integrator feedback.
+- Which parts of schema v0 need stronger portability guarantees before the
+  preview contract stabilizes?

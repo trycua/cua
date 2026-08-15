@@ -22,6 +22,12 @@ const RELEASE_TEAM_IDENTIFIER: &str = "YCK386LBJ7";
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DaemonLaunchState {
+    pub permission_mode: Option<String>,
+    pub dangerously_bypass_approvals: bool,
+    pub allow_legacy_existing_profile_approval: bool,
+    pub capability_manifest: Option<String>,
+    pub approve_capability_manifest: bool,
+    pub no_permissions_gate: bool,
     pub claude_code_compat: bool,
     pub grants: Vec<String>,
 }
@@ -35,9 +41,25 @@ pub fn configure_admission(admitted: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn configure_daemon_launch_state(claude_code_compat: bool, grants: &[String]) {
+#[allow(clippy::too_many_arguments)]
+pub fn configure_daemon_launch_state(
+    permission_mode: Option<&str>,
+    dangerously_bypass_approvals: bool,
+    allow_legacy_existing_profile_approval: bool,
+    capability_manifest: Option<&str>,
+    approve_capability_manifest: bool,
+    no_permissions_gate: bool,
+    claude_code_compat: bool,
+    grants: &[String],
+) {
     let state = DAEMON_LAUNCH_STATE.get_or_init(|| Mutex::new(DaemonLaunchState::default()));
     *state.lock().unwrap() = DaemonLaunchState {
+        permission_mode: permission_mode.map(str::to_owned),
+        dangerously_bypass_approvals,
+        allow_legacy_existing_profile_approval,
+        capability_manifest: capability_manifest.map(str::to_owned),
+        approve_capability_manifest,
+        no_permissions_gate,
         claude_code_compat,
         grants: grants.to_vec(),
     };

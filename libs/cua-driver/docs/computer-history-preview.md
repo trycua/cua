@@ -44,8 +44,9 @@ cua-driver history enable
 
 The command admits the experimental feature, initializes its macOS Keychain
 key, verifies an encrypted write and read, and then enables capture. If the
-installed daemon must restart, Cua Driver preserves its existing compatibility
-mode and launch grants.
+installed daemon must restart, Cua Driver preserves its existing permission
+mode, capability manifest, approval flags, compatibility mode, and launch
+grants.
 
 Check the result:
 

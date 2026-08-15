@@ -533,7 +533,16 @@ fn main() {
                 eprintln!("cua-driver: Computer History admission error: {error}");
                 std::process::exit(1);
             }
-            history_runtime::configure_daemon_launch_state(claude_code_compat, &grants);
+            history_runtime::configure_daemon_launch_state(
+                permission_mode.as_deref(),
+                dangerously_bypass_approvals,
+                allow_legacy_existing_profile_approval,
+                capability_manifest.as_deref(),
+                approve_capability_manifest,
+                no_permissions_gate,
+                claude_code_compat,
+                &grants,
+            );
             let gate_opts =
                 platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
             if let Some((progress, context)) =

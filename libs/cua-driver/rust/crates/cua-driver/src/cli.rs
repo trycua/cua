@@ -1188,6 +1188,21 @@ pub fn launch_daemon_and_wait(
     grants: &[String],
     experimental_history: bool,
 ) -> Result<(), LaunchDaemonError> {
+    let state = crate::history_runtime::DaemonLaunchState {
+        claude_code_compat,
+        grants: grants.to_vec(),
+        ..Default::default()
+    };
+    launch_daemon_with_state_and_wait(socket_path, timeout_secs, &state, experimental_history)
+}
+
+#[cfg(target_os = "macos")]
+fn launch_daemon_with_state_and_wait(
+    socket_path: &str,
+    timeout_secs: u64,
+    state: &crate::history_runtime::DaemonLaunchState,
+    experimental_history: bool,
+) -> Result<(), LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
     use std::time::{Duration, Instant};
 
@@ -1201,13 +1216,7 @@ pub fn launch_daemon_and_wait(
     let app_name = crate::bundle::app_name();
     let app_path = crate::bundle::app_bundle_path();
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let open_args = daemon_launch_arguments(
-        app_name,
-        socket_path,
-        claude_code_compat,
-        grants,
-        experimental_history,
-    );
+    let open_args = daemon_launch_arguments(app_name, socket_path, state, experimental_history);
     // Thread the Claude-Code compat flag through to the daemon. Without this
     // the proxy-spawned daemon always called build_macos_registry() (compat
     // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
@@ -1276,8 +1285,7 @@ pub fn launch_daemon_and_wait(
 fn daemon_launch_arguments(
     app_name: &str,
     socket_path: &str,
-    claude_code_compat: bool,
-    grants: &[String],
+    state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
 ) -> Vec<String> {
     let mut args = vec![
@@ -1291,13 +1299,31 @@ fn daemon_launch_arguments(
     if socket_path != crate::serve::default_socket_path() {
         args.extend(["--socket".to_owned(), socket_path.to_owned()]);
     }
-    if claude_code_compat {
+    if let Some(mode) = &state.permission_mode {
+        args.extend(["--permission-mode".to_owned(), mode.clone()]);
+    }
+    if state.dangerously_bypass_approvals {
+        args.push("--dangerously-bypass-approvals".to_owned());
+    }
+    if state.allow_legacy_existing_profile_approval {
+        args.push("--allow-legacy-existing-profile-approval".to_owned());
+    }
+    if let Some(manifest) = &state.capability_manifest {
+        args.extend(["--capability-manifest".to_owned(), manifest.clone()]);
+    }
+    if state.approve_capability_manifest {
+        args.push("--approve-capability-manifest".to_owned());
+    }
+    if state.no_permissions_gate {
+        args.push("--no-permissions-gate".to_owned());
+    }
+    if state.claude_code_compat {
         args.push("--claude-code-computer-use-compat".to_owned());
     }
     if experimental_history {
         args.push("--experimental-history".to_owned());
     }
-    for grant in grants {
+    for grant in &state.grants {
         args.extend(["--grant".to_owned(), grant.clone()]);
     }
     args
@@ -2193,13 +2219,9 @@ pub fn run_history_cmd(
                 }
             }
             #[cfg(target_os = "macos")]
-            if let Err(error) = launch_daemon_and_wait(
-                &socket_path,
-                15,
-                prior_daemon_state.claude_code_compat,
-                &prior_daemon_state.grants,
-                true,
-            ) {
+            if let Err(error) =
+                launch_daemon_with_state_and_wait(&socket_path, 15, &prior_daemon_state, true)
+            {
                 rollback_history_preview(
                     &socket_path,
                     prior_daemon_was_running,
@@ -2342,13 +2364,7 @@ fn rollback_history_preview(
         crate::history_runtime::set_preview_admitted_preference(prior_preview_admitted_preference);
     let _ = stop_history_daemon(socket_path);
     if prior_daemon_was_running && !crate::serve::is_daemon_listening(socket_path) {
-        let _ = launch_daemon_and_wait(
-            socket_path,
-            15,
-            prior_daemon_state.claude_code_compat,
-            &prior_daemon_state.grants,
-            false,
-        );
+        let _ = launch_daemon_with_state_and_wait(socket_path, 15, prior_daemon_state, false);
     }
 }
 
@@ -4384,10 +4400,28 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn history_relaunch_preserves_compatibility_and_every_grant() {
+    fn history_relaunch_preserves_authorization_mode_and_every_grant() {
         let grants = args(&["capability:a", "capability:b"]);
-        let launch =
-            daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", true, &grants, true);
+        let state = crate::history_runtime::DaemonLaunchState {
+            permission_mode: Some("bounded".to_owned()),
+            dangerously_bypass_approvals: false,
+            allow_legacy_existing_profile_approval: true,
+            capability_manifest: Some("/tmp/capabilities.yaml".to_owned()),
+            approve_capability_manifest: true,
+            no_permissions_gate: true,
+            claude_code_compat: true,
+            grants,
+        };
+        let launch = daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true);
+        assert!(launch
+            .windows(2)
+            .any(|pair| pair == ["--permission-mode", "bounded"]));
+        assert!(launch
+            .windows(2)
+            .any(|pair| { pair == ["--capability-manifest", "/tmp/capabilities.yaml"] }));
+        assert!(launch.contains(&"--approve-capability-manifest".to_owned()));
+        assert!(launch.contains(&"--allow-legacy-existing-profile-approval".to_owned()));
+        assert!(launch.contains(&"--no-permissions-gate".to_owned()));
         assert!(launch.contains(&"--claude-code-computer-use-compat".to_owned()));
         assert!(launch.contains(&"--experimental-history".to_owned()));
         assert!(launch
@@ -4399,6 +4433,21 @@ mod tests {
         assert!(launch
             .windows(2)
             .any(|pair| pair == ["--socket", "/tmp/history-test.sock"]));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn history_relaunch_preserves_explicit_unrestricted_approval() {
+        let state = crate::history_runtime::DaemonLaunchState {
+            permission_mode: Some("unrestricted".to_owned()),
+            dangerously_bypass_approvals: true,
+            ..Default::default()
+        };
+        let launch = daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true);
+        assert!(launch
+            .windows(2)
+            .any(|pair| { pair == ["--permission-mode", "unrestricted"] }));
+        assert!(launch.contains(&"--dangerously-bypass-approvals".to_owned()));
     }
 
     #[test]

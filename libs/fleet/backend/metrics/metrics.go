@@ -69,6 +69,27 @@ var (
 		Help: "Total Stripe billing webhook requests by processing result and event type.",
 	}, []string{"result", "event_type"})
 
+	// DatabaseFeaturesReady reports whether the PostgreSQL-backed features
+	// came up at startup. The serving tier deliberately does NOT gate
+	// readiness on the database (see
+	// docs/superpowers/plans/2026-08-12-cyclops-serving-availability.md):
+	// initializeDatabaseFeatures logs, continues, and lets the affected
+	// routes answer 503, so the pod stays Ready and keeps serving everything
+	// else. That is the intended behaviour, but it is otherwise invisible —
+	// a pod whose database never initialized looks identical to a healthy one
+	// until somebody calls a database-backed route. This gauge is the signal.
+	//
+	// configured="false" means DATABASE_URL was unset, which is a supported
+	// configuration and always reports 1. Only configured="true" with value 0
+	// is a fault.
+	//
+	// Initialization runs once at startup, so the value is fixed for the
+	// lifetime of the process and recovery means restarting the pod.
+	DatabaseFeaturesReady = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "cyclops_cs_database_features_ready",
+		Help: "1 when the PostgreSQL-backed features initialized at startup (or are intentionally disabled), 0 when a configured database failed to come up.",
+	}, []string{"configured"})
+
 	UpstreamProxyDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "cyclops_cs_upstream_proxy_duration_seconds",
 		Help:    "Latency of requests proxied to upstream services.",

@@ -386,8 +386,14 @@ func initializeDatabaseFeatures(parent context.Context, cfg config.DatabaseConfi
 
 	if cfg.URL == "" {
 		slog.Info("postgres-backed features disabled (DATABASE_URL unset)")
+		metrics.DatabaseFeaturesReady.WithLabelValues("false").Set(1)
 		return
 	}
+
+	// Every path below reports through this gauge. Readiness stays
+	// database-independent by design, so this metric is the only way an
+	// operator learns that a serving pod came up degraded.
+	metrics.DatabaseFeaturesReady.WithLabelValues("true").Set(0)
 
 	ctx, cancel := context.WithTimeout(parent, databaseStartupTimeout)
 	defer cancel()
@@ -408,4 +414,6 @@ func initializeDatabaseFeatures(parent context.Context, cfg config.DatabaseConfi
 		auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolver(store))
 		slog.Info("github trust policies: enabled")
 	}
+
+	metrics.DatabaseFeaturesReady.WithLabelValues("true").Set(1)
 }

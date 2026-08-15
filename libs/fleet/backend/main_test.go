@@ -26,7 +26,11 @@ import (
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/handlers"
+	"cyclops-cs-backend/metrics"
 	"cyclops-cs-backend/statequery"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/trycua/cloud/pkg/featureflags"
@@ -726,4 +730,85 @@ func (githubTrustStoreStub) Delete(context.Context, string, string) (bool, error
 }
 func (githubTrustStoreStub) ResolveByRepository(context.Context, string) ([]*githubtrust.Policy, error) {
 	return nil, nil
+}
+
+// The serving tier keeps readiness database-independent on purpose, so a pod
+// that comes up without its database stays Ready and answers 503 from the
+// database-backed routes only. cyclops_cs_database_features_ready is what makes
+// that state visible; these cases pin the three values it can report.
+func TestInitializeDatabaseFeaturesReportsReadinessMetric(t *testing.T) {
+	tests := []struct {
+		name                string
+		config              config.DatabaseConfiguration
+		requireVersionError error
+		newStoreError       error
+		wantConfigured      string
+		wantValue           float64
+	}{
+		{
+			name:           "unset database url reports the disabled configuration as ready",
+			config:         config.DatabaseConfiguration{},
+			wantConfigured: "false",
+			wantValue:      1,
+		},
+		{
+			name:           "healthy database reports ready",
+			config:         config.DatabaseConfiguration{URL: "postgres://application/application"},
+			wantConfigured: "true",
+			wantValue:      1,
+		},
+		{
+			name:                "unavailable schema reports degraded",
+			config:              config.DatabaseConfiguration{URL: "postgres://application/application"},
+			requireVersionError: fmt.Errorf("schema unavailable"),
+			wantConfigured:      "true",
+			wantValue:           0,
+		},
+		{
+			name:           "trust store failure reports degraded",
+			config:         config.DatabaseConfiguration{URL: "postgres://application/application"},
+			newStoreError:  fmt.Errorf("store unavailable"),
+			wantConfigured: "true",
+			wantValue:      0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			metrics.DatabaseFeaturesReady.Reset()
+			dependencies := databaseFeatureDependencies{
+				requireVersion: func(context.Context, string, int64) error {
+					return test.requireVersionError
+				},
+				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
+					return stateQueryExecutorStub{}, nil
+				},
+				newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
+					if test.newStoreError != nil {
+						return nil, test.newStoreError
+					}
+					return githubTrustStoreStub{}, nil
+				},
+			}
+			h := handlers.Handlers{}
+			t.Cleanup(func() { auth.SetGitHubTrustResolver(nil) })
+
+			initializeDatabaseFeatures(context.Background(), test.config, &h, dependencies)
+
+			got := gaugeValue(t, metrics.DatabaseFeaturesReady.WithLabelValues(test.wantConfigured))
+			if got != test.wantValue {
+				t.Fatalf("cyclops_cs_database_features_ready{configured=%q} = %v, want %v",
+					test.wantConfigured, got, test.wantValue)
+			}
+		})
+	}
+}
+
+func gaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	var measurement dto.Metric
+	if err := gauge.Write(&measurement); err != nil {
+		t.Fatalf("read gauge: %v", err)
+	}
+	return measurement.GetGauge().GetValue()
 }

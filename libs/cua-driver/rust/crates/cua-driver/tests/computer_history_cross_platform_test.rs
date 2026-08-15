@@ -253,9 +253,17 @@ fn ciphertext_paths(root: &Path) -> Vec<PathBuf> {
 fn forged_control_response() -> Value {
     use std::os::unix::net::UnixStream;
 
-    let mut stream = UnixStream::connect(daemon_socket())
-        .expect("connect test process directly to packaged daemon");
-    write_forged_control(&mut stream)
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match UnixStream::connect(daemon_socket()) {
+            Ok(mut stream) => return write_forged_control(&mut stream),
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+                sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("connect test process directly to packaged daemon: {error}"),
+        }
+    }
 }
 
 #[cfg(windows)]

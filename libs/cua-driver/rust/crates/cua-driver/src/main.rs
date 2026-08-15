@@ -912,6 +912,7 @@ fn main() -> anyhow::Result<()> {
             no_permissions_gate,
             claude_code_compat,
             grants,
+            experimental_history: _,
         } => {
             configure_startup_permission_mode(
                 permission_mode.as_deref(),

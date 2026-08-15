@@ -47,7 +47,7 @@ ensure_local_signing_identity() {
             || { printf -- '-'; return; }
         identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
             | awk -v wanted="$CUA_DRIVER_LOCAL_SIGNING_IDENTITY" \
-                'toupper($2) == toupper(wanted) { print $2; exit }')"
+                '{ for (field = 1; field <= NF; field++) if (toupper($field) == toupper(wanted)) { print $field; exit } }')"
         [ -n "$identity" ] && printf '%s' "$identity" || printf -- '-'
         return
     fi

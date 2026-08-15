@@ -985,6 +985,16 @@ fn main() -> anyhow::Result<()> {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
             return Ok(());
         }
+        cli::Command::History {
+            subcommand,
+            args,
+            socket,
+            json,
+            confirmed,
+        } => {
+            cli::run_history_cmd(&subcommand, &args, socket.as_deref(), json, confirmed);
+            return Ok(());
+        }
         cli::Command::DumpDocs { pretty, doc_type } => {
             let tools = inspect_tools_without_runtime();
             cli::run_dump_docs_with_type(&tools, pretty, &doc_type);

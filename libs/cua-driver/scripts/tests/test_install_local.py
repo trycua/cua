@@ -41,6 +41,7 @@ def test_explicit_local_signing_identity_is_selected_exactly(tmp_path: Path) -> 
     keychain = tmp_path / "signing.keychain-db"
     keychain.touch()
     fake_bin = tmp_path / "fake-bin"
+    _write_executable(fake_bin / "codesign", "exit 0\n")
     wanted = "F2D26B5AFAAB910B340FBD8F480F88DF748D9D48"
     other = "A" * 40
     _write_executable(
@@ -76,6 +77,7 @@ def test_explicit_local_signing_identity_never_falls_back(tmp_path: Path) -> Non
     keychain = tmp_path / "signing.keychain-db"
     keychain.touch()
     fake_bin = tmp_path / "fake-bin"
+    _write_executable(fake_bin / "codesign", "exit 0\n")
     _write_executable(
         fake_bin / "security",
         f"printf '%s\\n' '  1) {'A' * 40} \"Developer ID Application: Other\"'\n",

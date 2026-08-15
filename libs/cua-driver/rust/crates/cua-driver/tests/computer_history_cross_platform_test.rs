@@ -207,6 +207,46 @@ fn launch_fixture(driver: &mut McpDriver) -> (u32, u64, Value) {
     }
 }
 
+fn wait_for_window_position(
+    driver: &mut McpDriver,
+    pid: u32,
+    window_id: u64,
+    requested_x: f64,
+    requested_y: f64,
+) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut last_bounds = None;
+    loop {
+        let readback = driver.call("list_windows", json!({"pid": pid}));
+        assert!(
+            !readback.is_error(),
+            "independent list_windows readback failed: {}",
+            readback.text()
+        );
+        if let Some(bounds) = readback.structured()["windows"]
+            .as_array()
+            .and_then(|windows| {
+                windows
+                    .iter()
+                    .find(|window| window["window_id"].as_u64() == Some(window_id))
+            })
+            .map(|window| window["bounds"].clone())
+        {
+            let observed_x = bounds["x"].as_f64().expect("readback x");
+            let observed_y = bounds["y"].as_f64().expect("readback y");
+            if (observed_x - requested_x).abs() <= 2.0 && (observed_y - requested_y).abs() <= 2.0 {
+                return bounds;
+            }
+            last_bounds = Some(bounds);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "window frame did not settle within 2s: requested=({requested_x}, {requested_y}) observed={last_bounds:?}"
+        );
+        sleep(Duration::from_millis(50));
+    }
+}
+
 fn assert_no_private_fields(value: &Value) {
     const FORBIDDEN_KEYS: &[&str] = &[
         "screenshot",
@@ -483,17 +523,8 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
         moved.text()
     );
     assert_eq!(moved.action_effect(), Some("confirmed"));
-    let readback = driver.call("list_windows", json!({"pid": pid}));
-    let observed = readback.structured()["windows"]
-        .as_array()
-        .and_then(|windows| {
-            windows
-                .iter()
-                .find(|window| window["window_id"].as_u64() == Some(window_id))
-        })
-        .expect("moved fixture window disappeared");
-    assert!((observed["bounds"]["x"].as_f64().unwrap() - requested_x).abs() <= 2.0);
-    assert!((observed["bounds"]["y"].as_f64().unwrap() - requested_y).abs() <= 2.0);
+    let _settled_bounds =
+        wait_for_window_position(&mut driver, pid, window_id, requested_x, requested_y);
     let ended = driver.call("end_session", json!({"session": RAW_SESSION}));
     assert!(!ended.is_error(), "end_session failed: {}", ended.text());
     assert_ready(&history_cli("flush", &[]));

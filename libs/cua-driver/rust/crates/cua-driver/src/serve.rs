@@ -316,6 +316,25 @@ fn history_control_response(
     }
 }
 
+async fn history_control_response_async(
+    registry: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
+    request: DaemonRequest,
+    trusted_cli_connection: bool,
+) -> DaemonResponse {
+    // Native credential stores are synchronous at this boundary. Linux's
+    // Secret Service adapter may drive its own async runtime internally, which
+    // must not be entered from a Tokio request worker. Keep key creation,
+    // deletion, and encrypted-store I/O off the daemon's async executor on all
+    // platforms so one control request cannot stall unrelated clients.
+    tokio::task::spawn_blocking(move || {
+        history_control_response(&registry, &request, trusted_cli_connection)
+    })
+    .await
+    .unwrap_or_else(|error| {
+        DaemonResponse::err(format!("history_control_worker_failed: {error}"), 1)
+    })
+}
+
 fn history_relaunch_state_response(
     request: &DaemonRequest,
     trusted_cli_connection: bool,
@@ -949,11 +968,11 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "history_control" => {
-                                let resp = history_control_response(
-                                    &reg,
-                                    &req,
+                                let resp = history_control_response_async(
+                                    reg.clone(),
+                                    req,
                                     trusted_history_cli_connection,
-                                );
+                                ).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1670,11 +1689,11 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "history_control" => {
-                                let resp = history_control_response(
-                                    &reg,
-                                    &req,
+                                let resp = history_control_response_async(
+                                    reg.clone(),
+                                    req,
                                     trusted_history_cli_connection,
-                                );
+                                ).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;

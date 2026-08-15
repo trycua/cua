@@ -210,7 +210,8 @@ function Invoke-ComputerHistoryGate {
     $historyHome = Join-Path $artifactDir "history-product-home"
     $historyBinDir = Join-Path $artifactDir "history-product-bin"
     $historyLocalAppData = Join-Path $artifactDir "history-local-app-data"
-    $historyPipe = "\\.\pipe\cua-driver-local-history-$PID"
+    $historyPipeName = "cua-driver-local-history-$PID"
+    $historyPipe = "\\.\pipe\$historyPipeName"
     $env:CUA_DRIVER_LOCAL_HOME = $historyHome
     $env:CUA_DRIVER_LOCAL_INSTALL_DIR = $historyBinDir
     $env:CUA_E2E_HISTORY_DAEMON_SOCKET = $historyPipe
@@ -275,12 +276,12 @@ function Invoke-ComputerHistoryGate {
     for ($attempt = 0; $attempt -lt 150; $attempt++) {
         if ($daemon.HasExited) { break }
         try {
-            $probe = [System.IO.File]::Open(
-                $historyPipe,
-                [System.IO.FileMode]::Open,
-                [System.IO.FileAccess]::ReadWrite,
-                [System.IO.FileShare]::ReadWrite
+            $probe = [System.IO.Pipes.NamedPipeClientStream]::new(
+                ".",
+                $historyPipeName,
+                [System.IO.Pipes.PipeDirection]::InOut
             )
+            $probe.Connect(100)
             $probe.Dispose()
             $ready = $true
             break

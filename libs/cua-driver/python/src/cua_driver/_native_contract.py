@@ -5244,6 +5244,62 @@ class _UniffiFfiConverterTypeVerifyStateOutput(_UniffiConverterRustBuffer):
 
 
 
+class InstancePolicy(enum.Enum):
+    """
+    How `launch_app` acquires an application process/window.
+
+    The portable default reuses an exact existing candidate before asking the
+    operating system to launch anything. Callers that require a stronger
+    guarantee must opt into `reuse_only` or `new` explicitly; a platform that
+    cannot honor `new` reports that limitation instead of silently degrading.
+"""
+
+    REUSE_OR_LAUNCH = 0
+
+    REUSE_ONLY = 1
+
+    NEW = 2
+
+
+
+class _UniffiFfiConverterTypeInstancePolicy(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return InstancePolicy.REUSE_OR_LAUNCH
+        if variant == 2:
+            return InstancePolicy.REUSE_ONLY
+        if variant == 3:
+            return InstancePolicy.NEW
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == InstancePolicy.REUSE_OR_LAUNCH:
+            return
+        if value == InstancePolicy.REUSE_ONLY:
+            return
+        if value == InstancePolicy.NEW:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == InstancePolicy.REUSE_OR_LAUNCH:
+            buf.write_i32(1)
+        if value == InstancePolicy.REUSE_ONLY:
+            buf.write_i32(2)
+        if value == InstancePolicy.NEW:
+            buf.write_i32(3)
+
+
+
+
+
+
+
+
 class Platform(enum.Enum):
 
     MACOS = 0
@@ -5323,6 +5379,7 @@ __all__ = [
     "ScrollBy",
     "CaptureScope",
     "EffectiveScope",
+    "InstancePolicy",
     "Platform",
     "ActionDelivery",
     "ActionEscalation",

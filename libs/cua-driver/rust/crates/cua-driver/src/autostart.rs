@@ -91,6 +91,35 @@ const HRESULT_FILE_NOT_FOUND: u32 = 0x8007_0002;
 #[cfg(any(target_os = "windows", test))]
 const HRESULT_ACCESS_DENIED: u32 = 0x8007_0005;
 
+/// What a post-registration Task Scheduler query proves about `enable()`.
+///
+/// `enable()` used to report success whenever the elevation helper exited 0,
+/// and a declined UAC prompt exited 0 (#3179). Verifying the task independently
+/// of the exit code keeps that class of regression from surfacing as success
+/// again — but a query that cannot be answered must not be turned into a false
+/// failure either, hence the third variant.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegistrationCheck {
+    /// The task exists: registration really happened.
+    Confirmed,
+    /// Task Scheduler answered, and the task is not there.
+    Missing,
+    /// Task Scheduler could not be inspected; neither prove nor disprove.
+    Unverifiable,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn classify_registration_check(outcome: TaskQueryOutcome) -> RegistrationCheck {
+    match outcome {
+        TaskQueryOutcome::Registered => RegistrationCheck::Confirmed,
+        TaskQueryOutcome::NotRegistered => RegistrationCheck::Missing,
+        TaskQueryOutcome::PermissionDenied | TaskQueryOutcome::Unknown => {
+            RegistrationCheck::Unverifiable
+        }
+    }
+}
+
 #[cfg(any(target_os = "windows", test))]
 fn classify_task_query(success: bool, exit_code: Option<i32>) -> TaskQueryOutcome {
     if success {
@@ -184,6 +213,58 @@ fn starts_with_drive_letter(path: &str) -> bool {
     matches!(path.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic())
 }
 
+// ── Windows self-elevation helper script ──────────────────────────────────
+
+/// PowerShell that re-launches this executable elevated (UAC) and forwards the
+/// elevated child's exit code.
+///
+/// **Every failure path must exit non-zero.** The original one-liner was
+/// `$p = Start-Process ... -Verb RunAs -Wait -PassThru; exit $p.ExitCode`.
+/// A declined UAC prompt makes `Start-Process` raise a *non-terminating*
+/// error, so `$p` stayed unset, `$null.ExitCode` was `$null`, and `exit $null`
+/// exits **0** — a dismissed prompt was reported as a registered autostart
+/// entry (#3179). Two independent guards now cover that:
+///
+/// 1. `-ErrorAction Stop` promotes the declined-UAC error to a terminating one
+///    so the `catch` runs and exits 1.
+/// 2. The explicit `$null` check, because `exit $null` silently meaning
+///    `exit 0` is precisely the trap that produced the bug. It also covers a
+///    process object that came back without an exit code.
+///
+/// `__INNER_COMMAND__` is substituted with the single-quoted PowerShell string
+/// holding the elevated child's `-Command` argument.
+#[cfg(any(target_os = "windows", test))]
+const ELEVATE_PS: &str = r#"
+$p = $null
+try {
+    $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-NonInteractive','-Command',__INNER_COMMAND__) -Verb RunAs -Wait -PassThru -ErrorAction Stop
+} catch {
+    [Console]::Error.WriteLine("cua-driver: UAC elevation for autostart registration failed: " + $_.Exception.Message)
+    exit 1
+}
+if ($null -eq $p -or $null -eq $p.ExitCode) {
+    [Console]::Error.WriteLine("cua-driver: UAC elevation for autostart registration returned no process.")
+    exit 1
+}
+exit $p.ExitCode
+"#;
+
+/// Build the self-elevation script for `exe`.
+///
+/// The elevated child runs `<exe> autostart enable` so the registration happens
+/// inside the elevated process, where the first (direct) attempt succeeds and
+/// does not re-enter the elevation branch.
+#[cfg(any(target_os = "windows", test))]
+fn elevation_script(exe: &str) -> String {
+    // `& "<exe>" autostart enable` — PowerShell escapes `"` as `` `" `` inside
+    // a double-quoted string.
+    let inner = format!("& \"{}\" autostart enable", exe.replace('"', "`\""));
+    // Embed that as a single-quoted PowerShell string (PS escapes `'` as `''`
+    // inside `'`-strings).
+    let inner_quoted = format!("'{}'", inner.replace('\'', "''"));
+    ELEVATE_PS.replace("__INNER_COMMAND__", &inner_quoted)
+}
+
 // ── Windows impl ──────────────────────────────────────────────────────────
 
 #[cfg(target_os = "windows")]
@@ -273,7 +354,7 @@ Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigge
             .output()
             .map_err(|e| anyhow!("failed to invoke powershell: {e}"))?;
         if out.status.success() {
-            return Ok(());
+            return confirm_registered();
         }
 
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -306,19 +387,10 @@ Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigge
             // via Start-Process -Verb RunAs's WindowStyle Hidden.
             const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-            // PowerShell incantation: Start-Process -Verb RunAs to elevate,
-            // run our own exe with `autostart enable` so the registration
-            // happens INSIDE the elevated process (where it'll succeed on
-            // the first attempt and not re-enter this branch). -Wait so we
-            // can capture the child's exit code.
-            let inner = format!("& \"{}\" autostart enable", exe.replace('"', "`\""));
-            let outer = format!(
-                "$p = Start-Process -FilePath '{}' -ArgumentList @('-NoProfile','-NonInteractive','-Command',{}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
-                "powershell.exe",
-                // Embed the inner command as a single-quoted PowerShell string
-                // (PS escapes ' as '' inside ''-strings).
-                format!("'{}'", inner.replace('\'', "''"))
-            );
+            // Start-Process -Verb RunAs elevates; -Wait so we can capture the
+            // child's exit code. See `ELEVATE_PS` for why every failure path
+            // there has to exit non-zero.
+            let outer = elevation_script(exe);
             Command::new("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-Command", &outer])
                 .creation_flags(CREATE_NO_WINDOW)
@@ -327,7 +399,7 @@ Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigge
         };
 
         if elevated_status.success() {
-            Ok(())
+            confirm_registered()
         } else {
             Err(anyhow!(
                 "self-elevation for autostart registration failed (exit {}). The UAC \
@@ -336,6 +408,81 @@ Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigge
                  same self-elevation flow. See https://github.com/trycua/cua/issues/1602.",
                 elevated_status.code().unwrap_or(-1)
             ))
+        }
+    }
+
+    /// Result of one `schtasks /Query` against the autostart task.
+    struct TaskQuery {
+        outcome: TaskQueryOutcome,
+        exit_code: Option<i32>,
+        diagnostic: String,
+    }
+
+    /// Ask Task Scheduler whether the autostart task exists.
+    ///
+    /// Without `/HRESULT`, schtasks collapses "task not found", permission
+    /// failures, and other Task Scheduler errors to exit 1. `/HRESULT` keeps
+    /// those cases distinct and is locale-independent: ERROR_FILE_NOT_FOUND
+    /// means the named task is absent, while ERROR_PATH_NOT_FOUND means the
+    /// scheduler namespace could not be inspected and therefore stays unknown.
+    fn query_task() -> Result<TaskQuery> {
+        let out = Command::new("schtasks")
+            .args(["/Query", "/TN", task_name(), "/HRESULT"])
+            .output()
+            .map_err(|e| anyhow!("failed to invoke schtasks: {e}"))?;
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let diagnostic = match (stdout.trim(), stderr.trim()) {
+            ("", "") => "no diagnostic output".to_owned(),
+            (stdout, "") => stdout.to_owned(),
+            ("", stderr) => stderr.to_owned(),
+            (stdout, stderr) => format!("{stdout}\n{stderr}"),
+        };
+        Ok(TaskQuery {
+            outcome: classify_task_query(out.status.success(), out.status.code()),
+            exit_code: out.status.code(),
+            diagnostic,
+        })
+    }
+
+    /// Postcondition for `enable`: the task has to actually exist afterwards.
+    ///
+    /// Reporting success is a promise that `cua-driver serve` will come up at
+    /// the next logon, and until #3179 that promise rested entirely on the exit
+    /// code of the elevation helper — which a declined UAC prompt left at 0.
+    /// Asking Task Scheduler directly makes the promise independent of the
+    /// exit-code plumbing. A query that cannot be answered (permission denied,
+    /// scheduler unreachable) is reported as unverified rather than converted
+    /// into a failure: registration may well have succeeded, and a false
+    /// negative here is its own kind of misleading.
+    fn confirm_registered() -> Result<()> {
+        let query = match query_task() {
+            Ok(query) => query,
+            Err(e) => {
+                eprintln!("cua-driver: could not verify autostart registration: {e}");
+                return Ok(());
+            }
+        };
+        match classify_registration_check(query.outcome) {
+            RegistrationCheck::Confirmed => Ok(()),
+            RegistrationCheck::Missing => Err(anyhow!(
+                "autostart registration reported success but scheduled task '{}' does not \
+                 exist. If a UAC prompt appeared, it was dismissed or the elevated \
+                 registration failed. Re-run `{} autostart enable` from an elevated shell. \
+                 See https://github.com/trycua/cua/issues/3179.",
+                task_name(),
+                crate::bundle::cli_name()
+            )),
+            RegistrationCheck::Unverifiable => {
+                eprintln!(
+                    "cua-driver: registered autostart task '{}' but could not verify it with \
+                     schtasks: {}",
+                    task_name(),
+                    query.diagnostic
+                );
+                Ok(())
+            }
         }
     }
 
@@ -379,20 +526,8 @@ Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigge
     }
 
     pub fn status() -> Result<Status> {
-        // Without /HRESULT, schtasks collapses "task not found", permission
-        // failures, and other Task Scheduler errors to exit 1. /HRESULT keeps
-        // those cases distinct and is locale-independent: ERROR_FILE_NOT_FOUND
-        // means the named task is absent, while ERROR_PATH_NOT_FOUND means the
-        // scheduler namespace could not be inspected and therefore stays
-        // unknown.
-        let out = Command::new("schtasks")
-            .args(["/Query", "/TN", task_name(), "/HRESULT"])
-            .output()
-            .map_err(|e| anyhow!("unknown: failed to invoke schtasks: {e}"))?;
-
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        match classify_task_query(out.status.success(), out.status.code()) {
+        let query = query_task().map_err(|e| anyhow!("unknown: {e}"))?;
+        match query.outcome {
             TaskQueryOutcome::Registered => {}
             TaskQueryOutcome::NotRegistered => return Ok(Status::NotRegistered),
             outcome @ (TaskQueryOutcome::PermissionDenied | TaskQueryOutcome::Unknown) => {
@@ -401,15 +536,9 @@ Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigge
                     TaskQueryOutcome::Unknown => "unknown",
                     _ => unreachable!(),
                 };
-                let diagnostic = match (stdout.trim(), stderr.trim()) {
-                    ("", "") => "no diagnostic output".to_owned(),
-                    (stdout, "") => stdout.to_owned(),
-                    ("", stderr) => stderr.to_owned(),
-                    (stdout, stderr) => format!("{stdout}\n{stderr}"),
-                };
-                let hresult = out
-                    .status
-                    .code()
+                let diagnostic = query.diagnostic;
+                let hresult = query
+                    .exit_code
                     .map(|code| format!("0x{:08X}", code as u32))
                     .unwrap_or_else(|| "unavailable".to_owned());
                 return Err(anyhow!(
@@ -621,6 +750,143 @@ mod tests {
             observed.to_ascii_lowercase(),
             expected.to_ascii_lowercase(),
             "Windows resolved the invoked installer junction path to a release path"
+        );
+    }
+
+    // ── Self-elevation exit-code semantics (#3179) ────────────────────────
+
+    #[test]
+    fn elevation_script_guards_every_failure_path() {
+        let script = elevation_script(r"C:\Cua\cua-driver.exe");
+
+        // Promotes the declined-UAC non-terminating error to a terminating one.
+        assert!(script.contains("-ErrorAction Stop"), "{script}");
+        assert!(script.contains("catch {"), "{script}");
+        // Defence in depth: `exit $null` exits 0, which is the trap that made a
+        // dismissed prompt look like a successful registration.
+        assert!(
+            script.contains("if ($null -eq $p -or $null -eq $p.ExitCode)"),
+            "{script}"
+        );
+        assert!(!script.contains("__INNER_COMMAND__"), "{script}");
+        assert!(
+            script.contains(r#"'& "C:\Cua\cua-driver.exe" autostart enable'"#),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn elevation_script_escapes_quotes_in_the_executable_path() {
+        let script = elevation_script("C:\\o'brien\\a\"b\\cua-driver.exe");
+
+        // `'` doubled for the single-quoted PowerShell string, `"` backtick-
+        // escaped for the double-quoted call operator argument.
+        assert!(script.contains("o''brien"), "{script}");
+        assert!(script.contains("a`\"b"), "{script}");
+    }
+
+    /// Run the shipped elevation script against a stubbed `Start-Process`.
+    ///
+    /// A PowerShell function shadows the cmdlet of the same name, so the script
+    /// under test runs verbatim — no real UAC prompt, which is what makes the
+    /// exit-code contract testable in CI at all.
+    #[cfg(target_os = "windows")]
+    fn elevation_script_exit_code(stub_body: &str) -> i32 {
+        use std::process::Command;
+
+        let temp = tempfile::tempdir().unwrap();
+        let script_path = temp.path().join("elevation-probe.ps1");
+        let contents = format!(
+            "function Start-Process {{\n\
+             [CmdletBinding()]\n\
+             param([string]$FilePath,[string[]]$ArgumentList,[string]$Verb,\
+             [switch]$Wait,[switch]$PassThru)\n\
+             {stub_body}\n\
+             }}\n{}",
+            elevation_script(r"C:\Cua\cua-driver.exe")
+        );
+        std::fs::write(&script_path, contents).unwrap();
+
+        let status = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
+            .arg(&script_path)
+            .status()
+            .unwrap();
+        status.code().expect("powershell reported no exit code")
+    }
+
+    /// The regression itself: declining UAC raises a non-terminating error, so
+    /// the pre-fix `$p = Start-Process ...; exit $p.ExitCode` exited 0 and
+    /// `enable()` reported a registered autostart entry (#3179).
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn declined_uac_exits_non_zero() {
+        let declined = "Write-Error 'This command cannot be run due to the error: \
+                        The operation was canceled by the user.'";
+        assert_eq!(elevation_script_exit_code(declined), 1);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn absent_process_object_exits_non_zero() {
+        assert_eq!(elevation_script_exit_code("return $null"), 1);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn absent_child_exit_code_exits_non_zero() {
+        assert_eq!(
+            elevation_script_exit_code("return [pscustomobject]@{ ExitCode = $null }"),
+            1
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn accepted_uac_forwards_the_child_exit_code() {
+        assert_eq!(
+            elevation_script_exit_code("return [pscustomobject]@{ ExitCode = 0 }"),
+            0
+        );
+        assert_eq!(
+            elevation_script_exit_code("return [pscustomobject]@{ ExitCode = 3 }"),
+            3
+        );
+    }
+
+    // ── Post-registration verification ────────────────────────────────────
+
+    #[test]
+    fn present_task_confirms_registration() {
+        assert_eq!(
+            classify_registration_check(TaskQueryOutcome::Registered),
+            RegistrationCheck::Confirmed
+        );
+    }
+
+    #[test]
+    fn absent_task_contradicts_reported_success() {
+        assert_eq!(
+            classify_registration_check(TaskQueryOutcome::NotRegistered),
+            RegistrationCheck::Missing
+        );
+    }
+
+    #[test]
+    fn unanswerable_query_is_never_a_false_failure() {
+        assert_eq!(
+            classify_registration_check(TaskQueryOutcome::PermissionDenied),
+            RegistrationCheck::Unverifiable
+        );
+        assert_eq!(
+            classify_registration_check(TaskQueryOutcome::Unknown),
+            RegistrationCheck::Unverifiable
         );
     }
 

@@ -1,4 +1,4 @@
-//! Trusted standalone-daemon assembly for the macOS Computer History preview.
+//! Trusted standalone-daemon assembly for the Computer History preview.
 
 use std::{
     fs,
@@ -10,14 +10,15 @@ use std::{
     },
 };
 
-#[cfg(target_os = "macos")]
 use cua_driver_core::history::{
-    HistoryConfig, HistoryManager, DEFAULT_QUOTA_BYTES, DEFAULT_RETENTION_DAYS,
+    ApplicationIdentityProvider, HistoryConfig, HistoryManager, KeyProvider, DEFAULT_QUOTA_BYTES,
+    DEFAULT_RETENTION_DAYS,
 };
 use cua_driver_core::tool::ToolRegistry;
 
 static HISTORY_ADMITTED: AtomicBool = AtomicBool::new(false);
 static DAEMON_LAUNCH_STATE: OnceLock<Mutex<DaemonLaunchState>> = OnceLock::new();
+#[cfg(target_os = "macos")]
 const RELEASE_TEAM_IDENTIFIER: &str = "YCK386LBJ7";
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -32,9 +33,8 @@ pub struct DaemonLaunchState {
 }
 
 pub fn configure_admission(admitted: bool) -> anyhow::Result<()> {
-    #[cfg(target_os = "macos")]
     if admitted {
-        verify_installed_app_for_history()?;
+        verify_installed_product_for_history()?;
     }
     HISTORY_ADMITTED.store(admitted, Ordering::Release);
     Ok(())
@@ -133,30 +133,27 @@ fn set_preview_admitted_preference_at(path: &Path, admitted: bool) -> anyhow::Re
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 pub fn run_offline_purge_if_requested() -> Option<i32> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.as_slice() != ["history", "purge-offline", "--yes"] {
         return None;
     }
-    let expected =
-        PathBuf::from(crate::bundle::app_bundle_path()).join("Contents/MacOS/cua-driver");
     let current = std::env::current_exe().ok();
     if current
         .as_deref()
-        .is_none_or(|current| !is_exact_packaged_helper(current, &expected))
-        || verify_installed_app_for_history().is_err()
+        .is_none_or(|current| verify_history_cli_executable_path(current).is_err())
+        || verify_installed_product_for_history().is_err()
     {
         eprintln!(
-            "history_purge_incomplete: purge requires the exact verified installed CuaDriver.app helper"
+            "history_purge_incomplete: purge requires the exact verified installed Cua Driver helper"
         );
         return Some(1);
     }
-    let provider = platform_macos::history::MacosKeychainKeyProvider::default();
+    let provider = platform_key_provider();
     match cua_driver_core::history::purge_offline(
         &history_root(),
         crate::bundle::state_namespace(),
-        &provider,
+        provider.as_ref(),
     ) {
         Ok(result) => {
             println!(
@@ -172,20 +169,43 @@ pub fn run_offline_purge_if_requested() -> Option<i32> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn is_exact_packaged_helper(current: &Path, expected: &Path) -> bool {
     fs::canonicalize(current).ok() == fs::canonicalize(expected).ok()
         && fs::canonicalize(expected).is_ok()
 }
 
-#[cfg(target_os = "macos")]
 pub(crate) fn verify_history_cli_executable_path(path: &Path) -> anyhow::Result<()> {
-    let expected = PathBuf::from(crate::bundle::app_bundle_path())
-        .join("Contents/MacOS")
-        .join(crate::bundle::cli_name());
-    if !is_exact_packaged_helper(path, &expected) {
-        anyhow::bail!("history control peer is not the exact installed Cua Driver helper");
+    #[cfg(target_os = "macos")]
+    {
+        let expected = PathBuf::from(crate::bundle::app_bundle_path())
+            .join("Contents/MacOS")
+            .join(crate::bundle::cli_name());
+        if !is_exact_packaged_helper(path, &expected) {
+            anyhow::bail!("history control peer is not the exact installed Cua Driver helper");
+        }
+        return verify_installed_app_for_history();
     }
-    verify_installed_app_for_history()
+    #[cfg(not(target_os = "macos"))]
+    {
+        let current = std::env::current_exe()
+            .map_err(|error| anyhow::anyhow!("current executable is unavailable: {error}"))?;
+        if !same_canonical_file(path, &current) {
+            anyhow::bail!("history control peer is not the exact installed Cua Driver helper");
+        }
+        verify_installed_non_macos_binary_for_history()
+    }
+}
+
+pub fn verify_installed_product_for_history() -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        verify_installed_app_for_history()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        verify_installed_non_macos_binary_for_history()
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -268,6 +288,7 @@ pub fn verify_installed_app_for_history() -> anyhow::Result<()> {
     )
 }
 
+#[cfg(target_os = "macos")]
 fn validate_history_app_signature(
     detail: &str,
     requirement: &str,
@@ -316,11 +337,62 @@ fn validate_history_app_signature(
     Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
+fn verify_installed_non_macos_binary_for_history() -> anyhow::Result<()> {
+    let current = std::env::current_exe().map_err(|error| {
+        anyhow::anyhow!("current Cua Driver executable is unavailable: {error}")
+    })?;
+    let expected = installed_package_helper_path()?;
+    if !same_canonical_file(&current, &expected) {
+        anyhow::bail!(
+            "history admission requires the exact executable under the installed package's current pointer"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn installed_package_helper_path() -> anyhow::Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let home = std::env::var_os("USERPROFILE");
+    #[cfg(not(target_os = "windows"))]
+    let home = std::env::var_os("HOME");
+    let user_home = home
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("user home is unavailable"))?;
+    let local = crate::bundle::is_local_installation();
+    let product_home = if local {
+        std::env::var_os("CUA_DRIVER_LOCAL_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| user_home.join(".cua-driver-local"))
+    } else {
+        std::env::var_os("CUA_DRIVER_HOME")
+            .filter(|value| !value.is_empty())
+            .or_else(|| std::env::var_os("CUA_DRIVER_RS_HOME").filter(|value| !value.is_empty()))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| user_home.join(".cua-driver"))
+    };
+    let executable = if cfg!(target_os = "windows") {
+        format!("{}.exe", crate::bundle::cli_name())
+    } else {
+        crate::bundle::cli_name().to_owned()
+    };
+    Ok(product_home
+        .join("packages")
+        .join("current")
+        .join(executable))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn same_canonical_file(left: &Path, right: &Path) -> bool {
+    fs::canonicalize(left).ok() == fs::canonicalize(right).ok() && fs::canonicalize(right).is_ok()
+}
+
 fn admission_preference_path() -> PathBuf {
     history_root().join("admission.json")
 }
 
-#[cfg(target_os = "macos")]
 pub fn register_into(registry: &mut ToolRegistry) {
     if !HISTORY_ADMITTED.load(Ordering::Acquire) {
         return;
@@ -330,18 +402,15 @@ pub fn register_into(registry: &mut ToolRegistry) {
             root: history_root(),
             namespace: crate::bundle::state_namespace().to_owned(),
             admitted: true,
-            platform: "macos".to_owned(),
+            platform: platform_name().to_owned(),
             retention_days: DEFAULT_RETENTION_DAYS,
             quota_bytes: DEFAULT_QUOTA_BYTES,
         },
-        platform_macos::history::MacosKeychainKeyProvider::shared(),
-        Some(platform_macos::history::application_identity_provider()),
+        platform_key_provider(),
+        Some(platform_application_identity_provider()),
     );
     registry.register_history_tools(manager);
 }
-
-#[cfg(not(target_os = "macos"))]
-pub fn register_into(_registry: &mut ToolRegistry) {}
 
 pub fn register_host_tools(registry: &mut ToolRegistry) {
     crate::check_update_tool::register_into(registry);
@@ -349,13 +418,79 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
 }
 
 pub fn history_root() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    home.join("Library")
-        .join("Application Support")
-        .join(crate::bundle::state_namespace())
-        .join("computer-history")
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        return home
+            .join("Library")
+            .join("Application Support")
+            .join(crate::bundle::state_namespace())
+            .join("computer-history");
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let root = std::env::var_os("XDG_STATE_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".local/state"))
+            })
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        return root
+            .join(crate::bundle::state_namespace())
+            .join("computer-history");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let root = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:/Temp"));
+        return root
+            .join(crate::bundle::state_namespace())
+            .join("computer-history");
+    }
+}
+
+fn platform_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    }
+}
+
+pub fn platform_key_store_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macOS Keychain"
+    } else if cfg!(target_os = "windows") {
+        "Windows Credential Manager"
+    } else {
+        "the Linux Secret Service"
+    }
+}
+
+fn platform_key_provider() -> std::sync::Arc<dyn KeyProvider> {
+    #[cfg(target_os = "macos")]
+    return platform_macos::history::MacosKeychainKeyProvider::shared();
+    #[cfg(target_os = "windows")]
+    return platform_windows::history::WindowsCredentialKeyProvider::shared();
+    #[cfg(target_os = "linux")]
+    return platform_linux::history::LinuxSecretServiceKeyProvider::shared();
+}
+
+fn platform_application_identity_provider() -> std::sync::Arc<dyn ApplicationIdentityProvider> {
+    #[cfg(target_os = "macos")]
+    return platform_macos::history::application_identity_provider();
+    #[cfg(target_os = "windows")]
+    return platform_windows::history::application_identity_provider();
+    #[cfg(target_os = "linux")]
+    return platform_linux::history::application_identity_provider();
 }
 
 #[cfg(test)]
@@ -404,6 +539,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn offline_purge_identity_guard_requires_the_exact_packaged_helper() {
         let temp = tempfile::tempdir().unwrap();
         let expected = temp.path().join("CuaDriver.app/Contents/MacOS/cua-driver");
@@ -417,6 +553,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn local_history_accepts_exact_certificate_identity_without_release_entitlements() {
         validate_history_app_signature(
             "Identifier=com.trycua.driver.local\nTeamIdentifier=TEAM123",
@@ -430,6 +567,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn history_admission_rejects_adhoc_or_wrong_bundle_identity() {
         let adhoc = validate_history_app_signature(
             "Identifier=com.trycua.driver.local\nTeamIdentifier=TEAM123",
@@ -452,6 +590,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn release_history_still_requires_device_protected_keychain_entitlements() {
         let detail =
             format!("Identifier=com.trycua.driver\nTeamIdentifier={RELEASE_TEAM_IDENTIFIER}");

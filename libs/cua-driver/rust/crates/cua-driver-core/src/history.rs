@@ -1,4 +1,4 @@
-//! Encrypted, metadata-only Computer History for the macOS early preview.
+//! Encrypted, metadata-only Computer History.
 //!
 //! History is deliberately separate from trajectory recording.  It accepts
 //! only strongly typed, fixed-field events and performs encryption before any
@@ -620,7 +620,7 @@ impl HistoryManager {
 
     pub fn status(&self) -> HistoryStatus {
         HistoryStatus {
-            supported: self.config.platform == "macos",
+            supported: matches!(self.config.platform.as_str(), "macos" | "windows" | "linux"),
             admitted: self.config.admitted,
             enabled: self.enabled.load(Ordering::Acquire),
             paused: self.paused.load(Ordering::Acquire),

@@ -37,6 +37,11 @@ purge_macos_history "$APP" "$HELPER" 1 "$FIXTURE/codesign"
 [[ "$(sed -n '1p' "$LOG")" == "stop" ]]
 [[ "$(sed -n '2p' "$LOG")" == "history purge-offline --yes" ]]
 
+: > "$LOG"
+purge_linux_history "$HELPER" 1
+[[ "$(sed -n '1p' "$LOG")" == "stop" ]]
+[[ "$(sed -n '2p' "$LOG")" == "history purge-offline --yes" ]]
+
 export UNINSTALL_FIXTURE_FAIL=1
 if purge_macos_history "$APP" "$HELPER" 1 "$FIXTURE/codesign" 2> "$FIXTURE/error.log"; then
     echo "expected synthetic purge failure" >&2
@@ -46,9 +51,18 @@ grep -Fq history_purge_incomplete "$FIXTURE/error.log"
 [[ -d "$APP" ]]
 [[ -f "$STATE/state.json" ]]
 
+if purge_linux_history "$FIXTURE/missing-helper" 1 2> "$FIXTURE/linux-error.log"; then
+    echo "expected missing Linux helper refusal" >&2
+    exit 1
+fi
+grep -Fq history_purge_incomplete "$FIXTURE/linux-error.log"
+
 purge_line="$(grep -n 'purge_macos_history \\' "$UNINSTALL" | tail -1 | cut -d: -f1)"
 remove_line="$(grep -n 'rm -rf "\$APP_BUNDLE"' "$UNINSTALL" | head -1 | cut -d: -f1)"
 [[ "$purge_line" -lt "$remove_line" ]]
+linux_purge_line="$(grep -n 'purge_linux_history "\$HISTORY_PURGE_HELPER"' "$UNINSTALL" | tail -1 | cut -d: -f1)"
+package_remove_line="$(grep -n 'rm -rf "\$HOME_DIR"' "$UNINSTALL" | head -1 | cut -d: -f1)"
+[[ "$linux_purge_line" -lt "$package_remove_line" ]]
 grep -Fq 'preserved encrypted Computer History' "$UNINSTALL"
 
 echo "uninstall history purge fixture: ok"

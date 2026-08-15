@@ -72,7 +72,7 @@ pub enum Command {
         claude_code_compat: bool,
         /// Repeatable trusted launch grants.
         grants: Vec<String>,
-        /// Admit the encrypted macOS Computer History early preview for this
+        /// Admit the encrypted local Computer History early preview for this
         /// daemon generation. Capture still requires separate persisted opt-in.
         experimental_history: bool,
     },
@@ -634,7 +634,7 @@ pub fn parse_command() -> Command {
         println!();
         println!("experimental options (default: off):");
         println!(
-            "  --experimental-history      Admit encrypted local Computer History for this daemon (macOS only)."
+            "  --experimental-history      Admit encrypted local Computer History for this daemon."
         );
         println!(
             "                              Capture remains off until `cua-driver history enable`."
@@ -1156,28 +1156,24 @@ pub fn run_describe(tools_list: &serde_json::Value, name: &str) {
 /// Mirror of Swift `MCPCommand.launchDaemonViaOpen` +
 /// `waitForDaemon`. Split into one Rust function because we don't
 /// need the post-launch probe separation Swift has.
-#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchDaemonErrorKind {
     Failed,
     Timeout,
 }
 
-#[cfg(target_os = "macos")]
 #[derive(Debug)]
 pub struct LaunchDaemonError {
     pub kind: LaunchDaemonErrorKind,
     message: String,
 }
 
-#[cfg(target_os = "macos")]
 impl std::fmt::Display for LaunchDaemonError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.message)
     }
 }
 
-#[cfg(target_os = "macos")]
 impl std::error::Error for LaunchDaemonError {}
 
 #[cfg(target_os = "macos")]
@@ -1193,7 +1189,13 @@ pub fn launch_daemon_and_wait(
         grants: grants.to_vec(),
         ..Default::default()
     };
-    launch_daemon_with_state_and_wait(socket_path, timeout_secs, &state, experimental_history)
+    launch_daemon_with_state_and_wait(
+        socket_path,
+        timeout_secs,
+        &state,
+        experimental_history,
+        true,
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -1202,6 +1204,7 @@ fn launch_daemon_with_state_and_wait(
     timeout_secs: u64,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
+    _allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
     use std::time::{Duration, Instant};
@@ -1281,6 +1284,142 @@ fn launch_daemon_with_state_and_wait(
     })
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn launch_daemon_and_wait(
+    socket_path: &str,
+    timeout_secs: u64,
+    claude_code_compat: bool,
+    grants: &[String],
+    experimental_history: bool,
+) -> Result<(), LaunchDaemonError> {
+    let state = crate::history_runtime::DaemonLaunchState {
+        claude_code_compat,
+        grants: grants.to_vec(),
+        ..Default::default()
+    };
+    launch_daemon_with_state_and_wait(
+        socket_path,
+        timeout_secs,
+        &state,
+        experimental_history,
+        true,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launch_daemon_with_state_and_wait(
+    socket_path: &str,
+    timeout_secs: u64,
+    state: &crate::history_runtime::DaemonLaunchState,
+    experimental_history: bool,
+    allow_managed_restart: bool,
+) -> Result<(), LaunchDaemonError> {
+    use std::process::{Command as Cmd, Stdio};
+    use std::time::{Duration, Instant};
+
+    let executable = std::env::current_exe().map_err(|error| LaunchDaemonError {
+        kind: LaunchDaemonErrorKind::Failed,
+        message: format!("current Cua Driver executable is unavailable: {error}"),
+    })?;
+    let managed = allow_managed_restart
+        && socket_path == crate::serve::default_socket_path()
+        && restart_managed_daemon_if_present(&executable);
+    if !managed {
+        let mut command = Cmd::new(&executable);
+        command
+            .args(daemon_process_arguments(
+                socket_path,
+                state,
+                experimental_history,
+            ))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            command.process_group(0);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt as _;
+            command.creation_flags(0x0000_0200 | 0x0000_0008);
+        }
+        command.spawn().map_err(|error| LaunchDaemonError {
+            kind: LaunchDaemonErrorKind::Failed,
+            message: format!("failed to launch {} serve: {error}", executable.display()),
+        })?;
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    while Instant::now() < deadline {
+        if crate::serve::is_daemon_listening(socket_path) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(LaunchDaemonError {
+        kind: LaunchDaemonErrorKind::Timeout,
+        message: format!("daemon did not appear on {socket_path} within {timeout_secs}s"),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn daemon_process_arguments(
+    socket_path: &str,
+    state: &crate::history_runtime::DaemonLaunchState,
+    experimental_history: bool,
+) -> Vec<String> {
+    let mut args = vec!["serve".to_owned()];
+    if socket_path != crate::serve::default_socket_path() {
+        args.extend(["--socket".to_owned(), socket_path.to_owned()]);
+    }
+    append_daemon_launch_state(&mut args, state, experimental_history);
+    args
+}
+
+#[cfg(target_os = "windows")]
+fn restart_managed_daemon_if_present(executable: &std::path::Path) -> bool {
+    use std::process::{Command as Cmd, Stdio};
+    let task = crate::bundle::autostart_task_name();
+    let exists = Cmd::new("schtasks.exe")
+        .args(["/Query", "/TN", task])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    exists
+        && Cmd::new(executable)
+            .args(["autostart", "kick"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "linux")]
+fn restart_managed_daemon_if_present(_executable: &std::path::Path) -> bool {
+    use std::process::{Command as Cmd, Stdio};
+    let unit = if crate::bundle::is_local_installation() {
+        "cua-driver-local.service"
+    } else {
+        "cua-driver.service"
+    };
+    let exists = Cmd::new("systemctl")
+        .args(["--user", "is-enabled", unit])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    exists
+        && Cmd::new("systemctl")
+            .args(["--user", "restart", unit])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+}
+
 #[cfg(target_os = "macos")]
 fn daemon_launch_arguments(
     app_name: &str,
@@ -1299,6 +1438,15 @@ fn daemon_launch_arguments(
     if socket_path != crate::serve::default_socket_path() {
         args.extend(["--socket".to_owned(), socket_path.to_owned()]);
     }
+    append_daemon_launch_state(&mut args, state, experimental_history);
+    args
+}
+
+fn append_daemon_launch_state(
+    args: &mut Vec<String>,
+    state: &crate::history_runtime::DaemonLaunchState,
+    experimental_history: bool,
+) {
     if let Some(mode) = &state.permission_mode {
         args.extend(["--permission-mode".to_owned(), mode.clone()]);
     }
@@ -1323,7 +1471,6 @@ fn daemon_launch_arguments(
     for grant in &state.grants {
         args.extend(["--grant".to_owned(), grant.clone()]);
     }
-    args
 }
 
 /// Run the MCP proxy path: ensure a daemon is up (spawning via
@@ -1428,23 +1575,35 @@ where
             daemon = McpDaemonStartup::Launched;
         }
         #[cfg(not(target_os = "macos"))]
-        let _ = claude_code_compat;
-        // On Linux / Windows there's no equivalent `open -a CuaDriver`
-        // mechanism to spawn a daemon attributed to the user's
-        // interactive session. The caller is expected to have one running
-        // already (e.g. via `cua-driver autostart enable && kick` on Windows).
-        #[cfg(not(target_os = "macos"))]
         {
-            if let Some(on_startup) = on_startup.take() {
-                on_startup(McpDaemonStartup::UnsupportedRelaunch, false);
+            if !crate::history_runtime::preview_admitted_preference() {
+                if let Some(on_startup) = on_startup.take() {
+                    on_startup(McpDaemonStartup::UnsupportedRelaunch, false);
+                }
+                anyhow::bail!(
+                    "no Cua Driver daemon listening on {socket_path}. Start one in \
+                     your interactive session — on Windows run \
+                     `cua-driver autostart enable && cua-driver autostart kick`; \
+                     on Linux run `cua-driver serve &` in the user's session. \
+                     Then re-run `cua-driver mcp`."
+                );
             }
-            anyhow::bail!(
-                "no Cua Driver daemon listening on {socket_path}. Start one in \
-                 your interactive session — on Windows run \
-                 `cua-driver autostart enable && cua-driver autostart kick`; \
-                 on Linux run `cua-driver serve &` in the user's session. \
-                 Then re-run `cua-driver mcp`."
-            );
+            if let Err(error) =
+                launch_daemon_and_wait(&socket_path, 10, claude_code_compat, grants, true)
+            {
+                if let Some(on_startup) = on_startup.take() {
+                    on_startup(
+                        if error.kind == LaunchDaemonErrorKind::Timeout {
+                            McpDaemonStartup::LaunchTimeout
+                        } else {
+                            McpDaemonStartup::LaunchFailed
+                        },
+                        false,
+                    );
+                }
+                return Err(error.into());
+            }
+            daemon = McpDaemonStartup::Launched;
         }
     }
 
@@ -1532,7 +1691,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
-                  ,{ "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted macOS Computer History early preview for this daemon launch." }
+                  ,{ "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
               ] },
             { "name": "stop",
               "description": "Stop a running daemon by sending it a shutdown request.",
@@ -1586,7 +1745,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "subcommand", "type": "positional-string", "description": "enable | disable | pause | resume | status | flush | list [limit] | show <sequence> | delete --yes" },
                   { "name": "--socket", "type": "string", "description": "Override the daemon socket path." },
                   { "name": "--json", "type": "flag", "description": "Emit machine-readable output." },
-                  { "name": "--yes", "type": "flag", "description": "Confirm irreversible deletion of encrypted chunks and their Keychain key." }
+                  { "name": "--yes", "type": "flag", "description": "Confirm irreversible deletion of encrypted chunks and their native credential-store key." }
               ] },
             { "name": "dump-docs",
               "description": "Dump every registered tool's docs as one document (markdown by default, JSON with --type json).",
@@ -2142,30 +2301,9 @@ pub fn run_history_cmd(
         process::exit(64);
     }
     if subcommand == "delete" && !confirmed {
-        eprintln!("history delete destroys the encrypted files and their Keychain key. Re-run with --yes.");
+        eprintln!("history delete destroys the encrypted files and their native credential-store key. Re-run with --yes.");
         process::exit(64);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        if subcommand == "status" {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "supported": false,
-                    "admitted": false,
-                    "enabled": false,
-                    "paused": false,
-                    "encrypted": true,
-                    "health": "not_admitted"
-                }))
-                .unwrap()
-            );
-            return;
-        }
-        eprintln!("Computer History early preview is available on macOS only.");
-        process::exit(1);
-    }
-
     let socket_path = socket
         .map(str::to_owned)
         .unwrap_or_else(crate::serve::default_socket_path);
@@ -2175,6 +2313,7 @@ pub fn run_history_cmd(
             .and_then(|value| value.get("admitted").and_then(serde_json::Value::as_bool))
             == Some(true);
         if !admitted {
+            #[cfg(target_os = "macos")]
             if crate::bundle::is_local_installation() {
                 eprintln!(
                     "This local-development daemon is not admitted for Computer History. Restart it with:\n  {} serve --experimental-history\nThen run `{} history enable` again.",
@@ -2183,9 +2322,8 @@ pub fn run_history_cmd(
                 );
                 process::exit(1);
             }
-            #[cfg(target_os = "macos")]
-            if let Err(error) = crate::history_runtime::verify_installed_app_for_history() {
-                eprintln!("history enable: installed app verification failed: {error}");
+            if let Err(error) = crate::history_runtime::verify_installed_product_for_history() {
+                eprintln!("history enable: installed product verification failed: {error}");
                 process::exit(1);
             }
             if crate::serve::is_daemon_listening(&socket_path) {
@@ -2205,7 +2343,6 @@ pub fn run_history_cmd(
                 process::exit(1);
             }
             enabled_preview_for_this_command = true;
-            #[cfg(target_os = "macos")]
             if crate::serve::is_daemon_listening(&socket_path) {
                 if let Err(error) = stop_history_daemon(&socket_path) {
                     let _ = crate::history_runtime::set_preview_admitted_preference(false);
@@ -2215,10 +2352,13 @@ pub fn run_history_cmd(
                     process::exit(1);
                 }
             }
-            #[cfg(target_os = "macos")]
-            if let Err(error) =
-                launch_daemon_with_state_and_wait(&socket_path, 15, &prior_daemon_state, true)
-            {
+            if let Err(error) = launch_daemon_with_state_and_wait(
+                &socket_path,
+                15,
+                &prior_daemon_state,
+                true,
+                false,
+            ) {
                 rollback_history_preview(
                     &socket_path,
                     prior_daemon_was_running,
@@ -2226,11 +2366,6 @@ pub fn run_history_cmd(
                     prior_preview_admitted_preference,
                 );
                 eprintln!("history enable: could not relaunch the installed daemon with preview admission: {error}");
-                process::exit(1);
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                eprintln!("Computer History early preview is available on macOS only.");
                 process::exit(1);
             }
         }
@@ -2249,7 +2384,6 @@ pub fn run_history_cmd(
         process::exit(1);
     }
     if let Err(error) = ensure_compatible_daemon(&socket_path) {
-        #[cfg(target_os = "macos")]
         if enabled_preview_for_this_command {
             rollback_history_preview(
                 &socket_path,
@@ -2295,7 +2429,10 @@ pub fn run_history_cmd(
                 println!("Computer History preview enabled.");
                 println!("Stored fields: time, opaque session/action ids, fixed capability, app name/bundle id, and fixed action outcome metadata.");
                 println!("Never stored: screenshots, typed text, clipboard contents, raw arguments/results, accessibility trees, paths, titles, URLs, or free-form diagnostics.");
-                println!("Encryption: CBOR Sequence + COSE_Encrypt0 (ChaCha20-Poly1305), with the key protected by macOS Keychain.");
+                println!(
+                    "Encryption: CBOR Sequence + COSE_Encrypt0 (ChaCha20-Poly1305), with the key protected by {}.",
+                    crate::history_runtime::platform_key_store_name()
+                );
                 println!(
                     "Retention: {} days. Quota: {} MiB.",
                     value
@@ -2317,7 +2454,6 @@ pub fn run_history_cmd(
             }
         }
         Ok(response) => {
-            #[cfg(target_os = "macos")]
             if enabled_preview_for_this_command {
                 rollback_history_preview(
                     &socket_path,
@@ -2335,7 +2471,6 @@ pub fn run_history_cmd(
             process::exit(response.exit_code.unwrap_or(1));
         }
         Err(error) => {
-            #[cfg(target_os = "macos")]
             if enabled_preview_for_this_command {
                 rollback_history_preview(
                     &socket_path,
@@ -2350,7 +2485,6 @@ pub fn run_history_cmd(
     }
 }
 
-#[cfg(target_os = "macos")]
 fn rollback_history_preview(
     socket_path: &str,
     prior_daemon_was_running: bool,
@@ -2361,11 +2495,11 @@ fn rollback_history_preview(
         crate::history_runtime::set_preview_admitted_preference(prior_preview_admitted_preference);
     let _ = stop_history_daemon(socket_path);
     if prior_daemon_was_running && !crate::serve::is_daemon_listening(socket_path) {
-        let _ = launch_daemon_with_state_and_wait(socket_path, 15, prior_daemon_state, false);
+        let _ =
+            launch_daemon_with_state_and_wait(socket_path, 15, prior_daemon_state, false, false);
     }
 }
 
-#[cfg(target_os = "macos")]
 fn stop_history_daemon(socket_path: &str) -> Result<(), String> {
     if !crate::serve::is_daemon_listening(socket_path) {
         return Ok(());
@@ -4395,7 +4529,6 @@ mod tests {
         values.iter().map(|value| (*value).to_owned()).collect()
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn history_relaunch_preserves_authorization_mode_and_every_grant() {
         let grants = args(&["capability:a", "capability:b"]);
@@ -4408,7 +4541,10 @@ mod tests {
             claude_code_compat: true,
             grants,
         };
+        #[cfg(target_os = "macos")]
         let launch = daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true);
+        #[cfg(not(target_os = "macos"))]
+        let launch = daemon_process_arguments("history-test.sock", &state, true);
         assert!(launch
             .windows(2)
             .any(|pair| pair == ["--permission-mode", "bounded"]));
@@ -4425,12 +4561,12 @@ mod tests {
         assert!(launch
             .windows(2)
             .any(|pair| pair == ["--grant", "capability:b"]));
+        #[cfg(target_os = "macos")]
         assert!(launch
             .windows(2)
             .any(|pair| pair == ["--socket", "/tmp/history-test.sock"]));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn history_relaunch_preserves_explicit_unrestricted_approval() {
         let state = crate::history_runtime::DaemonLaunchState {
@@ -4438,7 +4574,8 @@ mod tests {
             dangerously_bypass_approvals: true,
             ..Default::default()
         };
-        let launch = daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true);
+        let mut launch = vec!["serve".to_owned()];
+        append_daemon_launch_state(&mut launch, &state, true);
         assert!(launch
             .windows(2)
             .any(|pair| { pair == ["--permission-mode", "unrestricted"] }));

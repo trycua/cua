@@ -11,16 +11,12 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use super::approval::{
-    consume_existing_profile_approval, consume_prepare_approval, validate_profile,
-    ExistingProfileApprovalScope,
-};
 use super::engine::unsupported_engine_refusal;
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
-    PrepareAuthorization, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
-    PrepareSideEffects, PrepareStrategy,
+    PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects,
+    PrepareStrategy,
 };
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
@@ -30,6 +26,39 @@ use super::BrowserEngine;
 
 const PROFILE_MARKER: &str = ".cua-driver-owned-profile.json";
 const PROFILE_SCHEMA: &str = "cua-driver-browser-profile-v1";
+
+fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
+    match profile.mode {
+        PrepareProfileMode::IsolatedNew => {
+            if profile.name.is_some() {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "profile.name is not valid with mode=isolated_new",
+                ));
+            }
+        }
+        PrepareProfileMode::IsolatedNamed => {
+            let Some(name) = profile.name.as_deref() else {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "profile.name is required with mode=isolated_named",
+                ));
+            };
+            if name.is_empty()
+                || name.len() > 64
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "profile.name must be 1-64 ASCII letters, digits, '-' or '_'",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 
 async fn claim_with_optional_consent<T, Claim, Consent>(
     claim: &mut Pin<Box<Claim>>,
@@ -670,19 +699,6 @@ impl BrowserEngine {
             )
         })?;
         validate_profile(profile_request)?;
-        match request.authorization.as_ref() {
-            Some(PrepareAuthorization::McpHost) => {}
-            Some(PrepareAuthorization::ApprovalArtifact(token)) => {
-                consume_prepare_approval(token, request.pid, profile_request)?;
-            }
-            None => {
-                return Err(refusal(
-                    BrowserRefusalCode::BrowserConsentRequired,
-                    "browser preparation needs MCP host approval or a fresh browser-approve token",
-                ))
-            }
-        }
-
         let classification = self.platform.classify_browser(request.pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
             return Err(unsupported_engine_refusal(
@@ -769,7 +785,6 @@ impl BrowserEngine {
             Protected,
             BoundedManifest,
             LaunchGrant,
-            LegacyArtifact,
             Unrestricted,
         }
 
@@ -779,11 +794,6 @@ impl BrowserEngine {
                 "strategy=existing_profile requires an exact window_id approval anchor",
             )
         })?;
-        let scope = ExistingProfileApprovalScope {
-            pid: request.pid,
-            window_id,
-            session: request.session.clone(),
-        };
         let mode = crate::tool::current_dispatch_authorization_context()
             .map(|context| context.mode())
             .map(Ok)
@@ -824,27 +834,6 @@ impl BrowserEngine {
             ConsentPath::LaunchGrant
         } else if self.approval_broker.provider_id().is_some() {
             ConsentPath::Protected
-        } else if crate::authorization::legacy_existing_profile_approval_enabled() {
-            match request.authorization.as_ref() {
-                Some(PrepareAuthorization::ApprovalArtifact(token)) => {
-                    consume_existing_profile_approval(token, &scope)?;
-                    ConsentPath::LegacyArtifact
-                }
-                // The ordinary MCP destructive-tool marker proves transport
-                // provenance, not a person's approval of their authenticated
-                // profile. It is deliberately insufficient here.
-                Some(PrepareAuthorization::McpHost) | None => {
-                    return Err(refusal(
-                        BrowserRefusalCode::BrowserConsentRequired,
-                        "legacy existing-profile compatibility requires a fresh operation-bound browser-approve artifact",
-                    )
-                    .with_detail(serde_json::json!({
-                        "approval_request_id": uuid::Uuid::new_v4().to_string(),
-                        "approval_command": "cua-driver browser-approve --strategy existing_profile --pid <pid> --window-id <window_id> --session <session>",
-                        "legacy_approval_enabled": true,
-                    })));
-                }
-            }
         } else {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
@@ -853,7 +842,6 @@ impl BrowserEngine {
             .with_detail(serde_json::json!({
                 "permission_mode": mode.as_str(),
                 "authorization_required": true,
-                "legacy_approval_enabled": false,
                 "authorization_host": self.approval_broker.provider_id(),
             })));
         };

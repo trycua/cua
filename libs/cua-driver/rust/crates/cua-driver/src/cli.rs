@@ -55,9 +55,6 @@ pub enum Command {
         permission_mode: Option<String>,
         /// Deliberate unrestricted-mode selector and risk acknowledgement.
         dangerously_bypass_approvals: bool,
-        /// Temporary trusted-launcher compatibility path for the forgeable
-        /// file-backed existing-profile approval artifact.
-        allow_legacy_existing_profile_approval: bool,
         /// Immutable narrow-only capability manifest selected by the trusted
         /// launcher. Required in bounded mode and optional in other profiles.
         capability_manifest: Option<String>,
@@ -188,16 +185,6 @@ pub enum Command {
     CursorTheme {
         args: Vec<String>,
     },
-    /// Mint a short-lived, single-use approval token for a direct/raw
-    /// `browser_prepare` call. This command requires an interactive terminal.
-    BrowserApprove {
-        pid: i64,
-        strategy: Option<String>,
-        window_id: Option<u64>,
-        session: Option<String>,
-        profile_mode: Option<String>,
-        profile_name: Option<String>,
-    },
 }
 
 pub enum TelemetryCommand {
@@ -251,7 +238,6 @@ const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
     "--session-policy",
     "--approve-session-policy",
     "--dangerously-bypass-approvals",
-    "--allow-legacy-existing-profile-approval",
     "--no-permissions-gate",
 ];
 
@@ -321,7 +307,6 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("autostart") => Some("autostart"),
         Some("skills") => Some("skills"),
         Some("cursor-theme") => Some("cursor_theme"),
-        Some("browser-approve") => Some("browser_approve"),
         Some("config") => Some("config"),
         Some(_) => Some("call"),
     }
@@ -483,7 +468,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, channel, cursor-theme, sessions");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest, channel, cursor-theme, sessions");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -524,16 +509,6 @@ pub fn parse_command() -> Command {
         println!("  cua-driver skills path          Print where the local skill pack lives.");
         println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
         println!();
-        println!("browser preparation approval:");
-        println!("  cua-driver browser-approve --pid <pid> --profile-mode isolated_new");
-        println!("  cua-driver browser-approve --pid <pid> --profile-mode isolated_named --profile-name <name>");
-        println!("                                  Interactively mint a five-minute, single-use token for a");
-        println!("                                  direct CLI/raw browser_prepare call. MCP hosts use their");
-        println!("                                  destructive-tool approval flow instead.");
-        println!("  cua-driver browser-approve --strategy existing_profile --pid <pid>");
-        println!("                                  --window-id <window_id> --session <session>");
-        println!("                                  Approve attachment to one exact existing browser request.");
-        println!();
         println!("agent authorization (serve only):");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
         println!(
@@ -545,9 +520,6 @@ pub fn parse_command() -> Command {
         );
         println!("                                  The mode is fixed for the daemon lifetime and cannot");
         println!("                                  be changed by a tool call.");
-        println!("  --allow-legacy-existing-profile-approval");
-        println!("                                  Temporary migration flag for the forgeable file-backed");
-        println!("                                  approval artifact; never treated as protected consent.");
         println!("                                  This is separate from --no-permissions-gate, which only");
         println!(
             "                                  controls the macOS OS-permission onboarding UI."
@@ -657,12 +629,7 @@ pub fn parse_command() -> Command {
     let screenshot_out_file = flag_value(&args, "--screenshot-out-file");
     let mcp_client = flag_value(&args, "--client");
     let socket = flag_value(&args, "--socket");
-    let approval_pid = flag_value(&args, "--pid");
-    let approval_strategy = flag_value(&args, "--strategy");
-    let approval_window_id = flag_value(&args, "--window-id");
     let approval_session = flag_value(&args, "--session");
-    let approval_profile_mode = flag_value(&args, "--profile-mode");
-    let approval_profile_name = flag_value(&args, "--profile-name");
     let grants = flag_values(&args, "--grant");
 
     // `--embedded` / `--host-bundle-id` export to the environment rather
@@ -755,9 +722,6 @@ pub fn parse_command() -> Command {
             dangerously_bypass_approvals: args
                 .iter()
                 .any(|a| a == "--dangerously-bypass-approvals"),
-            allow_legacy_existing_profile_approval: args
-                .iter()
-                .any(|a| a == "--allow-legacy-existing-profile-approval"),
             capability_manifest: aliased_flag_value(
                 &args,
                 "--capability-manifest",
@@ -970,24 +934,6 @@ pub fn parse_command() -> Command {
                 args: args[index + 1..].to_vec(),
             }
         }
-        Some("browser-approve") => {
-            let pid = approval_pid
-                .as_deref()
-                .and_then(|value| value.parse::<i64>().ok())
-                .filter(|pid| *pid > 0)
-                .unwrap_or_else(|| {
-                    eprintln!("browser-approve requires --pid <positive integer>");
-                    process::exit(64);
-                });
-            Command::BrowserApprove {
-                pid,
-                strategy: approval_strategy,
-                window_id: approval_window_id.and_then(|value| value.parse::<u64>().ok()),
-                session: approval_session,
-                profile_mode: approval_profile_mode,
-                profile_name: approval_profile_name,
-            }
-        }
         Some(first) => {
             // Implicit call: unrecognised first positional → treat as tool name.
             // Same parse-error handling as the explicit `call` branch above. See #1637.
@@ -1020,114 +966,6 @@ pub fn parse_command() -> Command {
                 screenshot_out_file,
                 socket: socket.clone(),
             }
-        }
-    }
-}
-
-pub fn run_browser_approve(
-    pid: i64,
-    strategy: Option<&str>,
-    window_id: Option<u64>,
-    session: Option<&str>,
-    profile_mode: Option<&str>,
-    profile_name: Option<&str>,
-) {
-    use std::io::{IsTerminal as _, Write as _};
-
-    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
-        eprintln!("browser-approve requires an interactive terminal; approval cannot be piped or scripted");
-        process::exit(1);
-    }
-    if let Some(strategy) = strategy {
-        if strategy != "existing_profile" {
-            eprintln!("unsupported browser approval strategy {strategy:?}; use existing_profile");
-            process::exit(64);
-        }
-        if profile_mode.is_some() || profile_name.is_some() {
-            eprintln!("--strategy existing_profile cannot be combined with profile flags");
-            process::exit(64);
-        }
-        let Some(window_id) = window_id.filter(|window_id| *window_id > 0) else {
-            eprintln!("existing-profile approval requires --window-id <positive integer>");
-            process::exit(64);
-        };
-        let Some(session) = session.filter(|session| !session.trim().is_empty()) else {
-            eprintln!("existing-profile approval requires --session <explicit session>");
-            process::exit(64);
-        };
-        eprintln!("Approve CUA Driver to attach to this existing Chromium profile?");
-        eprintln!("  browser pid: {pid}");
-        eprintln!("  native window id: {window_id}");
-        eprintln!("  caller session: {session}");
-        eprintln!(
-            "This grant stays in daemon memory, expires, and never authorizes arbitrary dialogs."
-        );
-        eprint!("Type APPROVE to continue: ");
-        let _ = std::io::stderr().flush();
-        let mut confirmation = String::new();
-        if std::io::stdin().read_line(&mut confirmation).is_err()
-            || confirmation.trim() != "APPROVE"
-        {
-            eprintln!("browser attachment approval declined; no artifact was created");
-            process::exit(1);
-        }
-        let scope = cua_driver_core::browser::approval::ExistingProfileApprovalScope {
-            pid,
-            window_id,
-            session: session.to_owned(),
-        };
-        match cua_driver_core::browser::approval::mint_existing_profile_approval(scope) {
-            Ok(token) => println!("{token}"),
-            Err(error) => {
-                eprintln!("{}", error.message);
-                process::exit(1);
-            }
-        }
-        return;
-    }
-    if window_id.is_some() || session.is_some() {
-        eprintln!("--window-id/--session require --strategy existing_profile");
-        process::exit(64);
-    }
-    let profile_mode = profile_mode.unwrap_or_else(|| {
-        eprintln!("browser-approve requires --profile-mode isolated_new|isolated_named");
-        process::exit(64);
-    });
-    let mode = match profile_mode {
-        "isolated_new" => cua_driver_core::browser::PrepareProfileMode::IsolatedNew,
-        "isolated_named" => cua_driver_core::browser::PrepareProfileMode::IsolatedNamed,
-        other => {
-            eprintln!("unsupported profile mode {other:?}; use isolated_new or isolated_named");
-            process::exit(64);
-        }
-    };
-    let profile = cua_driver_core::browser::PrepareProfile {
-        mode,
-        name: profile_name.map(str::to_owned),
-    };
-    if let Err(error) = cua_driver_core::browser::approval::validate_profile(&profile) {
-        eprintln!("{}", error.message);
-        process::exit(64);
-    }
-    eprintln!("Approve CUA Driver to launch a separate driver-owned Chromium profile?");
-    eprintln!("  source pid: {pid}");
-    eprintln!("  profile mode: {profile_mode}");
-    if let Some(name) = profile_name {
-        eprintln!("  profile name: {name}");
-    }
-    eprintln!("The existing browser process and its profile will not be modified or terminated.");
-    eprint!("Type APPROVE to continue: ");
-    let _ = std::io::stderr().flush();
-    let mut confirmation = String::new();
-    if std::io::stdin().read_line(&mut confirmation).is_err() || confirmation.trim() != "APPROVE" {
-        eprintln!("browser preparation approval declined; no artifact was created");
-        process::exit(1);
-    }
-    match cua_driver_core::browser::approval::mint_prepare_approval(pid, profile) {
-        Ok(token) => println!("{token}"),
-        Err(error) => {
-            eprintln!("{}", error.message);
-            process::exit(1);
         }
     }
 }
@@ -1589,7 +1427,6 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--permission-mode", "type": "string", "description": "Immutable daemon authorization mode: standard, bounded, or unrestricted." },
                   { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary. Supported value: existing-profile." },
                   { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
-                  { "name": "--allow-legacy-existing-profile-approval", "type": "flag", "description": "Temporary migration flag for the unprotected file-backed existing-profile artifact." },
                   { "name": "--capability-manifest", "type": "string", "description": "Optional narrow-only tool/resource ceiling; required in bounded mode." },
                   { "name": "--approve-capability-manifest", "type": "flag", "description": "Trusted-launcher confirmation that the exact capability manifest was reviewed." },
                   { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
@@ -3291,7 +3128,6 @@ fn cli_docs_json() -> serde_json::Value {
                 ],
                 "flags": [
                     {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
-                    {"name":"allow-legacy-existing-profile-approval","short_name":null,"help":"Temporary migration flag for the unprotected file-backed existing-profile artifact.","default_value":false},
                     {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
                     {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},

@@ -145,14 +145,6 @@ fn is_active_proxy_session(session: Option<&str>) -> bool {
 }
 
 fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, session: Option<&str>) {
-    if tool_name == "browser_prepare" && is_active_proxy_session(session) {
-        if let Some(arguments) = args.as_object_mut() {
-            arguments.insert(
-                cua_driver_core::browser::approval::MCP_HOST_APPROVAL_ARG.to_owned(),
-                serde_json::Value::Bool(true),
-            );
-        }
-    }
     if tool_name == "browser_download" && is_active_proxy_session(session) {
         if let Some(arguments) = args.as_object_mut() {
             arguments.insert(
@@ -2486,7 +2478,6 @@ mod service_authorization_status_tests {
 #[cfg(test)]
 mod session_boundary_tests {
     use super::{active_proxy_sessions, apply_session_identity, inject_browser_approvals};
-    use cua_driver_core::browser::approval::MCP_HOST_APPROVAL_ARG;
     use cua_driver_core::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG;
     use serde_json::json;
 
@@ -2539,30 +2530,8 @@ mod session_boundary_tests {
     }
 
     #[test]
-    fn browser_prepare_approval_requires_a_live_proxy_session() {
+    fn browser_download_approval_requires_a_live_proxy_session() {
         let session = "approval-boundary-test";
-        let mut raw_args = json!({"pid": 42});
-        inject_browser_approvals("browser_prepare", &mut raw_args, Some(session));
-        assert!(raw_args.get(MCP_HOST_APPROVAL_ARG).is_none());
-
-        active_proxy_sessions()
-            .lock()
-            .unwrap()
-            .insert(session.to_owned());
-        let mut proxy_args = json!({"pid": 42});
-        inject_browser_approvals("browser_prepare", &mut proxy_args, Some(session));
-        active_proxy_sessions().lock().unwrap().remove(session);
-        assert_eq!(proxy_args[MCP_HOST_APPROVAL_ARG], true);
-
-        let mut other_tool = json!({"pid": 42});
-        active_proxy_sessions()
-            .lock()
-            .unwrap()
-            .insert(session.to_owned());
-        inject_browser_approvals("get_browser_state", &mut other_tool, Some(session));
-        active_proxy_sessions().lock().unwrap().remove(session);
-        assert!(other_tool.get(MCP_HOST_APPROVAL_ARG).is_none());
-
         let mut raw_download = json!({"destination_root": "/private/path"});
         inject_browser_approvals("browser_download", &mut raw_download, Some(session));
         assert!(raw_download.get(MCP_HOST_DOWNLOAD_APPROVAL_ARG).is_none());

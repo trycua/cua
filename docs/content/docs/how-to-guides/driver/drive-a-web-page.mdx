@@ -39,12 +39,12 @@ person's normal profile to DevTools.
 ## Prepare an isolated browser when required
 
 If inspection returns `browser_requires_setup`, call `browser_prepare` as a
-separate approved operation. It starts another Chromium process with a
-driver-owned profile; it never copies, modifies, restarts, or terminates the
-selected user profile.
-
-In an MCP client, approve the destructive tool call through the client's normal
-approval UI:
+separate operation. Isolated-profile preparation follows the runtime's
+permission mode and optional capability manifest. In `standard` it is a
+routine operation, in `bounded` it must match the manifest, and in
+`unrestricted` it relies on the launcher's dangerous acknowledgement. It
+starts another Chromium process with a driver-owned profile; it never copies,
+modifies, restarts, or terminates the selected user profile.
 
 ```jsonc
 browser_prepare({
@@ -59,17 +59,9 @@ The response includes `prepared_pid`. Call `list_windows` for that new process,
 then bind its window with `get_browser_state`. An `isolated_new` profile is
 removed when its owning session ends. Use
 `profile: {"mode":"isolated_named","name":"research"}` only when the
-automation profile must survive across sessions.
-
-For direct CLI or raw-socket use, mint a five-minute, single-use token from an
-interactive terminal first:
-
-```bash
-cua-driver browser-approve --pid 844 --profile-mode isolated_new
-```
-
-Pass the returned token as `approval_token` in the otherwise identical
-`browser_prepare` call. `get_browser_state` never performs this setup itself.
+automation profile must survive across sessions. `allow_launch: true` states
+that this call may create the separate process; it does not widen runtime
+authorization. `get_browser_state` never performs setup itself.
 
 ## Attach to an existing Chrome or Edge profile
 

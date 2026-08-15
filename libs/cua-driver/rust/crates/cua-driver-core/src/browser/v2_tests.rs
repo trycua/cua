@@ -1010,22 +1010,13 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
     // Match Chrome's per-instance toggle: the endpoint is discoverable only
     // through the approved existing-profile route, never as driver-managed.
     let f = existing_profile_only_fixture().await;
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
     let prepare = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
             "_transport_session_id": "transport-v2-attach",
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         }))
         .await;
     let prepared = structured(&prepare);
@@ -1087,21 +1078,12 @@ async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_gra
 #[tokio::test]
 async fn approved_existing_profile_setup_reports_exact_side_effects() {
     let (f, setup_invoked) = existing_profile_setup_fixture().await;
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
     let prepare = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         }))
         .await;
     let prepared = structured(&prepare);
@@ -1143,22 +1125,13 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
     }));
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
     let prepared = tokio::time::timeout(
         std::time::Duration::from_secs(3),
         BrowserPrepareTool::new(engine).invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         })),
     )
     .await
@@ -1189,22 +1162,13 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
         setup_aborted: setup_aborted.clone(),
         stall_consent: true,
     }));
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
     let cancelled = tokio::time::timeout(
         std::time::Duration::from_millis(750),
         BrowserPrepareTool::new(engine).invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         })),
     )
     .await;

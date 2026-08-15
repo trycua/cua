@@ -14,8 +14,6 @@ use serde_json::Value;
 pub const PERMISSION_MODE_ENV: &str = "CUA_DRIVER_PERMISSION_MODE";
 pub const DANGEROUS_BYPASS_ENV: &str = "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS";
 pub const DISABLE_UNRESTRICTED_ENV: &str = "CUA_DRIVER_DISABLE_UNRESTRICTED";
-pub const LEGACY_EXISTING_PROFILE_APPROVAL_ENV: &str =
-    "CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL";
 pub const RISK_METADATA_VERSION: &str = "1";
 
 static LAUNCH_GRANTS: OnceLock<BTreeSet<String>> = OnceLock::new();
@@ -193,6 +191,18 @@ impl AdapterProfileBehavior {
 }
 
 const EXISTING_PROFILE_OPERATIONS: &[&str] = &["browser_prepare[strategy.kind=existing_profile]"];
+const ISOLATED_BROWSER_OPERATIONS: &[&str] = &["browser_prepare[profile.mode=isolated]"];
+const ISOLATED_BROWSER_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "transport_session",
+    "pid",
+    "profile_mode",
+    "profile_name",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
 const EXISTING_PROFILE_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
     "public_session",
@@ -366,6 +376,23 @@ const SESSION_REVOCATION: &[&str] = &[
 ];
 
 pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
+    EnforcementAdapterDescriptor {
+        id: "browser_prepare.isolated",
+        operations: ISOLATED_BROWSER_OPERATIONS,
+        state: RiskEnforcement::Active,
+        risk_class: RiskClass::R1,
+        resource_kind: "driver_owned_browser_profile",
+        scope_keys: ISOLATED_BROWSER_SCOPE_KEYS,
+        grant_type: None,
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        authorization_requirement: "profile_behavior_and_optional_capability_manifest",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: Some("authorization_required"),
+        authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        profile_behavior: AdapterProfileBehavior::Routine,
+    },
     EnforcementAdapterDescriptor {
         id: "browser_prepare.existing_profile",
         operations: EXISTING_PROFILE_OPERATIONS,
@@ -669,6 +696,13 @@ pub fn enforcement_adapters_for_call(
         && args.pointer("/strategy/kind").and_then(Value::as_str) == Some("existing_profile")
     {
         add("browser_prepare.existing_profile");
+    } else if tool == "browser_prepare"
+        && matches!(
+            args.pointer("/profile/mode").and_then(Value::as_str),
+            Some("isolated_new" | "isolated_named")
+        )
+    {
+        add("browser_prepare.isolated");
     }
 
     if matches!(
@@ -1172,10 +1206,6 @@ pub enum PermissionModeError {
     UnexpectedSessionPolicy,
     #[error("permission mode unrestricted is disabled by managed startup configuration")]
     UnrestrictedDisabled,
-    #[error(
-        "--allow-legacy-existing-profile-approval is valid only with --permission-mode standard"
-    )]
-    UnexpectedLegacyApproval,
 }
 
 fn parse_permission_mode(
@@ -1208,21 +1238,6 @@ fn env_flag(name: &str) -> bool {
     })
 }
 
-/// Temporary migration escape hatch for the same-user-writable browser
-/// approval artifact. It is deliberately outside the public tool protocol and
-/// must never be described as protected human consent.
-pub fn legacy_existing_profile_approval_enabled() -> bool {
-    // Core's browser unit fixtures exercise the legacy artifact's binding,
-    // setup, reconnect, and cleanup mechanics directly. Integration tests
-    // compile this crate without `cfg(test)` and own the production-default
-    // refusal contract.
-    #[cfg(test)]
-    return true;
-
-    #[cfg(not(test))]
-    env_flag(LEGACY_EXISTING_PROFILE_APPROVAL_ENV)
-}
-
 static CONFIGURED_PERMISSION_MODE: OnceLock<Result<PermissionMode, String>> = OnceLock::new();
 
 /// Return the immutable process permission mode. An unset mode is `standard`.
@@ -1244,9 +1259,6 @@ pub fn validate_startup_authorization() -> anyhow::Result<()> {
     let mode = configured_permission_mode().map_err(anyhow::Error::msg)?;
     if mode == PermissionMode::Unrestricted && env_flag(DISABLE_UNRESTRICTED_ENV) {
         return Err(PermissionModeError::UnrestrictedDisabled.into());
-    }
-    if mode != PermissionMode::Standard && env_flag(LEGACY_EXISTING_PROFILE_APPROVAL_ENV) {
-        return Err(PermissionModeError::UnexpectedLegacyApproval.into());
     }
     let manifest_configured = crate::session_manifest::capability_manifest_configured();
     let manifest_approved = crate::session_manifest::capability_manifest_approved();
@@ -1337,7 +1349,6 @@ pub fn status_json_with_provider(authorization_host: Option<&'static str>) -> se
         "managed_policy_valid": managed_policy.is_ok(),
         "managed_policy_sha256": managed_policy_sha256,
         "built_in_ceiling": "reviewed_tool_and_risk_map_v1",
-        "legacy_existing_profile_approval": legacy_existing_profile_approval_enabled(),
         "risk_metadata_version": RISK_METADATA_VERSION,
         "active_risk_enforcement": adapter_ids_with_state(RiskEnforcement::Active),
         "metadata_only_risk_enforcement": adapter_ids_with_state(RiskEnforcement::MetadataOnly),
@@ -1432,7 +1443,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_profile_is_the_first_actively_enforced_risk_operation() {
+    fn browser_prepare_operations_are_actively_enforced() {
         assert_eq!(
             advertised_risk_for("browser_prepare").enforcement,
             RiskEnforcement::Active,
@@ -1450,7 +1461,7 @@ mod tests {
             &serde_json::json!({"profile": {"mode": "isolated_new"}}),
         );
         assert_eq!(isolated.class, RiskClass::R1);
-        assert_eq!(isolated.enforcement, RiskEnforcement::MetadataOnly);
+        assert_eq!(isolated.enforcement, RiskEnforcement::Active);
     }
 
     #[test]
@@ -1583,6 +1594,7 @@ mod tests {
         assert_eq!(
             adapter_ids_with_state(RiskEnforcement::Active),
             vec![
+                "browser_prepare.isolated",
                 "browser_prepare.existing_profile",
                 "private_observation",
                 "desktop_input",
@@ -1607,6 +1619,7 @@ mod tests {
         assert_eq!(
             adapter_ids_with_state_for_mode(PermissionMode::Standard, RiskEnforcement::Active),
             vec![
+                "browser_prepare.isolated",
                 "browser_prepare.existing_profile",
                 "private_observation",
                 "desktop_input",
@@ -1642,6 +1655,7 @@ mod tests {
         };
 
         for id in [
+            "browser_prepare.isolated",
             "private_observation",
             "desktop_input",
             "file_transfer_and_output",
@@ -1782,6 +1796,20 @@ mod tests {
         assert!(ids("page", serde_json::json!({})).is_empty());
         assert!(ids("page", serde_json::json!({"action": "unknown"})).is_empty());
         assert_eq!(
+            ids(
+                "browser_prepare",
+                serde_json::json!({"profile": {"mode": "isolated_new"}})
+            ),
+            vec!["browser_prepare.isolated"]
+        );
+        assert_eq!(
+            ids(
+                "browser_prepare",
+                serde_json::json!({"strategy": {"kind": "existing_profile"}})
+            ),
+            vec!["browser_prepare.existing_profile"]
+        );
+        assert_eq!(
             ids("browser_dialog", serde_json::json!({"action": "accept"})),
             vec!["browser_consequential_action"]
         );
@@ -1866,6 +1894,7 @@ mod tests {
         assert_eq!(
             status["active_risk_enforcement"],
             serde_json::json!([
+                "browser_prepare.isolated",
                 "browser_prepare.existing_profile",
                 "private_observation",
                 "desktop_input",
@@ -1890,6 +1919,7 @@ mod tests {
         assert_eq!(
             status["effective_active_risk_enforcement"],
             serde_json::json!([
+                "browser_prepare.isolated",
                 "browser_prepare.existing_profile",
                 "private_observation",
                 "desktop_input",

@@ -305,34 +305,9 @@ fn revoke_cli_ends_the_exact_live_session() {
 }
 
 #[test]
-fn forged_legacy_artifact_cannot_authorize_existing_profile_in_standard_mode() {
+fn standard_mode_refuses_existing_profile_without_a_launch_grant() {
     let mut driver = CliDriver::new();
     assert!(driver.available(), "test daemon failed to start");
-
-    let token = uuid::Uuid::new_v4().to_string();
-    let approval_root = std::env::temp_dir().join("cua-driver-browser-approvals-v1");
-    std::fs::create_dir_all(&approval_root).expect("create legacy approval directory");
-    let artifact_path = approval_root.join(format!("{token}.json"));
-    let expires_unix_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-        + 60_000;
-    std::fs::write(
-        &artifact_path,
-        serde_json::to_vec(&serde_json::json!({
-            "schema": "cua-browser-existing-profile-approval-v1",
-            "token": token,
-            "scope": {
-                "pid": 42,
-                "window_id": 7,
-                "session": "forged-standard-attach"
-            },
-            "expires_unix_ms": expires_unix_ms
-        }))
-        .unwrap(),
-    )
-    .expect("write syntactically valid forged legacy artifact");
 
     let response = driver.call(
         "browser_prepare",
@@ -340,20 +315,14 @@ fn forged_legacy_artifact_cannot_authorize_existing_profile_in_standard_mode() {
             "pid": 42,
             "window_id": 7,
             "session": "forged-standard-attach",
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         }),
     );
-    let _ = std::fs::remove_file(&artifact_path);
 
     assert_eq!(response.structured()["status"], "refused");
     assert_eq!(
         response.structured()["refusal"]["code"],
         "browser_consent_required"
-    );
-    assert_eq!(
-        response.structured()["refusal"]["detail"]["legacy_approval_enabled"],
-        false
     );
     assert!(
         response.structured()["refusal"]["message"]

@@ -1346,6 +1346,22 @@ impl<'de> Deserialize<'de> for NoncePrefix {
             {
                 self.visit_bytes(&value)
             }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut bytes = [0_u8; 4];
+                for (index, byte) in bytes.iter_mut().enumerate() {
+                    *byte = sequence
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(index, &self))?;
+                }
+                if sequence.next_element::<u8>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(5, &self));
+                }
+                Ok(NoncePrefix(bytes))
+            }
         }
 
         deserializer.deserialize_bytes(NoncePrefixVisitor)
@@ -2476,6 +2492,122 @@ mod tests {
             fields.get(6),
             Some(coset::cbor::value::Value::Bytes(prefix)) if prefix.len() == 4
         ));
+    }
+
+    fn legacy_header_bytes(header: &ChunkHeader) -> Vec<u8> {
+        use coset::cbor::value::{Integer, Value as CborValue};
+
+        let legacy = CborValue::Array(vec![
+            CborValue::Integer(Integer::from(header.0)),
+            CborValue::Integer(Integer::from(header.1)),
+            CborValue::Integer(Integer::from(header.2)),
+            CborValue::Text(header.3.clone()),
+            CborValue::Text(header.4.clone()),
+            CborValue::Text(header.5.clone()),
+            CborValue::Array(
+                header
+                    .6
+                    .as_bytes()
+                    .iter()
+                    .copied()
+                    .map(|byte| CborValue::Integer(Integer::from(byte)))
+                    .collect(),
+            ),
+        ]);
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&legacy, &mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn chunk_header_reads_legacy_nonce_prefix_array_and_rewrites_canonical_bytes() {
+        use coset::cbor::value::Value as CborValue;
+
+        let header = ChunkHeader(
+            HISTORY_PROFILE_VERSION,
+            iana::Algorithm::ChaCha20Poly1305 as i64,
+            1,
+            "test.history.key".to_owned(),
+            "0123456789abcdef0123456789abcdef".to_owned(),
+            "fedcba9876543210fedcba9876543210".to_owned(),
+            NoncePrefix([0x12, 0x34, 0x56, 0x78]),
+        );
+        let legacy_bytes = legacy_header_bytes(&header);
+
+        let decoded: ChunkHeader = ciborium::de::from_reader(legacy_bytes.as_slice()).unwrap();
+        assert_eq!(decoded.6.as_bytes(), &[0x12, 0x34, 0x56, 0x78]);
+
+        let mut canonical_bytes = Vec::new();
+        ciborium::ser::into_writer(&decoded, &mut canonical_bytes).unwrap();
+        let canonical: CborValue = ciborium::de::from_reader(canonical_bytes.as_slice()).unwrap();
+        let CborValue::Array(fields) = canonical else {
+            panic!("history header must remain a CBOR array")
+        };
+        assert!(matches!(
+            fields.get(6),
+            Some(CborValue::Bytes(prefix)) if prefix == &[0x12, 0x34, 0x56, 0x78]
+        ));
+    }
+
+    #[test]
+    fn legacy_nonce_prefix_array_remains_authenticated_as_original_aad() {
+        let temp = tempfile::tempdir().unwrap();
+        let keys = Arc::new(MemoryKeyProvider::default());
+        let manager = HistoryManager::new(config(temp.path()), keys.clone(), None);
+        let key = keys.load_or_create("test").unwrap();
+        let header = ChunkHeader(
+            HISTORY_PROFILE_VERSION,
+            iana::Algorithm::ChaCha20Poly1305 as i64,
+            key.epoch,
+            key.reference,
+            "0123456789abcdef0123456789abcdef".to_owned(),
+            "fedcba9876543210fedcba9876543210".to_owned(),
+            NoncePrefix([0x12, 0x34, 0x56, 0x78]),
+        );
+        let header_bytes = legacy_header_bytes(&header);
+        let mut event = manager.control_event(HistoryControlOperation::Enable);
+        event.data.sequence = 1;
+        let plaintext = serde_json::to_vec(&event).unwrap();
+        let chunk_key = derive_chunk_key(&key.bytes, &header).unwrap();
+        let cipher_key = Key::try_from(chunk_key.as_slice()).unwrap();
+        let cipher = ChaCha20Poly1305::new(&cipher_key);
+        let mut nonce = [0_u8; 12];
+        nonce[..4].copy_from_slice(header.6.as_bytes());
+        let protected = HeaderBuilder::new()
+            .algorithm(iana::Algorithm::ChaCha20Poly1305)
+            .build();
+        let unprotected = HeaderBuilder::new().iv(nonce.to_vec()).build();
+        let encrypted = CoseEncrypt0Builder::new()
+            .protected(protected)
+            .unprotected(unprotected)
+            .try_create_ciphertext(&plaintext, &header_bytes, |plaintext, aad| {
+                let nonce =
+                    Nonce::try_from(nonce.as_slice()).map_err(|_| chacha20poly1305::Error)?;
+                cipher.encrypt(
+                    &nonce,
+                    Payload {
+                        msg: plaintext,
+                        aad,
+                    },
+                )
+            })
+            .unwrap()
+            .build();
+        let mut chunk = header_bytes;
+        chunk.extend(encrypted.to_tagged_vec().unwrap());
+        secure_create_dir(&chunks_dir(temp.path())).unwrap();
+        fs::write(
+            chunks_dir(temp.path()).join(format!("{}.cborseq", header.5)),
+            chunk,
+        )
+        .unwrap();
+
+        let events =
+            HistoryStore::read_all(temp.path(), "test", keys.as_ref(), DEFAULT_QUOTA_BYTES)
+                .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, event.id);
+        assert_eq!(events[0].data.sequence, 1);
     }
 
     #[test]

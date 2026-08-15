@@ -47,7 +47,7 @@ Sandbox lifetime is separate from agent connection lifetime. An ephemeral sandbo
 
 A persistent or named sandbox is created once, identified by name, and can survive process exits. A later process can reconnect to the same sandbox and continue from the state it already has.
 
-Connect mode attaches to an already-running sandbox. It does not create a sandbox and it does not delete one. Disconnecting drops the control connection. Deleting destroys the machine and its state. Those are different operations, and the distinction matters when the sandbox contains work that should survive the current process.
+Connect mode attaches to an already-running sandbox. It does not create a sandbox and it does not delete one. Disconnecting drops the control connection. Deleting destroys the machine and its state. Those are different operations, and the distinction matters when the sandbox contains work that should survive the current process. [Sandbox lifecycles](/concepts/sandbox-lifecycles) covers this model in full, including suspension, pool leases, and snapshot lineage.
 
 ## Snapshots and forks
 

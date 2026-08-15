@@ -419,3 +419,11 @@ if ($AutoStart) {
     Write-Host "  cua-driver-local autostart disable   (remove)" -ForegroundColor Cyan
     Write-Host ""
 }
+
+# Native tools such as `schtasks.exe /Query` leave `$LASTEXITCODE` unchanged
+# even after later PowerShell commands succeed. When this script is launched
+# through `powershell.exe -File`, that stale value can become the process exit
+# code and make a completed install look failed to CI callers. Every real
+# failure above exits or throws explicitly, so finish with an unambiguous
+# success status.
+exit 0

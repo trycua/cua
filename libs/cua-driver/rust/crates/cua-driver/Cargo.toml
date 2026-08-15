@@ -54,7 +54,8 @@ platform-macos = { path = "../platform-macos" }
 platform-windows = { path = "../platform-windows" }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
-    "Win32_System_Console",
+    "Win32_Security",
+    "Win32_System_Threading",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

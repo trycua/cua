@@ -1314,7 +1314,6 @@ fn launch_daemon_with_state_and_wait(
     experimental_history: bool,
     allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
-    use std::process::{Command as Cmd, Stdio};
     use std::time::{Duration, Instant};
 
     let executable = std::env::current_exe().map_err(|error| LaunchDaemonError {
@@ -1325,38 +1324,26 @@ fn launch_daemon_with_state_and_wait(
         && socket_path == crate::serve::default_socket_path()
         && restart_managed_daemon_if_present(&executable);
     if !managed {
-        let mut command = Cmd::new(&executable);
-        command
-            .args(daemon_process_arguments(
-                socket_path,
-                state,
-                experimental_history,
-            ))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let arguments = daemon_process_arguments(socket_path, state, experimental_history);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt as _;
+            use std::process::{Command as Cmd, Stdio};
+
+            let mut command = Cmd::new(&executable);
+            command
+                .args(&arguments)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
             command.process_group(0);
+            command.spawn().map_err(|error| LaunchDaemonError {
+                kind: LaunchDaemonErrorKind::Failed,
+                message: format!("failed to launch {} serve: {error}", executable.display()),
+            })?;
         }
         #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt as _;
-            command.creation_flags(0x0000_0200 | 0x0000_0008);
-        }
-        // A Windows CLI invoked through `Command::output` owns inheritable
-        // stdout/stderr pipe handles. CreateProcess otherwise gives those
-        // unrelated handles to this long-lived daemon even though its standard
-        // streams are redirected to NUL, keeping the caller's capture open
-        // until the daemon exits. Mask inheritance only for the spawn and then
-        // restore the CLI's original handle flags.
-        #[cfg(target_os = "windows")]
-        let _stdio_inheritance = WindowsStdioInheritanceGuard::new()?;
-        command.spawn().map_err(|error| LaunchDaemonError {
-            kind: LaunchDaemonErrorKind::Failed,
-            message: format!("failed to launch {} serve: {error}", executable.display()),
-        })?;
+        spawn_detached_windows_daemon(&executable, &arguments)?;
     }
 
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
@@ -1373,62 +1360,101 @@ fn launch_daemon_with_state_and_wait(
 }
 
 #[cfg(target_os = "windows")]
-struct WindowsStdioInheritanceGuard {
-    handles: Vec<(windows::Win32::Foundation::HANDLE, u32)>,
+fn spawn_detached_windows_daemon(
+    executable: &std::path::Path,
+    arguments: &[String],
+) -> Result<(), LaunchDaemonError> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        CreateProcessW, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS, PROCESS_INFORMATION,
+        STARTUPINFOW,
+    };
+
+    let executable_wide = executable
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut command_line = windows_command_line(executable, arguments);
+    let mut startup = STARTUPINFOW {
+        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+        ..Default::default()
+    };
+    let mut process = PROCESS_INFORMATION::default();
+    // Rust's Command::output gives this short-lived CLI inheritable capture
+    // handles. A normal Command::spawn can leak those unrelated handles into
+    // the long-lived daemon, so the caller never observes EOF. CreateProcess
+    // with handle inheritance disabled is the Windows process boundary here.
+    unsafe {
+        CreateProcessW(
+            PCWSTR(executable_wide.as_ptr()),
+            Some(PWSTR(command_line.as_mut_ptr())),
+            None,
+            None,
+            false,
+            CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+            None,
+            PCWSTR::null(),
+            &mut startup,
+            &mut process,
+        )
+    }
+    .map_err(|error| LaunchDaemonError {
+        kind: LaunchDaemonErrorKind::Failed,
+        message: format!("failed to launch {} serve: {error}", executable.display()),
+    })?;
+    let _ = unsafe { CloseHandle(process.hThread) };
+    let _ = unsafe { CloseHandle(process.hProcess) };
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-impl WindowsStdioInheritanceGuard {
-    fn new() -> Result<Self, LaunchDaemonError> {
-        use windows::Win32::Foundation::{
-            GetHandleInformation, SetHandleInformation, HANDLE_FLAGS, HANDLE_FLAG_INHERIT,
-        };
-        use windows::Win32::System::Console::{
-            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
-        };
+fn windows_command_line(executable: &std::path::Path, arguments: &[String]) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt as _;
 
-        let mut guard = Self {
-            handles: Vec::new(),
-        };
-        for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-            let Ok(handle) = (unsafe { GetStdHandle(stream) }) else {
-                continue;
-            };
-            let mut flags = 0_u32;
-            if unsafe { GetHandleInformation(handle, &mut flags) }.is_err() {
-                continue;
-            }
-            if flags & HANDLE_FLAG_INHERIT.0 == 0 {
-                continue;
-            }
-            unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) }
-                .map_err(|error| LaunchDaemonError {
-                    kind: LaunchDaemonErrorKind::Failed,
-                    message: format!(
-                        "could not isolate daemon standard handles from the calling CLI: {error}"
-                    ),
-                })?;
-            guard.handles.push((handle, flags));
+    let mut command_line = Vec::new();
+    for argument in
+        std::iter::once(executable.as_os_str()).chain(arguments.iter().map(std::ffi::OsStr::new))
+    {
+        if !command_line.is_empty() {
+            command_line.push(' ' as u16);
         }
-        Ok(guard)
+        append_windows_argument(&mut command_line, argument.encode_wide());
     }
+    command_line.push(0);
+    command_line
 }
 
 #[cfg(target_os = "windows")]
-impl Drop for WindowsStdioInheritanceGuard {
-    fn drop(&mut self) {
-        use windows::Win32::Foundation::{SetHandleInformation, HANDLE_FLAGS, HANDLE_FLAG_INHERIT};
-
-        for (handle, flags) in self.handles.drain(..) {
-            let _ = unsafe {
-                SetHandleInformation(
-                    handle,
-                    HANDLE_FLAG_INHERIT.0,
-                    HANDLE_FLAGS(flags & HANDLE_FLAG_INHERIT.0),
-                )
-            };
+fn append_windows_argument(command_line: &mut Vec<u16>, argument: impl IntoIterator<Item = u16>) {
+    let argument = argument.into_iter().collect::<Vec<_>>();
+    let quote = argument.is_empty()
+        || argument
+            .iter()
+            .any(|value| matches!(*value, 0x20 | 0x09 | 0x22));
+    if !quote {
+        command_line.extend(argument);
+        return;
+    }
+    command_line.push('"' as u16);
+    let mut backslashes = 0;
+    for value in argument {
+        if value == '\\' as u16 {
+            backslashes += 1;
+        } else if value == '"' as u16 {
+            command_line.extend(std::iter::repeat_n('\\' as u16, backslashes * 2 + 1));
+            command_line.push(value);
+            backslashes = 0;
+        } else {
+            command_line.extend(std::iter::repeat_n('\\' as u16, backslashes));
+            command_line.push(value);
+            backslashes = 0;
         }
     }
+    command_line.extend(std::iter::repeat_n('\\' as u16, backslashes * 2));
+    command_line.push('"' as u16);
 }
 
 #[cfg(not(target_os = "macos"))]

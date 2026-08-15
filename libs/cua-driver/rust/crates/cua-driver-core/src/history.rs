@@ -45,7 +45,6 @@ use async_trait::async_trait;
 
 pub const HISTORY_PROFILE_VERSION: u8 = 1;
 pub const HISTORY_SCHEMA_URN: &str = "urn:cua-driver:schema:history-event:v0";
-pub const HISTORY_DIR_ENV: &str = "CUA_DRIVER_HISTORY_DIR";
 pub const DEFAULT_RETENTION_DAYS: u64 = 7;
 pub const DEFAULT_QUOTA_BYTES: u64 = 100 * 1024 * 1024;
 const WRITER_QUEUE_CAPACITY: usize = 512;
@@ -54,6 +53,8 @@ const CHUNK_KEY_INFO: &[u8] = b"cua-driver/history-profile/v1/chunk-key";
 const SESSION_ID_KEY_INFO: &[u8] = b"cua-driver/history-profile/v1/session-id-key";
 const CHUNK_ROTATION_INTERVAL: Duration = Duration::from_secs(55 * 60);
 const WRITER_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
+const ROOT_MARKER_NAME: &str = ".cua-history-root-v1";
+const ROOT_MARKER_CONTENT: &[u8] = b"cua-history-root-v1\n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,6 +133,7 @@ pub fn purge_offline(
     namespace: &str,
     key_provider: &dyn KeyProvider,
 ) -> Result<OfflinePurgeResult, HistoryError> {
+    prepare_history_root(root)?;
     let _writer_lease = WriterLease::acquire(root)?;
     let references = key_provider.references(namespace)?;
     for reference in &references {
@@ -164,6 +166,190 @@ pub fn purge_offline(
         destroyed_keys: references.len(),
         removed_files,
     })
+}
+
+/// Establish that `root` is a dedicated Cua History directory before any
+/// state write or destructive operation. A new or empty root is claimed by
+/// writing an ownership marker. A non-empty unmarked root fails closed, as do
+/// symlinked roots or managed entries.
+pub fn prepare_history_root(root: &Path) -> Result<(), HistoryError> {
+    if !root.is_absolute() {
+        return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+    }
+    reject_unsafe_root_components(root)?;
+    match fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => secure_create_dir(root)?,
+        Err(_) => {
+            return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+        }
+    }
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+    }
+    reject_unsafe_root_components(root)?;
+
+    let marker = root.join(ROOT_MARKER_NAME);
+    match fs::symlink_metadata(&marker) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || fs::read(&marker).ok().as_deref() != Some(ROOT_MARKER_CONTENT)
+            {
+                return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let empty = fs::read_dir(root)
+                .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?
+                .next()
+                .is_none();
+            if !empty {
+                return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+            }
+            let mut file = secure_create_new_file(&marker)?;
+            file.write_all(ROOT_MARKER_CONTENT)
+                .and_then(|_| file.sync_data())
+                .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
+        }
+        Err(_) => {
+            return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+        }
+    }
+    validate_history_root_layout(root)
+}
+
+#[cfg(unix)]
+fn reject_unsafe_root_components(root: &Path) -> Result<(), HistoryError> {
+    use std::os::unix::fs::MetadataExt;
+    for component in root.ancestors().filter(|path| !path.as_os_str().is_empty()) {
+        match fs::symlink_metadata(component) {
+            // Root-owned compatibility links such as macOS `/var` are outside
+            // the user's control. A user-owned link in the storage ancestry
+            // is not a stable destination for destructive history commands.
+            Ok(metadata) if metadata.file_type().is_symlink() && metadata.uid() != 0 => {
+                return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn reject_unsafe_root_components(root: &Path) -> Result<(), HistoryError> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    for component in root.ancestors().filter(|path| !path.as_os_str().is_empty()) {
+        match fs::symlink_metadata(component) {
+            Ok(metadata)
+                if metadata.file_type().is_symlink()
+                    || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 =>
+            {
+                return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn reject_unsafe_root_components(_root: &Path) -> Result<(), HistoryError> {
+    Ok(())
+}
+
+fn validate_history_root_layout(root: &Path) -> Result<(), HistoryError> {
+    let mut marker_seen = false;
+    for entry in fs::read_dir(root)
+        .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?
+    {
+        let entry =
+            entry.map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
+        let kind = entry
+            .file_type()
+            .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
+        if is_reparse_point(&entry.path())? {
+            return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+        }
+        match name {
+            ROOT_MARKER_NAME => {
+                marker_seen = true;
+                if !kind.is_file()
+                    || fs::read(entry.path()).ok().as_deref() != Some(ROOT_MARKER_CONTENT)
+                {
+                    return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+                }
+            }
+            "admission.json" | "admission.json.tmp" | "state.json" | "state.json.tmp"
+            | "writer.lock" => {
+                if !kind.is_file() {
+                    return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+                }
+            }
+            "chunks" => validate_chunks_layout(&entry.path(), kind.is_dir())?,
+            _ => {
+                return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+            }
+        }
+    }
+    if !marker_seen {
+        return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+    }
+    Ok(())
+}
+
+fn validate_chunks_layout(path: &Path, is_directory: bool) -> Result<(), HistoryError> {
+    if !is_directory {
+        return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+    }
+    for entry in fs::read_dir(path)
+        .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?
+    {
+        let entry =
+            entry.map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
+        let kind = entry
+            .file_type()
+            .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
+        if is_reparse_point(&entry.path())?
+            || !kind.is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("cborseq")
+        {
+            return Err(HistoryError::new(HistoryHealthCategory::StorageUnavailable));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn is_reparse_point(path: &Path) -> Result<bool, HistoryError> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_path: &Path) -> Result<bool, HistoryError> {
+    Ok(false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1378,7 +1564,7 @@ struct WriterLease {
 
 impl WriterLease {
     fn acquire(root: &Path) -> Result<Self, HistoryError> {
-        secure_create_dir(root)?;
+        prepare_history_root(root)?;
         let file = secure_open_lock_file(&root.join("writer.lock"))?;
         fs2::FileExt::try_lock_exclusive(&file)
             .map_err(|_| HistoryError::new(HistoryHealthCategory::WriterStopped))?;
@@ -1435,7 +1621,7 @@ impl HistoryStore {
             return Err(HistoryError::new(HistoryHealthCategory::QuotaReached));
         }
         let path = chunks.join(format!("{chunk_id}.cborseq"));
-        let mut file = secure_create_file(&path)?;
+        let mut file = secure_create_new_file(&path)?;
         file.write_all(&header_bytes)
             .and_then(|_| file.sync_data())
             .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
@@ -1522,7 +1708,7 @@ impl HistoryStore {
             ciborium::ser::into_writer(&self.header, &mut self.header_bytes)
                 .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageCorrupt))?;
             self.path = chunks_dir(&self.root).join(format!("{chunk_id}.cborseq"));
-            self.file = secure_create_file(&self.path)?;
+            self.file = secure_create_new_file(&self.path)?;
             self.file
                 .write_all(&self.header_bytes)
                 .and_then(|_| self.file.sync_data())
@@ -2015,11 +2201,15 @@ fn read_state(root: &Path) -> Option<PersistedState> {
 }
 
 fn write_state(root: &Path, state: &PersistedState) -> Result<(), HistoryError> {
-    secure_create_dir(root)?;
+    prepare_history_root(root)?;
     let temporary = root.join("state.json.tmp");
+    if temporary.exists() {
+        fs::remove_file(&temporary)
+            .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
+    }
     let bytes = serde_json::to_vec(state)
         .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
-    let mut file = secure_create_file(&temporary)?;
+    let mut file = secure_create_new_file(&temporary)?;
     file.write_all(&bytes)
         .and_then(|_| file.sync_data())
         .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))?;
@@ -2147,22 +2337,21 @@ fn secure_create_dir(path: &Path) -> Result<(), HistoryError> {
 }
 
 #[cfg(unix)]
-fn secure_create_file(path: &Path) -> Result<File, HistoryError> {
+fn secure_create_new_file(path: &Path) -> Result<File, HistoryError> {
     use std::os::unix::fs::OpenOptionsExt;
     OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))
 }
 
 #[cfg(not(unix))]
-fn secure_create_file(path: &Path) -> Result<File, HistoryError> {
+fn secure_create_new_file(path: &Path) -> Result<File, HistoryError> {
     OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .open(path)
         .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))
@@ -2176,6 +2365,7 @@ fn secure_open_lock_file(path: &Path) -> Result<File, HistoryError> {
         .read(true)
         .write(true)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .map_err(|_| HistoryError::new(HistoryHealthCategory::StorageUnavailable))
 }
@@ -3123,6 +3313,109 @@ mod tests {
         assert!(history_chunk_paths(temp.path()).unwrap().is_empty());
         assert!(!state_path(temp.path()).exists());
         assert!(!temp.path().join("admission.json").exists());
+    }
+
+    #[test]
+    fn purge_refuses_a_nonempty_unmarked_override_before_touching_keys_or_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("managed-override");
+        fs::create_dir(&root).unwrap();
+        let state = root.join("state.json");
+        fs::write(&state, br#"{"history_enabled":true}"#).unwrap();
+        let keys = MemoryKeyProvider::default();
+        keys.load_or_create("test").unwrap();
+
+        assert_eq!(
+            purge_offline(&root, "test", &keys).unwrap_err().category,
+            HistoryHealthCategory::StorageUnavailable
+        );
+        assert!(state.exists());
+        assert_eq!(keys.references("test").unwrap().len(), 1);
+        assert!(!root.join(ROOT_MARKER_NAME).exists());
+    }
+
+    #[test]
+    fn purge_refuses_relative_roots_without_creating_or_deleting_any_file() {
+        let keys = MemoryKeyProvider::default();
+        keys.load_or_create("test").unwrap();
+        let root = Path::new("relative-computer-history");
+
+        assert_eq!(
+            purge_offline(root, "test", &keys).unwrap_err().category,
+            HistoryHealthCategory::StorageUnavailable
+        );
+        assert_eq!(keys.references("test").unwrap().len(), 1);
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn nonempty_unmarked_computer_history_root_is_not_adopted_by_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("computer-history");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("state.json"), b"{}").unwrap();
+
+        assert_eq!(
+            prepare_history_root(&root).unwrap_err().category,
+            HistoryHealthCategory::StorageUnavailable
+        );
+        assert!(!root.join(ROOT_MARKER_NAME).exists());
+        assert!(root.join("state.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn purge_refuses_symlinked_roots_and_managed_entries_before_key_destruction() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let linked_root = temp.path().join("linked-root");
+        symlink(&target, &linked_root).unwrap();
+        let keys = MemoryKeyProvider::default();
+        keys.load_or_create("test").unwrap();
+        assert_eq!(
+            purge_offline(&linked_root, "test", &keys)
+                .unwrap_err()
+                .category,
+            HistoryHealthCategory::StorageUnavailable
+        );
+        assert_eq!(keys.references("test").unwrap().len(), 1);
+
+        let root = temp.path().join("safe-root");
+        prepare_history_root(&root).unwrap();
+        let outside = temp.path().join("outside-chunks");
+        fs::create_dir(&outside).unwrap();
+        symlink(&outside, root.join("chunks")).unwrap();
+        assert_eq!(
+            purge_offline(&root, "test", &keys).unwrap_err().category,
+            HistoryHealthCategory::StorageUnavailable
+        );
+        assert_eq!(keys.references("test").unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn state_writes_do_not_follow_a_managed_file_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("safe-root");
+        prepare_history_root(&root).unwrap();
+        let sentinel = temp.path().join("sentinel");
+        fs::write(&sentinel, b"preserve-me").unwrap();
+        symlink(&sentinel, root.join("state.json.tmp")).unwrap();
+        let state = PersistedState {
+            enabled: true,
+            paused: false,
+        };
+
+        assert_eq!(
+            write_state(&root, &state).unwrap_err().category,
+            HistoryHealthCategory::StorageUnavailable
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"preserve-me");
     }
 
     #[test]

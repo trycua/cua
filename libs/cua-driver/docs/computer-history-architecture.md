@@ -452,10 +452,21 @@ Windows: %LOCALAPPDATA%\{cua-driver|cua-driver-local}\computer-history\
 Linux:   ${XDG_STATE_HOME:-~/.local/state}/{cua-driver|cua-driver-local}/computer-history/
 ```
 
-`CUA_DRIVER_HISTORY_DIR` may override the file root for tests and explicitly managed deployments. It does not override native credential namespaces or encryption, and it must not merge release and local-development history implicitly.
+Preview 0 does not expose a file-root override. Production capture and purge
+are confined to the platform-derived root for the exact product namespace.
+Tests isolate storage by constructing `HistoryConfig` directly or by using an
+isolated native user-state root. A new or empty root receives a Cua History
+ownership marker. Preview builds created before this marker existed were never
+publicly released and are not auto-adopted: any non-empty unmarked or malformed
+root, symlinked root or managed entry, Windows reparse point, or unexpected
+contents fails closed before purge destroys its key or deletes any file. File
+creation also refuses existing final-component links. These checks prevent
+accidental destructive redirection; a privileged same-user process racing
+filesystem mutations remains outside the threat model defined below.
 
 ```text
 computer-history/
+├── .cua-history-root-v1       # fixed ownership marker; no user data
 ├── admission.json             # non-secret preview admission preference
 ├── state.json                 # enabled and paused booleans only
 ├── writer.lock                # empty OS-lock coordination file

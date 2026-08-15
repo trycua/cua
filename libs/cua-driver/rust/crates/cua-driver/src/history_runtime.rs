@@ -14,7 +14,7 @@ use std::{
 use cua_driver_core::history::{
     HistoryConfig, HistoryManager, DEFAULT_QUOTA_BYTES, DEFAULT_RETENTION_DAYS,
 };
-use cua_driver_core::{history::HISTORY_DIR_ENV, tool::ToolRegistry};
+use cua_driver_core::tool::ToolRegistry;
 
 static HISTORY_ADMITTED: AtomicBool = AtomicBool::new(false);
 static DAEMON_LAUNCH_STATE: OnceLock<Mutex<DaemonLaunchState>> = OnceLock::new();
@@ -75,6 +75,12 @@ pub fn preview_admitted_preference() -> bool {
 }
 
 fn preview_admitted_preference_at(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return false;
+    }
     let Ok(bytes) = fs::read(path) else {
         return false;
     };
@@ -99,19 +105,22 @@ fn set_preview_admitted_preference_at(path: &Path, admitted: bool) -> anyhow::Re
     let root = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("admission preference has no parent"))?;
-    fs::create_dir_all(&root)?;
+    cua_driver_core::history::prepare_history_root(root)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
     }
     let temporary = root.join("admission.json.tmp");
+    if temporary.exists() {
+        fs::remove_file(&temporary)?;
+    }
     let mut options = fs::OpenOptions::new();
-    options.create(true).truncate(true).write(true);
+    options.create_new(true).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
     let mut file = options.open(&temporary)?;
     file.write_all(
@@ -340,9 +349,6 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
 }
 
 pub fn history_root() -> PathBuf {
-    if let Some(path) = std::env::var_os(HISTORY_DIR_ENV).filter(|value| !value.is_empty()) {
-        return PathBuf::from(path);
-    }
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
@@ -368,12 +374,33 @@ mod tests {
     #[test]
     fn admission_preference_roundtrips_and_rejects_malformed_state() {
         let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("admission.json");
+        let path = temp.path().join("computer-history/admission.json");
         assert!(!preview_admitted_preference_at(&path));
         set_preview_admitted_preference_at(&path, true).unwrap();
         assert!(preview_admitted_preference_at(&path));
         fs::write(&path, b"not-json").unwrap();
         assert!(!preview_admitted_preference_at(&path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admission_preference_does_not_read_or_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("computer-history");
+        cua_driver_core::history::prepare_history_root(&root).unwrap();
+        let outside = temp.path().join("outside.json");
+        fs::write(&outside, br#"{"history_preview_admitted":true}"#).unwrap();
+        let path = root.join("admission.json");
+        symlink(&outside, &path).unwrap();
+
+        assert!(!preview_admitted_preference_at(&path));
+        assert!(set_preview_admitted_preference_at(&path, true).is_err());
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            br#"{"history_preview_admitted":true}"#
+        );
     }
 
     #[test]

@@ -2806,7 +2806,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prepare_requires_non_forgeable_approval_for_acting_setup() {
+    async fn isolated_prepare_uses_runtime_authorization_without_a_token() {
         let tool = BrowserPrepareTool::new(engine());
         let result = tool
             .invoke(json!({
@@ -2818,7 +2818,7 @@ mod tests {
             .await;
         assert_eq!(
             structured(&result)["refusal"]["code"],
-            "browser_consent_required"
+            "browser_route_unavailable"
         );
     }
 
@@ -2835,9 +2835,10 @@ mod tests {
             .await;
         let structured = structured(&result);
         assert_eq!(structured["refusal"]["code"], "browser_consent_required");
-        assert!(structured["refusal"]["detail"]["approval_request_id"]
-            .as_str()
-            .is_some());
+        assert_eq!(
+            structured["refusal"]["detail"]["authorization_required"],
+            true
+        );
     }
 
     #[tokio::test]

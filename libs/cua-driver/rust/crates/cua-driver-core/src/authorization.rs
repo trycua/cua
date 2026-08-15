@@ -932,7 +932,7 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             } else {
                 RiskAssessment {
                     class: RiskClass::R1,
-                    enforcement: RiskEnforcement::MetadataOnly,
+                    enforcement: RiskEnforcement::Active,
                     operation_sensitive: true,
                 }
             }

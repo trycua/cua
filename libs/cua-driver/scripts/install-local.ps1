@@ -176,10 +176,21 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 Write-Step "cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli"
 Push-Location $RepoRoot
 try {
-    & cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli
-    if ($LASTEXITCODE -ne 0) {
+    # Windows PowerShell 5.1 promotes native stderr into ErrorRecord objects.
+    # Cargo writes ordinary progress there, so the script-wide Stop preference
+    # would terminate a healthy build before its exit code can be inspected.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli
+        $buildExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($buildExit -ne 0) {
         Write-Host "Error: cargo build failed." -ForegroundColor Red
-        exit $LASTEXITCODE
+        exit $buildExit
     }
 }
 finally {

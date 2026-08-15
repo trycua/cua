@@ -319,7 +319,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("diagnose") => Some("diagnose"),
         Some("permissions") => Some("permissions"),
         Some("autostart") => Some("autostart"),
-        Some("skills") => Some("skills"),
+        Some("skill" | "skills") => Some("skills"),
         Some("cursor-theme") => Some("cursor_theme"),
         Some("browser-approve") => Some("browser_approve"),
         Some("config") => Some("config"),
@@ -399,6 +399,7 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "kick" => "kick",
             _ => "other",
         },
+        Some("skills") if positionals.first().copied() == Some("skill") => "path",
         Some("skills") => match subcommand.unwrap_or("status") {
             "install" => "install",
             "update" => "update",
@@ -483,7 +484,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, channel, cursor-theme, sessions");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest, channel, cursor-theme, sessions, skill");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -522,6 +523,9 @@ pub fn parse_command() -> Command {
         println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
         println!("  cua-driver skills path          Print where the local skill pack lives.");
+        println!(
+            "  cua-driver skill                Print the same path (read-only singular shortcut)."
+        );
         println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
         println!();
         println!("browser preparation approval:");
@@ -944,6 +948,16 @@ pub fn parse_command() -> Command {
                 process::exit(64);
             }
             Command::Autostart { subcommand }
+        }
+        Some("skill") => {
+            if pos.next().is_some() {
+                eprintln!("Usage: cua-driver skill");
+                process::exit(64);
+            }
+            Command::Skills {
+                subcommand: "path".to_owned(),
+                flags: Vec::new(),
+            }
         }
         Some("skills") => {
             // Skills subcommand. Default is `status` so plain `cua-driver
@@ -1702,7 +1716,10 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [ { "name": "subcommand", "type": "positional-string", "description": "enable | disable | status | kick" } ] },
             { "name": "skills",
               "description": "Manage the cua-driver agent skill pack (install / update / uninstall / status / path).",
-              "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] }
+              "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] },
+            { "name": "skill",
+              "description": "Print the local cua-driver agent skill-pack path (read-only alias for skills path).",
+              "args": [] }
         ]
     })
 }
@@ -3506,6 +3523,15 @@ fn cli_docs_json() -> serde_json::Value {
                 ]
             },
             {
+                "name": "skill",
+                "abstract": "Print the local agent skill-pack path.",
+                "discussion": "Read-only singular alias for cua-driver skills path.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
                 "name": "manifest",
                 "abstract": "Emit a stable JSON description of the CLI surface.",
                 "discussion": "Consumers can use this instead of hardcoding launch arguments such as the MCP invocation.",
@@ -4165,6 +4191,14 @@ mod tests {
     }
 
     #[test]
+    fn singular_skill_alias_is_the_reviewed_read_only_path_operation() {
+        let argv = args(&["skill"]);
+        assert_eq!(finite_command_name_from_args(&argv), Some("skills"));
+        assert_eq!(finite_tool_name_from_args(&argv), None);
+        assert_eq!(finite_operation_from_args(&argv), "path");
+    }
+
+    #[test]
     fn finite_computer_action_discards_arguments_after_fixed_classification() {
         assert!(finite_computer_action_from_args(&args(&[
             "call",
@@ -4396,6 +4430,7 @@ mod tests {
             "status",
             "mcp-config",
             "manifest",
+            "skill",
         ] {
             assert!(names.contains(&need), "missing subcommand '{need}'");
         }

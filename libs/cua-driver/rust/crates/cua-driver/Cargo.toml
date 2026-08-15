@@ -78,7 +78,7 @@ tokio = { workspace = true, features = ["full"] }
 image = { workspace = true }
 base64 = { workspace = true }
 # Isolated HOME / cache directories for `version_check` unit tests so they
-# never touch the developer's real `~/.cua-driver-rs/version_check.json`.
+# never touch the developer's real `~/.cua-driver/version_check.json`.
 tempfile = "3"
 futures-util = "0.3"
 tokio-tungstenite = "0.24"

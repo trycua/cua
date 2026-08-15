@@ -68,6 +68,11 @@ func ConfigRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-config", "data.authz_config.allow"))
 }
 
+// ChatRoutePolicy guards browser-local Bash conversation routes.
+func ChatRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-chat", "data.authz_chat.allow"))
+}
+
 // BillingRoutePolicy guards the Stripe-hosted billing browser routes. Its module
 // matches a prefix rather than three literals, so a billing route added to
 // main.go and bound here is covered without a policy change.
@@ -168,21 +173,45 @@ func StateQueryRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-state-query", "data.authz_state_query.allow"))
 }
 
+const billingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
+
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
-// as every other route, with one extra conjunct: admission control over the
-// request body.
+// as every other route, with two admission conjuncts: card-or-admin admission
+// for custom-resource creation, and pool admission over the request body.
 //
-// All three must pass. The admission leaf reads the raw body (bounded at 1 MiB)
+// Every conjunct must pass. The pool-admission leaf reads the raw body (bounded at 1 MiB)
 // to inspect the object being created or patched, which is why it names
 // pool_admission.rego alongside authz.rego — pool_admission imports
 // data.authz.is_admin. It stays a separate leaf rather than rules inside
 // authz_k8s.rego because it is the only thing on this surface that needs the
 // body, and folding it in would put every k8s request's verdict behind a body
 // read.
+func CustomResourceCreationAdmissionPolicy() Node {
+	leaf := func(query string, options ...PolicyOption) Node {
+		return Policy(
+			Modules(
+				Registered("authz"),
+				Registered("custom-resource-creation-admission"),
+			),
+			append([]PolicyOption{Query(query)}, options...)...,
+		)
+	}
+	return Any(
+		leaf("data.custom_resource_creation_admission.exempt"),
+		leaf(
+			"data.custom_resource_creation_admission.billing_eligible",
+			WithFacts(StripeCardsFactNamespace, RegisteredFacts(StripeCardsFactProvider)),
+			WithFacts(TimeFactNamespace, RegisteredFacts(CurrentYearFactProvider)),
+			WithFacts(TimeFactNamespace, RegisteredFacts(CurrentMonthFactProvider)),
+		),
+	)
+}
+
 func K8sRoutePolicy() Node {
 	return All(
 		BasePolicy(),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
+		Because(CustomResourceCreationAdmissionPolicy(), billingSetupRequiredMessage),
 		Policy(
 			Modules(
 				Registered("authz"),
@@ -224,6 +253,7 @@ type surfacePolicy struct {
 var surfacePolicies = map[string]surfacePolicy{
 	"keys":         {tree: KeysRoutePolicy},
 	"config":       {tree: ConfigRoutePolicy},
+	"chat":         {tree: ChatRoutePolicy},
 	"billing":      {tree: BillingRoutePolicy},
 	"namespaces":   {tree: NamespacesRoutePolicy},
 	"github-trust": {tree: GitHubTrustRoutePolicy},
@@ -247,6 +277,10 @@ var surfacePolicies = map[string]surfacePolicy{
 var routeSurfaces = map[string]string{
 	"/api/config":      "config",
 	"/api/state/query": "state-query",
+
+	"/api/chat/conversations":            "chat",
+	"/api/chat/conversations/{id}":       "chat",
+	"/api/chat/conversations/{id}/turns": "chat",
 
 	"/api/billing/summary":        "billing",
 	"/api/billing/setup-session":  "billing",

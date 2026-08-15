@@ -12,6 +12,10 @@ import (
 type fakeGateway struct {
 	searchSubject          string
 	customers              []Customer
+	searchErr              error
+	cards                  []SavedCard
+	cardsErr               error
+	listCardsCalls         int
 	createdMetadata        map[string]string
 	createIdempotencyKey   string
 	createdCustomer        Customer
@@ -33,7 +37,7 @@ type fakeGateway struct {
 
 func (f *fakeGateway) SearchCustomers(_ context.Context, subject string) ([]Customer, error) {
 	f.searchSubject = subject
-	return f.customers, nil
+	return f.customers, f.searchErr
 }
 
 func (f *fakeGateway) CreateCustomer(_ context.Context, metadata map[string]string, idempotencyKey string) (Customer, error) {
@@ -53,6 +57,11 @@ func (f *fakeGateway) UpdateCustomerMetadata(_ context.Context, customerID strin
 		return f.updatedCustomer, nil
 	}
 	return Customer{ID: customerID, Metadata: metadata}, nil
+}
+
+func (f *fakeGateway) ListAttachedCards(_ context.Context, _ string) ([]SavedCard, error) {
+	f.listCardsCalls++
+	return f.cards, f.cardsErr
 }
 
 func (f *fakeGateway) GetDefaultCard(_ context.Context, _ string) (SavedCard, error) {
@@ -348,5 +357,45 @@ func TestCreateSetupSessionReturnsNoURLWhenGenerationPublishFails(t *testing.T) 
 	url, err := NewService(gateway).CreateSetupSession(context.Background(), "subject-123", SetupOptions{})
 	if err == nil || url != "" || !reflect.DeepEqual(gateway.operations, []string{"create", "publish"}) {
 		t.Fatalf("url/error/operations = %q/%v/%#v", url, err, gateway.operations)
+	}
+}
+
+func TestAttachedCards(t *testing.T) {
+	gatewayErr := errors.New("stripe unavailable")
+
+	cases := []struct {
+		name      string
+		customers []Customer
+		searchErr error
+		cards     []SavedCard
+		cardsErr  error
+		want      []SavedCard
+		wantErr   error
+		wantLists int
+	}{
+		{name: "no customer", want: []SavedCard{}},
+		{name: "empty attached card list", customers: []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}}, want: []SavedCard{}, wantLists: 1},
+		{name: "legacy customer is read without metadata migration", customers: []Customer{{ID: "cus_legacy", Metadata: map[string]string{LegacyMetadataSubject: "subject-123"}}}, cards: []SavedCard{{Brand: "visa", Last4: "4242", ExpMonth: 9, ExpYear: 2026}}, want: []SavedCard{{Brand: "visa", Last4: "4242", ExpMonth: 9, ExpYear: 2026}}, wantLists: 1},
+		{name: "attached cards are returned without qualification", customers: []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}}, cards: []SavedCard{{ExpMonth: 1, ExpYear: 2025}, {ExpMonth: 1, ExpYear: 2027}}, want: []SavedCard{{ExpMonth: 1, ExpYear: 2025}, {ExpMonth: 1, ExpYear: 2027}}, wantLists: 1},
+		{name: "customer search error", searchErr: gatewayErr, wantErr: gatewayErr},
+		{name: "card listing error", customers: []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}}, cardsErr: gatewayErr, wantErr: gatewayErr, wantLists: 1},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			gateway := &fakeGateway{customers: testCase.customers, searchErr: testCase.searchErr, cards: testCase.cards, cardsErr: testCase.cardsErr}
+			got, err := NewService(gateway).AttachedCards(context.Background(), "subject-123")
+			if !errors.Is(err, testCase.wantErr) || !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("AttachedCards() = %#v, %v; want %#v, %v", got, err, testCase.want, testCase.wantErr)
+			}
+			if gateway.createCalls != 0 {
+				t.Fatalf("CreateCustomer calls = %d, want 0", gateway.createCalls)
+			}
+			if gateway.updatedMetadata != nil {
+				t.Fatalf("UpdateCustomerMetadata called during authorization: %#v", gateway.updatedMetadata)
+			}
+			if gateway.listCardsCalls != testCase.wantLists {
+				t.Fatalf("ListAttachedCards calls = %d, want %d", gateway.listCardsCalls, testCase.wantLists)
+			}
+		})
 	}
 }

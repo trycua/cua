@@ -101,6 +101,29 @@ func savedCardFromCustomer(customer *stripe.Customer) (SavedCard, error) {
 	}, nil
 }
 
+func (g *StripeGateway) ListAttachedCards(ctx context.Context, customerID string) ([]SavedCard, error) {
+	params := &stripe.PaymentMethodListParams{
+		Customer: stripe.String(customerID),
+		Type:     stripe.String(string(stripe.PaymentMethodTypeCard)),
+	}
+	cards := make([]SavedCard, 0)
+	for paymentMethod, err := range g.client.V1PaymentMethods.List(ctx, params).All(ctx) {
+		if err != nil {
+			return nil, err
+		}
+		if paymentMethod.Card == nil {
+			continue
+		}
+		cards = append(cards, SavedCard{
+			Brand:    string(paymentMethod.Card.Brand),
+			Last4:    paymentMethod.Card.Last4,
+			ExpMonth: paymentMethod.Card.ExpMonth,
+			ExpYear:  paymentMethod.Card.ExpYear,
+		})
+	}
+	return cards, nil
+}
+
 func (g *StripeGateway) GetDefaultCard(ctx context.Context, customerID string) (SavedCard, error) {
 	customer, err := g.client.V1Customers.Retrieve(ctx, customerID, defaultCardRetrieveParams())
 	if err != nil {

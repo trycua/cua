@@ -401,6 +401,7 @@ end
     RustBuffer.check_lower_Optionalu32(v.cpu_cores)
     RustBuffer.check_lower_Optionalstring(v.memory)
     RustBuffer.check_lower_OptionalTypeFirmware(v.firmware)
+    RustBuffer.check_lower_Optionalbool(v.nested_virtualization)
     RustBuffer.check_lower_OptionalTypePreservedJson(v.probes)
     RustBuffer.check_lower_OptionalSequenceTypeSandboxService(v.services)
     RustBuffer.check_lower_OptionalTypeOidcConfig(v.oidc)
@@ -1249,6 +1250,7 @@ class RustBufferStream
       cpu_cores: readOptionalu32,
       memory: readOptionalstring,
       firmware: readOptionalTypeFirmware,
+      nested_virtualization: readOptionalbool,
       probes: readOptionalTypePreservedJson,
       services: readOptionalSequenceTypeSandboxService,
       oidc: readOptionalTypeOidcConfig
@@ -1937,6 +1939,7 @@ class RustBufferBuilder
     self.write_Optionalu32(v.cpu_cores)
     self.write_Optionalstring(v.memory)
     self.write_OptionalTypeFirmware(v.firmware)
+    self.write_Optionalbool(v.nested_virtualization)
     self.write_OptionalTypePreservedJson(v.probes)
     self.write_OptionalSequenceTypeSandboxService(v.services)
     self.write_OptionalTypeOidcConfig(v.oidc)
@@ -2457,6 +2460,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization,
+    [:uint64, :int8, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -2599,6 +2605,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector,
@@ -2943,9 +2952,9 @@ end
 
   # Record type VmTemplate
 class VmTemplate
-  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :probes, :services, :oidc
+  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :nested_virtualization, :probes, :services, :oidc
 
-  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, probes:, services:, oidc:)
+  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, nested_virtualization:, probes:, services:, oidc:)
     @container_disk_image = container_disk_image
     @command = command
     @runtime = runtime
@@ -2957,6 +2966,7 @@ class VmTemplate
     @cpu_cores = cpu_cores
     @memory = memory
     @firmware = firmware
+    @nested_virtualization = nested_virtualization
     @probes = probes
     @services = services
     @oidc = oidc
@@ -2994,6 +3004,9 @@ class VmTemplate
       return false
     end
     if @firmware != other.firmware
+      return false
+    end
+    if @nested_virtualization != other.nested_virtualization
       return false
     end
     if @probes != other.probes
@@ -3400,6 +3413,12 @@ end
         value = CyclopsSdkSchema::uniffi_utf8(value)
 
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def nested_virtualization(value)
+        value = value ? true : false
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization,uniffi_clone_handle(),(value ? 1 : 0))
     return VmTemplateBuilder.uniffi_allocate(result)
   end
   def node_selector(value)

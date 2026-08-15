@@ -738,23 +738,6 @@ func TestActiveBackendSourcesDoNotOwnMigrations(t *testing.T) {
 	}
 }
 
-func TestMainRequiresMigrationVersionWithoutRunningMigrations(t *testing.T) {
-	source := readSource(t, "main.go")
-	if !strings.Contains(source, "database.RequireVersion(ctx, cfg.Database.URL, 1)") {
-		t.Fatal("backend must require migration version 1")
-	}
-}
-
-func TestBackendReadinessStartsFailClosedAndRequiresSchema(t *testing.T) {
-	source := readSource(t, "main.go")
-	if !strings.Contains(source, "h.Readiness = handlers.NewReadiness()") {
-		t.Fatal("backend readiness must start fail-closed before the database check")
-	}
-	if !strings.Contains(source, "h.Readiness.MarkReady()") {
-		t.Fatal("backend readiness must become ready after the database schema check")
-	}
-}
-
 func TestBackendDeploymentKeepsCoreAPIReadyWithoutDatabaseSchema(t *testing.T) {
 	source := readSource(t, filepath.Join("..", "..", "clusters", "kopf-k3s", "cyclops-cs", "backend-deployment.yaml"))
 	for _, probe := range []string{"readinessProbe", "livenessProbe"} {

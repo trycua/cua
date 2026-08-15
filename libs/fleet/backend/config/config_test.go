@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -179,5 +180,96 @@ func TestLoadConfig_StateDatabaseURLs(t *testing.T) {
 	}
 	if got, want := cfg.Database.StateQueryTenantPassword, "tenant-password"; got != want {
 		t.Fatalf("Database.StateQueryTenantPassword = %q, want %q", got, want)
+	}
+}
+
+func loadChatTestConfig(t *testing.T) (*Configuration, error) {
+	t.Helper()
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+	RegisterFlags(pflag.NewFlagSet("chat-test", pflag.ContinueOnError))
+	return LoadConfig()
+}
+
+func TestLoadConfig_ChatAccessModes(t *testing.T) {
+	tests := []struct {
+		name       string
+		access     string
+		legacy     string
+		wantAccess ChatAccessMode
+	}{
+		{name: "default disabled", wantAccess: ChatAccessDisabled},
+		{name: "disabled", access: "disabled", wantAccess: ChatAccessDisabled},
+		{name: "restricted", access: "restricted", wantAccess: ChatAccessRestricted},
+		{name: "all", access: "all", wantAccess: ChatAccessAll},
+		{name: "invalid fails closed", access: "unexpected", legacy: "true", wantAccess: ChatAccessDisabled},
+		{name: "new mode overrides legacy", access: "restricted", legacy: "false", wantAccess: ChatAccessRestricted},
+		{name: "legacy true maps to all", legacy: "true", wantAccess: ChatAccessAll},
+		{name: "legacy false maps to disabled", legacy: "false", wantAccess: ChatAccessDisabled},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.access != "" {
+				t.Setenv("CYCLOPS_CS_CHAT_ACCESS", test.access)
+			}
+			if test.legacy != "" {
+				t.Setenv("CYCLOPS_CS_CHAT_ENABLED", test.legacy)
+			}
+			if test.wantAccess.Enabled() {
+				t.Setenv("LITELLM_BASE_URL", "https://litellm.example/v1")
+				t.Setenv("LITELLM_API_KEY", "secret")
+			}
+
+			cfg, err := loadChatTestConfig(t)
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			if cfg.Chat.Access != test.wantAccess {
+				t.Fatalf("Chat.Access = %q, want %q", cfg.Chat.Access, test.wantAccess)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_ChatAccessWithCredentials(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_CHAT_ACCESS", "all")
+	t.Setenv("LITELLM_BASE_URL", "https://litellm.example/v1")
+	t.Setenv("LITELLM_API_KEY", "secret")
+	t.Setenv("LITELLM_MODEL", "browser-bash")
+	cfg, err := loadChatTestConfig(t)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Chat.Access != ChatAccessAll || cfg.Chat.BaseURL != "https://litellm.example/v1" || cfg.Chat.APIKey != "secret" || cfg.Chat.Model != "browser-bash" {
+		t.Fatalf("Chat = %#v, want all-users configuration", cfg.Chat)
+	}
+}
+
+func TestLoadConfig_ChatAccessRequiresCredentials(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"restricted missing base URL": {"CYCLOPS_CS_CHAT_ACCESS": "restricted", "LITELLM_API_KEY": "secret"},
+		"restricted missing API key":  {"CYCLOPS_CS_CHAT_ACCESS": "restricted", "LITELLM_BASE_URL": "https://litellm.example/v1"},
+		"all missing base URL":        {"CYCLOPS_CS_CHAT_ACCESS": "all", "LITELLM_API_KEY": "secret"},
+		"all missing API key":         {"CYCLOPS_CS_CHAT_ACCESS": "all", "LITELLM_BASE_URL": "https://litellm.example/v1"},
+		"legacy missing base URL":     {"CYCLOPS_CS_CHAT_ENABLED": "true", "LITELLM_API_KEY": "secret"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for key, value := range env {
+				t.Setenv(key, value)
+			}
+			_, err := loadChatTestConfig(t)
+			if err == nil || !strings.Contains(err.Error(), "chat") {
+				t.Fatalf("LoadConfig() error = %v, want chat credential error", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_ChatDisabledDoesNotRequireCredentials(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_CHAT_ACCESS", "disabled")
+	if _, err := loadChatTestConfig(t); err != nil {
+		t.Fatalf("LoadConfig() error = %v, want disabled mode without credentials", err)
 	}
 }

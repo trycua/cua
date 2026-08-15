@@ -42,6 +42,7 @@ def template_spec(image: str, image_pull_secret: str) -> OsGymSandboxTemplateSpe
             cpu_cores=4,
             memory="4Gi",
             firmware=None,
+            nested_virtualization=None,
             probes=None,
             services=[SandboxService(name="mcp", target_port=3000, protocol=None)],
             oidc=None,

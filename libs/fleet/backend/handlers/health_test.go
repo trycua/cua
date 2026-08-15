@@ -16,24 +16,10 @@ func TestHealthIsLiveWhenDatabaseIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestReadinessFailsClosedUntilDatabaseSchemaIsReady(t *testing.T) {
-	readiness := NewReadiness()
-	h := Handlers{Readiness: readiness}
-
-	for _, name := range []string{"initial state", "schema check failure"} {
-		t.Run(name, func(t *testing.T) {
-			response := httptest.NewRecorder()
-			h.GetReadiness(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-
-			if response.Code < http.StatusBadRequest {
-				t.Fatalf("status = %d, want non-2xx", response.Code)
-			}
-		})
-	}
-
-	readiness.MarkReady()
+func TestReadinessIsReadyWhenDatabaseIsUnavailable(t *testing.T) {
 	response := httptest.NewRecorder()
-	h.GetReadiness(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	Handlers{}.GetReadiness(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)

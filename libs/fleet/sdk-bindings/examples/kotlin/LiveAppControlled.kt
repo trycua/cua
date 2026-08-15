@@ -42,7 +42,7 @@ private fun templateSpec() = OsGymSandboxTemplateSpec(
         required("CUA_IMAGE_PULL_SECRET"),
         4u,
         "4Gi",
-        null, null,
+        null, null, null,
         listOf(SandboxService("mcp", 3000u, null)),
         null,
     ),

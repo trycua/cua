@@ -4,19 +4,26 @@ package handlers
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"regexp"
+	"time"
 
 	"cyclops-cs-backend/auth"
+	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/keycloak"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
+
+type UserAccountService interface {
+	UserCreatedAt(ctx context.Context, subject string) (time.Time, error)
+}
 
 type Handlers struct {
 	Admin           *keycloak.Admin
@@ -25,13 +32,18 @@ type Handlers struct {
 	KC              config.KeycloakConfiguration
 	Stripe          config.StripeConfiguration
 	Billing         BillingService
+	UserAccounts    UserAccountService
 	WebhookVerifier WebhookVerifier
 
 	GitHubTrustPolicies githubtrust.Store
 
 	StateQueryExecutor StateQueryExecutor
 
-	Readiness *Readiness
+	ChatAccess          config.ChatAccessMode
+	Conversations       chat.ConversationStore
+	Model               chat.ModelClient
+	chatAccessEvaluator func(context.Context, *auth.User) (bool, error)
+	chatLocks           *conversationLockRegistry
 
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
@@ -45,11 +57,32 @@ type Handlers struct {
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 	return Handlers{
-		Admin:      admin,
-		GatewayCfg: cfg.Gateway,
-		AuthCfg:    cfg.Auth,
-		KC:         cfg.Keycloak,
-		Stripe:     cfg.Stripe,
+		Admin:        admin,
+		UserAccounts: admin,
+		GatewayCfg:   cfg.Gateway,
+		AuthCfg:      cfg.Auth,
+		KC:           cfg.Keycloak,
+		Stripe:       cfg.Stripe,
+		ChatAccess:   cfg.Chat.Access,
+		chatLocks:    newConversationLockRegistry(),
+	}
+}
+
+func (h Handlers) chatEnabled(ctx context.Context, user *auth.User) (bool, error) {
+	if user == nil || user.ID == "" {
+		return false, nil
+	}
+	switch h.ChatAccess {
+	case config.ChatAccessAll:
+		return true, nil
+	case config.ChatAccessRestricted:
+		evaluator := h.chatAccessEvaluator
+		if evaluator == nil {
+			evaluator = auth.EvalChatEnabled
+		}
+		return evaluator(ctx, user)
+	default:
+		return false, nil
 	}
 }
 

@@ -285,6 +285,11 @@ recording, do a pixel click (`click({pid,x,y})`) or a `move_cursor`
 first to put the cursor on-screen; subsequent AX actions then glide the
 full path normally.
 
+Pixel `click` already glides the overlay. Do not call `move_cursor`
+immediately before `click` on the same target; that plays two glides.
+Use `move_cursor` to place the overlay without clicking, or as the
+one-time seed above before AX actions.
+
 Requires a suitable UI event loop. Service and private-worker runtimes provide
 one. On macOS, a same-process SDK runtime or `cua-driver mcp --direct` without
 a certified host main-thread adapter returns a structured

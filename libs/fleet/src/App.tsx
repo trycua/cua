@@ -21,7 +21,8 @@ import { PoolDetail } from "./pages/PoolDetail"
 import { PoolNew } from "./pages/PoolNew"
 import { UserApiKeys } from "./pages/UserApiKeys"
 import { Settings } from "./pages/Settings"
-import { FeatureFlagProvider } from "./components/FeatureFlagContext"
+import { AgentChat } from "./pages/AgentChat"
+import { FeatureFlagProvider, useFeatureFlags } from "./components/FeatureFlagContext"
 import { FlashContext, type FlashMsg } from "./components/FlashContext"
 import { logout, userInfo } from "./auth/keycloak"
 
@@ -80,6 +81,7 @@ function Shell() {
   const { stale } = useStaleCheck()
   const [staleDismissed, setStaleDismissed] = useState(false)
   const user = userInfo()
+  const { chat } = useFeatureFlags()
   const pushFlash = useCallback((msg: FlashMsg) => {
     const id = crypto.randomUUID()
     const dismiss = () =>
@@ -140,6 +142,7 @@ function Shell() {
               }}
               items={[
                 { type: "link", text: "Pools", href: "#/pools" },
+                ...(chat ? [{ type: "link" as const, text: "Chat", href: "#/agent" }] : []),
                 { type: "link", text: "User API keys", href: "#/user-keys" },
                 { type: "link", text: "Settings", href: "#/settings" },
               ]}
@@ -194,6 +197,7 @@ export function App() {
             <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
             <Route path="/user-keys" element={<UserApiKeys />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/agent" element={<ChatRoute />} />
             <Route path="/billing" element={<Navigate to="/settings" replace />} />
             <Route
               path="/pools/:namespace/:poolName/claims/:claimName"
@@ -216,4 +220,10 @@ export function App() {
 function RedirectModule() {
   const path = window.location.pathname.replace(/^\/modules/, "/pools")
   return <Navigate to={path} replace />
+}
+
+function ChatRoute() {
+  const { chat, resolved } = useFeatureFlags()
+  if (!resolved) return null
+  return chat ? <AgentChat /> : <Navigate to="/pools" replace />
 }

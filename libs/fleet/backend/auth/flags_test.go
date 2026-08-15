@@ -23,6 +23,7 @@ func resetFlagsCache() {
 // pure-policy tests in policy_test.go don't touch.
 func TestExportedEvalsEndToEnd(t *testing.T) {
 	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-sub"]`)
+	t.Setenv("CYCLOPS_CS_CHAT_SUBS", `["chat-sub"]`)
 
 	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
 		t.Fatalf("setup dev provider: %v", err)
@@ -44,6 +45,26 @@ func TestExportedEvalsEndToEnd(t *testing.T) {
 		ok, err = EvalIsAdmin(ctx, nil)
 		if err != nil || ok {
 			t.Fatalf("EvalIsAdmin(nil) = %v, %v; want false, nil", ok, err)
+		}
+	})
+
+	t.Run("EvalChatEnabled", func(t *testing.T) {
+		for _, test := range []struct {
+			name string
+			user *User
+			want bool
+		}{
+			{name: "admin", user: &User{ID: "admin-sub", AZP: "cyclops-cs-spa"}, want: true},
+			{name: "allowlisted", user: &User{ID: "chat-sub", AZP: "cyclops-cs-spa"}, want: true},
+			{name: "unlisted", user: &User{ID: "someone-else", AZP: "cyclops-cs-spa"}, want: false},
+			{name: "nil", user: nil, want: false},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				ok, err := EvalChatEnabled(ctx, test.user)
+				if err != nil || ok != test.want {
+					t.Fatalf("EvalChatEnabled(%v) = %v, %v; want %v, nil", test.user, ok, err, test.want)
+				}
+			})
 		}
 	})
 
@@ -79,6 +100,19 @@ func TestFlagsDataCachedAndRefreshes(t *testing.T) {
 	}
 }
 
+func TestFlagsDataLoadsCardRequirementExemptSubs(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_CARD_REQUIREMENT_EXEMPT_SUBS", `["exempt-a","exempt-b"]`)
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+	resetFlagsCache()
+
+	got := asStrings(flagsData()["card_requirement_exempt_subs"])
+	if len(got) != 2 || got[0] != "exempt-a" || got[1] != "exempt-b" {
+		t.Fatalf("card_requirement_exempt_subs = %v, want [exempt-a exempt-b]", got)
+	}
+}
+
 func asStrings(v any) []string {
 	items, ok := v.([]interface{})
 	if !ok {
@@ -111,5 +145,20 @@ func TestEvalBillingEnabledDefaultsFalseAndReadsBooleanFlag(t *testing.T) {
 	enabled, err = EvalBillingEnabled(context.Background(), &User{ID: "user-1", AZP: "cyclops-cs-spa"})
 	if err != nil || !enabled {
 		t.Fatalf("EvalBillingEnabled(true) = %v, %v; want true, nil", enabled, err)
+	}
+}
+
+func TestEvalChatEnabledFailsClosedForMalformedAllowlist(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`)
+	t.Setenv("CYCLOPS_CS_CHAT_SUBS", `not-json`)
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+	LoadOpa()
+	resetFlagsCache()
+
+	enabled, err := EvalChatEnabled(context.Background(), &User{ID: "not-json", AZP: "cyclops-cs-spa"})
+	if err != nil || enabled {
+		t.Fatalf("EvalChatEnabled(malformed allowlist) = %v, %v; want false, nil", enabled, err)
 	}
 }

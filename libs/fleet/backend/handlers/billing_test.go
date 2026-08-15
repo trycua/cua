@@ -32,6 +32,10 @@ type fakeBillingService struct {
 	defaultErr             error
 }
 
+func (f *fakeBillingService) AttachedCards(context.Context, string) ([]billing.SavedCard, error) {
+	return []billing.SavedCard{}, nil
+}
+
 func (f *fakeBillingService) Summary(_ context.Context, subject string) (billing.Summary, error) {
 	f.summaryCalls++
 	f.summarySubject = subject

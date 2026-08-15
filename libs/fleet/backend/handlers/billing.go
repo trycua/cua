@@ -13,6 +13,7 @@ import (
 )
 
 type BillingService interface {
+	AttachedCards(ctx context.Context, subject string) ([]billing.SavedCard, error)
 	Summary(ctx context.Context, subject string) (billing.Summary, error)
 	CreateSetupSession(ctx context.Context, subject string, options billing.SetupOptions) (string, error)
 	CreatePortalSession(ctx context.Context, subject, returnURL string) (string, error)

@@ -23,6 +23,75 @@ definitions:
     - card
     - payment_method_present
     type: object
+  chat.Conversation:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      messages:
+        items:
+          $ref: '#/definitions/chat.Message'
+        type: array
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  chat.ConversationSummary:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  chat.Message:
+    properties:
+      content:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      role:
+        $ref: '#/definitions/chat.Role'
+      tool_call_id:
+        type: string
+      tool_calls:
+        items:
+          $ref: '#/definitions/chat.ToolCall'
+        type: array
+    type: object
+  chat.Role:
+    enum:
+    - user
+    - assistant
+    - tool
+    type: string
+    x-enum-varnames:
+    - RoleUser
+    - RoleAssistant
+    - RoleTool
+  chat.ToolCall:
+    properties:
+      function:
+        $ref: '#/definitions/chat.ToolFunction'
+      id:
+        type: string
+      type:
+        type: string
+    type: object
+  chat.ToolFunction:
+    properties:
+      arguments:
+        type: string
+      name:
+        type: string
+    type: object
   handlers.BillingSessionResponse:
     properties:
       url:
@@ -38,6 +107,8 @@ definitions:
           server-side by authz.rego.
         type: boolean
       billing:
+        type: boolean
+      chat:
         type: boolean
     type: object
   handlers.CreateKeyRequest:
@@ -133,6 +204,13 @@ definitions:
       status:
         type: string
     type: object
+  handlers.TurnRequest:
+    properties:
+      messages:
+        items:
+          $ref: '#/definitions/chat.Message'
+        type: array
+    type: object
   handlers.UserKeyResponse:
     properties:
       client_id:
@@ -145,6 +223,15 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  handlers.turnEvent:
+    properties:
+      delta:
+        type: string
+      message:
+        $ref: '#/definitions/chat.Message'
+      type:
+        type: string
     type: object
   keycloak.KeyClient:
     properties:
@@ -323,6 +410,139 @@ paths:
       summary: Receive Stripe webhook
       tags:
       - billing
+  /api/chat/conversations:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/chat.ConversationSummary'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List the calling user's chat conversations
+      tags:
+      - chat
+    post:
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/chat.Conversation'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a chat conversation
+      tags:
+      - chat
+  /api/chat/conversations/{id}:
+    get:
+      parameters:
+      - description: Conversation ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/chat.Conversation'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a chat conversation
+      tags:
+      - chat
+  /api/chat/conversations/{id}/turns:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Conversation ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: User message or tool results
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.TurnRequest'
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.turnEvent'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Send a chat turn and stream the assistant response
+      tags:
+      - chat
   /api/config:
     get:
       description: Returns OPA-evaluated feature flags for the authenticated SPA user.

@@ -123,6 +123,8 @@ func mapChildren(n Node, rewrite func(Node) Node) Node {
 		return AllNode{Children: rewriteChildren(node.Children, rewrite)}
 	case AnyNode:
 		return AnyNode{Children: rewriteChildren(node.Children, rewrite)}
+	case BecauseNode:
+		return BecauseNode{Child: rewrite(node.Child), Reason: node.Reason}
 	}
 	return n
 }

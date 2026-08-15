@@ -1,7 +1,13 @@
 package billing
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"testing"
 
 	"github.com/stripe/stripe-go/v85"
@@ -160,5 +166,49 @@ func TestCurrentSetupGenerationIgnoresDuplicateAfterMarkerConsumption(t *testing
 	metadata[MetadataSetupGeneration] = ""
 	if currentSetupGeneration(metadata, "current") {
 		t.Fatal("duplicate delivery must not match a consumed marker")
+	}
+}
+
+func TestListAttachedCardsFiltersAndPaginates(t *testing.T) {
+	var requests []url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/payment_methods" {
+			t.Fatalf("request = %s %s, want GET /v1/payment_methods", r.Method, r.URL.Path)
+		}
+		requests = append(requests, r.URL.Query())
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("starting_after") == "" {
+			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"pm_1","object":"payment_method","type":"card","card":{"brand":"visa","last4":"4242","exp_month":8,"exp_year":2026}}],"has_more":true,"url":"/v1/payment_methods"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"pm_2","object":"payment_method","type":"card","card":{"brand":"mastercard","last4":"4444","exp_month":1,"exp_year":2027,"fingerprint":"must-not-leak"}}],"has_more":false,"url":"/v1/payment_methods"}`)
+	}))
+	defer server.Close()
+
+	backend := stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{URL: stripe.String(server.URL)})
+	client := stripe.NewClient("sk_test", stripe.WithBackends(&stripe.Backends{API: backend, Connect: backend, Uploads: backend, MeterEvents: backend}))
+	gateway := &StripeGateway{client: client}
+
+	cards, err := gateway.ListAttachedCards(context.Background(), "cus_owned")
+	if err != nil {
+		t.Fatalf("ListAttachedCards() error = %v", err)
+	}
+	want := []SavedCard{
+		{Brand: "visa", Last4: "4242", ExpMonth: 8, ExpYear: 2026},
+		{Brand: "mastercard", Last4: "4444", ExpMonth: 1, ExpYear: 2027},
+	}
+	if !reflect.DeepEqual(cards, want) {
+		t.Fatalf("cards = %#v, want %#v", cards, want)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(requests))
+	}
+	for i, query := range requests {
+		if query.Get("customer") != "cus_owned" || query.Get("type") != "card" {
+			t.Fatalf("request %d query = %v, want customer=cus_owned and type=card", i+1, query)
+		}
+	}
+	if got := requests[1].Get("starting_after"); got != "pm_1" {
+		t.Fatalf("second page starting_after = %q, want pm_1", got)
 	}
 }

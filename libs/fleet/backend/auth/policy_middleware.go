@@ -231,6 +231,7 @@ type requestPolicyInput struct {
 }
 
 func newRequestPolicyInput(request *http.Request, bodyBudget int64) *requestPolicyInput {
+	*request = *request.WithContext(context.WithValue(request.Context(), requestClockSnapshotKey{}, &requestClockSnapshot{}))
 	user, _ := request.Context().Value(UserKey).(*User)
 	route, _ := request.Context().Value(routeKey).(string)
 	params, _ := request.Context().Value(paramsKey).(map[string]string)
@@ -261,7 +262,17 @@ func (input *requestPolicyInput) forPolicy(ctx context.Context, config policyCon
 		if err != nil {
 			return nil, err
 		}
-		facts[configured.namespace] = value
+		merged, ok := facts[configured.namespace].(map[string]any)
+		if !ok {
+			merged = map[string]any{}
+			facts[configured.namespace] = merged
+		}
+		for key, fact := range value {
+			if _, exists := merged[key]; exists {
+				return nil, fmt.Errorf("fact namespace %q contains duplicate key %q", configured.namespace, key)
+			}
+			merged[key] = fact
+		}
 	}
 	document["facts"] = facts
 
@@ -428,7 +439,11 @@ func PolicyMiddleware(expression Node, options ...MiddlewareOption) Middleware {
 			case truthTrue:
 				next.ServeHTTP(w, request)
 			case truthFalse:
-				writeJSONErr(w, http.StatusForbidden, config.deniedMessage)
+				message := verdict.reason
+				if message == "" {
+					message = config.deniedMessage
+				}
+				writeJSONErr(w, http.StatusForbidden, message)
 			default:
 				// truthError, and deliberately also any truth value a future
 				// change adds: an undecidable policy must fail closed rather

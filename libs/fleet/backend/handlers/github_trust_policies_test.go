@@ -5,17 +5,26 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"syscall"
 	"testing"
 	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/githubtrust"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type fakeGitHubTrustStore struct {
+	listContext      context.Context
+	createContext    context.Context
+	getContext       context.Context
+	updateContext    context.Context
+	deleteContext    context.Context
 	listByOwner      []*githubtrust.Policy
 	createInput      *githubtrust.Policy
 	updateInput      *githubtrust.Policy
@@ -31,10 +40,11 @@ type fakeGitHubTrustStore struct {
 	resolveResult    []*githubtrust.Policy
 	resolveErr       error
 	resolvedRepoName string
+	resolveContext   context.Context
 }
 
 func (f *fakeGitHubTrustStore) List(ctx context.Context, ownerSub string) ([]*githubtrust.Policy, error) {
-	_ = ctx
+	f.listContext = ctx
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -44,7 +54,7 @@ func (f *fakeGitHubTrustStore) List(ctx context.Context, ownerSub string) ([]*gi
 }
 
 func (f *fakeGitHubTrustStore) Create(ctx context.Context, policy *githubtrust.Policy) error {
-	_ = ctx
+	f.createContext = ctx
 	if f.createErr != nil {
 		return f.createErr
 	}
@@ -54,7 +64,7 @@ func (f *fakeGitHubTrustStore) Create(ctx context.Context, policy *githubtrust.P
 }
 
 func (f *fakeGitHubTrustStore) Get(ctx context.Context, ownerSub, id string) (*githubtrust.Policy, error) {
-	_ = ctx
+	f.getContext = ctx
 	_ = ownerSub
 	_ = id
 	if f.getErr != nil {
@@ -68,7 +78,7 @@ func (f *fakeGitHubTrustStore) Get(ctx context.Context, ownerSub, id string) (*g
 }
 
 func (f *fakeGitHubTrustStore) Update(ctx context.Context, policy *githubtrust.Policy) error {
-	_ = ctx
+	f.updateContext = ctx
 	if f.updateErr != nil {
 		return f.updateErr
 	}
@@ -78,7 +88,7 @@ func (f *fakeGitHubTrustStore) Update(ctx context.Context, policy *githubtrust.P
 }
 
 func (f *fakeGitHubTrustStore) Delete(ctx context.Context, ownerSub, id string) (bool, error) {
-	_ = ctx
+	f.deleteContext = ctx
 	f.deleteOwner = ownerSub
 	f.deleteID = id
 	if f.deleteErr != nil {
@@ -88,7 +98,7 @@ func (f *fakeGitHubTrustStore) Delete(ctx context.Context, ownerSub, id string) 
 }
 
 func (f *fakeGitHubTrustStore) ResolveByRepository(ctx context.Context, repository string) ([]*githubtrust.Policy, error) {
-	_ = ctx
+	f.resolveContext = ctx
 	f.resolvedRepoName = repository
 	if f.resolveErr != nil {
 		return nil, f.resolveErr
@@ -227,5 +237,206 @@ func authConfigForHandlers() config.AuthConfiguration {
 		GitHubOIDCIssuer:          "https://token.actions.githubusercontent.com",
 		GitHubOIDCAudience:        "fleets",
 		GitHubOIDCLegacyAudiences: []string{"cyclops-cs"},
+	}
+}
+
+func TestGitHubTrustPoliciesUseBoundedDatabaseContext(t *testing.T) {
+	policy := &githubtrust.Policy{
+		ID:                "policy-1",
+		OwnerSub:          "user-123",
+		Name:              "ci",
+		Repository:        "trycua/cloud",
+		AllowedNamespaces: []string{"ns-a"},
+		Enabled:           true,
+		CreatedAt:         time.Date(2026, 6, 26, 10, 0, 0, 0, time.UTC),
+	}
+	tests := []struct {
+		name    string
+		request *http.Request
+		call    func(Handlers, http.ResponseWriter, *http.Request)
+		context func(*fakeGitHubTrustStore) context.Context
+	}{
+		{"list", httptest.NewRequest(http.MethodGet, "/api/github-trust-policies", nil), Handlers.ListGitHubTrustPolicies, func(store *fakeGitHubTrustStore) context.Context { return store.listContext }},
+		{"create", httptest.NewRequest(http.MethodPost, "/api/github-trust-policies", bytes.NewBufferString(`{"name":"ci","repository":"trycua/cloud","allowed_namespaces":["ns-a"],"enabled":true}`)), Handlers.CreateGitHubTrustPolicy, func(store *fakeGitHubTrustStore) context.Context { return store.createContext }},
+		{"update", httptest.NewRequest(http.MethodPatch, "/api/github-trust-policies/policy-1", bytes.NewBufferString(`{"enabled":false}`)), Handlers.UpdateGitHubTrustPolicy, func(store *fakeGitHubTrustStore) context.Context { return store.updateContext }},
+		{"delete", httptest.NewRequest(http.MethodDelete, "/api/github-trust-policies/policy-1", nil), Handlers.DeleteGitHubTrustPolicy, func(store *fakeGitHubTrustStore) context.Context { return store.deleteContext }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeGitHubTrustStore{getResult: policy, deleteFound: true}
+			request := withUser(test.request, &auth.User{ID: "user-123", AZP: "cyclops-cs-spa"})
+			if test.name == "update" || test.name == "delete" {
+				request.SetPathValue("id", "policy-1")
+			}
+			response := httptest.NewRecorder()
+			start := time.Now()
+
+			test.call(Handlers{GitHubTrustPolicies: store}, response, request)
+
+			assertBoundedDatabaseContext(t, test.context(store), start)
+			if test.name == "update" {
+				assertBoundedDatabaseContext(t, store.getContext, start)
+			}
+		})
+	}
+}
+
+func assertBoundedDatabaseContext(t *testing.T, ctx context.Context, start time.Time) {
+	t.Helper()
+	if ctx == nil {
+		t.Fatal("store context was not captured")
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("store context has no deadline")
+	}
+	if deadline.Before(start) {
+		t.Fatalf("deadline = %s, before test start %s", deadline, start)
+	}
+	if deadline.After(start.Add(databaseRequestTimeout + time.Second)) {
+		t.Fatalf("deadline = %s, want no later than %s", deadline, start.Add(databaseRequestTimeout+time.Second))
+	}
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatalf("context error after handler returned = %v, want context canceled", ctx.Err())
+	}
+}
+
+func TestGitHubTrustResolverUsesBoundedDatabaseContext(t *testing.T) {
+	store := &fakeGitHubTrustStore{}
+	resolver := NewGitHubTrustResolver(store)
+	start := time.Now()
+
+	if _, err := resolver.ResolveGitHubTrustPolicies(context.Background(), "trycua/cloud"); err != nil {
+		t.Fatalf("resolve github trust policies: %v", err)
+	}
+
+	assertBoundedDatabaseContext(t, store.resolveContext, start)
+}
+
+func TestGitHubTrustResolverHonorsExistingDatabaseDeadline(t *testing.T) {
+	store := &fakeGitHubTrustStore{}
+	resolver := NewGitHubTrustResolver(store)
+	parent, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
+	defer cancel()
+	wantDeadline, ok := parent.Deadline()
+	if !ok {
+		t.Fatal("parent context has no deadline")
+	}
+
+	if _, err := resolver.ResolveGitHubTrustPolicies(parent, "trycua/cloud"); err != nil {
+		t.Fatalf("resolve github trust policies: %v", err)
+	}
+
+	gotDeadline, ok := store.resolveContext.Deadline()
+	if !ok {
+		t.Fatal("resolver context has no deadline")
+	}
+	if !gotDeadline.Equal(wantDeadline) {
+		t.Fatalf("resolver deadline = %s, want parent deadline %s", gotDeadline, wantDeadline)
+	}
+}
+
+func TestGitHubTrustResolverNormalizesDatabaseFailures(t *testing.T) {
+	store := &fakeGitHubTrustStore{resolveErr: context.DeadlineExceeded}
+	resolver := NewGitHubTrustResolver(store)
+
+	_, err := resolver.ResolveGitHubTrustPolicies(context.Background(), "trycua/cloud")
+	if !errors.Is(err, auth.ErrDatabaseUnavailable) {
+		t.Fatalf("resolve error = %v, want database unavailable sentinel", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("resolve error = %v, want original deadline error", err)
+	}
+}
+
+func TestGitHubTrustResolverClassifiesImmediateNetworkFailures(t *testing.T) {
+	connectionRefused := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	store := &fakeGitHubTrustStore{resolveErr: connectionRefused}
+	resolver := NewGitHubTrustResolver(store)
+
+	_, err := resolver.ResolveGitHubTrustPolicies(context.Background(), "trycua/cloud")
+	if !errors.Is(err, auth.ErrDatabaseUnavailable) {
+		t.Fatalf("resolve error = %v, want database unavailable sentinel", err)
+	}
+	if !errors.Is(err, connectionRefused) {
+		t.Fatalf("resolve error = %v, want original connection error", err)
+	}
+}
+
+func TestGitHubTrustResolverDoesNotClassifyPostgresErrorsAsUnavailable(t *testing.T) {
+	postgresError := &pgconn.PgError{Code: "42501", Message: "permission denied"}
+	store := &fakeGitHubTrustStore{resolveErr: postgresError}
+	resolver := NewGitHubTrustResolver(store)
+
+	_, err := resolver.ResolveGitHubTrustPolicies(context.Background(), "trycua/cloud")
+	if errors.Is(err, auth.ErrDatabaseUnavailable) {
+		t.Fatalf("resolve error = %v, must not be database unavailable", err)
+	}
+}
+
+func TestGitHubTrustPolicies_DatabaseFailuresReturnServiceUnavailable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "unavailable", err: auth.ErrDatabaseUnavailable},
+		{name: "deadline", err: context.DeadlineExceeded},
+		{name: "canceled", err: context.Canceled},
+		{name: "connection refused", err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeGitHubTrustStore{listErr: test.err}
+			h := Handlers{GitHubTrustPolicies: store}
+			request := withUser(httptest.NewRequest(http.MethodGet, "/api/github-trust-policies", nil), &auth.User{ID: "user-123"})
+			response := httptest.NewRecorder()
+
+			h.ListGitHubTrustPolicies(response, request)
+
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestGitHubTrustPolicies_PostgresErrorsRemainInternalServerErrors(t *testing.T) {
+	store := &fakeGitHubTrustStore{listErr: &pgconn.PgError{Code: "42501", Message: "permission denied"}}
+	h := Handlers{GitHubTrustPolicies: store}
+	request := withUser(httptest.NewRequest(http.MethodGet, "/api/github-trust-policies", nil), &auth.User{ID: "user-123"})
+	response := httptest.NewRecorder()
+
+	h.ListGitHubTrustPolicies(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestUpdateGitHubTrustPolicySharesDatabaseBudget(t *testing.T) {
+	policy := &githubtrust.Policy{
+		ID: "policy-1", OwnerSub: "user-123", Name: "ci", Repository: "trycua/cloud",
+		AllowedNamespaces: []string{"ns-a"}, Enabled: true,
+	}
+	store := &fakeGitHubTrustStore{getResult: policy}
+	h := Handlers{GitHubTrustPolicies: store}
+	request := withUser(httptest.NewRequest(http.MethodPatch, "/api/github-trust-policies/policy-1", bytes.NewBufferString(`{"enabled":false}`)), &auth.User{ID: "user-123"})
+	request.SetPathValue("id", "policy-1")
+	response := httptest.NewRecorder()
+
+	h.UpdateGitHubTrustPolicy(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	getDeadline, getOK := store.getContext.Deadline()
+	updateDeadline, updateOK := store.updateContext.Deadline()
+	if !getOK || !updateOK {
+		t.Fatalf("deadlines get=%t update=%t, want both", getOK, updateOK)
+	}
+	if !getDeadline.Equal(updateDeadline) {
+		t.Fatalf("deadlines get=%s update=%s, want one shared budget", getDeadline, updateDeadline)
 	}
 }

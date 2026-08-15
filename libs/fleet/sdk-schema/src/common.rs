@@ -67,6 +67,10 @@ pub(crate) fn default_memory() -> Option<String> {
     Some("4Gi".into())
 }
 
+pub(crate) fn default_nested_virtualization() -> Option<bool> {
+    Some(false)
+}
+
 pub(crate) fn default_firmware() -> Option<Firmware> {
     Some(Firmware::Bios)
 }
@@ -250,6 +254,13 @@ pub struct VmTemplate {
     #[schemars(schema_with = "firmware_schema")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub firmware: Option<Firmware>,
+    #[schemars(
+        default = "default_nested_virtualization",
+        description = "Enable nested KVM by setting domain.cpu.model to host-passthrough"
+    )]
+    #[schemars(schema_with = "bool_schema")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nested_virtualization: Option<bool>,
     #[schemars(
         description = "Optional KubeVirt readinessProbe/livenessProbe for the VMI, gating ready on the guest actually serving."
     )]

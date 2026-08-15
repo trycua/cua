@@ -215,6 +215,9 @@ func sinkNode(n Node, model costModel) (Node, cost) {
 	case AnyNode:
 		children, lowest := sinkChildren(node.Children, model)
 		return AnyNode{Children: children}, lowest
+	case BecauseNode:
+		child, childCost := sinkNode(node.Child, model)
+		return BecauseNode{Child: child, Reason: node.Reason}, childCost
 	}
 	// An unknown node kind is not something to guess a cost for. cost{} is the
 	// cheapest value, so it sorts first and is evaluated first — and Compile

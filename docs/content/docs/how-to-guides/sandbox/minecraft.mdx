@@ -1,0 +1,502 @@
+---
+title: Run Minecraft in a Windows sandbox
+description: Boot a Windows sandbox, install Minecraft Java Edition, and drive it with an agent through the cua-driver MCP server running inside the sandbox.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Minecraft exercises almost everything a Windows sandbox can do: it needs internet access, a Java runtime, working OpenGL, and a GUI that only clicks can drive. This guide boots a Windows sandbox, installs Minecraft Java Edition, and hands it to an agent that talks to **cua-driver's MCP server inside the sandbox** — the same loop against a local sandbox and against Fleet.
+
+## Before you start
+
+- **cua-sandbox 0.3.3 or newer.** Windows on Fleet needs 0.3.0, `Image.expose()` on the local QEMU runtime landed in 0.3.1, the `sb.exposed_ports` this guide reads the forwarded port from landed in 0.3.2, and 0.3.3 brought both `Image.from_registry(..., os_type=...)` and the pull-secret fix that lets Fleet boot an image from a registry outside its own allowlist — which the containerDisk section below needs.
+- **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright. The Fleet path runs there instead, including the game, with the one extra environment variable described in the Fleet section below.
+- **A Microsoft account that owns Minecraft Java Edition.** Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
+- **A vision-capable LLM endpoint** for the agent loop.
+
+## Boot a Windows sandbox
+
+`Image.windows()` resolves to a pinned Windows Server 2022 containerDisk. Three things get added on top of the defaults:
+
+- **`.expose(3000)`** publishes cua-driver's MCP server, which already runs inside the guest, so the agent can reach it.
+- **A second network interface.** The bare-metal runtime attaches its NIC with `restrict=on`, which isolates the guest. `sb.shell.run()` still works over the forwarded port, but nothing inside Windows can reach the internet — and Minecraft needs to.
+- **`-cpu host`.** The default `qemu64` model is too thin for a software OpenGL driver: Minecraft creates its window and then dies while loading resources, with no Java exception and no crash log. The last `-cpu` on the command line wins, so appending it is enough.
+
+```python
+import asyncio
+from cua import Image, QEMURuntime, Sandbox
+
+EXTRA_ARGS = [
+    # a second, unrestricted user-mode NIC — the default one is restrict=on
+    '-netdev', 'user,id=net1,net=10.0.3.0/24,host=10.0.3.2,dns=10.0.3.3',
+    '-device', 'virtio-net-pci,netdev=net1,mac=52:55:00:d1:55:02',
+    # a CPU the software OpenGL driver can actually use
+    '-cpu', 'host',
+]
+
+async def main():
+    sb = await Sandbox.create(
+        Image.windows().expose(3000),
+        name='mc-win',
+        local=True,
+        runtime=QEMURuntime(
+            mode='bare-metal',
+            cpu_count=12,
+            memory_mb=16384,
+            extra_args=EXTRA_ARGS,
+        ),
+    )
+    mcp_port = sb.exposed_ports[3000]
+    print(f'cua-driver MCP on http://127.0.0.1:{mcp_port}/mcp')
+    await sb.disconnect()  # the sandbox keeps running
+
+asyncio.run(main())
+```
+
+A warm boot takes about 30 seconds. `exposed_ports` maps each exposed guest port to the host port it landed on, and `GET /healthz` on that port answers `ok` once cua-driver is up.
+
+<Callout type="warn">
+  **Read the port from `sb.exposed_ports`, not from a tunnel.** `sb.tunnel.forward(3000)` — the usual way to get a forwarded port, and the one the Fleet section below uses — raises `NotImplementedError: HTTPTransport does not support port forwarding` on the local transport. `exposed_ports` is the local equivalent: the runtime picks a free host port at boot, so the mapping is only knowable at runtime, and it is saved with the sandbox state so a later `Sandbox.connect()` can read it back. On Fleet the property is empty, because Fleet publishes services instead — use `tunnel.forward()` there.
+</Callout>
+
+<Callout type="warn">
+  Give the second NIC its own subnet. Both user-mode networks default to `10.0.2.0/24` and both offer the guest `10.0.2.15`, so Windows drops one interface to a `169.254.x.x` link-local address with no gateway and no working DNS.
+</Callout>
+
+Confirm the guest really has internet before installing anything.
+
+```python
+async with Sandbox.connect('mc-win', local=True) as sb:
+    check = await sb.shell.run(
+        'powershell -Command "(Invoke-WebRequest -UseBasicParsing '
+        'https://piston-meta.mojang.com/mc/game/version_manifest.json).StatusCode"'
+    )
+    print(check.stdout)  # 200
+```
+
+## Install a launcher and a software OpenGL driver
+
+The sandbox GPU is the *Microsoft Basic Display Adapter*, which offers OpenGL 1.1. Minecraft 1.17 and later need OpenGL 3.2, so the game needs Mesa3D's `opengl32.dll` (llvmpipe), which implements OpenGL in software.
+
+Both downloads below are **MinGW** builds on purpose. The MSVC builds of Prism Launcher and Mesa both depend on the Visual C++ redistributable, which Windows Server 2022 does not ship: Prism then exits silently, and Mesa's DLL fails to load so Windows quietly falls back to the system `opengl32.dll`.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+New-Item -ItemType Directory -Force -Path C:\mc | Out-Null
+
+# Prism Launcher — signs in with Microsoft device authorization, which needs no browser
+Invoke-WebRequest -UseBasicParsing -OutFile C:\mc\prism.zip `
+  'https://github.com/PrismLauncher/PrismLauncher/releases/download/11.0.3/PrismLauncher-Windows-MinGW-w64-Portable-11.0.3.zip'
+Expand-Archive C:\mc\prism.zip -DestinationPath C:\mc\prismw -Force
+
+# 7-Zip, because Mesa ships as .7z
+Invoke-WebRequest -UseBasicParsing -OutFile C:\mc\7z.msi 'https://www.7-zip.org/a/7z2408-x64.msi'
+Start-Process msiexec.exe -ArgumentList '/i','C:\mc\7z.msi','/qn' -Wait
+
+# Mesa3D software OpenGL
+Invoke-WebRequest -UseBasicParsing -OutFile C:\mc\mesa.7z `
+  'https://github.com/pal1000/mesa-dist-win/releases/download/26.1.6/mesa3d-26.1.6-release-mingw.7z'
+& 'C:\Program Files\7-Zip\7z.exe' x C:\mc\mesa.7z -oC:\mc\mesamw -y | Out-Null
+
+Start-Process -FilePath C:\mc\prismw\prismlauncher.exe -WorkingDirectory C:\mc\prismw
+```
+
+Save that as `setup.ps1`, push it into the sandbox, and run it. It downloads roughly 100 MB, so allow a generous timeout.
+
+```python
+from pathlib import Path
+
+async with Sandbox.connect('mc-win', local=True) as sb:
+    await sb.shell.run('if not exist C:\\mc mkdir C:\\mc')
+    await sb.files.write_text('C:\\mc\\setup.ps1', Path('setup.ps1').read_text())
+    result = await sb.shell.run(
+        'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\mc\\setup.ps1',
+        timeout=1800,
+    )
+    print(result.stdout)
+```
+
+## Sign in and create an instance
+
+Prism opens a **Quick Setup** wizard on first run. Screenshot the sandbox, click through it, and stop at the account page.
+
+```python
+async with Sandbox.connect('mc-win', local=True) as sb:
+    Path('sandbox.png').write_bytes(await sb.screenshot())   # look at it
+    await sb.mouse.click(888, 678)                           # Next
+```
+
+1. Work through the wizard to **Accounts → Add Microsoft**. Prism shows a QR code and an eight-character device code.
+2. Read the code off a screenshot, open `https://www.microsoft.com/link` in your own browser, enter it, and approve the sign-in. The account then appears with status *Ready*.
+3. Click **Add Instance**, search for a version such as `1.20.1`, and click **OK**. Prism downloads the client jar and assets.
+
+<Callout type="info">
+  Device codes expire after about fifteen minutes, but Prism issues a fresh one automatically and keeps polling, so the dialog can be left open. Take a new screenshot to read the current code rather than reusing an old one.
+</Callout>
+
+## Point the software driver at the launcher's Java
+
+Click **Launch** once. Prism downloads its own Java runtime and the game fails with `GLFW error 65542: WGL: The driver does not appear to support OpenGL` — expected, because Mesa is not in place yet.
+
+Prism may keep using the runtime it downloaded even if you set `JavaPath` in its config, so copy the Mesa DLLs next to *every* `javaw.exe` under the install root. Windows loads `opengl32.dll` from the running executable's directory before the system directory, which is what makes this work.
+
+```powershell
+$dirs = Get-ChildItem C:\mc -Recurse -Filter javaw.exe -ErrorAction SilentlyContinue |
+  Select-Object -ExpandProperty DirectoryName -Unique
+foreach ($d in $dirs) {
+  Copy-Item C:\mc\mesamw\x64\opengl32.dll, C:\mc\mesamw\x64\libgallium_wgl.dll $d -Force
+  Write-Output "mesa -> $d"
+}
+```
+
+Deliver it the same way as the first script.
+
+```python
+async with Sandbox.connect('mc-win', local=True) as sb:
+    await sb.files.write_text('C:\\mc\\mesa.ps1', Path('mesa.ps1').read_text())
+    result = await sb.shell.run(
+        'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\mc\\mesa.ps1', timeout=600,
+    )
+    print(result.stdout)   # mesa -> C:\mc\prismw\java\java-runtime-gamma\bin
+```
+
+Click **Launch** again. The Minecraft title screen appears after a minute or two.
+
+## Drive it with an agent over MCP
+
+The sandbox already runs **cua-driver**, which serves an MCP endpoint on guest port 3000 — that is what `.expose(3000)` published. The agent is a small loop: list the MCP tools, hand them to a model as ordinary function tools, call whichever one it picks, feed the result back.
+
+Three things about cua-driver's tools shape the loop:
+
+- **A YAML policy governs which tools may actually run, and `list_tools()` does not reflect it.** Every cua-driver release to date advertises the full surface and refuses out-of-policy calls only when you make them, with `Permission denied: user policy: tool 'X' is not allowed by the YAML policy`. So the listing is a menu of what exists, not of what you can call. Here that surface was 55 tools, identically over the local and Fleet transports: `get_desktop_state`, `list_apps`, `list_windows`, `get_window_state`, `click`, `double_click`, `type_text`, `press_key`, `hotkey`, `launch_app`, `bring_to_front`, `scroll` and `drag` ran, while `get_screen_size`, `get_accessibility_tree`, `get_config`, `check_permissions`, `get_cursor_position` and `zoom` were refused. Treat that split as something to probe on your own image rather than a fixed list — a denial arrives before the tool executes, so probing is cheap. Later drivers filter the listing through the policy, at which point the two finally agree.
+- **Clicks are addressed to an application, not the screen.** `click(pid=..., x=..., y=...)` targets a window belonging to that pid, which you find with `list_windows`. Add `delivery_mode='foreground'` when a background-delivered click does not land.
+- **There is no wait tool.** The loop waits by calling `get_desktop_state` again, so say that in the system prompt or the model will invent something worse.
+
+```python
+import asyncio, json, os
+import litellm
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+
+SYSTEM = """You operate a computer through the provided tools.
+
+The desktop is Windows at 1280x800. Work in a loop: look at the screen with
+get_desktop_state, decide one action, call one tool, then look again.
+
+  * click / type_text / press_key act on a specific application, addressed by
+    `pid`. Use list_windows to find the pid, then pass pid with x/y.
+  * There is no wait tool. If something is still loading, call
+    get_desktop_state again — repeated looks are how you wait.
+
+Call exactly one tool per turn. When the task is complete, reply DONE."""
+
+async def complete(**kwargs):
+    """Two workarounds for the endpoint used here — yours may need neither.
+
+    It is streaming-only (a plain request comes back with empty output), and it
+    rejects role=system, so the system prompt travels as the first user turn.
+    """
+    messages, system = [], []
+    for m in kwargs['messages']:
+        (system if m.get('role') == 'system' else messages).append(m)
+    if system:
+        text = '\n\n'.join(m['content'] for m in system)
+        messages = [{'role': 'user', 'content': text}] + messages
+    kwargs['messages'] = messages
+
+    stream = await litellm.acompletion(**kwargs, stream=True)
+    chunks = [c async for c in stream]
+    return litellm.stream_chunk_builder(chunks, messages=messages)
+
+def prune_images(messages, keep=3):
+    """Each get_desktop_state returns a full screenshot; keep only the newest."""
+    seen = 0
+    for msg in reversed(messages):
+        if not isinstance(msg.get('content'), list):
+            continue
+        for part in msg['content']:
+            if part.get('type') == 'image_url':
+                seen += 1
+                if seen > keep:
+                    part.clear()
+                    part.update({'type': 'text', 'text': '[older screenshot dropped]'})
+    return messages
+
+async def run(mcp_url, task, model, max_steps=60, headers=None):
+    client = Client(StreamableHttpTransport(mcp_url, headers=headers))
+    async with client:
+        # list_tools() returned 55 tools on the image used here, most of them
+        # browser and recording plumbing this task never needs. Hand the model
+        # only what the job requires: dozens of schemas is a lot of context to
+        # spend, and a shorter menu is a shorter list of ways to go wrong. Worth
+        # doing whether or not your driver already filters denied tools out.
+        wanted = {
+            'get_desktop_state', 'list_windows', 'list_apps', 'click',
+            'double_click', 'type_text', 'press_key', 'hotkey', 'launch_app',
+            'bring_to_front', 'scroll',
+        }
+        mcp_tools = [t for t in await client.list_tools() if t.name in wanted]
+        tools = [{
+            'type': 'function',
+            'function': {
+                'name': t.name,
+                'description': (t.description or '')[:800],
+                'parameters': t.inputSchema or {'type': 'object', 'properties': {}},
+            },
+        } for t in mcp_tools]
+
+        messages = [{'role': 'system', 'content': SYSTEM},
+                    {'role': 'user', 'content': task}]
+
+        for _ in range(max_steps):
+            resp = await complete(
+                model=model, messages=prune_images(messages), tools=tools,
+                tool_choice='auto', temperature=0.0,
+            )
+            msg = resp.choices[0].message
+            messages.append(msg.model_dump())
+            if not msg.tool_calls:
+                break                      # model said DONE
+
+            for call in msg.tool_calls:
+                args = json.loads(call.function.arguments or '{}')
+                result = await client.call_tool(call.function.name, args,
+                                                raise_on_error=False)
+                text = ''.join(getattr(b, 'text', '') for b in (result.content or []))
+                messages.append({'role': 'tool', 'tool_call_id': call.id,
+                                 'name': call.function.name, 'content': text[:1500]})
+
+                shot = next((b.data for b in (result.content or [])
+                             if getattr(b, 'data', None)), None)
+                if shot:
+                    messages.append({'role': 'user', 'content': [
+                        {'type': 'text', 'text': 'screenshot after that action:'},
+                        {'type': 'image_url',
+                         'image_url': {'url': f'data:image/png;base64,{shot}'}},
+                    ]})
+```
+
+Point it at the exposed port and give it the task.
+
+```python
+TASK = """
+Prism Launcher is open, with a Minecraft instance and a signed-in account.
+Select the instance and click Launch. Minecraft uses a software renderer, so the
+window takes minutes to appear and repaints slowly — keep calling
+get_desktop_state to watch it, and do not restart anything. On the title screen
+click Singleplayer, then Create New World, then Create New World again. Stop as
+soon as you are inside the world (terrain in first person, hotbar and hearts
+visible) and reply DONE. Never press Escape while Minecraft is in the foreground.
+"""
+
+asyncio.run(run(f'http://127.0.0.1:{mcp_port}/mcp', TASK, 'your-model'))
+```
+
+Because the MCP tools are presented as **ordinary function tools**, this works against endpoints that reject the provider-native computer-use tool types. That is not hypothetical: on the gateway used here, the same model with the same image in the same second returned 200 for an ordinary function tool and 403 for Anthropic's `computer_20250124`, and `computer_use_preview` was refused outright.
+
+The `complete()` wrapper above exists only for that gateway — it is streaming-only, and it rejects `role: system`. Against an endpoint without those quirks, call `litellm.acompletion` directly.
+
+A full run — launcher to standing in a new world — took 52 steps locally and 51 on Fleet, roughly twenty minutes, most of it waiting on the software renderer. Expect the model to spend long stretches doing nothing but re-screenshotting.
+
+<Callout type="info">
+  Give the model help with coordinates. A vision model without grounding guesses pixel positions and misses: in one run an ungrounded model clicked at (1226, 210) four times, nowhere near the button it wanted, then declared it had no desktop tool. cua-driver's `list_windows` and pid-scoped clicks avoid most of this, and a grounding pass over the screenshot removes the rest.
+</Callout>
+
+## Publish the installed sandbox as a containerDisk
+
+Everything above is a one-time cost, and none of it has to be repeated — least of all on Fleet, where a manual GUI install is the least pleasant part of this guide. A cua sandbox boots from a **containerDisk**: an OCI image whose entire content is one file at `/disk/disk.img`. Push the disk you just built as one, and every later sandbox, local or Fleet, starts with Prism, Java, Mesa and the game files already in place.
+
+Despite the name, `/disk/disk.img` is a **qcow2**, not a raw image. The puller looks for exactly `disk/disk.img` or `./disk/disk.img` inside the layer tarball and caches whatever it finds under `~/.cua/cua-sandbox/images/container-disks/`. Nothing reads the extension — it is a KubeVirt convention.
+
+`Sandbox.snapshot()` is a different feature and not a substitute: it forks a *cloud* sandbox in place, raises `NotImplementedError: Snapshots are only supported for cloud sandboxes` on the local runtime, and returns an `Image` you cannot push or pull.
+
+<Callout type="error">
+  **Build the image before you sign in, never after.** A disk that has ever held a signed-in Minecraft account cannot be reliably cleaned, and a containerDisk you publish is a disk anyone can pull.
+
+  Deleting Prism's `accounts.json` is not enough, and neither is deleting it and then zero-filling the volume's free space. Both were done to a disk where the game had been played, and the Microsoft profile name, the profile UUID and a full Mojang access-token JWT were still recoverable from the exported image. Mapping the byte offsets back to files with `ntfscluster` put them in three places:
+
+  - **`pagefile.sys`** — most of them. The JVM heap, swapped out, holding the `--accessToken` command line and raw HTTPS response bodies from `api.minecraftservices.com`. Free-space zeroing cannot reach it, because the pagefile is an allocated file.
+  - **File slack inside a live log.** Clusters allocated to `instances/1.20.1/minecraft/logs/latest.log` past its valid-data length still held `Setting user: <name>` from a longer earlier run. This is also why searching from inside the guest proves nothing: `findstr` stops at end-of-file, the disk image does not.
+  - **Unallocated clusters the zero-fill missed**, because NTFS does not reuse every freed cluster when you write one large file.
+
+  No scrub turns "my search found nothing" into "no credential is present". Build the image without ever signing in and the question does not arise — and signing in is the reader's step anyway, since every reader needs their own Microsoft account.
+</Callout>
+
+### Build the image without an account
+
+Follow the walkthrough above but **skip the sign-in section entirely**. Prism's Quick Setup ends on an *Add Microsoft account* page that also has a **Finish** button; click Finish.
+
+Two steps that normally happen as a side effect of signing in and launching then have to be done explicitly:
+
+- **Create the instance.** *Add Instance → Custom*, search `1.20.1`, **OK**. Prism downloads the client jar, libraries and assets with no account attached.
+- **Fetch Java without launching.** The walkthrough gets Prism's Java runtime by clicking Launch, which needs an account. Use *Settings → Java → Installations → **Download*** instead and pick a Mojang **Java 17** runtime — `java-runtime-gamma` `17.0.15` for 1.20.1. It lands in `C:\mc\prismw\java\java-runtime-gamma\bin\`, which is where the Mesa script then copies `opengl32.dll`. Run that script *after* this, not before.
+
+Then close the launcher and make two edits. Prism rewrites its config on exit, so doing this while it is running achieves nothing.
+
+```powershell
+# Prism auto-sizes -Xmx from the *build* host's RAM. A Fleet sandbox has 4 GB.
+(Get-Content C:\mc\prismw\prismlauncher.cfg) -replace '^MaxMemAlloc=.*','MaxMemAlloc=2048' |
+  Set-Content C:\mc\prismw\prismlauncher.cfg
+# The installers are dead weight once unpacked — 243 MB of them.
+Remove-Item C:\mc\prism.zip, C:\mc\mesa.7z, C:\mc\7z.msi -Force
+```
+
+<Callout type="info">
+  Prism refuses to add an **offline** account until a Microsoft account that owns Minecraft has been added at least once — *"You must add a Microsoft account that owns Minecraft before you can add an offline account."* So there is no way to smoke-test the game on the finished image without signing into it, which is exactly what you are avoiding. Test the game on the sandbox you built it from, before the export.
+</Callout>
+
+### Shut the guest down from inside
+
+<Callout type="warn">
+  **Do not stop the sandbox with `sb.stop()`.** The QEMU runtime treats the session disk as ephemeral — `runtime.start()` reads `opts.pop("ephemeral", True)` and `Sandbox.create()` never passes the flag — so `stop()` unlinks `~/.cua/cua-sandbox/images/sessions/<name>.qcow2`, which is the disk you just spent an hour building. Starting the same sandbox name again is no safer: `create_session_disk()` unlinks and recreates the overlay every time.
+
+  Shut Windows down from inside instead, and wait for the QEMU process to exit before touching the file.
+
+  ```python
+  async with Sandbox.connect('mc-win', local=True) as sb:
+      await sb.shell.run('shutdown /s /t 0')
+  ```
+</Callout>
+
+### Export the disk
+
+The session disk is a qcow2 overlay on the base containerDisk. `qemu-img convert` flattens the chain and `-c` compresses the result, so one command produces a standalone image.
+
+```bash
+qemu-img convert -O qcow2 -c ~/.cua/cua-sandbox/images/sessions/mc-win.qcow2 disk.img
+```
+
+Expect it to be slow and CPU-bound rather than I/O-bound — `-c` is single-threaded zlib. For the image built here it took **8 min 44 s** and produced **7,697,072,128 bytes (7.14 GiB)** from a 3.40 GB overlay on the 5.62 GiB base disk, 64 GiB virtual. `qemu-img` itself needs almost nothing resident — under 20 MB — so the size of the host does not matter.
+
+<Callout type="info">
+  Zero-filling the volume's free space from inside Windows before shutting down makes the export smaller, but only if QEMU is told to discard the zeroes instead of storing them. Attach the disk with `discard=unmap,detect-zeroes=unmap` and the writes are dropped, so the source qcow2 *shrinks* rather than growing toward its 64 GiB virtual size.
+
+  ```bash
+  -drive file=<session>.qcow2,format=qcow2,if=virtio,discard=unmap,detect-zeroes=unmap
+  ```
+
+  Inside the guest, write zeroes to a file until the volume is nearly full and then delete it. Leave about a gigabyte of headroom; filling `C:` completely destabilises Windows. Zeroing roughly 46 GB took under two minutes on the disks here, because QEMU drops the writes rather than committing them.
+</Callout>
+
+### Build the OCI image and push it
+
+The Dockerfile is two lines, and `FROM scratch` is not an optimisation — a containerDisk must contain nothing else.
+
+```dockerfile
+FROM scratch
+ADD disk.img /disk/disk.img
+```
+
+```bash
+docker buildx build --provenance=false --sbom=false \
+  -t ghcr.io/<you>/minecraft-workspace:1.20.1 --push .
+```
+
+That took **6 min 28 s** here — 3 min 48 s exporting the layer and 1 min 57 s pushing it. The layer came out at 7,631,366,006 bytes as `application/vnd.oci.image.layer.v1.tar+gzip`: gzip buys essentially nothing on a qcow2 that is already zlib-compressed, so budget for pushing the full size rather than expecting the progress bar to outrun it.
+
+`--provenance=false --sbom=false` suppresses buildx's attestation manifests. With them off, buildx publishes a plain `application/vnd.oci.image.manifest.v1+json` and no image index at all, which is the simplest thing for a single-platform disk to be. cua's puller does follow an index and skips attestation children — it filters on `os == "linux"` and on the `vnd.docker.reference.type` annotation — so an index is not fatal, but there is no reason to publish one here.
+
+<Callout type="warn">
+  **A GHCR package is private when first pushed, and Fleet pulls anonymously.** Fleet's nodes have no credentials for your registry, so a private package fails there no matter how well `docker login` works on your own machine. Make the package public before testing on Fleet — *Package settings → Change visibility → Public* — and only publish an image you are willing to hand to strangers, which is what the sign-in warning above is about.
+
+  A `gh auth login` token does not carry `write:packages`. `docker login ghcr.io` still succeeds with it, and the push then fails at the very end with `denied: permission_denied: The token provided does not match expected scopes`. Run `gh auth refresh -h github.com -s write:packages` first, or use a PAT that has the scope.
+</Callout>
+
+### Boot the published image
+
+`os_type` is what selects firmware on both paths: the local runtime only looks for OVMF when it is `"windows"`, and the Fleet transport only sets `Firmware.EFI` for it. A Windows containerDisk that claims to be Linux boots SeaBIOS against a GPT/ESP disk and never reaches the readiness probe, so say which one it is:
+
+```python
+from cua import Image, QEMURuntime, Sandbox
+
+REF = 'ghcr.io/<you>/minecraft-workspace:1.20.1'
+IMAGE = Image.from_registry(REF, os_type='windows', kind='vm').expose(3000)
+```
+
+`IMAGE` is then a drop-in replacement for `Image.windows().expose(3000)` in both snippets earlier in this guide — the local `Sandbox.create(..., local=True, runtime=QEMURuntime(...))` call and the Fleet one. Nothing else changes: the same `EXTRA_ARGS` locally, the same agent loop, and on Fleet the same `GALLIUM_DRIVER=softpipe`.
+
+<Callout type="warn">
+  `sb.tunnel.forward(3000)` is not available on every Fleet path. A sandbox handed back by a pool claim carries the base `FleetTransport`, which does not implement port forwarding, and the error names the transport rather than the cause: `FleetTransport does not support port forwarding`. A sandbox created directly carries `FleetCloudTransport`, which does. If you hit it, reach the service through Fleet's proxy at `/api/svc/<namespace>/<sandbox>-port-3000/` instead.
+</Callout>
+
+Booted locally, that image printed `Image(windows/registry:latest, kind=vm, ...)`, came up on the first try, and had everything in it: `instances\1.20.1`, `java\java-runtime-gamma`, Mesa's `opengl32.dll` beside `javaw.exe`, `minecraft-1.20.1-client.jar`, `MaxMemAlloc=2048` — and `Test-Path C:\mc\prismw\accounts.json` returning `False`. Opening Prism shows the Quick Setup account page and *No accounts added!*, which is what a correctly-built image looks like.
+
+<Callout type="info">
+  Use a registry that speaks **HTTPS**. The puller goes through `oras`, which never tries plain HTTP, so a scratch `docker run registry:2` on `localhost:5000` fails with `SSLError(1, '[SSL: WRONG_VERSION_NUMBER] wrong version number')` before it ever fetches a manifest. Give the registry a certificate and point `REQUESTS_CA_BUNDLE` at the CA if you want to rehearse this locally.
+
+  Expect the first Fleet boot on a given node to be slow: it has to pull the whole image before the sandbox can start, and Fleet enforces a **300-second bind deadline** that `time_to_start=` does not extend, so a cold pull can surface as `BindDeadlineExceeded: no adoptable Sandbox within 300s`.
+
+  A second failure to expect is `403 k8s request is not allowed` on `update template`. A template can be **created but never updated**: both branches of the gateway's image policy are guarded by `input.method != "PATCH"`, so any request that takes the update path is refused, with the same opaque message you get for a disallowed image. Reusing the sandbox name guarantees it. A fresh name usually avoids it but **not reliably** — of four boots of the same image, one reused name and one fresh name both returned 403, while two other fresh names reached `READY` in 157 s and 187 s. Retry; it is intermittent, and nothing about your image changes the outcome.
+</Callout>
+
+The reader's remaining work is the part that has to be theirs: open Prism, *Accounts → Add Microsoft*, approve the device code, and click Launch.
+
+## Run the same thing on Fleet
+
+The image and the agent loop are identical on Fleet. Two things change: there is no `local=True` and no `runtime=`, and the MCP endpoint is reached through Fleet's service proxy rather than a forwarded localhost port.
+
+`.expose(3000)` becomes a Fleet **service** named `port-3000`, and `sb.tunnel.forward()` hands you its URL — the same call documented in [Forward a port from a sandbox](/how-to-guides/sandbox/tunneling), so there is nothing Fleet-specific to hand-assemble.
+
+```python
+import httpx
+from cua import Image, Sandbox
+
+sb = await Sandbox.create(Image.windows().expose(3000), name='mc-fleet', time_to_start=900)
+
+tunnel = await sb.tunnel.forward(3000)
+# https://run.cua.ai/api/svc/<namespace>/<sandbox>-port-3000/
+
+token = httpx.post(
+    'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token',
+    data={'grant_type': 'client_credentials',
+          'client_id': os.environ['CUA_CLIENT_ID'],
+          'client_secret': os.environ['CUA_CLIENT_SECRET']},
+).json()['access_token']
+
+await run(tunnel.url + 'mcp', TASK, 'your-model',
+          headers={'Authorization': f'Bearer {token}'})
+```
+
+That is the same `run()` as above, with only the URL and an auth header changed. A Fleet Windows sandbox takes about three minutes to become ready, against about thirty seconds for a warm local one, and `GET healthz` on that service URL answers `ok` when cua-driver is up.
+
+Notice there is no `-cpu host` here. That flag exists on the local path because the bare-metal runtime defaults to the thin `qemu64` model; a Fleet sandbox is provisioned for you and already reports a full host CPU — `Intel Xeon Processor (SapphireRapids)`, with AVX, AVX2 and AVX-512 all present — so there is nothing to override, and no QEMU arguments to pass.
+
+`Sandbox.create` also accepts `cpu` and `memory_mb`, but sizing a Fleet sandbox is account-dependent: passing them routes the request through a gated custom-resource path, which returned `403 create pool: k8s request is not allowed` at every size until a card-on-file requirement was lifted for the account. The default sandbox — 4 vCPU and 4 GB — is what this guide was written against, and it is enough.
+
+<Callout type="warn">
+  **On Fleet the game needs one extra environment variable: `GALLIUM_DRIVER=softpipe`.** With Mesa's default llvmpipe renderer, Minecraft dies during resource loading every time — `Process crashed with exitcode -2147024809`, no Java exception, no `hs_err` file, nothing in the Windows event log, the log simply stopping after `Reloading ResourceManager`. Switching Mesa to its `softpipe` rasteriser fixes it, and the game runs.
+
+  Set the variable in the process that launches the launcher, so the game inherits it — a machine-level variable does not reach an already-running process, and a test that silently did not apply looks exactly like a test that failed. `setup.ps1` above already started Prism without it, so close the running launcher first and start it again like this.
+
+  ```powershell
+  $env:GALLIUM_DRIVER = 'softpipe'
+  Start-Process -FilePath C:\mc\prismw\prismlauncher.exe -WorkingDirectory C:\mc\prismw
+  ```
+
+  Softpipe is a reference rasteriser with no JIT, so it is **considerably slower than llvmpipe** — allow several minutes for the title screen and longer again for world generation.
+</Callout>
+
+<Callout type="warn">
+  Use client credentials, not a `cua auth login` session token. The session token is short-lived and is held without refresh, so a long provisioning wait dies partway with `401 auth token is invalid`. Client-credential tokens expire too — the ones issued here came back with `expires_in` of 900 seconds — so a run longer than that has to re-mint the token and rebuild the MCP client.
+</Callout>
+
+What that crash is *not*, since each obvious explanation was tested and eliminated: not the Minecraft version or the Java/LWJGL generation (1.20.1 on Java 17 with LWJGL 3 and 1.12.2 on Java 8 with LWJGL 2 fail identically), not the heap (forcing Prism's auto-sized `-Xmx2717m` down to `-Xmx1024m` changed nothing), and not the size of the machine (the same local session disk rebooted with `-m 4096 -smp 4`, matching Fleet exactly, runs the game fine). Narrowing llvmpipe's vectors with `LP_NATIVE_VECTOR_WIDTH=128` did **not** help either, which argues the fault is not simply wide-vector code generation.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| QEMU refuses to start with `-cpu host` | no KVM or HVF — for example an x86_64 guest on Apple Silicon, which runs under TCG | use a host with hardware virtualisation, or the Fleet path |
+| Launcher never appears, no error | MSVC build without the VC++ redistributable | use the MinGW portable build |
+| Guest has an IP address but cannot resolve names | both user-mode NICs offered the same address | give the second NIC its own subnet |
+| `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |
+| Game exits during resource loading with no Java exception, **local** | default `qemu64` CPU model | append `-cpu host` to `extra_args` |
+| Game exits during resource loading with `exitcode -2147024809`, **Fleet** | Mesa's default llvmpipe renderer | set `GALLIUM_DRIVER=softpipe` in the process that starts the launcher, and restart the launcher if it is already running |
+| `Permission denied: user policy: tool 'X' is not allowed` | cua-driver's YAML policy refuses that tool, which `list_tools()` advertises anyway on every driver released so far | use an allowed tool — `get_desktop_state` instead of `get_screen_size`, `list_windows` instead of `get_accessibility_tree` |
+| Model replies with empty output on the first call | endpoint is streaming-only | issue `stream=True` and rebuild with `litellm.stream_chunk_builder` |
+| Sandbox from `Image.from_registry()` never becomes ready | `os_type` defaults to `"linux"`, so a Windows disk gets BIOS instead of UEFI | pass `os_type="windows", kind="vm"` (needs cua-sandbox 0.3.3; before that, `dataclasses.replace()` on the result) |
+| `SSLError(1, '[SSL: WRONG_VERSION_NUMBER] wrong version number')` while pulling | the registry speaks plain HTTP; `oras` only speaks HTTPS | give the registry a certificate, and set `REQUESTS_CA_BUNDLE` for a self-signed one |
+| `denied: permission_denied: The token provided does not match expected scopes` at the end of a push | the `gh` OAuth token carries no `write:packages` | `gh auth refresh -h github.com -s write:packages`, or use a PAT that has it |
+| Fleet cannot pull the image you just published | GHCR packages are private on first push, and Fleet pulls anonymously | make the package public |
+| The session disk vanished after a run | `stop()` unlinks the ephemeral session overlay, and starting the same name recreates it | shut the guest down from inside, and copy the qcow2 before anything else touches it |

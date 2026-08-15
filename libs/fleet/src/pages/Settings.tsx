@@ -201,7 +201,7 @@ steps:
       trap cleanup EXIT
 
       cua sb launch \\
-        296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest \\
+        public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest \\
         --name "$sandbox"
       cua sb exec "$sandbox" sh -lc 'uname -a; id; pwd'`
   return (

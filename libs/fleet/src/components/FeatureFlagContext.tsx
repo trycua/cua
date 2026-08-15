@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { fetchFeatureFlags, type FeatureFlags } from "../sdk/featureFlags"
 
-const DEFAULT_FLAGS: FeatureFlags = { admin: false, billing: false }
+const DEFAULT_FLAGS: FeatureFlags = { admin: false, billing: false, chat: false }
 
 interface FeatureFlagContextValue extends FeatureFlags {
   resolved: boolean

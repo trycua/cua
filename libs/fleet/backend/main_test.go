@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -23,7 +24,9 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/handlers"
+	"cyclops-cs-backend/statequery"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/trycua/cloud/pkg/featureflags"
@@ -51,7 +54,7 @@ func TestHealthAndReadinessRoutes(t *testing.T) {
 		statusCode int
 	}{
 		{path: "/healthz", statusCode: http.StatusOK},
-		{path: "/readyz", statusCode: http.StatusServiceUnavailable},
+		{path: "/readyz", statusCode: http.StatusOK},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			response := httptest.NewRecorder()
@@ -184,6 +187,11 @@ func TestMain(m *testing.M) {
 	}))
 	defer jwksServer.Close()
 
+	if os.Getenv("CARD_ADMISSION_ROUTER_HELPER") != "1" {
+		if err := os.Setenv("CYCLOPS_CS_REQUIRE_CARD_FOR_CUSTOM_RESOURCE_CREATION", "false"); err != nil {
+			panic(err)
+		}
+	}
 	if err := os.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`); err != nil {
 		panic(err)
 	}
@@ -242,6 +250,10 @@ func bigEndianBytes(v int) []byte {
 }
 
 type routerBillingService struct{}
+
+func (routerBillingService) AttachedCards(context.Context, string) ([]billing.SavedCard, error) {
+	return []billing.SavedCard{}, nil
+}
 
 func (routerBillingService) Summary(context.Context, string) (billing.Summary, error) {
 	return billing.Summary{}, nil
@@ -426,4 +438,292 @@ func TestK8sRouteRejectsDisallowedPoolBeforeProxy(t *testing.T) {
 	if upstreamCalled {
 		t.Fatal("disallowed pool request reached kubectl proxy")
 	}
+}
+
+func TestSwaggerIncludesChatRoutes(t *testing.T) {
+	data, err := os.ReadFile("docs/swagger.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec struct {
+		Paths map[string]map[string]struct{} `json:"paths"`
+	}
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatalf("unmarshal swagger.json: %v", err)
+	}
+	for _, tc := range []struct{ path, method string }{
+		{"/api/chat/conversations", "post"}, {"/api/chat/conversations", "get"},
+		{"/api/chat/conversations/{id}", "get"}, {"/api/chat/conversations/{id}/turns", "post"},
+	} {
+		if _, ok := spec.Paths[tc.path][tc.method]; !ok {
+			t.Fatalf("swagger.json missing %s %s", strings.ToUpper(tc.method), tc.path)
+		}
+	}
+}
+
+func TestNginxRoutesChatToBackend(t *testing.T) {
+	data, err := os.ReadFile("../nginx.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "|chat|") && !strings.Contains(string(data), "|chat)") {
+		t.Fatal("nginx.conf backend matcher does not include chat")
+	}
+}
+
+type routerCardAccounts struct{}
+
+func (routerCardAccounts) UserCreatedAt(context.Context, string) (time.Time, error) {
+	return time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC), nil
+}
+
+type routerCardBilling struct {
+	cards []billing.SavedCard
+	err   error
+	calls int
+}
+
+func (service *routerCardBilling) AttachedCards(context.Context, string) ([]billing.SavedCard, error) {
+	service.calls++
+	return service.cards, service.err
+}
+func (*routerCardBilling) Summary(context.Context, string) (billing.Summary, error) {
+	panic("unexpected Summary call")
+}
+func (*routerCardBilling) CreateSetupSession(context.Context, string, billing.SetupOptions) (string, error) {
+	panic("unexpected setup call")
+}
+func (*routerCardBilling) CreatePortalSession(context.Context, string, string) (string, error) {
+	panic("unexpected portal call")
+}
+func (*routerCardBilling) SetDefaultPaymentMethodForSetupGeneration(context.Context, string, string, string) (bool, error) {
+	panic("unexpected webhook call")
+}
+
+func TestK8sRouteRejectsCustomResourceCreateWithoutCardBeforeProxy(t *testing.T) {
+	if os.Getenv("CARD_ADMISSION_ROUTER_HELPER") != "1" {
+		command := exec.Command(os.Args[0], "-test.run=^TestK8sRouteRejectsCustomResourceCreateWithoutCardBeforeProxy$")
+		command.Env = append(os.Environ(),
+			"CARD_ADMISSION_ROUTER_HELPER=1",
+			"CYCLOPS_CS_REQUIRE_CARD_FOR_CUSTOM_RESOURCE_CREATION=true",
+		)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("enabled router subprocess failed: %v\n%s", err, output)
+		}
+		return
+	}
+
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer upstream.Close()
+	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
+
+	service := &routerCardBilling{}
+	router := setupRouter(handlers.Handlers{Billing: service, UserAccounts: routerCardAccounts{}})
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "legacy workspace pool",
+			path: "/api/k8s/apis/cua.ai/v1/namespaces/foo/osgymworkspacepools",
+			body: `{"spec":{"template":{"containerDiskImage":"public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest","imagePullSecret":"ecr-credentials"}}}`,
+		},
+		{
+			name: "native sandbox template",
+			path: "/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/foo/osgymsandboxtemplates",
+			body: `{"spec":{"vmTemplate":{"containerDiskImage":"public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest","imagePullSecret":"ecr-credentials"}}}`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, authorizedRequest(t, http.MethodPost, testCase.path, strings.NewReader(testCase.body)))
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if upstreamCalled {
+		t.Fatal("denied custom-resource create reached kubectl proxy")
+	}
+
+	service.cards = []billing.SavedCard{{ExpYear: 2099, ExpMonth: 1}}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, authorizedRequest(t, http.MethodPost, cases[0].path, strings.NewReader(cases[0].body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("valid attached card status = %d, want 201; body = %s", response.Code, response.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("allowed custom-resource create did not reach kubectl proxy")
+	}
+	if service.calls != len(cases)+1 {
+		t.Fatalf("Stripe attached-card calls = %d, want %d", service.calls, len(cases)+1)
+	}
+}
+
+func TestInitializeDatabaseFeatures(t *testing.T) {
+	tests := []struct {
+		name                string
+		config              config.DatabaseConfiguration
+		requireVersionError error
+		newExecutorError    error
+		newStoreError       error
+		wantExecutor        bool
+		wantStore           bool
+		wantRequireVersion  bool
+		wantNewExecutor     bool
+		wantNewStore        bool
+	}{
+		{
+			name: "state query initializes without application database",
+			config: config.DatabaseConfiguration{
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			wantExecutor:    true,
+			wantNewExecutor: true,
+		},
+		{
+			name: "state query initializes when application schema validation fails",
+			config: config.DatabaseConfiguration{
+				URL:                      "postgres://application/application",
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			requireVersionError: fmt.Errorf("schema unavailable"),
+			wantExecutor:        true,
+			wantRequireVersion:  true,
+			wantNewExecutor:     true,
+		},
+		{
+			name:               "application database enables GitHub trust store",
+			config:             config.DatabaseConfiguration{URL: "postgres://application/application"},
+			wantStore:          true,
+			wantRequireVersion: true,
+			wantNewStore:       true,
+		},
+		{
+			name: "constructor failures are non-fatal and clear stale fields",
+			config: config.DatabaseConfiguration{
+				URL:                      "postgres://application/application",
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			newExecutorError:   fmt.Errorf("invalid state query configuration"),
+			newStoreError:      fmt.Errorf("store unavailable"),
+			wantRequireVersion: true,
+			wantNewExecutor:    true,
+			wantNewStore:       true,
+		},
+		{
+			name:               "missing database config clears stale fields",
+			config:             config.DatabaseConfiguration{},
+			wantRequireVersion: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var requireVersionContext context.Context
+			var storeContext context.Context
+			newExecutorCalls := 0
+			newStoreCalls := 0
+			dependencies := databaseFeatureDependencies{
+				requireVersion: func(ctx context.Context, _ string, _ int64) error {
+					requireVersionContext = ctx
+					return test.requireVersionError
+				},
+				newStateQueryExecutor: func(_ string, _ string) (handlers.StateQueryExecutor, error) {
+					newExecutorCalls++
+					if test.newExecutorError != nil {
+						return nil, test.newExecutorError
+					}
+					return stateQueryExecutorStub{}, nil
+				},
+				newGitHubTrustStore: func(ctx context.Context, _ string) (githubtrust.Store, error) {
+					newStoreCalls++
+					storeContext = ctx
+					if test.newStoreError != nil {
+						return nil, test.newStoreError
+					}
+					return githubTrustStoreStub{}, nil
+				},
+			}
+			h := handlers.Handlers{
+				StateQueryExecutor:  stateQueryExecutorStub{},
+				GitHubTrustPolicies: githubTrustStoreStub{},
+			}
+			auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolver(githubTrustStoreStub{}))
+			t.Cleanup(func() { auth.SetGitHubTrustResolver(nil) })
+
+			initializeDatabaseFeatures(context.Background(), test.config, &h, dependencies)
+
+			if got := newExecutorCalls == 1; got != test.wantNewExecutor {
+				t.Fatalf("state-query constructor called = %t, want %t", got, test.wantNewExecutor)
+			}
+			if got := newStoreCalls == 1; got != test.wantNewStore {
+				t.Fatalf("GitHub trust store constructor called = %t, want %t", got, test.wantNewStore)
+			}
+			if got := h.StateQueryExecutor != nil; got != test.wantExecutor {
+				t.Fatalf("StateQueryExecutor present = %t, want %t", got, test.wantExecutor)
+			}
+			if got := h.GitHubTrustPolicies != nil; got != test.wantStore {
+				t.Fatalf("GitHubTrustPolicies present = %t, want %t", got, test.wantStore)
+			}
+			assertStartupContext(t, requireVersionContext, test.wantRequireVersion)
+			assertStartupContext(t, storeContext, test.wantNewStore)
+		})
+	}
+}
+
+func assertStartupContext(t *testing.T, ctx context.Context, wantCalled bool) {
+	t.Helper()
+	if !wantCalled {
+		if ctx != nil {
+			t.Fatal("initializer received a context unexpectedly")
+		}
+		return
+	}
+	if ctx == nil {
+		t.Fatal("initializer did not receive a context")
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("initializer context has no deadline")
+	}
+	if remaining := time.Until(deadline); remaining > databaseStartupTimeout+100*time.Millisecond {
+		t.Fatalf("context deadline is too far away: %s", remaining)
+	}
+	if err := ctx.Err(); err != context.Canceled {
+		t.Fatalf("initializer context error = %v, want %v", err, context.Canceled)
+	}
+}
+
+type stateQueryExecutorStub struct{}
+
+func (stateQueryExecutorStub) Execute(context.Context, string, string, statequery.ResultWriter) error {
+	return nil
+}
+
+type githubTrustStoreStub struct{}
+
+func (githubTrustStoreStub) List(context.Context, string) ([]*githubtrust.Policy, error) {
+	return nil, nil
+}
+func (githubTrustStoreStub) Create(context.Context, *githubtrust.Policy) error { return nil }
+func (githubTrustStoreStub) Get(context.Context, string, string) (*githubtrust.Policy, error) {
+	return nil, nil
+}
+func (githubTrustStoreStub) Update(context.Context, *githubtrust.Policy) error { return nil }
+func (githubTrustStoreStub) Delete(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (githubTrustStoreStub) ResolveByRepository(context.Context, string) ([]*githubtrust.Policy, error) {
+	return nil, nil
 }

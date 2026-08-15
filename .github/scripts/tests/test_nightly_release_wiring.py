@@ -42,6 +42,11 @@ def test_driver_nightly_reuses_builder_without_stable_state_mutation():
     assert "needs.plan.outputs.attribution_base_tag" in nightly
     assert "issues: read" in nightly
     assert "pull-requests: read" in nightly
+    assert "release_channels.py apply-version" not in nightly
+    assert "release_channels.py stage-versioned-tree" in nightly
+    assert nightly.index("stage-versioned-tree") < nightly.index(
+        "Collect PR-first attribution and render nightly body"
+    )
 
 
 def test_lume_nightly_reuses_notarized_builder_and_never_becomes_latest():
@@ -105,3 +110,14 @@ def test_nightly_workflow_names_cannot_trigger_stable_driver_sdk_publish():
     for name in ("nightly-cua-driver.yml", "nightly-lume.yml"):
         first_line = source(name).splitlines()[0]
         assert "CD: Cua Driver (cross-platform)" not in first_line
+
+
+def test_release_control_ci_runs_for_every_nightly_definition():
+    test_workflow = source("ci-test-scripts.yml")
+    for path in (
+        ".github/releases/**",
+        ".github/workflows/nightly-component-plan.yml",
+        ".github/workflows/nightly-cua-driver.yml",
+        ".github/workflows/nightly-lume.yml",
+    ):
+        assert f'- "{path}"' in test_workflow

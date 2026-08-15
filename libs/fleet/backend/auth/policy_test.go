@@ -95,48 +95,48 @@ func evalAllow(t *testing.T, input map[string]any) bool {
 	if !ok {
 		t.Fatalf("input names route %q, which is bound to no authorization surface", route)
 	}
+	return evalPolicyNode(t, tree, input)
+}
 
-	allowed := true
-	for _, leaf := range conjunctiveLeaves(t, tree) {
-		if leaf.MaxBody > 0 {
-			continue
+func evalPolicyNode(t *testing.T, node Node, input map[string]any) bool {
+	t.Helper()
+	switch policy := node.(type) {
+	case Leaf:
+		if policy.MaxBody > 0 {
+			return true
 		}
-		modules, err := leaf.Source.modules()
+		modules, err := policy.Source.modules()
 		if err != nil {
-			t.Fatalf("load modules for %q: %v", leaf.Query, err)
+			t.Fatalf("load modules for %q: %v", policy.Query, err)
 		}
 		sources := make(map[string]string, len(modules))
 		for _, module := range modules {
 			sources[module.name] = module.source
 		}
-		result, err := prepareQuery(t, leaf.Query, sources).Eval(context.Background(), rego.EvalInput(input))
+		result, err := prepareQuery(t, policy.Query, sources).Eval(context.Background(), rego.EvalInput(input))
 		if err != nil {
-			t.Fatalf("eval %q: %v", leaf.Query, err)
+			t.Fatalf("eval %q: %v", policy.Query, err)
 		}
-		if !result.Allowed() {
-			allowed = false
-		}
-	}
-	return allowed
-}
-
-// conjunctiveLeaves flattens a route tree into its leaves, refusing anything but
-// conjunction. Every route policy is All(...) today; a disjunction would make
-// "AND the leaves" the wrong fold, and silently so.
-func conjunctiveLeaves(t *testing.T, n Node) []Leaf {
-	t.Helper()
-	switch node := n.(type) {
-	case Leaf:
-		return []Leaf{node}
+		return result.Allowed()
 	case AllNode:
-		var leaves []Leaf
-		for _, child := range node.Children {
-			leaves = append(leaves, conjunctiveLeaves(t, child)...)
+		for _, child := range policy.Children {
+			if !evalPolicyNode(t, child, input) {
+				return false
+			}
 		}
-		return leaves
+		return true
+	case BecauseNode:
+		return evalPolicyNode(t, policy.Child, input)
+	case AnyNode:
+		for _, child := range policy.Children {
+			if evalPolicyNode(t, child, input) {
+				return true
+			}
+		}
+		return false
 	default:
-		t.Fatalf("route policy contains a %T; this helper folds conjunctions only", n)
-		return nil
+		t.Fatalf("route policy contains unknown node %T", node)
+		return false
 	}
 }
 
@@ -148,6 +148,37 @@ func evalIsAdmin(t *testing.T, input map[string]any) bool {
 		t.Fatalf("eval is_admin: %v", err)
 	}
 	return rs.Allowed()
+}
+
+func evalChatEnabled(t *testing.T, input map[string]any) bool {
+	t.Helper()
+	pq := prepareQuery(t, "data.authz.chat_enabled", map[string]string{"authz.rego": authzPolicy})
+	rs, err := pq.Eval(context.Background(), rego.EvalInput(input))
+	if err != nil {
+		t.Fatalf("eval chat_enabled: %v", err)
+	}
+	return rs.Allowed()
+}
+
+func TestChatEnabled(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]any
+		want  bool
+	}{
+		{name: "admin", input: map[string]any{"user": spaUser("admin"), "flags": map[string]any{"admin_subs": []any{"admin"}, "chat_subs": []any{}}}, want: true},
+		{name: "allowlisted", input: map[string]any{"user": spaUser("listed"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": []any{"listed"}}}, want: true},
+		{name: "unlisted", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": []any{"listed"}}}, want: false},
+		{name: "missing allowlist", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}}}, want: false},
+		{name: "malformed allowlist", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": "other"}}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := evalChatEnabled(t, test.input); got != test.want {
+				t.Fatalf("chat_enabled = %v, want %v", got, test.want)
+			}
+		})
+	}
 }
 
 func evalPoolAdmission(t *testing.T, input map[string]any) bool {

@@ -115,7 +115,7 @@ def client(transport):
     return CyclopsClient.connect(CyclopsConfiguration(base_url=BASE, token_url=TOKEN, credentials=CyclopsCredentials('client-id', 'client-secret'), pool_poll_interval_ms=1, pool_poll_limit=1, claim_poll_interval_ms=1, claim_poll_limit=2), transport)
 
 async def run_lifecycle(transport):
-    vm = VmTemplate(container_disk_image='registry.example/desktop:offline', command=None, runtime=None, runtime_class_name=None, node_selector=None, tolerations=None, image_pull_policy=None, image_pull_secret=None, cpu_cores=None, memory=None, firmware=None, probes=None, services=None, oidc=None)
+    vm = VmTemplate(container_disk_image='registry.example/desktop:offline', command=None, runtime=None, runtime_class_name=None, node_selector=None, tolerations=None, image_pull_policy=None, image_pull_secret=None, cpu_cores=None, memory=None, firmware=None, nested_virtualization=None, probes=None, services=None, oidc=None)
     assert vm.container_disk_image
     sdk = client(transport)
     namespace = await sdk.create_namespace('default')

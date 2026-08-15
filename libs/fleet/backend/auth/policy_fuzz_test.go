@@ -215,6 +215,8 @@ func siblingLeafPairs(n Node) [][2]Leaf {
 		children = node.Children
 	case AnyNode:
 		children = node.Children
+	case BecauseNode:
+		return siblingLeafPairs(node.Child)
 	default:
 		return nil
 	}

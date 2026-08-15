@@ -1,16 +1,23 @@
 ---
 title: Grok Bot
-description: Let Grok Bot operate desktop apps through Cua Driver on your local computer.
+description: Let Grok Bot operate desktop apps through Cua Driver on your local computer or on its own cloud computer.
 icon: Bot
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-[Grok Bot](https://docs.x.ai/grok-bot/overview) runs on a persistent cloud computer. Cua Driver can give it a separate path to native apps on your Mac or Windows computer.
+<Callout type="info">
+  This page is Grok Bot, the persistent cloud agent. It is not [Grok Build](/use-cua-with/grok-build), xAI's coding CLI over stdio MCP.
+</Callout>
 
-Use Grok Bot's local-command execution for the first setup. This keeps Cua Driver on the computer it controls and leaves each command behind Grok Bot's local-computer approval policy.
+[Grok Bot](https://docs.x.ai/grok-bot/overview) runs on a persistent cloud Linux computer, separate from your laptop. Cua Driver can drive either desktop:
 
-## Before you start
+- **Your local Mac or Windows computer.** Install Cua Driver there. Grok Bot uses local-command execution (`cua-driver call …`) with approval.
+- **Grok Bot's own cloud computer.** If that is the GUI being driven, install Cua Driver on that machine and call `cua-driver` there.
+
+Use command execution for the first setup on either path. This keeps Cua Driver on the computer it controls.
+
+## Drive your local computer
 
 Install Cua Driver on the computer with the apps you want to control, grant the required operating-system permissions, and start its daemon. Verify the local CLI before involving Grok Bot:
 
@@ -57,6 +64,36 @@ Read [Agent action policy](/reference/cua-driver/action-selection-policy) for th
   Grok Bot's local-command approval controls whether a command may run. Cua Driver's permission mode controls what that command may do. Keep both boundaries enabled. Do not set Grok Bot to **Always allowed** or run Cua Driver in unrestricted mode for routine use.
 </Callout>
 
+## Drive Grok Bot's cloud computer
+
+If the desktop being driven is Grok Bot's own computer, install Cua Driver there — not on your laptop. That machine is persistent cloud Linux, separate from your Mac or Windows computer.
+
+Stable is the default:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+```
+
+To follow nightly instead:
+
+```bash
+curl -fsSL https://cua.ai/driver/install.sh | bash -s -- --channel nightly
+```
+
+Linux requirements: x86_64, with X11 or XWayland. `get_window_state` needs AT-SPI 2. After install, verify:
+
+```bash
+cua-driver --version
+cua-driver doctor
+cua-driver call list_apps '{}'
+```
+
+If `doctor` warns that AT-SPI is unreachable, `get_window_state` will not work until the accessibility bus is available. See [Install Cua Driver](/how-to-guides/driver/install) for Linux libraries and display-server details.
+
+`cua-driver skills install` writes the pack to `~/.cua-driver/skills/cua-driver`. It auto-links only Claude Code, Codex, Prime Agent, OpenClaw, OpenCode, Antigravity, and Hermes. Grok Bot is not in that list. On Grok Bot, save a private skill or workflow that points at that pack and keeps snapshot-before-action, element tokens, and post-action verification.
+
+Then give the Bot a narrow UI task on that computer. Cua Driver actions should follow the same loop as the local path: find the window, call `get_window_state`, act through an `element_token` from the latest state, then verify.
+
 ## Save the workflow as a Grok Bot skill
 
 Once a safe task succeeds, ask Grok Bot to save the method as a private skill:
@@ -64,11 +101,12 @@ Once a safe task succeeds, ask Grok Bot to save the method as a private skill:
 ```text
 Save the Cua Driver process we just used as a skill. Preserve the fresh-state,
 snapshot-bound element-token, and post-action verification rules. Require my
-approval for consequential actions. Keep Cua Driver commands on my local
-computer and report any refusal instead of bypassing it.
+approval for consequential actions. Keep Cua Driver on the computer it is
+driving — my local computer, or Grok Bot's cloud computer when that is the
+desktop — and report any refusal instead of bypassing it.
 ```
 
-Test the saved skill on a disposable example before attaching it to a routine. Grok Bot routines can run while your laptop is closed, but a routine that depends on local commands also depends on your computer being reachable and Cua Driver running.
+Test the saved skill on a disposable example before attaching it to a routine. Grok Bot routines can run while your laptop is closed, but a routine that depends on local commands also depends on your computer being reachable and Cua Driver running. A routine that drives Grok Bot's own computer does not depend on your laptop.
 
 ## Custom MCP is an advanced route
 

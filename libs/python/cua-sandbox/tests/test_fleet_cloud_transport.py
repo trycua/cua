@@ -13,6 +13,7 @@ from fleet_sdk import (
     ResourceMetadata,
     Sandbox,
     SandboxTemplateRefBuilder,
+    WarmPoolAutoscaling,
 )
 
 
@@ -112,6 +113,59 @@ def test_pool_request_uses_the_single_sandbox_name_and_requested_replicas():
     assert request.spec.replicas == 3
     assert request.spec.sandbox_template_ref.name == "demo"
     assert request.spec.autoscaling is None
+
+
+def test_pool_request_carries_the_requested_autoscaling():
+    autoscaling = WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10)
+
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+        autoscaling=autoscaling,
+    )._pool_request()
+
+    assert request.spec.autoscaling == autoscaling
+
+
+def test_pool_request_accepts_partial_autoscaling_bounds():
+    autoscaling = WarmPoolAutoscaling(min_pool_size=None, initial_pool_size=None, max_pool_size=25)
+
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+        autoscaling=autoscaling,
+    )._pool_request()
+
+    assert request.spec.autoscaling == autoscaling
+
+
+def test_transport_rejects_untyped_autoscaling():
+    with pytest.raises(TypeError, match="WarmPoolAutoscaling"):
+        FleetCloudTransport(
+            image=Image.from_registry("registry.example/workspace@sha256:abc"),
+            name="demo",
+            autoscaling={"min_pool_size": 0, "max_pool_size": 10},
+        )
+
+
+@pytest.mark.parametrize(
+    "autoscaling",
+    [
+        WarmPoolAutoscaling(min_pool_size=-1, initial_pool_size=None, max_pool_size=None),
+        WarmPoolAutoscaling(min_pool_size=None, initial_pool_size=-1, max_pool_size=None),
+        WarmPoolAutoscaling(min_pool_size=None, initial_pool_size=None, max_pool_size=0),
+        WarmPoolAutoscaling(min_pool_size=True, initial_pool_size=None, max_pool_size=None),
+        WarmPoolAutoscaling(min_pool_size="2", initial_pool_size=None, max_pool_size=None),
+        WarmPoolAutoscaling(min_pool_size=5, initial_pool_size=None, max_pool_size=2),
+    ],
+)
+def test_transport_rejects_invalid_autoscaling_bounds(autoscaling):
+    with pytest.raises(ValueError, match="autoscaling"):
+        FleetCloudTransport(
+            image=Image.from_registry("registry.example/workspace@sha256:abc"),
+            name="demo",
+            autoscaling=autoscaling,
+        )
 
 
 @pytest.mark.parametrize("pool_length", [57, 58, 63])

@@ -12,11 +12,14 @@ export interface FeatureFlags {
   admin: boolean
   /** Billing navigation and page are disabled by default. */
   billing: boolean
+  /** Chat users can access persisted browser-bash conversations. */
+  chat: boolean
 }
 
 const DEFAULT_FLAGS: FeatureFlags = {
   admin: false,
   billing: false,
+  chat: false,
 }
 
 let _cache: FeatureFlags | null = null
@@ -40,6 +43,7 @@ export async function fetchFeatureFlags(): Promise<FeatureFlags> {
       _cache = {
         admin: data.admin ?? false,
         billing: data.billing ?? false,
+        chat: data.chat ?? false,
       }
       return _cache
     } catch {

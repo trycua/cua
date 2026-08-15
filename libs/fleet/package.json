@@ -9,12 +9,14 @@
     "build": "npm run sdk:browser && npm run build:app",
     "build:app": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "npm run sdk:browser && tsc -b --noEmit",
+    "typecheck": "npm run sdk:browser && tsc -b --noEmit && tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions --skipLibCheck agent.test.ts src/browser-agent.ts",
     "lint": "biome check",
     "lint:fix": "biome check --write",
     "test:e2e": "npm run sdk:browser && playwright test",
     "test:e2e:ui": "npm run sdk:browser && playwright test --ui",
-    "test:sdk-models": "rm -rf target/sdk-model-tests && tsc e2e/sdk-models.unit.ts src/sdk/status.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --outDir target/sdk-model-tests --skipLibCheck && node target/sdk-model-tests/e2e/sdk-models.unit.js"
+    "test:favicon": "node --test tests/favicon.test.mjs",
+    "test:sdk-models": "rm -rf target/sdk-model-tests && tsc e2e/sdk-models.unit.ts src/sdk/status.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --outDir target/sdk-model-tests --skipLibCheck && node target/sdk-model-tests/e2e/sdk-models.unit.js",
+    "test:agent": "node --test --experimental-strip-types agent.test.ts"
   },
   "dependencies": {
     "@cloudscape-design/collection-hooks": "^1.0.93",
@@ -26,7 +28,12 @@
     "keycloak-js": "^25.0.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0"
+    "react-router-dom": "^6.28.0",
+    "@cloudscape-design/chat-components": "^1.0.157",
+    "just-bash": "^3.2.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "dompurify": "^3.4.13",
+    "marked": "^18.0.9"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
@@ -35,6 +42,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "@types/node": "^22.19.17"
   }
 }

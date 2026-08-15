@@ -50,6 +50,7 @@ type Gateway interface {
 	CreateCustomer(ctx context.Context, metadata map[string]string, idempotencyKey string) (Customer, error)
 	UpdateCustomerMetadata(ctx context.Context, customerID string, metadata map[string]string) (Customer, error)
 	GetDefaultCard(ctx context.Context, customerID string) (SavedCard, error)
+	ListAttachedCards(ctx context.Context, customerID string) ([]SavedCard, error)
 	SetDefaultPaymentMethodForSetupGeneration(ctx context.Context, customerID, paymentMethodID, generation string) (bool, error)
 	CreateSetupSession(ctx context.Context, request SetupSessionRequest) (string, error)
 	CreatePortalSession(ctx context.Context, request PortalSessionRequest) (string, error)
@@ -87,6 +88,24 @@ func (s *Service) FindCustomer(ctx context.Context, subject string) (Customer, e
 	return Customer{}, ErrCustomerNotFound
 }
 
+func (s *Service) findCustomerReadOnly(ctx context.Context, subject string) (Customer, error) {
+	customers, err := s.gateway.SearchCustomers(ctx, subject)
+	if err != nil {
+		return Customer{}, err
+	}
+	for _, customer := range customers {
+		if customer.Metadata[MetadataSubject] == subject {
+			return customer, nil
+		}
+	}
+	for _, customer := range customers {
+		if customer.Metadata[LegacyMetadataSubject] == subject && customer.Metadata[MetadataSubject] == "" {
+			return customer, nil
+		}
+	}
+	return Customer{}, ErrCustomerNotFound
+}
+
 func (s *Service) FindOrCreateCustomer(ctx context.Context, subject string) (Customer, error) {
 	customer, err := s.FindCustomer(ctx, subject)
 	if err == nil {
@@ -110,6 +129,24 @@ type CardSummary struct {
 type Summary struct {
 	PaymentMethodPresent bool         `json:"payment_method_present" binding:"required"`
 	Card                 *CardSummary `json:"card" binding:"required" extensions:"x-nullable"`
+}
+
+func (s *Service) AttachedCards(ctx context.Context, subject string) ([]SavedCard, error) {
+	customer, err := s.findCustomerReadOnly(ctx, subject)
+	if errors.Is(err, ErrCustomerNotFound) {
+		return []SavedCard{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cards, err := s.gateway.ListAttachedCards(ctx, customer.ID)
+	if err != nil {
+		return nil, err
+	}
+	if cards == nil {
+		return []SavedCard{}, nil
+	}
+	return cards, nil
 }
 
 func (s *Service) Summary(ctx context.Context, subject string) (Summary, error) {

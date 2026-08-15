@@ -47,6 +47,7 @@ pub fn parent_liveness_stdin_enabled() -> bool {
 
 pub mod action_record;
 pub mod action_target;
+pub mod app_acquisition;
 pub mod authorization;
 pub mod background_input;
 pub mod browser;
@@ -89,5 +90,9 @@ pub mod video_ffmpeg;
 pub mod window_inspection;
 pub mod window_target;
 
-pub use cua_driver_contract::{CaptureScope, EscalationReason};
+pub use app_acquisition::{
+    launch_state_json, resolve_instance_policy, AppLaunchState, ProcessDisposition,
+    WindowDisposition,
+};
+pub use cua_driver_contract::{CaptureScope, EscalationReason, InstancePolicy};
 pub use recording::RecordingSession;

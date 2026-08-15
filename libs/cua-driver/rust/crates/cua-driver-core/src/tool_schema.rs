@@ -43,6 +43,20 @@ pub fn session_schema_with(note: &str) -> Value {
     schema
 }
 
+/// `instance_policy` — whether launch_app may reuse or create an instance.
+///
+/// Every platform advertises this exact shape. Backends that cannot honor a
+/// requested guarantee return an explicit limitation instead of selecting a
+/// weaker policy.
+pub fn instance_policy_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["reuse_or_launch", "reuse_only", "new"],
+        "default": "reuse_or_launch",
+        "description": "Application acquisition policy. `reuse_or_launch` (default) reuses an exact existing app/window before requesting a launch; `reuse_only` never launches; `new` requires a distinct application instance and returns an explicit limitation when the platform or app cannot provide one."
+    })
+}
+
 /// `delivery_mode` — the best-effort-background ladder rung. The prose varies by
 /// tool (the surface it injects through differs), so callers may pass their own
 /// `description`; the shape is fixed here.
@@ -131,6 +145,7 @@ pub fn element_token_schema() -> Value {
 fn shared_param_canonical(name: &str) -> Option<Value> {
     let v = match name {
         "session" => session_schema(),
+        "instance_policy" => instance_policy_schema(),
         "delivery_mode" => delivery_mode_schema(),
         "modifier" => modifier_schema(),
         "button" => button_schema(),
@@ -141,7 +156,7 @@ fn shared_param_canonical(name: &str) -> Option<Value> {
         "capture_mode" => crate::capture_mode::capture_mode_schema(),
         _ => return None,
     };
-    Some(structural(&v))
+    Some(structural_for_param(name, &v))
 }
 
 /// The canonical `required` array for tools whose required-set drifted across
@@ -163,8 +178,8 @@ fn required_canonical(tool: &str) -> Option<&'static [&'static str]> {
 }
 
 /// Reduce a param schema to the parts that govern client compatibility —
-/// `type`, `enum`, and (recursively) `items` — dropping `description` and any
-/// other prose so per-tool wording differences don't trip the gate.
+/// `type`, `enum`, and (recursively) `items` — dropping `description` and other
+/// prose so per-tool wording differences don't trip the gate.
 fn structural(schema: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(t) = schema.get("type") {
@@ -177,6 +192,20 @@ fn structural(schema: &Value) -> Value {
         out.insert("items".into(), structural(items));
     }
     Value::Object(out)
+}
+
+fn structural_for_param(name: &str, schema: &Value) -> Value {
+    let mut out = structural(schema);
+    // Reuse-first is observable launch behavior, not a prose hint. Existing
+    // shared parameters have historically varied in whether they publish an
+    // equivalent JSON Schema default, so keep this stricter check scoped to
+    // the new acquisition contract.
+    if name == "instance_policy" {
+        if let (Some(out), Some(default)) = (out.as_object_mut(), schema.get("default")) {
+            out.insert("default".into(), default.clone());
+        }
+    }
+    out
 }
 
 fn session_guidance_is_exempt(tool_name: &str) -> bool {
@@ -216,7 +245,7 @@ pub fn shared_schema_violations(tool_name: &str, input_schema: &Value) -> Vec<St
     if let Some(props) = input_schema.get("properties").and_then(|p| p.as_object()) {
         for (pname, pschema) in props {
             if let Some(canon) = shared_param_canonical(pname) {
-                let got = structural(pschema);
+                let got = structural_for_param(pname, pschema);
                 if got != canon {
                     violations.push(format!(
                         "{tool_name}.{pname}: shape {got} diverges from shared canon {canon}"
@@ -279,7 +308,61 @@ mod tests {
             .expect("session schema should carry agent guidance");
         assert!(description.contains("prefer a short public session label"));
         assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("first ordinary call carrying a fresh label creates"));
+        assert!(description.contains("do not call start_session merely to begin"));
         assert!(description.contains("implicit lifecycle session"));
+    }
+
+    #[test]
+    fn instance_policy_defaults_to_reuse_first() {
+        let schema = instance_policy_schema();
+        assert_eq!(schema["type"], "string");
+        assert_eq!(schema["default"], "reuse_or_launch");
+        assert_eq!(
+            schema["enum"],
+            json!(["reuse_or_launch", "reuse_only", "new"])
+        );
+        for policy in ["reuse_or_launch", "reuse_only", "new"] {
+            assert_eq!(
+                cua_driver_contract::InstancePolicy::parse(policy)
+                    .expect("canonical policy parses")
+                    .as_str(),
+                policy
+            );
+        }
+    }
+
+    #[test]
+    fn instance_policy_default_drift_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "instance_policy": {
+                    "type": "string",
+                    "enum": ["reuse_or_launch", "reuse_only", "new"],
+                    "default": "new"
+                }
+            }
+        });
+        let violations = shared_schema_violations("launch_app", &tool);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("default"));
+        assert!(violations[0].contains("reuse_or_launch"));
+    }
+
+    #[test]
+    fn legacy_shared_parameter_defaults_remain_outside_the_gate() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["window", "desktop"],
+                    "default": "window"
+                }
+            }
+        });
+        assert!(shared_schema_violations("move_cursor", &tool).is_empty());
     }
 
     #[test]

@@ -223,12 +223,12 @@ launch idioms in the per-OS companion file):
 
 ```bash
 cua-driver serve
-cua-driver launch_app '{"bundle_id":"..."}'
+cua-driver launch_app '{"bundle_id":"...","session":"example"}'
 # → {pid: 844, windows: [{window_id: 10725, ...}]}
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
+cua-driver get_window_state '{"pid":844,"window_id":10725,"session":"example"}'
 # Use the returned structuredContent.elements[].element_token:
-cua-driver click '{"pid":844,"element_token":"s0000002a:14"}'
-cua-driver verify_state '{"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}]}'
+cua-driver click '{"pid":844,"element_token":"s0000002a:14","session":"example"}'
+cua-driver verify_state '{"pid":844,"window_id":10725,"session":"example","expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}]}'
 cua-driver stop
 ```
 
@@ -381,13 +381,14 @@ The window target uses window-local coordinates and the background/foreground
 delivery ladder. The desktop target uses screen coordinates and foreground
 delivery. A desktop action does not disable window tools for later calls.
 
-`start_session` is optional. For a multi-call run, prefer a short public
-`session` label and pass the same label on every call that accepts it. The label
-is call-scoped: if a later call omits it, that call uses the authenticated
-transport's implicit session instead. Unnamed calls on one transport reuse that
-implicit identity. The default idle TTL is five minutes. Call
-`start_session(session)` to name or configure a run before acting, or to revive
-an ended name.
+For a multi-call run, pass a short public `session` label on the first ordinary
+call and repeat the same label on every call that accepts it. That first action
+creates a fresh named session lazily, so do not call `start_session` merely to
+begin. The label is call-scoped: if a later call omits it, that call uses the
+authenticated transport's implicit session instead. Unnamed calls on one
+transport reuse that implicit identity. The default idle TTL is five minutes.
+Use `start_session(session)` only when initial configuration (such as a cursor
+theme) must exist before the first action, or to revive an ended name.
 
 Do not use `config set capture_scope` or `set_config`; that key is retired and
 stale values on disk are ignored. `start_session.capture_scope`,
@@ -648,7 +649,7 @@ last resort.
 
 ```
 # for multi-call work, repeat the same session label on every call that accepts it
-launch_app(target, session)
+launch_app(target, session, instance_policy="reuse_or_launch")
   → pick window_id from the returned `windows` array
     (or call list_windows(pid) separately)
   → get_window_state(pid, window_id)
@@ -667,25 +668,37 @@ common case collapses to two calls (`launch_app` → `get_window_state`)
 without a separate `list_windows` hop.
 
 **Prefer a named session for multi-call work.** Choose a short label (for
-example, `session: "research-1"`) and pass the same value on every call that
-accepts it. Passing it once is not sticky: a later call that omits `session`
-uses the transport's implicit session. Call `start_session(session)` when you
-need to name or configure the run before acting, or to revive a name after
-`end_session`. For one-off or deliberately unlabeled work, omission is valid
-and the transport still gets one private lifecycle identity and visible agent
-cursor. A public label makes inspection and cleanup easier, but it is not a
-credential. End with `end_session` when useful; transport close or the
+example, `session: "research-1"`) and pass it on the first ordinary call. That
+call creates the named session lazily; repeat the value on every later call
+that accepts it. Passing it once is not sticky: a later call that omits
+`session` uses the transport's implicit session. Do not call `start_session`
+merely to begin; use it only for initial configuration or to revive a name
+after `end_session`. For one-off or deliberately unlabeled work, omission is
+valid and the transport still gets one private lifecycle identity and visible
+agent cursor. A public label makes inspection and cleanup easier, but it is not
+a credential. End with `end_session` when useful; transport close or the
 five-minute idle TTL also reclaims it.
 
+**Acquire the app atomically.** Call `launch_app` directly with its default
+`instance_policy: "reuse_or_launch"`. It first resolves an exact existing
+process/window and returns it without sending a launch request; only when none
+is reusable does it ask the OS to launch. Do not preflight with `list_apps` or
+`list_windows`: an extra read adds latency and can race the acquisition. Use
+`reuse_only` when launching is forbidden and handle its typed no-match result.
+Use `new` only when the task has a verified need for a distinct process that
+will be driven concurrently; unsupported apps/platforms return an explicit
+limitation. The legacy `creates_new_application_instance: true` input remains
+a compatibility spelling for `instance_policy: "new"` where supported.
+
 **Concurrent runs/subagents:** each transport gets its own implicit session.
-Also,
-`launch_app` is idempotent — two runs that
-launch the same app get the **same** instance (and on single-instance apps
-like Calculator, the same window), so they clobber each other. Give each run
-its **own connection** (for independent lifecycle/cursor ownership) AND pass
-`creates_new_application_instance: true` to `launch_app` (→ its own window).
-The element cache is keyed on `(pid, window_id)` and the cursor on the private
-lifecycle session, so distinct instances and transports keep the runs isolated.
+Default `reuse_or_launch` intentionally returns the same exact existing
+instance/window, so simultaneous agents would clobber each other. Only after
+verifying that two live runs must drive the same app at the same time, give each
+run its **own connection** (for independent lifecycle/cursor ownership) and
+pass `instance_policy: "new"`. Do not request `new` merely because an earlier
+session existed or sequential work uses another label. The element cache is
+keyed on `(pid, window_id)` and the cursor on the private lifecycle session, so
+distinct supported instances and transports keep concurrent runs isolated.
 
 **Parallelism vs. ordering.** Distinct sessions give distinct _cursors_, not
 distinct _connections_. Subagents that share one `cua-driver mcp` (stdio)
@@ -701,8 +714,8 @@ serves connections concurrently; per-connection ordering keeps each agent's own
 sequence (e.g. `3 → + → 1 → =`) correct.
 
 `list_apps` is for app-level discovery (answering "what's installed /
-running / frontmost?") — not part of the core action loop. Skip it
-in the loop. For **window-level** questions — "does this app have a
+running / frontmost?") — not an app-acquisition preflight and not part of the
+core action loop. Skip it in the loop. For **window-level** questions — "does this app have a
 visible window?", "which desktop is this window on?", "which of this
 pid's windows is the main one?" — call `list_windows` instead; the
 app record doesn't carry window state on purpose. In the common
@@ -839,7 +852,8 @@ coordinates only when the accessibility tree can't.
 
 ## Cross-platform parameter contract
 
-The capture, dispatch, and addressing params — `session`,
+The acquisition, capture, dispatch, and addressing params — `session`,
+`instance_policy`,
 `delivery_mode`, `capture_mode` (deprecated/ignored — see the behavior
 matrix; still in the schema only so old callers don't error), `scope`,
 `modifier`, `button`, `element_index`, `snapshot_id`, `element_token` — are a **shared
@@ -861,6 +875,10 @@ Two consequences for callers:
   schema-accepted everywhere else — so the same `session` you pass on
   macOS is no longer _rejected_ by Windows/Linux, which previously
   refused unknown keys via `additionalProperties:false`.
+- **`instance_policy` is accepted by `launch_app` on all three platforms.**
+  Its portable default is `reuse_or_launch`; `reuse_only` never launches, and
+  `new` either returns a distinct instance or an explicit unsupported
+  limitation. A backend must not silently weaken the requested policy.
 - **`delivery_mode` (`"background"` default / `"foreground"`) is on the
   whole input family** — `click`, `double_click`, `right_click`, `drag`,
   `scroll`, `type_text`, `press_key`, `hotkey` — uniformly. The
@@ -1068,12 +1086,13 @@ respective companion files.
 
 **User:** "Open the Downloads folder in the system file manager."
 
-1. `launch_app({bundle_id: "com.apple.finder", urls: ["~/Downloads"]})`
+1. `launch_app({bundle_id: "com.apple.finder", urls: ["~/Downloads"],
+   session: "downloads"})`
    on macOS, or `launch_app({name: "explorer", args: ["%USERPROFILE%\\Downloads"]})`
    on Windows. Returns `{pid, windows: [{window_id, title, ...}]}`.
-   Idempotent launch; the driver opens a hidden window via the
-   platform's launch primitive — zero activation, no focus steal.
-2. `get_window_state({pid, window_id})` → verify the expected window
+   The default reuse-first policy returns an exact existing app/window when it
+   can and otherwise requests a background launch.
+2. `get_window_state({pid, window_id, session: "downloads"})` → verify the expected window
    title is present with a populated tree (sidebar, list view, files).
 3. Done.
 

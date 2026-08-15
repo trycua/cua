@@ -7,10 +7,13 @@ use cua_driver_contract::{
     TypeTextInput,
 };
 use cua_driver_core::{
+    launch_state_json,
     protocol::ToolResult,
+    resolve_instance_policy,
     tool::{Tool, ToolDef, ToolRegistry},
     tool_args::{parse_typed_input, parse_typed_projection, ArgsExt},
     window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
+    InstancePolicy, ProcessDisposition, WindowDisposition,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -945,10 +948,151 @@ impl Tool for GetWindowStateTool {
 
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+static LAUNCH_ACQUISITION_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
 
 fn contains_remote_debugging_flag(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
+}
+
+fn launch_policy_error(
+    code: &str,
+    message: impl Into<String>,
+    policy: InstancePolicy,
+) -> ToolResult {
+    ToolResult::error(message.into()).with_structured(json!({
+        "error": code,
+        "instance_policy": policy.as_str(),
+        "platform": "linux",
+        "launch_state": launch_state_json(
+            false,
+            false,
+            false,
+            ProcessDisposition::None,
+            WindowDisposition::None,
+        ),
+    }))
+}
+
+fn launch_request_error(
+    code: &str,
+    message: impl Into<String>,
+    policy: InstancePolicy,
+) -> ToolResult {
+    ToolResult::error(message.into()).with_structured(json!({
+        "error": code,
+        "instance_policy": policy.as_str(),
+        "platform": "linux",
+        "launch_state": launch_state_json(
+            true,
+            false,
+            false,
+            ProcessDisposition::None,
+            WindowDisposition::None,
+        ),
+    }))
+}
+
+fn command_basename(command: &str) -> Option<String> {
+    let executable = command
+        .split_whitespace()
+        .next()?
+        .trim_matches(|character| character == '\'' || character == '"');
+    let basename = std::path::Path::new(executable)
+        .file_name()
+        .and_then(|name| name.to_str())?
+        .trim()
+        .to_ascii_lowercase();
+    (!basename.is_empty()).then_some(basename)
+}
+
+fn process_matches_command(process: &crate::proc_fs::ProcessInfo, command: &str) -> bool {
+    let Some(target) = command_basename(command) else {
+        return false;
+    };
+    let process_name = process.name.to_ascii_lowercase();
+    let argv0 = command_basename(&process.cmdline).unwrap_or_default();
+    process_name == target || argv0 == target
+}
+
+fn reusable_linux_processes(command: &str) -> Vec<(u32, String, Vec<Value>)> {
+    let processes: Vec<_> = crate::proc_fs::list_processes()
+        .into_iter()
+        .filter(|process| process_matches_command(process, command))
+        .collect();
+    if processes.is_empty() {
+        return Vec::new();
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        let candidates: Vec<_> = processes
+            .iter()
+            .map(|process| {
+                let windows = crate::wayland::list_windows_dispatch(Some(process.pid));
+                (
+                    process.pid,
+                    process.name.clone(),
+                    windows.iter().map(window_record_json).collect(),
+                )
+            })
+            .collect();
+        if candidates.len() > 1
+            || candidates
+                .first()
+                .is_some_and(|(_, _, windows): &(u32, String, Vec<Value>)| !windows.is_empty())
+            || std::time::Instant::now() >= deadline
+        {
+            return candidates;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn linux_reuse_command(launch_path: Option<&str>, name: Option<&str>) -> Option<String> {
+    if let Some(launch_path) = launch_path {
+        return Some(launch_path.to_owned());
+    }
+    let name = name?;
+    let installed = crate::installed_apps::list_installed_apps();
+    Some(
+        match_installed_app(&installed, name)
+            .map(|app| app.launch_path.clone())
+            .unwrap_or_else(|| name.to_owned()),
+    )
+}
+
+fn reused_linux_app_result(
+    pid: u32,
+    name: String,
+    windows: Vec<Value>,
+    instance_policy: InstancePolicy,
+) -> ToolResult {
+    let mut summary = format!("✅ Reused {name} (pid {pid}); no launch request was sent.");
+    if !windows.is_empty() {
+        summary.push_str("\n\nWindows:");
+        for window in &windows {
+            let title = window["title"].as_str().unwrap_or("");
+            let window_id = window["window_id"].as_u64().unwrap_or(0);
+            summary.push_str(&format!("\n- \"{title}\" [window_id: {window_id}]"));
+        }
+    }
+    ToolResult::text(summary).with_structured(json!({
+        "pid": pid,
+        "bundle_id": Value::Null,
+        "name": name,
+        "running": true,
+        "active": false,
+        "windows": windows,
+        "instance_policy": instance_policy.as_str(),
+        "launch_state": launch_state_json(
+            false,
+            true,
+            true,
+            ProcessDisposition::Reused,
+            WindowDisposition::Reused,
+        ),
+    }))
 }
 
 /// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
@@ -1181,6 +1325,73 @@ mod launch_app_tests {
         assert!(match_installed_app(&apps, "gnome-calculator").is_none());
         assert!(match_installed_app(&apps, "").is_none());
     }
+
+    #[test]
+    fn process_matching_uses_exact_executable_basename() {
+        let process = crate::proc_fs::ProcessInfo {
+            pid: 41,
+            name: "galculator".to_owned(),
+            cmdline: "/usr/bin/galculator".to_owned(),
+        };
+        assert!(process_matches_command(
+            &process,
+            "/usr/bin/galculator --session demo"
+        ));
+        assert!(!process_matches_command(&process, "calculator"));
+    }
+
+    #[test]
+    fn launch_schema_exposes_lazy_session_and_instance_policy() {
+        let schema = LaunchAppTool.def().input_schema.clone();
+        assert_eq!(schema["properties"]["session"]["type"], "string");
+        assert_eq!(
+            schema["properties"]["instance_policy"]["default"],
+            "reuse_or_launch"
+        );
+        assert_eq!(
+            schema["properties"]["instance_policy"]["enum"],
+            json!(["reuse_or_launch", "reuse_only", "new"])
+        );
+        assert_eq!(
+            schema["properties"]["creates_new_application_instance"]["deprecated"],
+            true
+        );
+    }
+
+    #[test]
+    fn legacy_new_conflicts_with_explicit_reuse() {
+        let result = resolve_instance_policy(&json!({
+            "instance_policy": "reuse_only",
+            "creates_new_application_instance": true,
+        }));
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn explicit_new_fails_before_sending_a_launch_request() {
+        let result = LaunchAppTool
+            .invoke(json!({"name": "galculator", "instance_policy": "new"}))
+            .await;
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["error"], "NEW_APPLICATION_INSTANCE_UNAVAILABLE");
+        assert_eq!(structured["launch_state"]["request_sent"], false);
+    }
+
+    #[tokio::test]
+    async fn reuse_only_with_arguments_fails_before_sending_a_request() {
+        let result = LaunchAppTool
+            .invoke(json!({
+                "name": "galculator",
+                "instance_policy": "reuse_only",
+                "additional_arguments": ["--example"],
+            }))
+            .await;
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["error"], "APP_REUSE_UNAVAILABLE");
+        assert_eq!(structured["launch_state"]["request_sent"], false);
+    }
 }
 
 #[async_trait]
@@ -1188,7 +1399,9 @@ impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
         LAUNCH_DEF.get_or_init(|| ToolDef {
             name: "launch_app".into(),
-            description: "Launch a Linux app in the background. Provide launch_path (preferred — \
+            description: "Resolve or launch a Linux app in the background. By default, reuse one \
+                exact running process with a window when it can be identified without ambiguity; \
+                otherwise launch. Provide launch_path (preferred — \
                 round-trip the value from list_apps), name (tried as a direct command, then \
                 matched against installed .desktop applications, then handed to xdg-open if it \
                 is a URL or existing file path), bundle_id (ignored on Linux), or urls (list of \
@@ -1199,9 +1412,12 @@ impl Tool for LaunchAppTool {
                 "name":{"type":"string","description":"App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring)."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
-                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."}
+                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process. Supplying arguments requires a launch request and therefore cannot be combined with instance_policy=reuse_only."},
+                "session": cua_driver_core::tool_schema::session_schema(),
+                "instance_policy": cua_driver_core::tool_schema::instance_policy_schema(),
+                "creates_new_application_instance":{"type":"boolean","deprecated":true,"description":"Deprecated compatibility alias. true maps to instance_policy=new; false maps to reuse_or_launch. Linux cannot guarantee a distinct live instance and returns NEW_APPLICATION_INSTANCE_UNAVAILABLE before sending a launch request."}
             },"additionalProperties":false}),
-            read_only: false, destructive: false, idempotent: false, open_world: true,
+            read_only: false, destructive: false, idempotent: true, open_world: true,
         })
     }
 
@@ -1211,6 +1427,10 @@ impl Tool for LaunchAppTool {
         let name_opt = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
         let additional_arguments: Vec<String> = args.str_array("additional_arguments");
+        let instance_policy = match resolve_instance_policy(&args) {
+            Ok(policy) => policy,
+            Err(error) => return error,
+        };
         if args.get("cdp_debugging_port").is_some() {
             return ToolResult::error(
                 "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
@@ -1230,6 +1450,85 @@ impl Tool for LaunchAppTool {
 
         if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
+        }
+
+        // Serialize the resolve/reuse-or-launch decision through request
+        // dispatch. Otherwise two concurrent calls can both observe no
+        // reusable window and spawn before either new window is enumerable.
+        let acquisition_guard = LAUNCH_ACQUISITION_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+
+        if instance_policy == InstancePolicy::New {
+            return launch_policy_error(
+                "NEW_APPLICATION_INSTANCE_UNAVAILABLE",
+                "Linux launchers and desktop portals may hand a request to an existing single-instance process, so Cua Driver cannot guarantee instance_policy=\"new\". No launch request was sent.",
+                instance_policy,
+            );
+        }
+
+        let carries_launch_modifiers = !urls.is_empty() || !additional_arguments.is_empty();
+        if instance_policy == InstancePolicy::ReuseOnly && carries_launch_modifiers {
+            return launch_policy_error(
+                "APP_REUSE_UNAVAILABLE",
+                "instance_policy=\"reuse_only\" cannot deliver URLs or additional_arguments without sending a launch request. No launch request was sent.",
+                instance_policy,
+            );
+        }
+
+        if !carries_launch_modifiers {
+            let reuse_command =
+                linux_reuse_command(launch_path_opt.as_deref(), name_opt.as_deref());
+            if let Some(reuse_command) = reuse_command {
+                let candidates =
+                    tokio::task::spawn_blocking(move || reusable_linux_processes(&reuse_command))
+                        .await
+                        .unwrap_or_default();
+                match candidates.as_slice() {
+                    [(pid, name, windows)] if !windows.is_empty() => {
+                        return reused_linux_app_result(
+                            *pid,
+                            name.clone(),
+                            windows.clone(),
+                            instance_policy,
+                        )
+                    }
+                    [] | [(_, _, _)] => {}
+                    _ => {
+                        let candidate_payload: Vec<Value> = candidates
+                            .iter()
+                            .map(|(pid, name, windows)| {
+                                json!({"pid": pid, "name": name, "windows": windows})
+                            })
+                            .collect();
+                        return ToolResult::error(
+                            "More than one exact running Linux process matches the requested app; choose a candidate pid/window_id instead of launching another instance.",
+                        )
+                        .with_structured(json!({
+                            "error": "APP_TARGET_AMBIGUOUS",
+                            "instance_policy": instance_policy.as_str(),
+                            "platform": "linux",
+                            "candidates": candidate_payload,
+                            "launch_state": launch_state_json(
+                                false,
+                                true,
+                                false,
+                                ProcessDisposition::None,
+                                WindowDisposition::None,
+                            ),
+                        }));
+                    }
+                }
+            }
+        }
+
+        if instance_policy == InstancePolicy::ReuseOnly {
+            return launch_policy_error(
+                "APP_REUSE_UNAVAILABLE",
+                "No exact running Linux process with a reusable window matched the requested app. No launch request was sent.",
+                instance_policy,
+            );
         }
 
         let result = tokio::task::spawn_blocking(
@@ -1323,6 +1622,7 @@ impl Tool for LaunchAppTool {
             },
         )
         .await;
+        drop(acquisition_guard);
 
         match result {
             Ok(Ok((message, pid_opt, name))) => {
@@ -1340,13 +1640,27 @@ impl Tool for LaunchAppTool {
                     })
                     .await
                     .unwrap_or_default();
+                    let window_ready = !windows.is_empty();
+                    let process_running = crate::proc_fs::is_process_live(pid);
                     ToolResult::text(message).with_structured(json!({
                         "pid": pid,
                         "bundle_id": Value::Null,
                         "name": name,
-                        "running": true,
+                        "running": process_running,
                         "active": false,
                         "windows": windows,
+                        "instance_policy": instance_policy.as_str(),
+                        "launch_state": launch_state_json(
+                            true,
+                            process_running,
+                            window_ready,
+                            ProcessDisposition::Created,
+                            if window_ready {
+                                WindowDisposition::Materialized
+                            } else {
+                                WindowDisposition::None
+                            },
+                        ),
                     }))
                 } else {
                     ToolResult::text(message).with_structured(json!({
@@ -1356,11 +1670,27 @@ impl Tool for LaunchAppTool {
                         "running": Value::Null,
                         "active": false,
                         "windows": [],
+                        "instance_policy": instance_policy.as_str(),
+                        "launch_state": launch_state_json(
+                            true,
+                            false,
+                            false,
+                            ProcessDisposition::None,
+                            WindowDisposition::None,
+                        ),
                     }))
                 }
             }
-            Ok(Err(e)) => ToolResult::error(format!("Failed to launch: {e}")),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Ok(Err(e)) => launch_request_error(
+                "APP_LAUNCH_FAILED",
+                format!("Failed to launch: {e}"),
+                instance_policy,
+            ),
+            Err(e) => launch_request_error(
+                "APP_LAUNCH_TASK_FAILED",
+                format!("Launch worker outcome is unavailable: {e}"),
+                instance_policy,
+            ),
         }
     }
 }

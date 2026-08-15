@@ -712,7 +712,10 @@ export type ClickInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string,
     button?: ClickButton,
@@ -780,7 +783,10 @@ export type ClipboardReadInput = {
     includeText: boolean,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -893,7 +899,10 @@ export type ClipboardWriteInput = {
     filePath?: string,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -1371,7 +1380,10 @@ export type DragInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string,
     durationMs?: bigint,
@@ -1828,7 +1840,10 @@ const FfiConverterTypeGetAgentCursorStateOutput = (() => {
 export type GetCursorPositionInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -1871,7 +1886,10 @@ const FfiConverterTypeGetCursorPositionInput = (() => {
 export type GetDesktopStateInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string,
     /**
@@ -1921,7 +1939,10 @@ const FfiConverterTypeGetDesktopStateInput = (() => {
 export type GetScreenSizeInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -2056,7 +2077,10 @@ export type HotkeyInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -2116,7 +2140,10 @@ export type InvokeMenuInput = {
     path: Array<string>,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -2450,7 +2477,10 @@ export type MoveCursorInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -2641,7 +2671,10 @@ export type PressKeyInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string,
     modifiers?: Array<string>
@@ -2769,7 +2802,10 @@ export type ScrollInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string,
     by?: ScrollBy,
@@ -3258,7 +3294,10 @@ export type SetWindowFrameInput = {
     height: number,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -3521,7 +3560,10 @@ export type TypeTextInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session.
      */
     session?: string
 }
@@ -3585,8 +3627,10 @@ export type VerifyStateInput = {
     expect: Array<StatePredicate>,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This
-     * field never selects capture modality or authorization.
+     * accepts it. The first ordinary call carrying a fresh label creates that session lazily; do
+     * not call start_session merely to begin. Use start_session only to configure the initial
+     * session state or revive an ended label. Omit session to use the authenticated transport's
+     * implicit lifecycle session. This field never selects capture modality or authorization.
      */
     session?: string,
     /**
@@ -3709,6 +3753,46 @@ const FfiConverterTypeVerifyStateOutput = (() => {
 
         }
     };
+    return new FFIConverter();
+})();
+
+/**
+ * How `launch_app` acquires an application process/window.
+ *
+ * The portable default reuses an exact existing candidate before asking the
+ * operating system to launch anything. Callers that require a stronger
+ * guarantee must opt into `reuse_only` or `new` explicitly; a platform that
+ * cannot honor `new` reports that limitation instead of silently degrading.
+ */
+export enum InstancePolicy {
+    ReuseOrLaunch,
+    ReuseOnly,
+    New
+}
+
+const FfiConverterTypeInstancePolicy = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = InstancePolicy;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return InstancePolicy.ReuseOrLaunch;
+                case 2: return InstancePolicy.ReuseOnly;
+                case 3: return InstancePolicy.New;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case InstancePolicy.ReuseOrLaunch: return ordinalConverter.write(1, into);
+                case InstancePolicy.ReuseOnly: return ordinalConverter.write(2, into);
+                case InstancePolicy.New: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
     return new FFIConverter();
 })();
 
@@ -3890,6 +3974,7 @@ export default Object.freeze({
     FfiConverterTypeGetSessionInput,
     FfiConverterTypeGetSessionStateInput,
     FfiConverterTypeHotkeyInput,
+    FfiConverterTypeInstancePolicy,
     FfiConverterTypeInvokeMenuInput,
     FfiConverterTypeListSessionsInput,
     FfiConverterTypeListSessionsOutput,

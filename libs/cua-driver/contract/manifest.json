@@ -51,7 +51,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -267,7 +267,7 @@
             "type": "boolean"
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           }
         },
@@ -350,7 +350,7 @@
             "type": "string"
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "text": {
@@ -447,7 +447,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "steps": {
@@ -1050,7 +1050,7 @@
         "additionalProperties": false,
         "properties": {
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           }
         },
@@ -1106,7 +1106,7 @@
             "type": "string"
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           }
         },
@@ -1187,7 +1187,7 @@
         "additionalProperties": false,
         "properties": {
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           }
         },
@@ -1451,7 +1451,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -1670,7 +1670,7 @@
             "type": "integer"
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "window_id": {
@@ -1966,7 +1966,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -2191,7 +2191,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -2420,7 +2420,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -2947,7 +2947,7 @@
             "type": "integer"
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "width": {
@@ -3092,7 +3092,7 @@
     },
     {
       "name": "start_session",
-      "description": "Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.",
+      "description": "Configure or revive a lifecycle session explicitly. Do not call this tool merely to begin: the first ordinary call carrying a fresh public `session` label creates that session lazily, and later calls reuse it when they repeat the label. An omitted value uses the authenticated transport lease's implicit session instead. Use start_session to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.",
       "platforms": [
         "macos",
         "windows",
@@ -3258,7 +3258,7 @@
             "description": "Deprecated flat desktop target retained for wire compatibility."
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session.",
             "type": "string"
           },
           "target": {
@@ -3588,7 +3588,7 @@
             "type": "integer"
           },
           "session": {
-            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session. This\nfield never selects capture modality or authorization.",
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. The first ordinary call carrying a fresh label creates that session lazily; do\nnot call start_session merely to begin. Use start_session only to configure the initial\nsession state or revive an ended label. Omit session to use the authenticated transport's\nimplicit lifecycle session. This field never selects capture modality or authorization.",
             "type": "string"
           },
           "stable_samples": {

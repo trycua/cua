@@ -1089,7 +1089,7 @@ impl Tool for HistoryStatusTool {
     fn def(&self) -> &ToolDef {
         HISTORY_STATUS_DEF.get_or_init(|| ToolDef {
             name: "history_status".to_owned(),
-            description: "Report whether encrypted local Computer History is admitted, enabled, healthy, paused, or dropping events. Returns metadata only; it never returns history entries.".to_owned(),
+            description: "For prompts to continue or revisit recent work, call this first, before broad desktop discovery. Reports whether encrypted local history is admitted, enabled, healthy, paused, or dropping events. If history is absent or access is denied, continue with normal discovery. Returns metadata-only status, never history entries, screen or page content, geometry, or inferred user intent, and does not change history lifecycle state.".to_owned(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {},
@@ -1127,7 +1127,7 @@ impl Tool for HistoryQueryTool {
     fn def(&self) -> &ToolDef {
         HISTORY_QUERY_DEF.get_or_init(|| ToolDef {
             name: "history_query".to_owned(),
-            description: "Read a bounded, metadata-only slice of the user's encrypted local Computer History. Results may enter model context. Requires the existing Cua permission and capability-manifest checks for this exact operation.".to_owned(),
+            description: "After history_status reports ready for a prompt to continue or revisit recent work, make one bounded initial query before broad desktop discovery. Reads metadata-only encrypted local history; it omits screen and page content, geometry, and inferred user intent. Results may enter model context. Requires the existing permission and capability-manifest checks for this exact operation; if history is absent or access is denied, continue with normal discovery. This read does not enable, pause, resume, disable, or delete history.".to_owned(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -2247,6 +2247,101 @@ mod tests {
             retention_days: DEFAULT_RETENTION_DAYS,
             quota_bytes: DEFAULT_QUOTA_BYTES,
         }
+    }
+
+    #[test]
+    fn history_tool_descriptions_define_bounded_history_first_consultation() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = HistoryManager::new(
+            config(temp.path()),
+            Arc::new(MemoryKeyProvider::default()),
+            None,
+        );
+        let status = HistoryStatusTool::new(Arc::clone(&manager));
+        let query = HistoryQueryTool::new(manager);
+        let status_description = &status.def().description;
+        let query_description = &query.def().description;
+
+        for trigger in ["continue", "recent work"] {
+            assert!(status_description.contains(trigger));
+            assert!(query_description.contains(trigger));
+        }
+        assert!(
+            query_description.find("history_status")
+                < query_description.find("one bounded initial query")
+        );
+        assert!(
+            query_description.find("one bounded initial query")
+                < query_description.find("broad desktop discovery")
+        );
+        for boundary in [
+            "metadata-only",
+            "screen and page content",
+            "geometry",
+            "inferred user intent",
+            "model context",
+        ] {
+            assert!(query_description.contains(boundary), "missing {boundary}");
+        }
+        assert!(status_description.contains("never history entries"));
+        assert!(status_description.contains("does not change history lifecycle state"));
+        assert!(query_description.contains("does not enable, pause, resume, disable, or delete"));
+        for fallback in ["absent", "access is denied", "normal discovery"] {
+            assert!(status_description.contains(fallback));
+            assert!(query_description.contains(fallback));
+        }
+    }
+
+    #[test]
+    fn history_consultation_keeps_closed_schemas_and_annotations() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = HistoryManager::new(
+            config(temp.path()),
+            Arc::new(MemoryKeyProvider::default()),
+            None,
+        );
+        let status = HistoryStatusTool::new(Arc::clone(&manager));
+        let query = HistoryQueryTool::new(manager);
+
+        assert_eq!(
+            status.def().input_schema,
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            })
+        );
+        assert_eq!(
+            query.def().input_schema,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_QUERY_LIMIT},
+                    "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                    "since_sequence": {"type": "integer", "minimum": 1},
+                    "until_sequence": {"type": "integer", "minimum": 1}
+                },
+                "additionalProperties": false
+            })
+        );
+        assert_eq!(
+            (
+                status.def().read_only,
+                status.def().destructive,
+                status.def().idempotent,
+                status.def().open_world,
+            ),
+            (true, false, true, false)
+        );
+        assert_eq!(
+            (
+                query.def().read_only,
+                query.def().destructive,
+                query.def().idempotent,
+                query.def().open_world,
+            ),
+            (true, false, false, false)
+        );
     }
 
     #[tokio::test]

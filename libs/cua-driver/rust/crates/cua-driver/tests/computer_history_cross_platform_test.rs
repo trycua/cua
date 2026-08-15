@@ -404,21 +404,8 @@ fn start_daemon() -> DaemonChild {
     }
 }
 
-#[cfg(unix)]
 fn daemon_is_reachable() -> bool {
-    std::os::unix::net::UnixStream::connect(daemon_socket()).is_ok()
-}
-
-#[cfg(windows)]
-fn daemon_is_reachable() -> bool {
-    use std::os::windows::fs::OpenOptionsExt;
-
-    fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .share_mode(0x0000_0001 | 0x0000_0002)
-        .open(daemon_socket())
-        .is_ok()
+    cua_driver_core::daemon::is_daemon_listening(&daemon_socket())
 }
 
 fn key_references() -> Vec<String> {

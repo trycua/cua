@@ -443,14 +443,20 @@ fn daemon_socket_is_reachable(socket: &str) -> bool {
 
 #[cfg(windows)]
 fn daemon_socket_is_reachable(socket: &str) -> bool {
-    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::ffi::OsStrExt;
 
-    std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .share_mode(0x0000_0001 | 0x0000_0002)
-        .open(socket)
-        .is_ok()
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn WaitNamedPipeW(lp_named_pipe_name: *const u16, timeout_ms: u32) -> i32;
+    }
+
+    let wide: Vec<u16> = std::ffi::OsStr::new(socket)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // NMPWAIT_NOWAIT == 1. Unlike opening the path, this does not consume the
+    // daemon's available named-pipe instance before the MCP proxy connects.
+    unsafe { WaitNamedPipeW(wide.as_ptr(), 1) != 0 }
 }
 
 impl Drop for McpDriver {

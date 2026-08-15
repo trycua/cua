@@ -520,7 +520,6 @@ impl Drop for RuntimeCleanup {
 pub struct TrustedInvocationEvidence {
     session_id: Option<String>,
     transport_session_id: Option<String>,
-    browser_prepare_mcp_host_approved: bool,
     browser_download_mcp_host_approved: bool,
 }
 
@@ -537,10 +536,6 @@ impl TrustedInvocationEvidence {
                 .remove("_transport_session_id")
                 .and_then(|value| value.as_str().map(str::to_owned))
                 .filter(|value| !value.is_empty());
-            evidence.browser_prepare_mcp_host_approved = arguments
-                .remove(crate::browser::approval::MCP_HOST_APPROVAL_ARG)
-                .and_then(|value| value.as_bool())
-                == Some(true);
             evidence.browser_download_mcp_host_approved = arguments
                 .remove(crate::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG)
                 .and_then(|value| value.as_bool())
@@ -561,12 +556,6 @@ impl TrustedInvocationEvidence {
             arguments.insert(
                 "_transport_session_id".to_owned(),
                 Value::String(session.clone()),
-            );
-        }
-        if self.browser_prepare_mcp_host_approved {
-            arguments.insert(
-                crate::browser::approval::MCP_HOST_APPROVAL_ARG.to_owned(),
-                Value::Bool(true),
             );
         }
         if self.browser_download_mcp_host_approved {
@@ -3962,7 +3951,6 @@ resources:
             "session": "public",
             "_session_id": "trusted-owner",
             "_transport_session_id": "transport-a",
-            "_cua_browser_prepare_mcp_host_approved": true,
             "_cua_browser_download_mcp_host_approved": true,
             "_protected_process_fingerprint": {"pid": 1},
             "files": ["/does/not/matter"]
@@ -3993,10 +3981,6 @@ resources:
             .get("_transport_session_id")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| value.ends_with(":transport-a")));
-        assert_eq!(
-            received["_cua_browser_prepare_mcp_host_approved"],
-            serde_json::Value::Bool(true)
-        );
         assert_eq!(
             received["_cua_browser_download_mcp_host_approved"],
             serde_json::Value::Bool(true)
@@ -4442,13 +4426,6 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
     if let Some(arguments) = redacted.as_object_mut() {
         match tool_name {
             "browser_prepare" => {
-                if arguments.contains_key("approval_token") {
-                    arguments.insert(
-                        "approval_token".to_owned(),
-                        Value::String("[redacted]".to_owned()),
-                    );
-                }
-                arguments.remove("_cua_browser_prepare_mcp_host_approved");
                 arguments.remove("_transport_session_id");
             }
             "browser_dialog" => {
@@ -4553,7 +4530,7 @@ mod capability_tests {
     use super::*;
 
     #[test]
-    fn browser_prepare_recording_redacts_authority_and_transport_secrets() {
+    fn browser_prepare_recording_redacts_transport_identity() {
         let recorded = recording_args_for(
             "browser_prepare",
             &serde_json::json!({
@@ -4561,15 +4538,9 @@ mod capability_tests {
                 "window_id": 7,
                 "session": "public-session",
                 "strategy": {"kind": "existing_profile"},
-                "approval_token": "one-use-secret",
-                "_cua_browser_prepare_mcp_host_approved": true,
                 "_transport_session_id": "private-transport",
             }),
         );
-        assert_eq!(recorded["approval_token"], "[redacted]");
-        assert!(recorded
-            .get("_cua_browser_prepare_mcp_host_approved")
-            .is_none());
         assert!(recorded.get("_transport_session_id").is_none());
         assert_eq!(recorded["pid"], 42);
         assert_eq!(recorded["window_id"], 7);

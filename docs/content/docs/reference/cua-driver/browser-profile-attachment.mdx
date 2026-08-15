@@ -40,11 +40,6 @@ proves transport provenance, not approval to use an authenticated browser
 profile. A standalone standard-mode runtime without a launch grant or host
 callback fails closed.
 
-The old `browser-approve` file artifact is disabled by default. A trusted
-launcher can temporarily enable it with
-`--allow-legacy-existing-profile-approval`. The artifact is same-user writable
-and is not protected human consent.
-
 ## Success result
 
 A successful call returns `action: "attached_existing_profile"` and an
@@ -73,7 +68,7 @@ A successful call returns `action: "attached_existing_profile"` and an
 
 All fields are `false` when the endpoint was already available. The driver does
 not return the profile identity, endpoint address, port, connection generation,
-grant identifier, or approval artifact.
+grant identifier, or internal authorization details.
 
 A refusal after setup begins may include `detail.setup_side_effects`. This uses
 the same setup fields and adds `restored_remote_debugging` when the driver had
@@ -150,8 +145,7 @@ for why Cua Driver uses CDP and which risks remain outside the driver.
 Host authorization events contain only bounded metadata and the structured
 outcome. They do not include browser screenshots or accessibility snapshots.
 Public results, recordings, and telemetry must not contain profile paths or
-hashes, endpoint URLs or ports, approval tokens, page content, tab URLs,
-cookies, or storage.
+hashes, endpoint URLs or ports, page content, tab URLs, cookies, or storage.
 The content-free browser operation and refusal fields are documented in
 [Telemetry and privacy](/reference/cua-driver/telemetry#structured-browser-refusals).
 

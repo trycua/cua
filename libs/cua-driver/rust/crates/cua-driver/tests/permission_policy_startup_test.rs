@@ -364,29 +364,6 @@ fn capability_manifest_acknowledgement_without_manifest_fails_closed() {
 }
 
 #[test]
-fn legacy_existing_profile_approval_cannot_bypass_bounded_indicator() {
-    let directory = tempfile::tempdir().expect("temporary bounded test directory");
-    let policy = write_valid_capability_manifest(&directory);
-    let socket = test_socket(&directory, "bounded-legacy-approval");
-    let output = rejected_serve(
-        &socket,
-        &[
-            "--permission-mode",
-            "bounded",
-            "--capability-manifest",
-            &policy,
-            "--approve-capability-manifest",
-            "--allow-legacy-existing-profile-approval",
-        ],
-    );
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr)
-        .contains("valid only with --permission-mode standard"));
-    #[cfg(unix)]
-    assert!(!std::path::Path::new(&socket).exists());
-}
-
-#[test]
 fn autonomous_mode_name_remains_a_bounded_compatibility_alias() {
     let directory = tempfile::tempdir().expect("temporary mode alias test directory");
     let socket = test_socket(&directory, "autonomous-alias");

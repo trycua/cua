@@ -107,14 +107,16 @@ Prefer an isolated profile when the task does not need the user's existing
 cookies or login state:
 
 ```bash
-# Direct CLI/raw clients mint this token interactively. MCP hosts can use their
-# destructive-tool approval flow instead.
-cua-driver browser-approve --pid 4242 --profile-mode isolated_new
-
 cua-driver browser_prepare \
   '{"pid":4242,"session":"browser-run-1","allow_launch":true,
-    "profile":{"mode":"isolated_new"},"approval_token":"<token>"}'
+    "profile":{"mode":"isolated_new"}}'
 ```
+
+Isolated preparation follows the runtime permission mode and optional
+capability manifest. Standard mode treats it as routine, bounded mode requires
+a matching manifest, and unrestricted mode requires the launcher's dangerous
+acknowledgement. `allow_launch: true` states that this call may create the
+separate process; it does not widen runtime authorization.
 
 Use `isolated_named` with a path-safe `name` for a reusable driver-managed
 profile. Preparation launches a separate browser and never copies, modifies,

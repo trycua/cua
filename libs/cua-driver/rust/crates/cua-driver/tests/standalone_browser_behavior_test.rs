@@ -2260,11 +2260,6 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 "browser_prepare disclosed its private profile path: {}",
                 prepared.raw
             );
-            assert!(
-                !prepared_json.contains("approval_token"),
-                "{}",
-                prepared.raw
-            );
 
             let prepared_pid = prepared.structured()["prepared_pid"]
                 .as_u64()
@@ -2503,11 +2498,6 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                     prepared.raw
                 );
                 assert!(
-                    !public_result.contains("approval_token"),
-                    "{}",
-                    prepared.raw
-                );
-                assert!(
                     !public_result.contains(&fixture._profile.path().display().to_string()),
                     "{}",
                     prepared.raw
@@ -2655,11 +2645,6 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
 
             let public_result = prepared.raw.to_string();
             assert!(!public_result.contains("ws://"), "{}", prepared.raw);
-            assert!(
-                !public_result.contains("approval_token"),
-                "{}",
-                prepared.raw
-            );
             assert!(
                 !public_result.contains(&fixture._profile.path().display().to_string()),
                 "{}",

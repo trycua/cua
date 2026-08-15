@@ -38,12 +38,6 @@ pub enum PrepareStrategy {
     ExistingProfile,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrepareAuthorization {
-    McpHost,
-    ApprovalArtifact(String),
-}
-
 /// Caller context for an explicit `browser_prepare` call. Prepare is never
 /// implicit: `get_browser_state` must not trigger it.
 #[derive(Debug, Clone)]
@@ -57,7 +51,6 @@ pub struct PrepareRequest {
     /// this independently from the public capability session so either proxy
     /// disconnect or explicit `end_session` can reap a spawned browser.
     pub transport_session: Option<String>,
-    pub authorization: Option<PrepareAuthorization>,
     /// Omitted for the legacy isolated-profile compatibility form.
     pub strategy: Option<PrepareStrategy>,
     pub profile: Option<PrepareProfile>,

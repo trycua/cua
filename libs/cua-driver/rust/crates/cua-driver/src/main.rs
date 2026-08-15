@@ -48,7 +48,6 @@ fn init_logging() {
 fn configure_startup_permission_mode(
     permission_mode: Option<&str>,
     dangerously_bypass_approvals: bool,
-    allow_legacy_existing_profile_approval: bool,
     capability_manifest: Option<&str>,
     approve_capability_manifest: bool,
     grants: &[String],
@@ -69,12 +68,6 @@ fn configure_startup_permission_mode(
     }
     if dangerously_bypass_approvals {
         std::env::set_var(cua_driver_core::authorization::DANGEROUS_BYPASS_ENV, "1");
-    }
-    if allow_legacy_existing_profile_approval {
-        std::env::set_var(
-            cua_driver_core::authorization::LEGACY_EXISTING_PROFILE_APPROVAL_ENV,
-            "1",
-        );
     }
     if let Some(path) = capability_manifest {
         std::env::set_var(
@@ -512,7 +505,6 @@ fn main() {
             socket,
             permission_mode,
             dangerously_bypass_approvals,
-            allow_legacy_existing_profile_approval,
             capability_manifest,
             approve_capability_manifest,
             no_permissions_gate,
@@ -522,7 +514,6 @@ fn main() {
             if let Err(error) = configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
-                allow_legacy_existing_profile_approval,
                 capability_manifest.as_deref(),
                 approve_capability_manifest,
                 &grants,
@@ -758,23 +749,6 @@ fn main() {
         cli::Command::CursorTheme { args } => {
             run_cursor_theme_command(&args);
         }
-        cli::Command::BrowserApprove {
-            pid,
-            strategy,
-            window_id,
-            session,
-            profile_mode,
-            profile_name,
-        } => {
-            cli::run_browser_approve(
-                pid,
-                strategy.as_deref(),
-                window_id,
-                session.as_deref(),
-                profile_mode.as_deref(),
-                profile_name.as_deref(),
-            );
-        }
         cli::Command::Config {
             subcommand,
             key,
@@ -801,7 +775,7 @@ fn main() {
             let result = match mcp_uses_direct_runtime(socket.as_deref(), direct) {
                 Ok(true) => {
                     if let Err(error) =
-                        configure_startup_permission_mode(None, false, false, None, false, &grants)
+                        configure_startup_permission_mode(None, false, None, false, &grants)
                     {
                         Err(error)
                     } else {
@@ -904,7 +878,6 @@ fn main() -> anyhow::Result<()> {
             socket,
             permission_mode,
             dangerously_bypass_approvals,
-            allow_legacy_existing_profile_approval,
             capability_manifest,
             approve_capability_manifest,
             no_permissions_gate,
@@ -914,7 +887,6 @@ fn main() -> anyhow::Result<()> {
             configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
-                allow_legacy_existing_profile_approval,
                 capability_manifest.as_deref(),
                 approve_capability_manifest,
                 &grants,
@@ -1033,24 +1005,6 @@ fn main() -> anyhow::Result<()> {
         cli::Command::CursorTheme { args } => {
             run_cursor_theme_command(&args);
         }
-        cli::Command::BrowserApprove {
-            pid,
-            strategy,
-            window_id,
-            session,
-            profile_mode,
-            profile_name,
-        } => {
-            cli::run_browser_approve(
-                pid,
-                strategy.as_deref(),
-                window_id,
-                session.as_deref(),
-                profile_mode.as_deref(),
-                profile_name.as_deref(),
-            );
-            return Ok(());
-        }
         cli::Command::Config {
             subcommand,
             key,
@@ -1077,7 +1031,7 @@ fn main() -> anyhow::Result<()> {
             version_check::maybe_announce_update();
             let result = match mcp_uses_direct_runtime(socket.as_deref(), direct) {
                 Ok(true) => {
-                    configure_startup_permission_mode(None, false, false, None, false, &grants)?;
+                    configure_startup_permission_mode(None, false, None, false, &grants)?;
                     telemetry::capture_mcp_startup_completed(
                         "sdk_owned_runtime",
                         "not_applicable",

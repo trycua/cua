@@ -42,7 +42,7 @@ jobs:
         include:
           - label: Linux X11
             os: ubuntu-latest
-            artifact: rust-browser-linux-x11-diagnostic
+            artifact: rust-browser-linux-x11-representative-install
             products: chrome
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -67,22 +67,61 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
+          sudo apt-get update
+          sudo apt-get install -y openbox picom xvfb dbus-x11 xdotool wmctrl ffmpeg
           google-chrome --version
-          candidate=/opt/google/chrome/google-chrome
-          printf 'readlink=%s\n' "$(readlink -f "$candidate")"
-          namei -l "$candidate"
-          current="$candidate"
-          while true; do
-            stat --printf='%n type=%F uid=%u gid=%g mode=%a\n' "$current"
-            [[ "$current" == / ]] && break
-            current="$(dirname "$current")"
+      - name: Prepare representative protected browser install
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # GitHub's disposable image currently installs Chrome in a root-owned
+          # but mode-0777 /opt tree. Verify the exact trusted candidate and each
+          # ancestor before removing only group/other write bits for this run.
+          candidates=(
+            /opt/google/chrome/google-chrome
+            /usr/lib/chromium/chromium
+            /usr/lib/chromium-browser/chromium-browser
+            /opt/microsoft/msedge/msedge
+          )
+          found=0
+          for candidate in "${candidates[@]}"; do
+            [[ -e "$candidate" ]] || continue
+            found=$((found + 1))
+            [[ -f "$candidate" ]] || { echo "candidate is not a regular file" >&2; exit 1; }
+            resolved="$(readlink -f -- "$candidate")"
+            [[ "$resolved" == "$candidate" ]] || { echo "candidate redirects" >&2; exit 1; }
+
+            current="$candidate"
+            while [[ "$current" != / ]]; do
+              [[ "$(stat -c %u -- "$current")" == 0 ]] || {
+                echo "candidate component is not root-owned" >&2
+                exit 1
+              }
+              sudo chmod go-w -- "$current"
+              current="$(dirname -- "$current")"
+            done
+          done
+          [[ "$found" -gt 0 ]] || { echo "no known browser candidate exists" >&2; exit 1; }
+
+          for candidate in "${candidates[@]}"; do
+            [[ -e "$candidate" ]] || continue
+            current="$candidate"
+            while true; do
+              uid="$(stat -c %u -- "$current")"
+              mode="$(stat -c %a -- "$current")"
+              printf 'verified component=%s uid=%s mode=%s\n' "$(basename -- "$current")" "$uid" "$mode"
+              [[ "$uid" == 0 ]] || exit 1
+              (( (8#$mode & 8#22) == 0 )) || exit 1
+              [[ "$current" == / ]] && break
+              current="$(dirname -- "$current")"
+            done
           done
       - name: Build source driver on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Build source driver on Linux
-        if: ${{ false }}
+        if: runner.os == 'Linux'
         shell: bash
         run: cargo build --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Run standalone browsers on Windows
@@ -92,19 +131,41 @@ jobs:
           $env:CUA_E2E_ARTIFACT_DIR = Join-Path $PWD "artifacts\cua-driver\standalone-browser"
           scripts\ci\windows\run-rust-standalone-browser-e2e.ps1 -NoBuild
       - name: Run standalone browsers on Linux X11
-        if: ${{ false }}
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          export CUA_E2E_ARTIFACT_DIR="$PWD/artifacts/cua-driver/standalone-browser"
-          export CUA_E2E_SKIP_BUILD=1
+          artifact_dir="$PWD/artifacts/cua-driver/standalone-browser"
+          mkdir -p "$artifact_dir/recordings"
+          export CUA_E2E_ARTIFACT_DIR="$artifact_dir"
+          export CUA_E2E_DECLARATIONS_FILE="$artifact_dir/cases.jsonl"
+          export CUA_E2E_ENVIRONMENT_FILE="$artifact_dir/environment.jsonl"
+          export CUA_E2E_BROWSER_PROVENANCE_FILE="$artifact_dir/browser-provenance.jsonl"
+          export CUA_E2E_RESULTS_FILE="$artifact_dir/results.jsonl"
+          export CUA_E2E_RECORDINGS_ROOT="$artifact_dir/recordings"
+          export CUA_TEST_WORKSPACE_ROOT="$PWD/libs/cua-driver/rust"
+          export CUA_TEST_DRIVER_BIN="$PWD/libs/cua-driver/rust/target/release/cua-driver"
           # Hosted Linux does not provide a browser sandbox suitable for the
           # isolated test profiles. This affects only disposable test browsers.
           export CUA_E2E_BROWSER_NO_SANDBOX=1
+          : > "$CUA_E2E_DECLARATIONS_FILE"
+          : > "$CUA_E2E_ENVIRONMENT_FILE"
+          : > "$CUA_E2E_BROWSER_PROVENANCE_FILE"
+          : > "$CUA_E2E_RESULTS_FILE"
+          libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            'openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; exec scripts/ci/run-rust-standalone-browser-e2e.sh'
+            'set -o pipefail; openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; cd libs/cua-driver/rust && cargo test --release -p cua-driver --features portal-input --test standalone_browser_behavior_test standalone_browser_prepare_isolated -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$CUA_E2E_ARTIFACT_DIR/standalone_browser_prepare_isolated.log"'
+          cargo run --release -p cua-driver-testkit \
+            --manifest-path libs/cua-driver/rust/Cargo.toml \
+            --bin cua-e2e-report -- \
+            --declarations "$CUA_E2E_DECLARATIONS_FILE" \
+            --environment "$CUA_E2E_ENVIRONMENT_FILE" \
+            --results "$CUA_E2E_RESULTS_FILE" \
+            --artifact-root "$artifact_dir" \
+            --require-video \
+            --output "$artifact_dir/summary.md"
       - name: Publish job summary
-        if: ${{ false }}
+        if: always()
         shell: bash
         run: |
           if [[ -f artifacts/cua-driver/standalone-browser/summary.md ]]; then
@@ -113,7 +174,7 @@ jobs:
             echo "Standalone browser summary was not produced." >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload browser evidence
-        if: ${{ false }}
+        if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
           name: ${{ matrix.artifact }}

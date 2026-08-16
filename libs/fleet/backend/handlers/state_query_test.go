@@ -70,7 +70,7 @@ func TestQueryStateStreamsRawQueryResults(t *testing.T) {
 		fields: []pgconn.FieldDescription{{Name: "name", DataTypeOID: 25}},
 		rows:   [][]any{{"alice-ns"}, {"alice-pod"}},
 	}
-	h := Handlers{StateQueryExecutor: executor}
+	h := Handlers{Features: FeaturesWith(executor, nil)}
 	query := "select pg_sleep(60)"
 	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader(query)), &auth.User{ID: "alice"})
 	request.Header.Set("Content-Type", "application/sql; charset=utf-8")
@@ -99,7 +99,7 @@ func TestQueryStateStreamsRawQueryResults(t *testing.T) {
 }
 
 func TestQueryStateRequiresSQLContentType(t *testing.T) {
-	h := Handlers{StateQueryExecutor: &fakeStateQueryExecutor{}}
+	h := Handlers{Features: FeaturesWith(&fakeStateQueryExecutor{}, nil)}
 	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")), &auth.User{ID: "alice"})
 	response := httptest.NewRecorder()
 	h.QueryState(response, request)
@@ -114,7 +114,7 @@ func TestQueryStateWritesExecutorErrorAsTerminalEvent(t *testing.T) {
 		rows:   [][]any{{"alice-ns"}},
 		err:    errors.New("stream failed"),
 	}
-	h := Handlers{StateQueryExecutor: executor}
+	h := Handlers{Features: FeaturesWith(executor, nil)}
 	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")), &auth.User{ID: "alice"})
 	request.Header.Set("Content-Type", "application/sql")
 	response := httptest.NewRecorder()
@@ -147,7 +147,7 @@ func TestQueryStateUsesBoundedDatabaseContext(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			executor := &deadlineStateQueryExecutor{write: test.write, err: test.err}
-			h := Handlers{StateQueryExecutor: executor}
+			h := Handlers{Features: FeaturesWith(executor, nil)}
 			request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")), &auth.User{ID: "alice"})
 			request.Header.Set("Content-Type", "application/sql")
 			response := httptest.NewRecorder()
@@ -174,7 +174,7 @@ func TestQueryStateUsesBoundedDatabaseContext(t *testing.T) {
 
 func TestQueryStateDatabaseFailureBeforeStreamReturnsServiceUnavailable(t *testing.T) {
 	executor := &deadlineStateQueryExecutor{err: auth.ErrDatabaseUnavailable}
-	h := Handlers{StateQueryExecutor: executor}
+	h := Handlers{Features: FeaturesWith(executor, nil)}
 	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")), &auth.User{ID: "alice"})
 	request.Header.Set("Content-Type", "application/sql")
 	response := httptest.NewRecorder()
@@ -191,7 +191,7 @@ func TestQueryStateDatabaseFailureBeforeStreamReturnsServiceUnavailable(t *testi
 
 func TestQueryStateDatabaseFailureAfterStreamWritesSanitizedTerminalEvent(t *testing.T) {
 	executor := &deadlineStateQueryExecutor{write: true, err: auth.ErrDatabaseUnavailable}
-	h := Handlers{StateQueryExecutor: executor}
+	h := Handlers{Features: FeaturesWith(executor, nil)}
 	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")), &auth.User{ID: "alice"})
 	request.Header.Set("Content-Type", "application/sql")
 	response := httptest.NewRecorder()
@@ -222,7 +222,7 @@ func TestQueryStatePropagatesRequestCancellation(t *testing.T) {
 	started := make(chan struct{})
 	done := make(chan struct{})
 	handlerDone := make(chan struct{})
-	h := Handlers{StateQueryExecutor: cancellationStateQueryExecutor{started: started, done: done}}
+	h := Handlers{Features: FeaturesWith(cancellationStateQueryExecutor{started: started, done: done}, nil)}
 	parent, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	request := withUser(httptest.NewRequest("QUERY", "/api/state/query", strings.NewReader("select 1")).WithContext(parent), &auth.User{ID: "alice"})

@@ -660,8 +660,7 @@ func TestInitializeDatabaseFeatures(t *testing.T) {
 				},
 			}
 			h := handlers.Handlers{
-				StateQueryExecutor:  stateQueryExecutorStub{},
-				GitHubTrustPolicies: githubTrustStoreStub{},
+				Features: handlers.FeaturesWith(stateQueryExecutorStub{}, githubTrustStoreStub{}),
 			}
 			auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolver(githubTrustStoreStub{}))
 			t.Cleanup(func() { auth.SetGitHubTrustResolver(nil) })
@@ -674,10 +673,10 @@ func TestInitializeDatabaseFeatures(t *testing.T) {
 			if got := newStoreCalls == 1; got != test.wantNewStore {
 				t.Fatalf("GitHub trust store constructor called = %t, want %t", got, test.wantNewStore)
 			}
-			if got := h.StateQueryExecutor != nil; got != test.wantExecutor {
+			if got := h.Features.StateQuery() != nil; got != test.wantExecutor {
 				t.Fatalf("StateQueryExecutor present = %t, want %t", got, test.wantExecutor)
 			}
-			if got := h.GitHubTrustPolicies != nil; got != test.wantStore {
+			if got := h.Features.TrustStore() != nil; got != test.wantStore {
 				t.Fatalf("GitHubTrustPolicies present = %t, want %t", got, test.wantStore)
 			}
 			assertStartupContext(t, requireVersionContext, test.wantRequireVersion)
@@ -818,7 +817,7 @@ func TestInitializeDatabaseFeaturesReportsReadinessMetric(t *testing.T) {
 					return githubTrustStoreStub{}, nil
 				},
 			}
-			h := handlers.Handlers{}
+			h := handlers.Handlers{Features: handlers.NewFeatures()}
 			t.Cleanup(func() { auth.SetGitHubTrustResolver(nil) })
 
 			initializeDatabaseFeatures(context.Background(), test.config, &h, dependencies)
@@ -846,4 +845,136 @@ func gaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
 		t.Fatalf("read gauge: %v", err)
 	}
 	return measurement.GetGauge().GetValue()
+}
+
+// The point of the retry: a pod that started during a database outage recovers
+// on its own. Before this, initialization ran once and the pod stayed degraded
+// until someone restarted it.
+func TestRetryDatabaseFeaturesRecoversWithoutARestart(t *testing.T) {
+	metrics.DatabaseFeaturesReady.Reset()
+	attempts := 0
+	dependencies := databaseFeatureDependencies{
+		requireVersion: func(context.Context, string, int64) error {
+			attempts++
+			if attempts < 3 {
+				return fmt.Errorf("schema unavailable")
+			}
+			return nil
+		},
+		newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
+			return stateQueryExecutorStub{}, nil
+		},
+		newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
+			return githubTrustStoreStub{}, nil
+		},
+	}
+	cfg := config.DatabaseConfiguration{URL: "postgres://application/application"}
+	h := handlers.Handlers{Features: handlers.NewFeatures()}
+	t.Cleanup(func() { auth.SetGitHubTrustResolver(nil) })
+
+	progress := initializeDatabaseFeatures(context.Background(), cfg, &h, dependencies)
+	if progress.ready() {
+		t.Fatal("startup reported ready despite the schema being unavailable")
+	}
+	if got := gaugeValue(t, metrics.DatabaseFeaturesReady.WithLabelValues("true")); got != 0 {
+		t.Fatalf("gauge after failed startup = %v, want 0", got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	retryDatabaseFeatures(ctx, cfg, &h, dependencies, progress, time.Millisecond)
+
+	if h.Features.TrustStore() == nil {
+		t.Fatal("trust store still absent after the retry succeeded")
+	}
+	if got := gaugeValue(t, metrics.DatabaseFeaturesReady.WithLabelValues("true")); got != 1 {
+		t.Fatalf("gauge after recovery = %v, want 1 so the alert resolves", got)
+	}
+}
+
+// A retry driven by a broken application database must not disturb a state
+// query executor that came up fine — re-running the whole initialization would
+// clear it on every tick.
+func TestRetryDatabaseFeaturesLeavesWorkingDependenciesAlone(t *testing.T) {
+	installed := stateQueryExecutorStub{}
+	executorCalls := 0
+	dependencies := databaseFeatureDependencies{
+		requireVersion: func(context.Context, string, int64) error {
+			return fmt.Errorf("schema unavailable")
+		},
+		newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
+			executorCalls++
+			return installed, nil
+		},
+		newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
+			return githubTrustStoreStub{}, nil
+		},
+	}
+	cfg := config.DatabaseConfiguration{
+		URL:                      "postgres://application/application",
+		StateQueryDSN:            "postgres://state-query/state-query",
+		StateQueryTenantPassword: "tenant-password",
+	}
+	h := handlers.Handlers{Features: handlers.NewFeatures()}
+	t.Cleanup(func() { auth.SetGitHubTrustResolver(nil) })
+
+	progress := initializeDatabaseFeatures(context.Background(), cfg, &h, dependencies)
+	for range 3 {
+		progress = attemptDatabaseFeatures(context.Background(), cfg, &h, dependencies, progress)
+		if h.Features.StateQuery() == nil {
+			t.Fatal("a retry cleared the working state query executor")
+		}
+	}
+	if executorCalls != 1 {
+		t.Fatalf("state query constructed %d times, want 1 — retries must skip what is already up", executorCalls)
+	}
+}
+
+// The reason the dependencies live behind Features at all: setupRouter copies
+// Handlers by value, so a later install has to be visible through an existing
+// copy or the retry is pointless.
+func TestFeaturesInstallIsVisibleThroughAnExistingHandlersCopy(t *testing.T) {
+	h := handlers.Handlers{Features: handlers.NewFeatures()}
+	captured := h // what setupRouter and every route handler hold
+
+	h.Features.SetTrustStore(githubTrustStoreStub{})
+
+	if captured.Features.TrustStore() == nil {
+		t.Fatal("install not visible through the captured copy; the retry would update nobody")
+	}
+}
+
+// The loop must stop once everything is up, or a recovered pod carries a ticker
+// and a goroutine for the rest of its life.
+func TestRetryDatabaseFeaturesStopsOnceReady(t *testing.T) {
+	attempts := 0
+	dependencies := databaseFeatureDependencies{
+		requireVersion: func(context.Context, string, int64) error {
+			attempts++
+			if attempts < 2 {
+				return fmt.Errorf("schema unavailable")
+			}
+			return nil
+		},
+		newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
+			return stateQueryExecutorStub{}, nil
+		},
+		newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
+			return githubTrustStoreStub{}, nil
+		},
+	}
+	cfg := config.DatabaseConfiguration{URL: "postgres://application/application"}
+	h := handlers.Handlers{Features: handlers.NewFeatures()}
+	t.Cleanup(func() { auth.SetGitHubTrustResolver(nil) })
+
+	progress := initializeDatabaseFeatures(context.Background(), cfg, &h, dependencies)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	retryDatabaseFeatures(ctx, cfg, &h, dependencies, progress, time.Millisecond)
+
+	settled := attempts
+	time.Sleep(50 * time.Millisecond) // many ticks' worth at a 1ms interval
+	if attempts != settled {
+		t.Fatalf("attempts kept climbing after recovery (%d -> %d); the loop did not stop", settled, attempts)
+	}
 }

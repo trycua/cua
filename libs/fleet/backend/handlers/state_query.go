@@ -87,7 +87,8 @@ func (writer *stateQueryStreamWriter) write(event any) error {
 func (h Handlers) QueryState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Accept-Query", "application/sql")
 	w.Header().Set("Cache-Control", "private, no-store")
-	if h.StateQueryExecutor == nil {
+	executor := h.Features.StateQuery()
+	if executor == nil {
 		writeErr(w, http.StatusServiceUnavailable, "state query unavailable")
 		return
 	}
@@ -112,7 +113,7 @@ func (h Handlers) QueryState(w http.ResponseWriter, r *http.Request) {
 	stream := newStateQueryStreamWriter(w)
 	ctx, cancel := databaseContext(r.Context())
 	defer cancel()
-	err = h.StateQueryExecutor.Execute(ctx, identity.PersonalGroup(r.Context(), user.ID), string(body), stream)
+	err = executor.Execute(ctx, identity.PersonalGroup(r.Context(), user.ID), string(body), stream)
 	if err != nil && !stream.started {
 		writeErr(w, http.StatusServiceUnavailable, "state query unavailable")
 		return

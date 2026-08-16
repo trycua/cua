@@ -177,8 +177,11 @@ fn has_trusted_codesign_identity(
     identifier: &str,
     team_identifier: &str,
 ) -> bool {
+    let requirement = format!(
+        "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
+    );
     let verified = std::process::Command::new("/usr/bin/codesign")
-        .args(["--verify", "--strict"])
+        .args(["--verify", "--strict", "--test-requirement", &requirement])
         .arg(executable)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

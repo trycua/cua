@@ -2,7 +2,6 @@
   "title": "Driver",
   "pages": [
     "install",
-    "use-computer-history",
     "use-sdk-in-process",
     "verify-a-desktop-action",
     "use-claude-agent-sdk",
@@ -20,6 +19,7 @@
     "write-a-bounded-manifest",
     "personalize-cursor",
     "update",
+    "use-computer-history",
     "troubleshoot-stale-macos-permissions",
     "windows-ssh"
   ]

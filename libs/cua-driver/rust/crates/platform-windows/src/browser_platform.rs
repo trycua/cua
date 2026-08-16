@@ -21,7 +21,14 @@ use cua_driver_core::browser::types::{
     OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, RECT};
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, FILETIME, HWND, RECT};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_APPEND_DATA, FILE_DELETE_CHILD,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, OPEN_EXISTING,
+    WRITE_DAC, WRITE_OWNER,
+};
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
@@ -142,28 +149,29 @@ fn browser_product(name: &str) -> BrowserProduct {
 fn isolated_browser_candidates_from_roots(
     program_files: &std::path::Path,
     program_files_x86: &std::path::Path,
-) -> Vec<(PathBuf, &'static str, &'static str)> {
-    // Per-user and environment-derived paths are intentionally excluded. The
-    // remaining protected installation locations must also carry a valid
-    // vendor Authenticode identity before core can spawn them.
+) -> Vec<(PathBuf, PathBuf, &'static str, &'static str)> {
     vec![
         (
             program_files.join(r"Google\Chrome\Application\chrome.exe"),
+            program_files.to_owned(),
             "CN=Google LLC",
             "O=Google LLC",
         ),
         (
             program_files_x86.join(r"Google\Chrome\Application\chrome.exe"),
+            program_files_x86.to_owned(),
             "CN=Google LLC",
             "O=Google LLC",
         ),
         (
             program_files.join(r"Microsoft\Edge\Application\msedge.exe"),
+            program_files.to_owned(),
             "CN=Microsoft Corporation",
             "O=Microsoft Corporation",
         ),
         (
             program_files_x86.join(r"Microsoft\Edge\Application\msedge.exe"),
+            program_files_x86.to_owned(),
             "CN=Microsoft Corporation",
             "O=Microsoft Corporation",
         ),
@@ -188,7 +196,7 @@ fn known_folder_path(id: &windows::core::GUID) -> Result<PathBuf, BrowserRefusal
 }
 
 fn isolated_browser_candidates(
-) -> Result<Vec<(PathBuf, &'static str, &'static str)>, BrowserRefusal> {
+) -> Result<Vec<(PathBuf, PathBuf, &'static str, &'static str)>, BrowserRefusal> {
     let program_files = known_folder_path(&FOLDERID_ProgramFiles)?;
     let program_files_x86 = known_folder_path(&FOLDERID_ProgramFilesX86)?;
     Ok(isolated_browser_candidates_from_roots(
@@ -239,6 +247,84 @@ fn has_trusted_authenticode_identity(
             expected_cn,
             expected_org,
         )
+}
+
+fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    let wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let rights = if directory {
+        [
+            FILE_ADD_FILE.0,
+            FILE_ADD_SUBDIRECTORY.0,
+            FILE_DELETE_CHILD.0,
+            FILE_WRITE_EA.0,
+            FILE_WRITE_ATTRIBUTES.0,
+            DELETE.0,
+            WRITE_DAC.0,
+            WRITE_OWNER.0,
+        ]
+    } else {
+        [
+            FILE_WRITE_DATA.0,
+            FILE_APPEND_DATA.0,
+            FILE_WRITE_EA.0,
+            FILE_WRITE_ATTRIBUTES.0,
+            DELETE.0,
+            WRITE_DAC.0,
+            WRITE_OWNER.0,
+        ]
+    };
+    let flags = if directory {
+        FILE_FLAG_BACKUP_SEMANTICS
+    } else {
+        FILE_FLAGS_AND_ATTRIBUTES(0)
+    };
+    for right in rights {
+        match unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                right,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                None,
+                OPEN_EXISTING,
+                flags,
+                None,
+            )
+        } {
+            Ok(handle) => {
+                let _ = unsafe { CloseHandle(handle) };
+                return false;
+            }
+            Err(error) if error.code() == E_ACCESSDENIED => {}
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+fn trusted_windows_installation(
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+) -> bool {
+    if !executable.starts_with(trusted_root) || !current_token_cannot_write(executable, false) {
+        return false;
+    }
+    let mut current = executable.parent();
+    while let Some(directory) = current {
+        if !current_token_cannot_write(directory, true) {
+            return false;
+        }
+        if directory == trusted_root {
+            return true;
+        }
+        current = directory.parent();
+    }
+    false
 }
 
 fn allows_embedded_descendant_endpoint(executable_path: &str) -> bool {
@@ -922,15 +1008,17 @@ where
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
     fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
-        for (candidate, expected_cn, expected_org) in isolated_browser_candidates()? {
-            let Ok(executable) = select_isolated_browser_executable([candidate]) else {
+        for (candidate, trusted_root, expected_cn, expected_org) in isolated_browser_candidates()? {
+            let Ok(executable) = select_isolated_browser_executable([candidate.clone()]) else {
                 continue;
             };
-            if has_trusted_authenticode_identity(
-                std::path::Path::new(&executable),
-                expected_cn,
-                expected_org,
-            ) {
+            if trusted_windows_installation(&candidate, &trusted_root)
+                && has_trusted_authenticode_identity(
+                    std::path::Path::new(&executable),
+                    expected_cn,
+                    expected_org,
+                )
+            {
                 return Ok(executable);
             }
         }
@@ -1486,6 +1574,31 @@ mod tests {
             "CN=Google LLC",
             "O=Google LLC"
         ));
+    }
+
+    #[test]
+    fn writable_installation_tree_is_rejected() {
+        let root = tempfile::tempdir().expect("writable product root");
+        let product = root.path().join(r"Google\Chrome\Application");
+        std::fs::create_dir_all(&product).expect("writable product directories");
+        let executable = product.join("chrome.exe");
+        std::fs::write(&executable, b"not a browser").expect("writable executable");
+
+        assert!(!trusted_windows_installation(&executable, root.path()));
+    }
+
+    #[test]
+    fn installed_vendor_browser_tree_is_not_effectively_writable() {
+        let installed = isolated_browser_candidates()
+            .expect("trusted Known Folder roots")
+            .into_iter()
+            .find(|(candidate, _, expected_cn, expected_org)| {
+                candidate.is_file()
+                    && has_trusted_authenticode_identity(candidate, expected_cn, expected_org)
+            })
+            .expect("Windows CI image must provide signed Chrome or Edge");
+
+        assert!(trusted_windows_installation(&installed.0, &installed.1));
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

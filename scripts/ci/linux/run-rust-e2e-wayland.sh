@@ -8,6 +8,12 @@ RUNTIME_DIR="$(mktemp -d)"
 SWAY_CONFIG="$(mktemp)"
 SESSION_KIND="${CUA_E2E_WAYLAND_SESSION:-sway}"
 export CUA_E2E_WAYLAND_SESSION="${SESSION_KIND}"
+if [[ "${SESSION_KIND}" == sway-xwayland ]]; then
+  # The testkit's compositor contract is still canonical Sway. Keep the
+  # orchestration label separate so focus, z-order, and sentinel observers use
+  # their established Sway paths while this wrapper additionally enables XWayland.
+  export CUA_E2E_WAYLAND_SESSION=sway
+fi
 COMPOSITOR_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/${SESSION_KIND}.log"
 ATSPI_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/at-spi-bus.log"
 COMPOSITOR_PID=""

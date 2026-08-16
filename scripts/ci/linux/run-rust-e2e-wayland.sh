@@ -8,6 +8,12 @@ RUNTIME_DIR="$(mktemp -d)"
 SWAY_CONFIG="$(mktemp)"
 SESSION_KIND="${CUA_E2E_WAYLAND_SESSION:-sway}"
 export CUA_E2E_WAYLAND_SESSION="${SESSION_KIND}"
+if [[ "${SESSION_KIND}" == sway-xwayland ]]; then
+  # The testkit's compositor contract is still canonical Sway. Keep the
+  # orchestration label separate so focus, z-order, and sentinel observers use
+  # their established Sway paths while this wrapper additionally enables XWayland.
+  export CUA_E2E_WAYLAND_SESSION=sway
+fi
 COMPOSITOR_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/${SESSION_KIND}.log"
 ATSPI_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/at-spi-bus.log"
 COMPOSITOR_PID=""
@@ -42,6 +48,9 @@ default_floating_border none
 for_window [title="^CuaTestHarness"] floating enable, resize set 940 780, move position 0 0
 for_window [title="CuaTestHarness Sentinel"] fullscreen enable
 EOF
+if [[ "${SESSION_KIND}" == sway-xwayland ]]; then
+  sed -i 's/^xwayland disable$/xwayland force/' "${SWAY_CONFIG}"
+fi
 
 unset DISPLAY
 unset WAYLAND_DISPLAY
@@ -63,6 +72,9 @@ if [[ "${SESSION_KIND}" == cua-compositor ]]; then
 else
   export CUA_E2E_COMPOSITOR=sway
   export CUA_E2E_INPUT_BACKENDS=atspi,wlr-virtual-pointer
+  if [[ "${SESSION_KIND}" == sway-xwayland ]]; then
+    export CUA_E2E_WAYLAND_XWAYLAND_REGRESSION=1
+  fi
 fi
 export CUA_WAYLAND_RECORDING_OUTPUT=HEADLESS-1
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
@@ -239,6 +251,31 @@ else
     cat "${COMPOSITOR_LOG}" >&2
     exit 1
   fi
+  if [[ "${SESSION_KIND}" == sway-xwayland ]]; then
+    deadline=$((SECONDS + 15))
+    while ((SECONDS < deadline)); do
+      xwayland_socket="$(find /tmp/.X11-unix -maxdepth 1 -type s -name 'X*' -newer "${SWAY_CONFIG}" -print -quit 2>/dev/null || true)"
+      if [[ -n "${xwayland_socket}" ]]; then
+        export CUA_E2E_XWAYLAND_DISPLAY=":${xwayland_socket##*/X}"
+        break
+      fi
+      sleep 0.2
+    done
+    if [[ -z "${CUA_E2E_XWAYLAND_DISPLAY:-}" ]] || ! xdpyinfo -display "${CUA_E2E_XWAYLAND_DISPLAY}" >/dev/null 2>&1; then
+      echo "Sway did not expose a usable XWayland display within 15 seconds" >&2
+      cat "${COMPOSITOR_LOG}" >&2
+      exit 1
+    fi
+    jq -n \
+      --arg source_sha "${CUA_E2E_SOURCE_SHA:-unknown}" \
+      --arg session_type "${XDG_SESSION_TYPE}" \
+      --arg compositor "${CUA_E2E_COMPOSITOR}" \
+      --arg wayland_display "${WAYLAND_DISPLAY}" \
+      --arg xwayland_display "${CUA_E2E_XWAYLAND_DISPLAY}" \
+      --argjson sway "$(swaymsg -r -t get_version)" \
+      '{source_sha:$source_sha,session_type:$session_type,compositor:$compositor,wayland_display:$wayland_display,xwayland_display:$xwayland_display,sway:$sway}' \
+      > "${REPO_ROOT}/artifacts/cua-driver/linux/wayland-xwayland-preflight.json"
+  fi
 fi
 
 echo "Native Wayland E2E session: ${SESSION_KIND} on ${WAYLAND_DISPLAY}"
@@ -251,7 +288,7 @@ set +e
 "${SESSION_RUNNER}" "$@"
 status=$?
 set -e
-if [[ "${status}" != 0 && "${SESSION_KIND}" == sway ]]; then
+if [[ "${status}" != 0 && "${SESSION_KIND}" == sway* ]]; then
   swaymsg -t get_tree > "${REPO_ROOT}/artifacts/cua-driver/linux/sway-tree.json" 2>/dev/null || true
 fi
 exit "${status}"

@@ -232,9 +232,11 @@ fn has_trusted_authenticode_identity(
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "$signature = Get-AuthenticodeSignature -LiteralPath $args[0]; Write-Output $signature.Status; Write-Output $signature.SignerCertificate.Subject",
+            "$utf8 = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $utf8; $path = [Environment]::GetEnvironmentVariable('CUA_BROWSER_ATTEST_PATH'); $signature = Get-AuthenticodeSignature -LiteralPath $path; Write-Output $signature.Status; Write-Output $signature.SignerCertificate.Subject",
         ])
-        .arg(executable)
+        // Pass the path as data rather than appending it to `-Command`, where
+        // Windows PowerShell would parse it as part of the command string.
+        .env("CUA_BROWSER_ATTEST_PATH", executable)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()

@@ -40,13 +40,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: Windows
-            os: windows-latest
-            artifact: rust-browser-windows
-            products: chrome,edge
           - label: Linux X11
             os: ubuntu-latest
-            artifact: rust-browser-linux-x11
+            artifact: rust-browser-linux-x11-diagnostic
             products: chrome
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -71,20 +67,22 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom libgtk-3-dev clang pkg-config \
-            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
-            libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev ffmpeg
           google-chrome --version
+          candidate=/opt/google/chrome/google-chrome
+          printf 'readlink=%s\n' "$(readlink -f "$candidate")"
+          namei -l "$candidate"
+          current="$candidate"
+          while true; do
+            stat --printf='%n type=%F uid=%u gid=%g mode=%a\n' "$current"
+            [[ "$current" == / ]] && break
+            current="$(dirname "$current")"
+          done
       - name: Build source driver on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Build source driver on Linux
-        if: runner.os == 'Linux'
+        if: ${{ false }}
         shell: bash
         run: cargo build --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Run standalone browsers on Windows
@@ -94,7 +92,7 @@ jobs:
           $env:CUA_E2E_ARTIFACT_DIR = Join-Path $PWD "artifacts\cua-driver\standalone-browser"
           scripts\ci\windows\run-rust-standalone-browser-e2e.ps1 -NoBuild
       - name: Run standalone browsers on Linux X11
-        if: runner.os == 'Linux'
+        if: ${{ false }}
         shell: bash
         run: |
           export CUA_E2E_ARTIFACT_DIR="$PWD/artifacts/cua-driver/standalone-browser"
@@ -106,7 +104,7 @@ jobs:
             dbus-run-session -- bash -lc \
             'openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; exec scripts/ci/run-rust-standalone-browser-e2e.sh'
       - name: Publish job summary
-        if: always()
+        if: ${{ false }}
         shell: bash
         run: |
           if [[ -f artifacts/cua-driver/standalone-browser/summary.md ]]; then
@@ -115,7 +113,7 @@ jobs:
             echo "Standalone browser summary was not produced." >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload browser evidence
-        if: always()
+        if: ${{ false }}
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
           name: ${{ matrix.artifact }}

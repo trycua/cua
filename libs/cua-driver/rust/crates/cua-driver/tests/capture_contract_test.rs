@@ -27,7 +27,7 @@ use cua_driver_testkit::e2e::{
 use cua_driver_testkit::e2e::{CaseSpec, Delivery, Scope};
 #[cfg(target_os = "windows")]
 use cua_driver_testkit::observer::TargetWindow;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 
@@ -155,6 +155,83 @@ fn snapshot_settled_tree_only(driver: &mut McpDriver, pid: u32, wid: u64) -> Too
         resp = driver.call("get_window_state", args.clone());
     }
     resp
+}
+
+#[cfg(target_os = "linux")]
+fn sway_json(args: &[&str]) -> serde_json::Value {
+    let output = Command::new("swaymsg")
+        .args(["-r"])
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run external Sway oracle");
+    assert!(
+        output.status.success(),
+        "Sway oracle {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("parse Sway oracle JSON")
+}
+
+#[cfg(target_os = "linux")]
+fn focused_workspace() -> String {
+    sway_json(&["-t", "get_workspaces"])
+        .as_array()
+        .and_then(|workspaces| {
+            workspaces
+                .iter()
+                .find(|workspace| workspace["focused"] == true)
+        })
+        .and_then(|workspace| workspace["name"].as_str())
+        .expect("Sway must report one focused workspace")
+        .to_owned()
+}
+
+#[cfg(target_os = "linux")]
+fn workspace_for_pid(
+    node: &serde_json::Value,
+    pid: u32,
+    workspace: Option<&str>,
+) -> Option<String> {
+    let workspace = if node["type"].as_str() == Some("workspace") {
+        node["name"].as_str()
+    } else {
+        workspace
+    };
+    if node["pid"].as_u64() == Some(pid as u64) {
+        return workspace.map(str::to_owned);
+    }
+    node["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(node["floating_nodes"].as_array().into_iter().flatten())
+        .find_map(|child| workspace_for_pid(child, pid, workspace))
+}
+
+#[cfg(target_os = "linux")]
+fn switch_sway_workspace(name: &str) {
+    let output = Command::new("swaymsg")
+        .args(["workspace", name])
+        .stdin(Stdio::null())
+        .output()
+        .expect("switch Sway workspace");
+    assert!(
+        output.status.success(),
+        "could not switch to Sway workspace {name}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(focused_workspace(), name);
+}
+
+#[cfg(target_os = "linux")]
+fn response_has_screenshot_metadata(response: &ToolResponse) -> bool {
+    has_image(response)
+        || response.structured()["screenshot_png_b64"].is_string()
+        || response.structured()["screenshot_file_path"].is_string()
+        || response.structured()["screenshot_width"].is_number()
+        || response.structured()["screenshot_height"].is_number()
 }
 
 // ── per-platform harness launch → (pid, window_id) ──────────────────────────────
@@ -379,6 +456,172 @@ fn deprecated_capture_mode_is_ignored() {
             );
         },
     );
+}
+
+/// Representative #2962 topology: a real XWayland GTK fixture remains on an
+/// inactive Sway workspace while an unrelated Electron sentinel owns the
+/// active output. The source-built public driver must preserve the truthful
+/// AT-SPI tree but return the stable typed screenshot refusal without bytes,
+/// a file, desktop mutation, or fixture mutation.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn off_workspace_xwayland_capture_refuses_unbound_pixels() {
+    if std::env::var("CUA_E2E_WAYLAND_XWAYLAND_REGRESSION").as_deref() != Ok("1") {
+        return;
+    }
+    assert_eq!(
+        std::env::var("XDG_SESSION_TYPE").as_deref(),
+        Ok("wayland"),
+        "the XWayland regression must run inside a native Wayland session"
+    );
+    let xwayland_display = std::env::var("CUA_E2E_XWAYLAND_DISPLAY")
+        .expect("the regression runner must expose its private XWayland display");
+    std::env::set_var("DISPLAY", &xwayland_display);
+    println!(
+        "[xwayland-capture-preflight] source_sha={} session={} compositor={} sway={} xwayland=available",
+        std::env::var("CUA_E2E_SOURCE_SHA").unwrap_or_else(|_| "unknown".to_owned()),
+        std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".to_owned()),
+        std::env::var("CUA_E2E_COMPOSITOR").unwrap_or_else(|_| "unknown".to_owned()),
+        sway_json(&["-t", "get_version"])["human_readable"].as_str().unwrap_or("unknown")
+    );
+    assert!(
+        std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("DISPLAY").is_some(),
+        "the regression requires both Wayland and XWayland display sockets"
+    );
+
+    let case = native_readonly_case(
+        "gtk3-xwayland",
+        "off_workspace_surface_identity_refusal",
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+        vec![
+            OracleKind::Protocol,
+            OracleKind::AxState,
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("start exact source-built driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        switch_sway_workspace("98");
+
+        let before = harness_pids(&mut driver, "CuaTestHarness GTK3");
+        let exe = std::env::var("HARNESS_GTK3_EXE")
+            .map(std::path::PathBuf::from)
+            .ok()
+            .filter(|path| path.exists())
+            .unwrap_or_else(|| harness_app("harness-gtk3", "CuaTestHarness.Gtk3"));
+        driver
+            .reaper()
+            .spawn(
+                Command::new(&exe)
+                    .env("GDK_BACKEND", "x11")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null()),
+            )
+            .unwrap_or_else(|error| panic!("launch real XWayland fixture {exe:?}: {error}"));
+        let (pid, wid) = resolve_new_window(&mut driver, "CuaTestHarness GTK3", &before)
+            .expect("resolve real XWayland fixture through public list_windows");
+        let target_workspace = workspace_for_pid(&sway_json(&["-t", "get_tree"]), pid, None);
+        assert_eq!(target_workspace.as_deref(), Some("98"));
+
+        let tree_before = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(
+            !tree_before.is_error(),
+            "tree-only precondition failed: {}",
+            tree_before.text()
+        );
+        assert!(tree_has_marker(&tree_before));
+        assert!(tree_before.tree_text().contains("counter=0"));
+
+        switch_sway_workspace("1");
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        driver.start_behavior_recording();
+        let active_workspace_before = focused_workspace();
+        let full_display = driver.call("get_desktop_state", serde_json::json!({}));
+        assert!(
+            !full_display.is_error() && has_image(&full_display),
+            "explicit active-output capture must remain available: {}",
+            full_display.text()
+        );
+
+        let output_dir = tempfile::Builder::new()
+            .prefix("cua-xwayland-refusal-")
+            .tempdir()
+            .expect("create refusal output directory");
+        let requested_path = output_dir.path().join("must-not-exist.png");
+        let ((first, second), mut passed) = sentinel
+            .observe_desktop(|| {
+                let first = driver.call(
+                    "get_window_state",
+                    serde_json::json!({"pid": pid as i64, "window_id": wid}),
+                );
+                let second = driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "screenshot_out_file": requested_path
+                    }),
+                );
+                (first, second)
+            })
+            .unwrap_or_else(|error| panic!("capture refusal disturbed active workspace: {error}"));
+
+        for response in [&first, &second] {
+            assert!(
+                !response.is_error(),
+                "tree-bearing refusal must be usable: {}",
+                response.text()
+            );
+            assert!(
+                tree_has_marker(response),
+                "refusal lost truthful accessibility output"
+            );
+            assert_eq!(response.structured()["screenshot_frame_valid"], false);
+            assert_eq!(
+                response.structured()["screenshot_error"]["code"],
+                "surface_identity_unproven"
+            );
+            assert_eq!(response.structured()["screenshot_error"]["window_id"], wid);
+            assert!(
+                !response_has_screenshot_metadata(response),
+                "refusal leaked screenshot bytes, dimensions, or a path: {}",
+                response.raw
+            );
+        }
+        assert_eq!(
+            first.structured()["screenshot_error"]["code"],
+            second.structured()["screenshot_error"]["code"],
+            "the typed refusal must be stable across repeated calls"
+        );
+        assert!(
+            !requested_path.exists(),
+            "refusal wrote unbound active-workspace pixels"
+        );
+        assert_eq!(focused_workspace(), active_workspace_before);
+        assert_eq!(
+            workspace_for_pid(&sway_json(&["-t", "get_tree"]), pid, None).as_deref(),
+            Some("98")
+        );
+
+        let tree_after = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(tree_after.tree_text().contains("counter=0"));
+        assert_eq!(tree_before.tree_text(), tree_after.tree_text());
+        passed.extend([
+            OracleKind::Protocol,
+            OracleKind::AxState,
+            OracleKind::FixtureState,
+        ]);
+        passed.sort();
+        passed.dedup();
+        Observation::delivered(passed, Evidence::default())
+    });
 }
 
 /// Capturing an occluded background window is a read-only operation: it must

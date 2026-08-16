@@ -5,11 +5,9 @@
 //! staging `ext_foreign_toplevel_list_v1`, captures per-output screenshots via
 //! `zwlr_screencopy_manager_v1` + `wl_shm` (native — `grim` remains a
 //! fallback), and synthesises pointer / scroll / drag input via
-//! `zwlr_virtual_pointer_v1`. Per-window image capture is deferred until
-//! `ext-foreign-toplevel-image-capture-source-v1` lands in
-//! `wayland-protocols-wlr`; until then window-scoped screenshot dispatch returns
-//! a typed error on Wayland rather than presenting an output crop as that
-//! window's pixels.
+//! `zwlr_virtual_pointer_v1`. Until identified per-toplevel capture is broadly
+//! available, window-scoped screenshots use output crops only for visible,
+//! compositor-attested surfaces and return a typed identity error otherwise.
 
 pub mod ext_screencopy;
 pub mod ext_toplevel;
@@ -879,14 +877,15 @@ pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
 #[derive(Debug)]
 pub struct SurfaceIdentityUnproven {
     window_id: u64,
+    reason: &'static str,
 }
 
 impl std::fmt::Display for SurfaceIdentityUnproven {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "surface_identity_unproven: Wayland output capture cannot prove pixels belong to window {}; per-window compositor capture is unavailable",
-            self.window_id
+            "surface_identity_unproven: Wayland capture cannot prove pixels belong to window {}: {}",
+            self.window_id, self.reason
         )
     }
 }
@@ -897,27 +896,142 @@ pub fn is_surface_identity_unproven(error: &anyhow::Error) -> bool {
     error.downcast_ref::<SurfaceIdentityUnproven>().is_some()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WaylandWindowCrop {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn surface_identity_unproven(window_id: u64, reason: &'static str) -> anyhow::Error {
+    SurfaceIdentityUnproven { window_id, reason }.into()
+}
+
+fn attested_wayland_crop(
+    xid: u64,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    visible: bool,
+) -> anyhow::Result<WaylandWindowCrop> {
+    if !visible {
+        return Err(surface_identity_unproven(
+            xid,
+            "the compositor reports the surface is not visible on the active workspace",
+        ));
+    }
+    if width == 0 || height == 0 {
+        return Err(surface_identity_unproven(
+            xid,
+            "the compositor reports empty surface geometry",
+        ));
+    }
+    Ok(WaylandWindowCrop {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
+/// Resolve a crop only from compositor-owned metadata that also proves the
+/// surface is present on the currently rendered workspace. X11 geometry and
+/// AT-SPI bounds are intentionally insufficient: an off-workspace XWayland
+/// window retains both while the output contains another application's pixels.
+fn wayland_window_crop(xid: u64) -> anyhow::Result<WaylandWindowCrop> {
+    if let Some(window) = sway_ipc::window_for_id(xid) {
+        return attested_wayland_crop(
+            xid,
+            window.x,
+            window.y,
+            window.width,
+            window.height,
+            window.visible,
+        );
+    }
+    if let Some(window) = shell_helper::list_windows(None)
+        .and_then(|windows| windows.into_iter().find(|window| window.xid == xid))
+    {
+        return attested_wayland_crop(
+            xid,
+            window.x,
+            window.y,
+            window.width,
+            window.height,
+            window.is_on_screen,
+        );
+    }
+    Err(surface_identity_unproven(
+        xid,
+        "no compositor-attested window geometry is available",
+    ))
+}
+
 fn screenshot_window_bytes_with_dispatch(
     wayland: bool,
     xid: u64,
+    wayland_crop: impl FnOnce(u64) -> anyhow::Result<WaylandWindowCrop>,
+    display_capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
     x11_capture: impl FnOnce(u64) -> anyhow::Result<Vec<u8>>,
 ) -> anyhow::Result<Vec<u8>> {
     if wayland {
-        return Err(SurfaceIdentityUnproven { window_id: xid }.into());
+        let crop = wayland_crop(xid)?;
+        let output = display_capture()?;
+        return crop_png_to_rect(
+            &output,
+            crop.x,
+            crop.y,
+            crop.width,
+            crop.height,
+            &format!("Wayland window {xid}"),
+        );
     }
     x11_capture(xid)
 }
 
 /// Window capture dispatcher. X11 uses its per-window capture path. Wayland
-/// fails closed until the compositor can return pixels for an identified
-/// surface; output-level capture remains available through
-/// [`screenshot_display_dispatch`].
+/// crops output pixels only when compositor metadata proves that the requested
+/// surface is currently rendered; otherwise it fails closed. Output-level
+/// capture remains available through [`screenshot_display_dispatch`].
 pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     screenshot_window_bytes_with_dispatch(
         is_wayland(),
         xid,
+        wayland_window_crop,
+        screenshot_display_dispatch,
         crate::capture::screenshot_window_bytes,
     )
+}
+
+fn crop_png_to_rect(
+    output_png: &[u8],
+    rect_x: i32,
+    rect_y: i32,
+    rect_width: u32,
+    rect_height: u32,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let image = image::load_from_memory(output_png)?;
+    let image_width = image.width();
+    let image_height = image.height();
+    let x = rect_x.max(0) as u32;
+    let y = rect_y.max(0) as u32;
+    if x >= image_width || y >= image_height {
+        anyhow::bail!(
+            "{label} origin ({x},{y}) is outside captured output {image_width}x{image_height}"
+        );
+    }
+    let width = rect_width.min(image_width - x);
+    let height = rect_height.min(image_height - y);
+    if width == 0 || height == 0 {
+        anyhow::bail!("{label} has empty capture geometry");
+    }
+    let cropped = image.crop_imm(x, y, width, height);
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    cropped.write_to(&mut cursor, image::ImageFormat::Png)?;
+    Ok(cursor.into_inner())
 }
 
 /// Display-level capture dispatcher. Cascade:
@@ -992,6 +1106,8 @@ pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     screenshot_window_bytes_with_dispatch(
         is_wayland(),
         xid,
+        wayland_window_crop,
+        screenshot_display_dispatch,
         crate::capture::screenshot_window_bytes,
     )
 }
@@ -3330,29 +3446,81 @@ mod tests {
 
     #[test]
     fn wayland_window_capture_fails_closed_without_using_x11_pixels() {
+        let display_called = std::cell::Cell::new(false);
         let x11_called = std::cell::Cell::new(false);
-        let error = screenshot_window_bytes_with_dispatch(true, 0x2962, |_| {
-            x11_called.set(true);
-            Ok(vec![1, 2, 3])
-        })
+        let error = screenshot_window_bytes_with_dispatch(
+            true,
+            0x2962,
+            |xid| {
+                Err(surface_identity_unproven(
+                    xid,
+                    "fixture surface is off-workspace",
+                ))
+            },
+            || {
+                display_called.set(true);
+                Ok(vec![9, 9, 9])
+            },
+            |_| {
+                x11_called.set(true);
+                Ok(vec![1, 2, 3])
+            },
+        )
         .expect_err("Wayland output pixels cannot prove a window surface");
 
         assert!(is_surface_identity_unproven(&error));
         assert!(error.to_string().contains("window 10594"));
+        assert!(!display_called.get());
         assert!(!x11_called.get());
     }
 
     #[test]
     fn x11_window_capture_keeps_the_existing_per_window_path() {
         let captured_xid = std::cell::Cell::new(None);
-        let bytes = screenshot_window_bytes_with_dispatch(false, 42, |xid| {
-            captured_xid.set(Some(xid));
-            Ok(vec![1, 2, 3])
-        })
+        let bytes = screenshot_window_bytes_with_dispatch(
+            false,
+            42,
+            |_| panic!("X11 must not resolve a Wayland crop"),
+            || panic!("X11 must not capture the Wayland output"),
+            |xid| {
+                captured_xid.set(Some(xid));
+                Ok(vec![1, 2, 3])
+            },
+        )
         .expect("X11 per-window capture should remain available");
 
         assert_eq!(captured_xid.get(), Some(42));
         assert_eq!(bytes, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn compositor_attested_visible_wayland_surface_keeps_window_capture() {
+        let source = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            8,
+            6,
+            image::Rgba([20, 40, 60, 255]),
+        ));
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        source
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .expect("encode fixture PNG");
+        let cropped = screenshot_window_bytes_with_dispatch(
+            true,
+            42,
+            |_| {
+                Ok(WaylandWindowCrop {
+                    x: 2,
+                    y: 1,
+                    width: 3,
+                    height: 4,
+                })
+            },
+            || Ok(encoded.into_inner()),
+            |_| panic!("Wayland must not use the X11 capture path"),
+        )
+        .expect("visible compositor-attested Wayland surface should capture");
+        let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
+        assert_eq!((decoded.width(), decoded.height()), (3, 4));
     }
 
     #[test]

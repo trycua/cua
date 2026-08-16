@@ -606,7 +606,7 @@ impl Tool for GetWindowStateTool {
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer"},
-                "window_id":{"type":"integer","description":"X11 XID from list_windows."},
+                "window_id":{"type":"integer","description":"Native window identifier from list_windows."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_screenshot":{"type":"boolean",
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
@@ -684,9 +684,9 @@ impl Tool for GetWindowStateTool {
 
         // Always walk the AT-SPI tree; capture the screenshot by default. The
         // tree+screenshot pair is the default so the agent grounds on both and
-        // cross-checks the (sometimes-lying) tree against the frame — only the
-        // explicit `include_screenshot:false` opt-out (with no screenshot_out_file)
-        // skips the grab to return tree only.
+        // cross-checks the (sometimes-lying) tree against the frame. An explicit
+        // `include_screenshot:false` skips the grab; an unproven Wayland surface
+        // returns the tree with a typed screenshot error instead of unrelated pixels.
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
         let observation_only = args
             .get("_observation_only")

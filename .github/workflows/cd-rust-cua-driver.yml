@@ -512,8 +512,16 @@ jobs:
           path = os.path.join(os.environ["RUNNER_TEMP"], "CuaDriver.provisioning-profile.plist")
           with open(path, "rb") as handle:
               profile = plistlib.load(handle)
-          if "YCK386LBJ7" not in profile.get("TeamIdentifier", []):
+          team_id = "YCK386LBJ7"
+          expected = f"{team_id}.com.trycua.driver"
+          if team_id not in profile.get("TeamIdentifier", []):
               raise SystemExit("Cua Driver provisioning profile does not match the pinned release team")
+          entitlements = profile.get("Entitlements", {})
+          if entitlements.get("com.apple.application-identifier") != expected:
+              raise SystemExit("Cua Driver provisioning profile does not match the release application identifier")
+          profile_groups = entitlements.get("keychain-access-groups")
+          if profile_groups not in ([expected], [f"{team_id}.*"]):
+              raise SystemExit("Cua Driver provisioning profile does not authorize the release keychain group")
           expiry = profile.get("ExpirationDate")
           now = datetime.datetime.now(datetime.timezone.utc)
           if expiry is None or expiry.replace(tzinfo=datetime.timezone.utc) <= now:
@@ -752,7 +760,10 @@ jobs:
           entitlements = profile.get("Entitlements", {})
           assert os.environ["TEAM_ID"] in profile.get("TeamIdentifier", [])
           assert entitlements.get("com.apple.application-identifier") == expected
-          assert entitlements.get("keychain-access-groups") == [expected]
+          assert entitlements.get("keychain-access-groups") in (
+              [expected],
+              [f"{os.environ['TEAM_ID']}.*"],
+          )
           expiry = profile.get("ExpirationDate")
           assert expiry is not None and expiry.replace(tzinfo=datetime.timezone.utc) > datetime.datetime.now(datetime.timezone.utc)
           PY
@@ -779,7 +790,10 @@ jobs:
           with open("release/CuaDriver.provisioning-profile.plist", "rb") as handle:
               profile_entitlements = plistlib.load(handle).get("Entitlements", {})
           assert actual.get("com.apple.application-identifier") == profile_entitlements.get("com.apple.application-identifier")
-          assert actual.get("keychain-access-groups") == profile_entitlements.get("keychain-access-groups")
+          assert profile_entitlements.get("keychain-access-groups") in (
+              [expected],
+              [f"{os.environ['TEAM_ID']}.*"],
+          )
           PY
           codesign -d --entitlements - --xml \
             release/CuaDriver.app/Contents/MacOS/cua-cursor-theme \

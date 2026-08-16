@@ -139,6 +139,7 @@ portal-libei = ["portal-input", "portal-capture"]
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 uuid = { workspace = true }
+tempfile = "3"
 # Used by the `screenshot_cascade` example to surface the
 # `tracing::debug!` lines emitted by each tier of the dispatch as it
 # falls through.

@@ -33,152 +33,140 @@ jobs:
           fi
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
-  browser:
-    name: "${{ matrix.label }} / ${{ matrix.products }}"
+  standard-token-browser:
+    name: "Windows standard-token / Chrome"
     needs: source
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Linux X11
-            os: ubuntu-latest
-            artifact: rust-browser-linux-x11-representative-install
-            products: chrome
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     timeout-minutes: 60
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
-      CUA_TEST_REQUIRE_EXTERNAL_BROWSERS: "1"
-      CUA_E2E_FORBID_SKIPS: "1"
-      CUA_TEST_DRIVER_STDERR: "1"
-      CUA_E2E_BROWSER_STDERR: "1"
-      CUA_E2E_BROWSER_PRODUCTS: ${{ matrix.products }}
-      RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install Windows video tools
-        if: runner.os == 'Windows'
+      - name: Verify interactive desktop and install video tools
         shell: pwsh
-        run: .\scripts\ci\windows\setup-ffmpeg.ps1
-      - name: Install Linux desktop dependencies
-        if: runner.os == 'Linux'
-        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y openbox picom xvfb dbus-x11 xdotool wmctrl ffmpeg
-          google-chrome --version
-      - name: Prepare representative protected browser install
-        if: runner.os == 'Linux'
-        shell: bash
+          .\scripts\ci\windows\verify-user-session.ps1
+          .\scripts\ci\windows\setup-ffmpeg.ps1
+      - name: Build exact-source row and fixtures
+        id: build
+        shell: pwsh
         run: |
-          # GitHub's disposable image currently installs Chrome in a root-owned
-          # but mode-0777 /opt tree. Verify the exact trusted candidate and each
-          # ancestor before removing only group/other write bits for this run.
-          candidates=(
-            /opt/google/chrome/google-chrome
-            /usr/lib/chromium/chromium
-            /usr/lib/chromium-browser/chromium-browser
-            /opt/microsoft/msedge/msedge
+          $ErrorActionPreference = "Continue"
+          cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release -p cua-driver-testkit --bin cua-e2e-report --manifest-path libs/cua-driver/rust/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $jsonLines = @(& cargo test --release -p cua-driver --test standalone_browser_behavior_test --no-run --message-format=json --manifest-path libs/cua-driver/rust/Cargo.toml 2>&1) | ForEach-Object { $_.ToString() }
+          $buildExit = $LASTEXITCODE
+          $jsonLines | Set-Content -Encoding utf8 test-build.jsonl
+          if ($buildExit -ne 0) { exit $buildExit }
+          $artifact = $jsonLines | ForEach-Object {
+            try { $_ | ConvertFrom-Json } catch { $null }
+          } | Where-Object {
+            $_.reason -eq "compiler-artifact" -and
+            $_.target.name -eq "standalone_browser_behavior_test" -and
+            $null -ne $_.executable
+          } | Select-Object -Last 1
+          if ($null -eq $artifact -or -not (Test-Path -LiteralPath $artifact.executable -PathType Leaf)) {
+            throw "exact standalone browser test executable was not resolved"
+          }
+          "test_exe=$($artifact.executable)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          .\scripts\ci\windows\build-harnesses.ps1 -Targets @("electron")
+      - name: Verify SAFER trust level and run isolated row
+        shell: pwsh
+        env:
+          TEST_EXE: ${{ steps.build.outputs.test_exe }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $artifactDir = Join-Path $PWD "artifacts\cua-driver\standalone-browser-standard-token"
+          $recordings = Join-Path $artifactDir "recordings"
+          New-Item -ItemType Directory -Force -Path $recordings | Out-Null
+          $runas = Join-Path $env:SystemRoot "System32\runas.exe"
+          $trustOutput = @(& $runas /showtrustlevels 2>&1) | ForEach-Object { $_.ToString() }
+          $trustExit = $LASTEXITCODE
+          $trustOutput | Set-Content -Encoding utf8 (Join-Path $artifactDir "showtrustlevels.txt")
+          "exit_code=$trustExit" | Add-Content -Encoding utf8 (Join-Path $artifactDir "showtrustlevels.txt")
+          if ($trustExit -ne 0 -or ($trustOutput -join "`n") -notmatch "0x20000") {
+            throw "SAFER normal-user trust level is unavailable"
+          }
+
+          $childScript = Join-Path $artifactDir "standard-token-row.ps1"
+          $marker = Join-Path $artifactDir "standard-token-exit.txt"
+          @'
+          param(
+            [Parameter(Mandatory = $true)][string]$RepoRoot,
+            [Parameter(Mandatory = $true)][string]$TestExe,
+            [Parameter(Mandatory = $true)][string]$ArtifactDir,
+            [Parameter(Mandatory = $true)][string]$Marker
           )
-          found=0
-          for candidate in "${candidates[@]}"; do
-            [[ -e "$candidate" ]] || continue
-            found=$((found + 1))
-            [[ -f "$candidate" ]] || { echo "candidate is not a regular file" >&2; exit 1; }
-            resolved="$(readlink -f -- "$candidate")"
-            [[ "$resolved" == "$candidate" ]] || { echo "candidate redirects" >&2; exit 1; }
+          $ErrorActionPreference = "Continue"
+          Set-Location -LiteralPath $RepoRoot
+          $env:CUA_E2E_ARTIFACT_DIR = $ArtifactDir
+          $env:CUA_E2E_DECLARATIONS_FILE = Join-Path $ArtifactDir "cases.jsonl"
+          $env:CUA_E2E_ENVIRONMENT_FILE = Join-Path $ArtifactDir "environment.jsonl"
+          $env:CUA_E2E_BROWSER_PROVENANCE_FILE = Join-Path $ArtifactDir "browser-provenance.jsonl"
+          $env:CUA_E2E_RESULTS_FILE = Join-Path $ArtifactDir "results.jsonl"
+          $env:CUA_E2E_RECORDINGS_ROOT = Join-Path $ArtifactDir "recordings"
+          $env:CUA_TEST_WORKSPACE_ROOT = Join-Path $RepoRoot "libs\cua-driver\rust"
+          $env:CUA_TEST_DRIVER_BIN = Join-Path $RepoRoot "libs\cua-driver\rust\target\release\cua-driver.exe"
+          $env:CUA_TEST_APPS_ROOT = Join-Path $RepoRoot "libs\cua-driver\rust\test-apps"
+          $env:CUA_TEST_REQUIRE_EXTERNAL_BROWSERS = "1"
+          $env:CUA_E2E_FORBID_SKIPS = "1"
+          $env:CUA_TEST_DRIVER_STDERR = "1"
+          $env:CUA_E2E_BROWSER_PRODUCTS = "chrome"
+          $env:RUST_BACKTRACE = "1"
+          foreach ($path in @(
+            $env:CUA_E2E_DECLARATIONS_FILE,
+            $env:CUA_E2E_ENVIRONMENT_FILE,
+            $env:CUA_E2E_BROWSER_PROVENANCE_FILE,
+            $env:CUA_E2E_RESULTS_FILE
+          )) { New-Item -ItemType File -Force -Path $path | Out-Null }
+          whoami.exe /groups /fo csv 2>&1 | Set-Content -Encoding utf8 (Join-Path $ArtifactDir "token-groups.csv")
+          & $TestExe standalone_browser_prepare_isolated --ignored --exact --nocapture --test-threads=1 *> (Join-Path $ArtifactDir "standalone_browser_prepare_isolated.log")
+          $testExit = $LASTEXITCODE
+          Set-Content -Encoding ascii -Path $Marker -Value $testExit
+          exit $testExit
+          '@ | Set-Content -Encoding utf8 -Path $childScript
 
-            current="$candidate"
-            while [[ "$current" != / ]]; do
-              [[ "$(stat -c %u -- "$current")" == 0 ]] || {
-                echo "candidate component is not root-owned" >&2
-                exit 1
-              }
-              sudo chmod go-w -- "$current"
-              current="$(dirname -- "$current")"
-            done
-          done
-          [[ "$found" -gt 0 ]] || { echo "no known browser candidate exists" >&2; exit 1; }
+          $childCommand = "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -RepoRoot `"$PWD`" -TestExe `"$env:TEST_EXE`" -ArtifactDir `"$artifactDir`" -Marker `"$marker`""
+          $launchOutput = @(& $runas "/trustlevel:0x20000" $childCommand 2>&1) | ForEach-Object { $_.ToString() }
+          $launchExit = $LASTEXITCODE
+          $launchOutput | Set-Content -Encoding utf8 (Join-Path $artifactDir "runas-launch.txt")
+          "exit_code=$launchExit" | Add-Content -Encoding utf8 (Join-Path $artifactDir "runas-launch.txt")
+          if ($launchExit -ne 0) { throw "SAFER child launch failed" }
 
-          for candidate in "${candidates[@]}"; do
-            [[ -e "$candidate" ]] || continue
-            current="$candidate"
-            while true; do
-              uid="$(stat -c %u -- "$current")"
-              mode="$(stat -c %a -- "$current")"
-              printf 'verified component=%s uid=%s mode=%s\n' "$(basename -- "$current")" "$uid" "$mode"
-              [[ "$uid" == 0 ]] || exit 1
-              (( (8#$mode & 8#22) == 0 )) || exit 1
-              [[ "$current" == / ]] && break
-              current="$(dirname -- "$current")"
-            done
-          done
-      - name: Build source driver on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
-      - name: Build source driver on Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: cargo build --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
-      - name: Run standalone browsers on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $env:CUA_E2E_ARTIFACT_DIR = Join-Path $PWD "artifacts\cua-driver\standalone-browser"
-          scripts\ci\windows\run-rust-standalone-browser-e2e.ps1 -NoBuild
-      - name: Run standalone browsers on Linux X11
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          artifact_dir="$PWD/artifacts/cua-driver/standalone-browser"
-          mkdir -p "$artifact_dir/recordings"
-          export CUA_E2E_ARTIFACT_DIR="$artifact_dir"
-          export CUA_E2E_DECLARATIONS_FILE="$artifact_dir/cases.jsonl"
-          export CUA_E2E_ENVIRONMENT_FILE="$artifact_dir/environment.jsonl"
-          export CUA_E2E_BROWSER_PROVENANCE_FILE="$artifact_dir/browser-provenance.jsonl"
-          export CUA_E2E_RESULTS_FILE="$artifact_dir/results.jsonl"
-          export CUA_E2E_RECORDINGS_ROOT="$artifact_dir/recordings"
-          export CUA_TEST_WORKSPACE_ROOT="$PWD/libs/cua-driver/rust"
-          export CUA_TEST_DRIVER_BIN="$PWD/libs/cua-driver/rust/target/release/cua-driver"
-          # Hosted Linux does not provide a browser sandbox suitable for the
-          # isolated test profiles. This affects only disposable test browsers.
-          export CUA_E2E_BROWSER_NO_SANDBOX=1
-          : > "$CUA_E2E_DECLARATIONS_FILE"
-          : > "$CUA_E2E_ENVIRONMENT_FILE"
-          : > "$CUA_E2E_BROWSER_PROVENANCE_FILE"
-          : > "$CUA_E2E_RESULTS_FILE"
-          libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh
-          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-            dbus-run-session -- bash -lc \
-            'set -o pipefail; openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; cd libs/cua-driver/rust && cargo test --release -p cua-driver --features portal-input --test standalone_browser_behavior_test standalone_browser_prepare_isolated -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$CUA_E2E_ARTIFACT_DIR/standalone_browser_prepare_isolated.log"'
-          cargo run --release -p cua-driver-testkit \
-            --manifest-path libs/cua-driver/rust/Cargo.toml \
-            --bin cua-e2e-report -- \
-            --declarations "$CUA_E2E_DECLARATIONS_FILE" \
-            --environment "$CUA_E2E_ENVIRONMENT_FILE" \
-            --results "$CUA_E2E_RESULTS_FILE" \
-            --artifact-root "$artifact_dir" \
-            --require-video \
-            --output "$artifact_dir/summary.md"
-      - name: Publish job summary
+          $deadline = [DateTime]::UtcNow.AddMinutes(25)
+          while (-not (Test-Path -LiteralPath $marker)) {
+            if ([DateTime]::UtcNow -ge $deadline) { throw "standard-token row timed out" }
+            Start-Sleep -Seconds 2
+          }
+          $testExit = [int](Get-Content -Raw -LiteralPath $marker).Trim()
+          if ($testExit -ne 0) { throw "standard-token isolated row failed with exit code $testExit" }
+      - name: Produce row report
         if: always()
-        shell: bash
+        shell: pwsh
         run: |
-          if [[ -f artifacts/cua-driver/standalone-browser/summary.md ]]; then
-            cat artifacts/cua-driver/standalone-browser/summary.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Standalone browser summary was not produced." >> "$GITHUB_STEP_SUMMARY"
-          fi
-      - name: Upload browser evidence
+          $artifactDir = Join-Path $PWD "artifacts\cua-driver\standalone-browser-standard-token"
+          if (Test-Path (Join-Path $artifactDir "cases.jsonl")) {
+            & .\libs\cua-driver\rust\target\release\cua-e2e-report.exe `
+              --declarations (Join-Path $artifactDir "cases.jsonl") `
+              --environment (Join-Path $artifactDir "environment.jsonl") `
+              --results (Join-Path $artifactDir "results.jsonl") `
+              --artifact-root $artifactDir `
+              --require-video `
+              --output (Join-Path $artifactDir "summary.md")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Get-Content (Join-Path $artifactDir "summary.md") | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+      - name: Upload standard-token evidence
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
-          name: ${{ matrix.artifact }}
-          path: artifacts/cua-driver/standalone-browser
+          name: rust-browser-windows-standard-token
+          path: artifacts/cua-driver/standalone-browser-standard-token
           if-no-files-found: error
           compression-level: 0
           retention-days: 14

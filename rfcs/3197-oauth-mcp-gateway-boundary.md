@@ -8,7 +8,7 @@ created: 2026-08-16
 last_updated: 2026-08-16
 status: review
 discussion: https://github.com/trycua/cua/issues/3197
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/3198
 implementation:
 supersedes:
 superseded_by:
@@ -462,4 +462,5 @@ candidate revisions:
 
 ## Decision record
 
-Pending review in [issue #3197](https://github.com/trycua/cua/issues/3197).
+Pending review in [issue #3197](https://github.com/trycua/cua/issues/3197). The
+RFC document is [pull request #3198](https://github.com/trycua/cua/pull/3198).

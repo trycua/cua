@@ -92,7 +92,7 @@ jobs:
             libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev \
             libxext-dev libdrm-dev libgbm-dev libwebkit2gtk-4.1-dev \
             libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
-            ffmpeg jq
+            ffmpeg jq gnome-keyring
       - name: Install Nix for the custom compositor environment
         if: inputs.environment == 'cua-compositor'
         uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30

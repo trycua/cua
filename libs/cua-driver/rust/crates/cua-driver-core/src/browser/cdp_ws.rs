@@ -260,7 +260,7 @@ impl CdpConnection {
         // Chrome 136+ settings-toggle endpoints (DevToolsActivePort mode)
         // refuse the upgrade without an http://localhost-family Origin on the
         // handshake. Classic --remote-debugging-port endpoints ignore it.
-        let request = ws_url
+        let mut request = ws_url
             .into_client_request()
             .map_err(|e| anyhow::anyhow!("could not build CDP request: {e}"))?;
         if let Some(port) = loopback_port(ws_url) {

@@ -742,20 +742,40 @@ func TestInitializeDatabaseFeaturesReportsReadinessMetric(t *testing.T) {
 		config              config.DatabaseConfiguration
 		requireVersionError error
 		newStoreError       error
+		newExecutorError    error
 		wantConfigured      string
 		wantValue           float64
+		wantStateQuery      string
+		wantStateQueryValue float64
 	}{
 		{
-			name:           "unset database url reports the disabled configuration as ready",
-			config:         config.DatabaseConfiguration{},
-			wantConfigured: "false",
-			wantValue:      1,
+			name:                "unset database url reports the disabled configuration as ready",
+			config:              config.DatabaseConfiguration{},
+			wantConfigured:      "false",
+			wantValue:           1,
+			wantStateQuery:      "false",
+			wantStateQueryValue: 1,
 		},
 		{
-			name:           "healthy database reports ready",
-			config:         config.DatabaseConfiguration{URL: "postgres://application/application"},
-			wantConfigured: "true",
-			wantValue:      1,
+			name: "state query failure is reported independently of the application database",
+			config: config.DatabaseConfiguration{
+				URL:                      "postgres://application/application",
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			newExecutorError:    fmt.Errorf("invalid state query configuration"),
+			wantConfigured:      "true",
+			wantValue:           1,
+			wantStateQuery:      "true",
+			wantStateQueryValue: 0,
+		},
+		{
+			name:                "healthy database reports ready",
+			config:              config.DatabaseConfiguration{URL: "postgres://application/application"},
+			wantConfigured:      "true",
+			wantValue:           1,
+			wantStateQuery:      "false",
+			wantStateQueryValue: 1,
 		},
 		{
 			name:                "unavailable schema reports degraded",
@@ -763,24 +783,32 @@ func TestInitializeDatabaseFeaturesReportsReadinessMetric(t *testing.T) {
 			requireVersionError: fmt.Errorf("schema unavailable"),
 			wantConfigured:      "true",
 			wantValue:           0,
+			wantStateQuery:      "false",
+			wantStateQueryValue: 1,
 		},
 		{
-			name:           "trust store failure reports degraded",
-			config:         config.DatabaseConfiguration{URL: "postgres://application/application"},
-			newStoreError:  fmt.Errorf("store unavailable"),
-			wantConfigured: "true",
-			wantValue:      0,
+			name:                "trust store failure reports degraded",
+			config:              config.DatabaseConfiguration{URL: "postgres://application/application"},
+			newStoreError:       fmt.Errorf("store unavailable"),
+			wantConfigured:      "true",
+			wantValue:           0,
+			wantStateQuery:      "false",
+			wantStateQueryValue: 1,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			metrics.DatabaseFeaturesReady.Reset()
+			metrics.StateQueryReady.Reset()
 			dependencies := databaseFeatureDependencies{
 				requireVersion: func(context.Context, string, int64) error {
 					return test.requireVersionError
 				},
 				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
+					if test.newExecutorError != nil {
+						return nil, test.newExecutorError
+					}
 					return stateQueryExecutorStub{}, nil
 				},
 				newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
@@ -799,6 +827,13 @@ func TestInitializeDatabaseFeaturesReportsReadinessMetric(t *testing.T) {
 			if got != test.wantValue {
 				t.Fatalf("cyclops_cs_database_features_ready{configured=%q} = %v, want %v",
 					test.wantConfigured, got, test.wantValue)
+			}
+			if test.wantStateQuery != "" {
+				gotStateQuery := gaugeValue(t, metrics.StateQueryReady.WithLabelValues(test.wantStateQuery))
+				if gotStateQuery != test.wantStateQueryValue {
+					t.Fatalf("cyclops_cs_state_query_ready{configured=%q} = %v, want %v",
+						test.wantStateQuery, gotStateQuery, test.wantStateQueryValue)
+				}
 			}
 		})
 	}

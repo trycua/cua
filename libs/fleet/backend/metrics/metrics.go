@@ -85,9 +85,24 @@ var (
 	//
 	// Initialization runs once at startup, so the value is fixed for the
 	// lifetime of the process and recovery means restarting the pod.
+	// This gauge tracks the APPLICATION database (DATABASE_URL) only, which
+	// is what the GitHub trust policy routes need. The Kubernetes state query
+	// executor behind /api/state/query is a separate dependency on a separate
+	// DSN (STATE_QUERY_DSN) and is reported by StateQueryReady below —
+	// initializeDatabaseFeatures logs and continues when it fails, so a broken
+	// state query alongside a healthy application database would otherwise
+	// leave this gauge reporting 1.
 	DatabaseFeaturesReady = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "cyclops_cs_database_features_ready",
-		Help: "1 when the PostgreSQL-backed features initialized at startup (or are intentionally disabled), 0 when a configured database failed to come up.",
+		Help: "1 when the application database features initialized at startup (or are intentionally disabled), 0 when a configured database failed to come up.",
+	}, []string{"configured"})
+
+	// StateQueryReady is the same signal for the /api/state/query executor,
+	// which has its own DSN and its own failure path. configured="false"
+	// (STATE_QUERY_DSN or its tenant password unset) always reports 1.
+	StateQueryReady = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "cyclops_cs_state_query_ready",
+		Help: "1 when the Kubernetes state query executor initialized at startup (or is intentionally disabled), 0 when a configured executor failed to come up.",
 	}, []string{"configured"})
 
 	UpstreamProxyDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{

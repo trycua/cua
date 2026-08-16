@@ -374,14 +374,23 @@ func initializeDatabaseFeatures(parent context.Context, cfg config.DatabaseConfi
 	h.GitHubTrustPolicies = nil
 	auth.SetGitHubTrustResolver(nil)
 
+	// The state query executor has its own DSN and its own failure path: it is
+	// initialized before the DATABASE_URL short-circuit below and a failure
+	// here does not stop the rest of this function, so it needs its own gauge.
+	// Reporting it through DatabaseFeaturesReady would claim a healthy
+	// /api/state/query whenever the application database came up fine.
 	if cfg.StateQueryDSN != "" && cfg.StateQueryTenantPassword != "" {
 		executor, err := dependencies.newStateQueryExecutor(cfg.StateQueryDSN, cfg.StateQueryTenantPassword)
 		if err != nil {
 			slog.Error("kubernetes state query: executor init failed; /api/state/query will return 503", "err", err)
+			metrics.StateQueryReady.WithLabelValues("true").Set(0)
 		} else {
 			h.StateQueryExecutor = executor
+			metrics.StateQueryReady.WithLabelValues("true").Set(1)
 			slog.Info("kubernetes state query: query endpoint enabled")
 		}
+	} else {
+		metrics.StateQueryReady.WithLabelValues("false").Set(1)
 	}
 
 	if cfg.URL == "" {

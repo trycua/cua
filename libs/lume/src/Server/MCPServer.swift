@@ -374,6 +374,11 @@ final class LumeMCPServer {
                             "type": .string("boolean"),
                             "description": .string("Run headless without VNC window (default: true)")
                         ]),
+                        "vnc": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("enabled"), .string("disabled")]),
+                            "description": .string("VNC server policy. 'disabled' starts no VNC listener and reports a null vncUrl (default: enabled)")
+                        ]),
                         "storage": .object([
                             "type": .string("string"),
                             "description": .string("Optional storage location name or path")
@@ -650,6 +655,30 @@ final class LumeMCPServer {
         let noDisplay = args?["no_display"]?.boolValue ?? true
         let clipboard = args?["clipboard"]?.boolValue ?? false
 
+        let vncPolicy: VNCPolicy
+        if let requested = args?["vnc"]?.stringValue {
+            guard let policy = VNCPolicy(rawValue: requested) else {
+                return CallTool.Result(
+                    content: [
+                        .text("Error: 'vnc' must be 'enabled' or 'disabled', got '\(requested)'")
+                    ],
+                    isError: true)
+            }
+            vncPolicy = policy
+        } else {
+            vncPolicy = .enabled
+        }
+        if let option = VNCPolicy.conflictingOption(
+            policy: vncPolicy,
+            displayMode: noDisplay ? .none : .vnc,
+            vncPort: 0,
+            vncPassword: nil
+        ) {
+            return CallTool.Result(
+                content: [.text("Error: \(VMError.vncDisabledConflict(option).localizedDescription)")],
+                isError: true)
+        }
+
         var sharedDirectories: [SharedDirectory] = []
         if let sharedDir = args?["shared_dir"]?.stringValue {
             // Expand ~ to home directory
@@ -667,6 +696,7 @@ final class LumeMCPServer {
                     sharedDirectories: sharedDirectories,
                     storage: storage,
                     clipboard: clipboard,
+                    vncPolicy: vncPolicy,
                     telemetryTransport: .mcpStdio
                 )
             } catch {

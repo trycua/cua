@@ -585,11 +585,15 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
             clicked.raw
         );
         let _settled_state = wait_for_window_text(&mut driver, pid, window_id, "counter=1");
-        (
-            "input.pointer.click.left".to_owned(),
-            effect.to_owned(),
-            "accessibility",
-        )
+        let capability = cua_driver_core::tool::default_capabilities_for("click")
+            .into_iter()
+            .next()
+            .expect("click has no primary capability");
+        assert_eq!(
+            capability, "input.pointer.click",
+            "history must use click's primary closed-contract capability"
+        );
+        (capability, effect.to_owned(), "accessibility")
     } else {
         let requested_x = bounds["x"].as_f64().expect("fixture x") + 18.0;
         let requested_y = bounds["y"].as_f64().expect("fixture y") + 12.0;

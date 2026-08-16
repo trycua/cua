@@ -252,13 +252,16 @@ fn has_trusted_authenticode_identity(
 fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
     use std::os::windows::ffi::OsStrExt;
 
+    // This launch boundary protects the current agent token from executing a
+    // browser tree that it can modify. Other principals that can replace an
+    // installed browser are outside this runtime authorization boundary.
     let wide = path
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    let rights = if directory {
-        [
+    let rights: &[u32] = if directory {
+        &[
             FILE_ADD_FILE.0,
             FILE_ADD_SUBDIRECTORY.0,
             FILE_DELETE_CHILD.0,
@@ -269,7 +272,7 @@ fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
             WRITE_OWNER.0,
         ]
     } else {
-        [
+        &[
             FILE_WRITE_DATA.0,
             FILE_APPEND_DATA.0,
             FILE_WRITE_EA.0,
@@ -284,7 +287,7 @@ fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
     } else {
         FILE_FLAGS_AND_ATTRIBUTES(0)
     };
-    for right in rights {
+    for &right in rights {
         match unsafe {
             CreateFileW(
                 PCWSTR(wide.as_ptr()),

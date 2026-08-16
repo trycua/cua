@@ -87,3 +87,4 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 uuid = { workspace = true }
+tempfile = "3"

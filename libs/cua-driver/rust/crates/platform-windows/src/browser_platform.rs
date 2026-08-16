@@ -325,12 +325,20 @@ fn trusted_windows_installation(
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
 ) -> bool {
-    if !executable.starts_with(trusted_root) || !current_token_cannot_write(executable, false) {
+    trusted_windows_installation_with_probe(executable, trusted_root, current_token_cannot_write)
+}
+
+fn trusted_windows_installation_with_probe(
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+    mut cannot_write: impl FnMut(&std::path::Path, bool) -> bool,
+) -> bool {
+    if !executable.starts_with(trusted_root) || !cannot_write(executable, false) {
         return false;
     }
     let mut current = executable.parent();
     while let Some(directory) = current {
-        if !current_token_cannot_write(directory, true) {
+        if !cannot_write(directory, true) {
             return false;
         }
         if directory == trusted_root {
@@ -1602,7 +1610,29 @@ mod tests {
     }
 
     #[test]
-    fn installed_vendor_browser_tree_is_not_effectively_writable() {
+    fn installation_trust_walk_requires_every_probe_to_deny_write() {
+        let root = std::path::Path::new(r"C:\Program Files");
+        let executable = root.join(r"Google\Chrome\Application\chrome.exe");
+
+        assert!(trusted_windows_installation_with_probe(
+            &executable,
+            root,
+            |_, _| true,
+        ));
+        assert!(!trusted_windows_installation_with_probe(
+            &executable,
+            root,
+            |path, directory| !(directory && path.ends_with(r"Google\Chrome")),
+        ));
+        assert!(!trusted_windows_installation_with_probe(
+            &std::path::PathBuf::from(r"D:\UserControlled\chrome.exe"),
+            root,
+            |_, _| true,
+        ));
+    }
+
+    #[test]
+    fn installed_vendor_browser_tree_is_accepted_only_for_a_nonwritable_token() {
         let candidates = isolated_browser_candidates().expect("trusted Known Folder roots");
         let installed = candidates
             .iter()
@@ -1656,7 +1686,14 @@ mod tests {
                 current = directory.parent();
                 index += 1;
             }
-            panic!("installed browser tree was writable or could not be proved: {diagnostics:?}");
+            assert!(
+                diagnostics.iter().any(|entry| !entry.ends_with("None")),
+                "a refused installation must identify a fail-closed probe: {diagnostics:?}"
+            );
+            eprintln!(
+                "installed browser correctly refused for this write-capable runner token: {diagnostics:?}"
+            );
+            return;
         }
     }
     use std::sync::atomic::{AtomicUsize, Ordering};

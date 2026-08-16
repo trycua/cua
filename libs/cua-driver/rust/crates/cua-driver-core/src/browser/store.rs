@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::SemanticDocument;
-use super::types::{BindingQuality, ProcessFingerprint, Rect};
+use super::types::{BindingQuality, BrowserProduct, ProcessFingerprint, Rect};
 
 /// Browser action kinds proven for one semantic page ref.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -207,6 +207,7 @@ pub struct TabRecord {
 pub struct TargetRecord {
     pub target_id: String,
     pub pid: i64,
+    pub product_kind: BrowserProduct,
     pub window_id: u64,
     pub ws_url: String,
     pub endpoint_owner_pid: i64,
@@ -465,6 +466,7 @@ mod tests {
         TargetRecord {
             target_id: String::new(),
             pid: 42,
+            product_kind: BrowserProduct::GoogleChrome,
             window_id: 7,
             ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
             endpoint_owner_pid: 42,

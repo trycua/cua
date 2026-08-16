@@ -2137,7 +2137,9 @@ fn run_trusted_click(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    let case = if cfg!(any(target_os = "linux", target_os = "macos")) {
+    let trusted_refused =
+        cfg!(target_os = "linux") || (cfg!(target_os = "macos") && spec.name != "chrome");
+    let case = if trusted_refused {
         refusal_case(
             &spec.name,
             "trusted_click",
@@ -2163,7 +2165,7 @@ fn run_trusted_click(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            if cfg!(any(target_os = "linux", target_os = "macos")) {
+            if trusted_refused {
                 assert_eq!(click.action_effect(), Some("refused"), "{}", click.raw);
                 assert!(
                     click.text().contains("browser_input_trust_unavailable"),

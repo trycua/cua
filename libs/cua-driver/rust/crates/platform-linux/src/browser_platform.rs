@@ -388,7 +388,10 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for LinuxBrowserPlatform {
-    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+    fn standalone_trusted_input_background_limitation(
+        &self,
+        _product: BrowserProduct,
+    ) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
     }
 

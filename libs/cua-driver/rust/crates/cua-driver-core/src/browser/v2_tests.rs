@@ -671,7 +671,10 @@ struct FixturePlatform {
 
 #[async_trait]
 impl BrowserPlatform for FixturePlatform {
-    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+    fn standalone_trusted_input_background_limitation(
+        &self,
+        _product: BrowserProduct,
+    ) -> Option<&'static str> {
         self.trusted_input_limited
             .then_some("fixture trusted input raises the standalone window")
     }

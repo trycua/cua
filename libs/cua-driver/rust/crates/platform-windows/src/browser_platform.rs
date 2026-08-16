@@ -10,9 +10,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareOutcome, PrepareRequest,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -133,6 +133,45 @@ fn browser_product(name: &str) -> BrowserProduct {
         "firefox" => BrowserProduct::Firefox,
         _ => BrowserProduct::Other,
     }
+}
+
+fn isolated_browser_candidates_from_roots(
+    program_files: PathBuf,
+    program_files_x86: PathBuf,
+    local_app_data: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        program_files.join(r"Google\Chrome\Application\chrome.exe"),
+        program_files_x86.join(r"Google\Chrome\Application\chrome.exe"),
+    ];
+    if let Some(local_app_data) = local_app_data.as_ref().filter(|path| path.is_absolute()) {
+        candidates.push(local_app_data.join(r"Google\Chrome\Application\chrome.exe"));
+    }
+    candidates.extend([
+        program_files.join(r"Chromium\Application\chrome.exe"),
+        program_files_x86.join(r"Chromium\Application\chrome.exe"),
+    ]);
+    if let Some(local_app_data) = local_app_data.as_ref().filter(|path| path.is_absolute()) {
+        candidates.push(local_app_data.join(r"Chromium\Application\chrome.exe"));
+    }
+    candidates.extend([
+        program_files.join(r"Microsoft\Edge\Application\msedge.exe"),
+        program_files_x86.join(r"Microsoft\Edge\Application\msedge.exe"),
+    ]);
+    candidates
+}
+
+fn isolated_browser_candidates() -> Vec<PathBuf> {
+    let program_files = std::env::var_os("ProgramFiles")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+    let program_files_x86 = std::env::var_os("ProgramFiles(x86)")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+    let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    isolated_browser_candidates_from_roots(program_files, program_files_x86, local_app_data)
 }
 
 fn allows_embedded_descendant_endpoint(executable_path: &str) -> bool {
@@ -811,6 +850,10 @@ where
 
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        select_isolated_browser_executable(isolated_browser_candidates())
+    }
+
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
         if action.session.is_empty()
             || action.cdp_target_id.is_empty()
@@ -1291,7 +1334,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -1311,6 +1360,26 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_browser_candidates_omit_missing_or_relative_user_root() {
+        let program_files = PathBuf::from(r"C:\Program Files");
+        let program_files_x86 = PathBuf::from(r"C:\Program Files (x86)");
+        let without_user = isolated_browser_candidates_from_roots(
+            program_files.clone(),
+            program_files_x86.clone(),
+            None,
+        );
+        let relative_user = isolated_browser_candidates_from_roots(
+            program_files,
+            program_files_x86,
+            Some(PathBuf::from("relative-user-root")),
+        );
+        assert_eq!(without_user, relative_user);
+        assert!(without_user[0].ends_with(r"Google\Chrome\Application\chrome.exe"));
+        assert!(without_user[2].ends_with(r"Chromium\Application\chrome.exe"));
+        assert!(without_user[4].ends_with(r"Microsoft\Edge\Application\msedge.exe"));
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 

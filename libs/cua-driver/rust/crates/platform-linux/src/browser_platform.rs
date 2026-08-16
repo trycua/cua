@@ -7,8 +7,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
+    PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -72,6 +73,27 @@ fn browser_product(identity: &str) -> BrowserProduct {
     } else {
         BrowserProduct::Other
     }
+}
+
+fn isolated_browser_candidates(path: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for (fixed, executable) in [
+        ("/usr/bin/google-chrome", "google-chrome"),
+        ("/usr/bin/chromium", "chromium"),
+        ("/usr/bin/chromium-browser", "chromium-browser"),
+        ("/usr/bin/microsoft-edge", "microsoft-edge"),
+        ("/usr/bin/microsoft-edge-stable", "microsoft-edge-stable"),
+    ] {
+        candidates.push(PathBuf::from(fixed));
+        if let Some(path) = path {
+            candidates.extend(
+                std::env::split_paths(path)
+                    .filter(|directory| directory.is_absolute())
+                    .map(|directory| directory.join(executable)),
+            );
+        }
+    }
+    candidates
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {
@@ -388,6 +410,11 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for LinuxBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        let path = std::env::var_os("PATH");
+        select_isolated_browser_executable(isolated_browser_candidates(path.as_deref()))
+    }
+
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
     }
@@ -1035,7 +1062,13 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -1055,6 +1088,27 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_browser_candidates_ignore_relative_path_entries() {
+        let candidates = isolated_browser_candidates(Some(std::ffi::OsStr::new(
+            "relative:/opt/browser/bin::/usr/local/bin",
+        )));
+        assert!(candidates.iter().all(|candidate| candidate.is_absolute()));
+        let chrome = candidates
+            .iter()
+            .position(|candidate| candidate.ends_with("google-chrome"))
+            .expect("Chrome candidate");
+        let chromium = candidates
+            .iter()
+            .position(|candidate| candidate.ends_with("chromium"))
+            .expect("Chromium candidate");
+        let edge = candidates
+            .iter()
+            .position(|candidate| candidate.ends_with("microsoft-edge"))
+            .expect("Edge candidate");
+        assert!(chrome < chromium && chromium < edge);
+    }
 
     #[test]
     fn proc_net_parser_returns_only_loopback_listeners() {

@@ -108,7 +108,7 @@ cookies or login state:
 
 ```bash
 cua-driver browser_prepare \
-  '{"pid":4242,"session":"browser-run-1","allow_launch":true,
+  '{"session":"browser-run-1","allow_launch":true,
     "profile":{"mode":"isolated_new"}}'
 ```
 
@@ -118,9 +118,14 @@ a matching manifest, and unrestricted mode requires the launcher's dangerous
 acknowledgement. `allow_launch: true` states that this call may create the
 separate process; it does not widen runtime authorization.
 
+When `pid` is omitted, the driver selects the first installed supported
+browser in this order: Google Chrome, Chromium, then Microsoft Edge. Supply a
+Chromium-family browser pid when the isolated launch must use that process's
+exact executable. The pid remains required for existing-profile attachment.
+
 Use `isolated_named` with a path-safe `name` for a reusable driver-managed
 profile. Preparation launches a separate browser and never copies, modifies,
-or terminates the requested personal profile. The result returns a
+or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 

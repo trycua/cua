@@ -581,8 +581,10 @@ impl BrowserPrepareTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_prepare".into(),
-            description: "Explicitly prepare an owned DevTools endpoint for a browser \
-                pid. Existing endpoints are detected without side effects. Acting setup \
+            description: "Explicitly prepare an owned DevTools endpoint for a browser. \
+                pid is required for an existing process or existing-profile attachment, \
+                and optional only for allow_launch=true with an isolated profile. Existing \
+                endpoints are detected without side effects. Acting setup \
                 for an isolated profile follows the runtime permission mode and optional \
                 capability manifest. It requires allow_launch=true, launches a separate browser, and never \
                 copies, modifies, or terminates the requested user profile. Existing-profile \
@@ -600,7 +602,7 @@ impl BrowserPrepareTool {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Browser process id to prepare." },
+                    "pid": { "type": "integer", "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true." },
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
                     "allow_launch": {
                         "type": "boolean",
@@ -625,7 +627,22 @@ impl BrowserPrepareTool {
                     },
                     "session": schema_session(),
                 },
-                "required": ["pid"],
+                "required": [],
+                "anyOf": [
+                    { "required": ["pid"] },
+                    {
+                        "required": ["allow_launch", "profile"],
+                        "properties": {
+                            "allow_launch": { "const": true },
+                            "profile": {
+                                "required": ["mode"],
+                                "properties": {
+                                    "mode": { "enum": ["isolated_new", "isolated_named"] }
+                                }
+                            }
+                        }
+                    }
+                ],
                 "additionalProperties": true
             }),
             read_only: false,
@@ -644,10 +661,6 @@ impl Tool for BrowserPrepareTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.require_i64("pid") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
         let session = match require_explicit_session(&args) {
             Ok(session) => session,
             Err(error) => return error,
@@ -672,6 +685,21 @@ impl Tool for BrowserPrepareTool {
                 }
             },
         };
+        let allow_launch = args.opt_bool("allow_launch").unwrap_or(false);
+        let pid = match args.get("pid") {
+            None => None,
+            Some(_) => match args.require_i64("pid") {
+                Ok(pid) => Some(pid),
+                Err(error) => return error,
+            },
+        };
+        let pid_optional = strategy.is_none() && profile.is_some() && allow_launch;
+        if pid.is_none() && !pid_optional {
+            return match args.require_i64("pid") {
+                Ok(_) => unreachable!("pid was already parsed"),
+                Err(error) => error,
+            };
+        }
         let request = PrepareRequest {
             pid,
             window_id: args.opt_u64("window_id"),
@@ -679,7 +707,7 @@ impl Tool for BrowserPrepareTool {
             transport_session: args.opt_str("_transport_session_id"),
             strategy,
             profile,
-            allow_launch: args.opt_bool("allow_launch").unwrap_or(false),
+            allow_launch,
         };
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
@@ -2819,6 +2847,40 @@ mod tests {
         assert_eq!(
             structured(&result)["refusal"]["code"],
             "browser_route_unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn isolated_launch_accepts_omitted_pid() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "session": "pid-free-isolated-run"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_profile_still_requires_pid() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-profile-without-pid"
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        let body = serde_json::to_string(&result.content).expect("serialize tool error");
+        assert!(
+            body.contains("Missing required integer field: pid"),
+            "{body}"
         );
     }
 

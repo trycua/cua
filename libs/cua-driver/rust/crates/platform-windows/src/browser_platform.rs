@@ -246,10 +246,11 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "$utf8 = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $utf8; $path = [Environment]::GetEnvironmentVariable('CUA_BROWSER_ATTEST_PATH'); $signature = Get-AuthenticodeSignature -LiteralPath $path; Write-Output $signature.Status; Write-Output $signature.SignerCertificate.Subject",
+            r#"$ErrorActionPreference = 'Stop'; $utf8 = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $utf8; $module = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'; Import-Module -Name $module -Force -ErrorAction Stop; $path = [Environment]::GetEnvironmentVariable('CUA_BROWSER_ATTEST_PATH'); $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $path; Write-Output $signature.Status; Write-Output $signature.SignerCertificate.Subject"#,
         ])
-        // Pass the path as data rather than appending it to `-Command`, where
-        // Windows PowerShell would parse it as part of the command string.
+        // The static command imports Security beside the trusted System32
+        // PowerShell, ignoring an incompatible inherited PSModulePath. Pass the
+        // browser path as data so PowerShell never parses it as command text.
         .env("CUA_BROWSER_ATTEST_PATH", executable)
         .stdin(Stdio::null())
         .output()

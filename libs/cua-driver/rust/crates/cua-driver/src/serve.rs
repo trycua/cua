@@ -220,7 +220,11 @@ fn history_control_response(
     let Some(history) = registry.history() else {
         return if operation == "status" {
             DaemonResponse::ok(serde_json::json!({
-                "supported": cfg!(target_os = "macos"),
+                "supported": cfg!(any(
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "linux"
+                )),
                 "admitted": false,
                 "enabled": false,
                 "paused": false,
@@ -310,6 +314,25 @@ fn history_control_response(
         Ok(value) => DaemonResponse::ok(value),
         Err(error) => DaemonResponse::err(error.code(), 1),
     }
+}
+
+async fn history_control_response_async(
+    registry: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
+    request: DaemonRequest,
+    trusted_cli_connection: bool,
+) -> DaemonResponse {
+    // Native credential stores are synchronous at this boundary. Linux's
+    // Secret Service adapter may drive its own async runtime internally, which
+    // must not be entered from a Tokio request worker. Keep key creation,
+    // deletion, and encrypted-store I/O off the daemon's async executor on all
+    // platforms so one control request cannot stall unrelated clients.
+    tokio::task::spawn_blocking(move || {
+        history_control_response(&registry, &request, trusted_cli_connection)
+    })
+    .await
+    .unwrap_or_else(|error| {
+        DaemonResponse::err(format!("history_control_worker_failed: {error}"), 1)
+    })
 }
 
 fn history_relaunch_state_response(
@@ -691,9 +714,17 @@ fn authenticate_history_cli_connection(stream: &tokio::net::UnixStream) -> anyho
     crate::history_runtime::verify_history_cli_executable_path(&path)
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
-fn authenticate_history_cli_connection(_stream: &tokio::net::UnixStream) -> anyhow::Result<()> {
-    anyhow::bail!("Computer History control is unavailable on this platform")
+#[cfg(target_os = "linux")]
+fn authenticate_history_cli_connection(stream: &tokio::net::UnixStream) -> anyhow::Result<()> {
+    let peer_pid = stream
+        .peer_cred()
+        .map_err(|error| anyhow::anyhow!("read history control peer credentials: {error}"))?
+        .pid()
+        .ok_or_else(|| anyhow::anyhow!("history control peer PID is unavailable"))?;
+    let path = std::fs::read_link(format!("/proc/{peer_pid}/exe")).map_err(|error| {
+        anyhow::anyhow!("history control peer executable is unavailable: {error}")
+    })?;
+    crate::history_runtime::verify_history_cli_executable_path(&path)
 }
 
 fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Value {
@@ -937,11 +968,11 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "history_control" => {
-                                let resp = history_control_response(
-                                    &reg,
-                                    &req,
+                                let resp = history_control_response_async(
+                                    reg.clone(),
+                                    req,
                                     trusted_history_cli_connection,
-                                );
+                                ).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1569,6 +1600,11 @@ pub async fn run_serve(
                         expected_host_process_id,
                         client_process_id,
                     );
+                let trusted_history_cli_connection = client_process_id
+                    .and_then(platform_windows::history::process_executable_path)
+                    .is_some_and(|path| {
+                        crate::history_runtime::verify_history_cli_executable_path(&path).is_ok()
+                    });
 
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
@@ -1606,7 +1642,10 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "history_relaunch_state" => {
-                                let resp = history_relaunch_state_response(&req, false);
+                                let resp = history_relaunch_state_response(
+                                    &req,
+                                    trusted_history_cli_connection,
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1650,7 +1689,11 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "history_control" => {
-                                let resp = history_control_response(&reg, &req, false);
+                                let resp = history_control_response_async(
+                                    reg.clone(),
+                                    req,
+                                    trusted_history_cli_connection,
+                                ).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;

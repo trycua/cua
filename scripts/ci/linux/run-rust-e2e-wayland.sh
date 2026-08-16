@@ -93,6 +93,38 @@ if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
   DBUS_PID="$(sed -n '2p' <<< "${dbus_info}")"
 fi
 
+# The shared lane exercises the encrypted Computer History lifecycle. Give its
+# Linux key provider the same unlocked Secret Service that the canonical X11
+# lane provisions, but on this lane's private disposable session bus.
+if [[ "${CUA_E2E_INTERNAL_LANE:-all}" == "shared" \
+    || "${CUA_E2E_INTERNAL_LANE:-all}" == "all" ]]; then
+  if ! command -v gnome-keyring-daemon >/dev/null 2>&1; then
+    echo "gnome-keyring-daemon is required for the shared Wayland history gate" >&2
+    exit 1
+  fi
+  keyring_environment="$(
+    printf 'test-password' | gnome-keyring-daemon --unlock --components=secrets
+  )"
+  eval "${keyring_environment}"
+  deadline=$((SECONDS + 15))
+  while ((SECONDS < deadline)); do
+    if gdbus call --session \
+        --dest org.freedesktop.secrets \
+        --object-path /org/freedesktop/secrets \
+        --method org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
+  if ! gdbus call --session \
+      --dest org.freedesktop.secrets \
+      --object-path /org/freedesktop/secrets \
+      --method org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1; then
+    echo "Secret Service did not become ready on the private Wayland session bus" >&2
+    exit 1
+  fi
+fi
+
 # A private session bus does not activate the desktop accessibility stack by
 # itself. Start the repo-pinned AT-SPI launcher, then require org.a11y.Bus to
 # answer before any fixture or driver process inherits this session.

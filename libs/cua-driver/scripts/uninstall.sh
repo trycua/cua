@@ -126,10 +126,24 @@ purge_macos_history() {
     fi
 }
 
+purge_linux_history() {
+    local helper="$1"
+    local rust_install_present="$2"
+    if [[ "$rust_install_present" != "1" || ! -x "$helper" ]]; then
+        printf 'history_purge_incomplete: installed Cua Driver helper unavailable; preserved history state for retry\n' >&2
+        return 1
+    fi
+    "$helper" stop >/dev/null 2>&1 || true
+    if ! "$helper" history purge-offline --yes; then
+        printf 'history_purge_incomplete: exact-namespace Secret Service key destruction was not verified; preserved history state and runtime for retry\n' >&2
+        return 1
+    fi
+}
+
 reject_root_invocation() {
     local effective_uid="$1"
     if [[ "$effective_uid" == "0" ]]; then
-        printf 'error: do not run the Cua Driver uninstaller with sudo; run it as the login user so Computer History is purged from the correct home directory and Keychain. The script elevates only protected app removal when needed.\n' >&2
+        printf 'error: do not run the Cua Driver uninstaller with sudo; run it as the login user so Computer History is purged from the correct home directory and native credential store. The script elevates only protected app removal when needed.\n' >&2
         return 77
     fi
 }
@@ -344,10 +358,10 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         fi
     fi
 
-    # Cryptographic history purge must run while the exact packaged, signed
+    # Cryptographic history purge must run while the exact installed helper
     # executable still exists. The helper uses the production KeyProvider and
     # its own bundle-derived namespace, then takes the exclusive writer lease;
-    # failure leaves the app and all retryable history state in place.
+    # failure leaves the runtime and all retryable history state in place.
     if [[ "$OS" == "Darwin" && "$PURGE_DATA" == "1" ]]; then
         HISTORY_PURGE_HELPER="$APP_BUNDLE/Contents/MacOS/cua-driver"
         if ! purge_macos_history \
@@ -356,6 +370,14 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         fi
         log "cryptographically purged release Computer History key and local history state"
     elif [[ "$OS" == "Darwin" ]]; then
+        log "preserved encrypted Computer History if present; reinstall to reopen it or run uninstall.sh --purge to destroy it"
+    elif [[ "$OS" == "Linux" && "$PURGE_DATA" == "1" ]]; then
+        HISTORY_PURGE_HELPER="$PACKAGES_DIR/current/cua-driver"
+        if ! purge_linux_history "$HISTORY_PURGE_HELPER" "$RUST_INSTALL_PRESENT"; then
+            exit 1
+        fi
+        log "cryptographically purged release Computer History Secret Service key and local history state"
+    elif [[ "$OS" == "Linux" ]]; then
         log "preserved encrypted Computer History if present; reinstall to reopen it or run uninstall.sh --purge to destroy it"
     fi
 

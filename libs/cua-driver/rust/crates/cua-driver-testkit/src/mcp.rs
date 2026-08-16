@@ -44,12 +44,12 @@ impl McpDriver {
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
     pub fn spawn() -> Option<Self> {
-        Self::spawn_internal(&[], &[], None, false)
+        Self::spawn_internal(&[], &[], None, false, true)
     }
 
     /// Spawn the driver with a stable recording label for artifact naming.
     pub fn spawn_named(recording_label: &str) -> Option<Self> {
-        Self::spawn_internal(&[], &[], Some(recording_label), false)
+        Self::spawn_internal(&[], &[], Some(recording_label), false, true)
     }
 
     /// Spawn a named driver with the native cursor overlay enabled.
@@ -58,17 +58,48 @@ impl McpDriver {
     /// cannot paint over their own pixel oracles. Cursor-specific E2E tests
     /// opt in through this constructor.
     pub fn spawn_named_with_overlay(recording_label: &str) -> Option<Self> {
-        Self::spawn_internal(&[], &[], Some(recording_label), true)
+        Self::spawn_internal(&[], &[], Some(recording_label), true, true)
     }
 
     /// Spawn a named driver with environment variables scoped to this child.
     pub fn spawn_named_with_env(recording_label: &str, env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_internal(env, &[], Some(recording_label), false)
+        Self::spawn_internal(env, &[], Some(recording_label), false, true)
+    }
+
+    /// Spawn a transport proxy through an already-running installed daemon.
+    ///
+    /// Computer History admission is tied to the installed product path and
+    /// the daemon authenticates the local CLI peer. Cross-platform lifecycle
+    /// tests therefore use this constructor instead of the testkit's ephemeral
+    /// source-tree daemon.
+    pub fn spawn_daemon_proxy_named(socket: &str, recording_label: &str) -> Option<Self> {
+        if !daemon_socket_is_reachable(socket) {
+            eprintln!("[testkit] CuaDriver daemon not listening at {socket} — skipping");
+            return None;
+        }
+        Self::spawn_internal(
+            &[],
+            &["mcp", "--socket", socket],
+            Some(recording_label),
+            false,
+            true,
+        )
+    }
+
+    /// Spawn an installed-daemon proxy without allocating behavior artifacts.
+    /// Used for post-restart continuity checks after the visible trajectory has
+    /// already been captured by the same test case.
+    pub fn spawn_daemon_proxy_unrecorded(socket: &str) -> Option<Self> {
+        if !daemon_socket_is_reachable(socket) {
+            eprintln!("[testkit] CuaDriver daemon not listening at {socket} — skipping");
+            return None;
+        }
+        Self::spawn_internal(&[], &["mcp", "--socket", socket], None, false, false)
     }
 
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_internal(env, &[], None, false)
+        Self::spawn_internal(env, &[], None, false, true)
     }
 
     fn spawn_internal(
@@ -76,6 +107,7 @@ impl McpDriver {
         args: &[&str],
         recording_label: Option<&str>,
         overlay_enabled: bool,
+        prepare_recording: bool,
     ) -> Option<Self> {
         let mut daemon_env = env.to_vec();
         let e2e_unrestricted = std::env::var_os("CUA_E2E_UNRESTRICTED_GUI").is_some();
@@ -167,7 +199,9 @@ impl McpDriver {
             recording_started_at: None,
         };
         d.initialize();
-        d.prepare_e2e_recording(recording_label);
+        if prepare_recording {
+            d.prepare_e2e_recording(recording_label);
+        }
         Some(d)
     }
 
@@ -194,14 +228,20 @@ impl McpDriver {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
         let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
             .unwrap_or_else(|_| format!("{home}/Library/Caches/cua-driver/cua-driver.sock"));
-        if std::os::unix::net::UnixStream::connect(&socket).is_err() {
+        if !daemon_socket_is_reachable(&socket) {
             eprintln!(
                 "[testkit] CuaDriver daemon not listening at {socket} — \
                  run `./scripts/install-local.sh` and `open -n -g -a CuaDriver --args serve`; skipping"
             );
             return None;
         }
-        Self::spawn_internal(&[], &["mcp", "--socket", &socket], recording_label, false)
+        Self::spawn_internal(
+            &[],
+            &["mcp", "--socket", &socket],
+            recording_label,
+            false,
+            true,
+        )
     }
 
     fn initialize(&mut self) {
@@ -394,6 +434,29 @@ impl McpDriver {
             }),
         }
     }
+}
+
+#[cfg(unix)]
+fn daemon_socket_is_reachable(socket: &str) -> bool {
+    std::os::unix::net::UnixStream::connect(socket).is_ok()
+}
+
+#[cfg(windows)]
+fn daemon_socket_is_reachable(socket: &str) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn WaitNamedPipeW(lp_named_pipe_name: *const u16, timeout_ms: u32) -> i32;
+    }
+
+    let wide: Vec<u16> = std::ffi::OsStr::new(socket)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // NMPWAIT_NOWAIT == 1. Unlike opening the path, this does not consume the
+    // daemon's available named-pipe instance before the MCP proxy connects.
+    unsafe { WaitNamedPipeW(wide.as_ptr(), 1) != 0 }
 }
 
 impl Drop for McpDriver {

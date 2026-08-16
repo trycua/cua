@@ -1,4 +1,4 @@
-//! Encrypted, metadata-only Computer History for the macOS early preview.
+//! Encrypted, metadata-only Computer History.
 //!
 //! History is deliberately separate from trajectory recording.  It accepts
 //! only strongly typed, fixed-field events and performs encryption before any
@@ -620,7 +620,7 @@ impl HistoryManager {
 
     pub fn status(&self) -> HistoryStatus {
         HistoryStatus {
-            supported: self.config.platform == "macos",
+            supported: matches!(self.config.platform.as_str(), "macos" | "windows" | "linux"),
             admitted: self.config.admitted,
             enabled: self.enabled.load(Ordering::Acquire),
             paused: self.paused.load(Ordering::Acquire),
@@ -1936,7 +1936,7 @@ fn validate_event(event: &HistoryEvent) -> Result<(), HistoryError> {
         || decode_hex_128(&event.id).is_none()
         || event.subject.len() > 160
         || event.data.sequence == 0
-        || event.data.platform != "macos"
+        || !matches!(event.data.platform.as_str(), "macos" | "windows" | "linux")
         || event.data.process_model != "in_daemon"
         || event.data.caller_category != "cua_runtime"
         || event
@@ -2605,6 +2605,38 @@ mod tests {
         let rendered = String::from_utf8_lossy(&bytes);
         assert!(!rendered.contains("action_started"));
         assert!(!rendered.contains("test_query"));
+    }
+
+    #[test]
+    fn every_supported_desktop_platform_roundtrips_encrypted_events() {
+        let temp = tempfile::tempdir().unwrap();
+        for platform in ["macos", "windows", "linux"] {
+            let root = temp.path().join(platform);
+            let manager = HistoryManager::new(
+                HistoryConfig {
+                    root,
+                    platform: platform.to_owned(),
+                    ..config(temp.path())
+                },
+                Arc::new(MemoryKeyProvider::default()),
+                None,
+            );
+            manager.enable().unwrap();
+            manager.flush().unwrap();
+            let events = manager
+                .query(
+                    HistoryQuery {
+                        limit: Some(20),
+                        ..Default::default()
+                    },
+                    HistoryAccessOperation::LocalCli,
+                )
+                .unwrap();
+            assert!(!events.is_empty(), "{platform} emitted no encrypted events");
+            assert!(events.iter().all(|event| event.data.platform == platform));
+            manager.disable().unwrap();
+            manager.delete_all().unwrap();
+        }
     }
 
     #[test]

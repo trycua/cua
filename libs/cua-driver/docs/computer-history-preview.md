@@ -1,24 +1,33 @@
-# Try the Computer History macOS preview
+# Try the Computer History desktop preview
 
 This guide shows you how to enable Cua Driver's encrypted Computer History,
 inspect it, let an authorized agent read it, and remove it. It applies to
-nightly macOS builds that include the experimental preview.
+nightly macOS, Windows, and Linux builds that include the experimental preview.
 
 Computer History is off by default. The preview records metadata for actions
 performed through Cua Driver. It does not watch unrelated desktop activity.
 
 ## Before you start
 
-- Use macOS.
+- Use macOS, Windows, or Linux in an interactive desktop session.
 - Install a Cua Driver nightly that includes Computer History.
-- Grant Cua Driver its usual macOS permissions.
+- Grant Cua Driver the usual permissions required for the actions you want it
+  to perform. Computer History does not add permission to perform an action.
+- On Linux, run a desktop Secret Service implementation such as GNOME
+  Keyring. The preview fails closed if no unlocked Secret Service is available.
 
 ## Install or switch to the nightly channel
 
-For a fresh installation, run:
+For a fresh macOS or Linux installation, run:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)" -- --channel nightly
+```
+
+For a fresh Windows installation, run in PowerShell:
+
+```powershell
+& ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -Channel nightly
 ```
 
 To switch an existing installation, run:
@@ -42,11 +51,11 @@ Run:
 cua-driver history enable
 ```
 
-The command admits the experimental feature, initializes its macOS Keychain
-key, verifies an encrypted write and read, and then enables capture. If the
-installed daemon must restart, Cua Driver preserves its existing permission
-mode, capability manifest, approval flags, compatibility mode, and launch
-grants.
+The command admits the experimental feature, initializes its device-local
+native credential, verifies an encrypted write and read, and then enables
+capture. If the installed daemon must restart, Cua Driver preserves its
+existing permission mode, capability manifest, approval flags, compatibility
+mode, and launch grants.
 
 Check the result:
 
@@ -118,7 +127,7 @@ These commands preserve existing encrypted history.
 
 ## Delete Computer History
 
-Delete the encrypted store and destroy its exact namespace Keychain key:
+Delete the encrypted store and destroy its exact namespace native key:
 
 ```bash
 cua-driver history delete --yes
@@ -128,10 +137,23 @@ This is cryptographic deletion. Cua Driver does not claim physical erasure from
 APFS snapshots, backups, copied ciphertext, SSD wear leveling, or memory that a
 process already decrypted.
 
-To purge history while uninstalling, run the uninstaller as your login user
-with `--purge`. Do not prefix the uninstaller with `sudo`: the script elevates
-only protected app removal, while Keychain and history cleanup must remain in
-the login user's context.
+To purge history while uninstalling on macOS or Linux, run:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)" -- --purge
+```
+
+On Windows, run:
+
+```powershell
+$env:CUA_DRIVER_RS_UNINSTALL_FORCE = '1'
+$env:CUA_DRIVER_RS_UNINSTALL_PURGE = '1'
+irm https://cua.ai/driver/uninstall.ps1 | iex
+```
+
+Run the uninstaller as the interactive login user. Do not prefix the Unix
+uninstaller with `sudo`: native credential and history cleanup must remain in
+that user's context.
 
 ## Return to the stable channel
 
@@ -153,7 +175,7 @@ The encrypted event allowlist contains:
 - time and monotonic sequence;
 - opaque session and action identifiers;
 - a fixed Cua capability;
-- an optional application bundle identifier and display name;
+- an optional fixed-field platform application identifier and display name;
 - fixed action outcome, delivery, route, evidence, and escalation categories;
 - lifecycle, access-audit, and writer-health events.
 
@@ -163,13 +185,25 @@ paths, window titles, URLs, or free-form diagnostics.
 
 Files use the Cua History Profile: a CBOR Sequence of COSE_Encrypt0 records with
 CloudEvents JSON inside each encrypted payload. ChaCha20-Poly1305 authenticates
-each record. A macOS Keychain-protected namespace key and per-chunk HKDF keys
-protect data at rest. There is no plaintext fallback and history performs no
-network I/O.
+each record. A namespace root key protected by macOS Keychain, Windows
+Credential Manager, or Linux Secret Service and per-chunk HKDF keys protect
+data at rest. There is no plaintext fallback and history performs no network
+I/O.
 
 The filesystem can still reveal that a history directory exists, its total
-size, and file modification times. The Keychain key is device-bound, so copying
-only the encrypted files to another Mac does not provide recovery.
+size, and file modification times. The native key is bound to the current
+user's credential store, so copying only the encrypted files to another
+machine does not provide recovery.
+
+Default encrypted-store locations are:
+
+- macOS: `~/Library/Application Support/cua-driver/computer-history`;
+- Windows: `%LOCALAPPDATA%\cua-driver\computer-history`;
+- Linux: `$XDG_STATE_HOME/cua-driver/computer-history`, or
+  `~/.local/state/cua-driver/computer-history` when `XDG_STATE_HOME` is unset.
+
+Local-development installs use `cua-driver-local` instead of `cua-driver` in
+both filesystem and native-key namespaces.
 
 ## Troubleshooting
 
@@ -182,8 +216,10 @@ relaunch automatically.
 
 **`history_key_locked` or `history_key_unavailable`**
 
-Unlock the macOS login session and Keychain, then retry. Capture stays disabled
-and Cua Driver does not create plaintext files.
+Unlock the login session and its native credential store (Keychain, Credential
+Manager, or Secret Service), then retry. On Linux, also confirm that a Secret
+Service implementation is running. Capture stays disabled and Cua Driver does
+not create plaintext files.
 
 **`history_quota_reached`**
 

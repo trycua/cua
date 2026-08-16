@@ -70,14 +70,14 @@ jobs:
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev ffmpeg
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg gnome-keyring
       - name: Run shared Rust behavior matrix
         env:
           CUA_E2E_INTERNAL_LANE: shared
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
+            "eval \"\$(printf test-password | gnome-keyring-daemon --unlock --components=secrets)\"; openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
       - name: Upload shared results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4

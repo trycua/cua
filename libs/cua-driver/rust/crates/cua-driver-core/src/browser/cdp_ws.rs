@@ -22,14 +22,13 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(20);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Connection-scoped command policy. Grant-owned personal-profile sockets
 /// always use the reviewed set below; callers cannot opt out or relax it.
@@ -257,21 +256,14 @@ impl Drop for CdpConnection {
 impl CdpConnection {
     pub async fn connect(ws_url: &str) -> anyhow::Result<Self> {
         validate_loopback_ws_url(ws_url).map_err(|e| anyhow::anyhow!(e))?;
-        // Chrome 136+ settings-toggle endpoints (DevToolsActivePort mode)
-        // refuse the upgrade without an http://localhost-family Origin on the
-        // handshake. Classic --remote-debugging-port endpoints ignore it.
-        let mut request = ws_url
-            .into_client_request()
-            .map_err(|e| anyhow::anyhow!("could not build CDP request: {e}"))?;
-        if let Some(port) = loopback_port(ws_url) {
-            request.headers_mut().insert(
-                http::header::ORIGIN,
-                http::HeaderValue::from_str(&format!("http://127.0.0.1:{port}"))
-                    .map_err(|e| anyhow::anyhow!("invalid CDP Origin header: {e}"))?,
-            );
-        }
+        // Chrome approval-mode endpoints (the chrome://settings "Remote
+        // debugging" toggle) show a native per-connection consent dialog while
+        // the upgrade handshake is pending; the handshake only completes once
+        // the user allows it. No Origin header must be sent: the approval
+        // server rejects any Origin with 403. CONNECT_TIMEOUT is intentionally
+        // generous so the user has time to accept the dialog.
         let (ws, _resp) =
-            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request))
+            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(ws_url))
                 .await
                 .map_err(|_| anyhow::anyhow!("CDP connect to {ws_url} timed out"))??;
         let (write, read) = ws.split();

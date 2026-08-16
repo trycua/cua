@@ -240,7 +240,7 @@ from_zoom: set true after a zoom call to auto-translate zoom-image pixel coordin
 - `count` (integer, optional): Click count (pixel path only). Default 1.
 - `debug_image_out` (string, optional): Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": perform the AX action or post the CGEvent without fronting. "foreground": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require "foreground" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:"foreground".
-- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `from_zoom` (boolean, optional): When true, x and y are in the last zoom image for this pid; driver translates back to full-window coordinates.
 - `modifier` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl.
@@ -268,7 +268,7 @@ Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordina
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
@@ -294,7 +294,7 @@ Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always r
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `modifier` (array of string, optional): Modifier keys held during the right-click: cmd/shift/option/ctrl. Pixel path only.
 - `pid` (integer, required): Target process ID.
@@ -358,7 +358,7 @@ WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's comp
 
 - `delay_ms` (integer, optional): Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds. range: 0–200
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": AX insert, then CGEvent keystrokes if needed — no focus steal; native controls can be confirmed via AXValue read-back, while web-content writes remain effect:"unverifiable". "foreground": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with "foreground" when a background attempt remains unverifiable and a fresh snapshot shows the text did not appear.
-- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `pid` (integer, optional): Target process ID.
 - `scope` (string, optional): Use desktop with no pid/window_id to type into the frontmost application. default: `"window"`
@@ -389,7 +389,7 @@ A key press is confirmed only when a bounded native AX value/selection read-back
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `key` (string, required): Key name: return, tab, escape, up, down, etc.
 - `modifiers` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl, fn.
@@ -423,7 +423,7 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `keys` (array of string, required): Modifier(s) and one non-modifier key, e.g. ["cmd", "c"]. items: 2–unbounded
 - `pid` (integer, optional): Target process ID.
@@ -455,7 +455,7 @@ For free-form text entry into web inputs, prefer `type_text_chars` which synthes
 
 **Arguments:**
 
-- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
@@ -483,7 +483,7 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 - `by` (string, optional): Scroll granularity. Default: line.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
 - `direction` (string, required): Scroll direction.
-- `element_index` (integer, optional): Element index from get_window_state. Cua Driver 0.17 requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
 - `pid` (integer, optional)
 - `scope` (string, optional): Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates. default: `"window"`

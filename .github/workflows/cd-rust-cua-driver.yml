@@ -799,10 +799,15 @@ jobs:
             release/CuaDriver.app/Contents/MacOS/cua-cursor-theme \
             > release/actual-packaged-cursor-entitlements.plist
           python3 - <<'PY'
+          import os
           import plistlib
 
-          with open("release/actual-packaged-cursor-entitlements.plist", "rb") as handle:
-              actual = plistlib.load(handle)
+          path = "release/actual-packaged-cursor-entitlements.plist"
+          if os.path.getsize(path) == 0:
+              actual = {}
+          else:
+              with open(path, "rb") as handle:
+                  actual = plistlib.load(handle)
           assert "com.apple.application-identifier" not in actual
           assert "keychain-access-groups" not in actual
           PY

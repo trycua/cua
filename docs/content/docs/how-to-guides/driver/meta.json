@@ -2,6 +2,7 @@
   "title": "Driver",
   "pages": [
     "install",
+    "use-computer-history",
     "use-sdk-in-process",
     "verify-a-desktop-action",
     "use-claude-agent-sdk",

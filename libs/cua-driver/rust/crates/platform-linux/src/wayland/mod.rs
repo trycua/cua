@@ -226,6 +226,32 @@ fn observed_origin_registry() -> &'static Mutex<HashMap<u32, (i32, i32)>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn listed_window_registry() -> &'static Mutex<HashSet<(u32, u64)>> {
+    static REGISTRY: OnceLock<Mutex<HashSet<(u32, u64)>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn remember_listed_windows(windows: &[WindowInfo]) {
+    if let Ok(mut registry) = listed_window_registry().lock() {
+        registry.extend(
+            windows
+                .iter()
+                .filter_map(|window| window.pid.map(|pid| (pid, window.xid))),
+        );
+    }
+}
+
+pub fn window_was_listed_for_pid(pid: u32, window_id: u64) -> bool {
+    listed_window_registry()
+        .lock()
+        .is_ok_and(|registry| registry.contains(&(pid, window_id)))
+}
+
+fn listed_windows(windows: Vec<WindowInfo>) -> Vec<WindowInfo> {
+    remember_listed_windows(&windows);
+    windows
+}
+
 pub fn remember_observed_window_origins(windows: &[WindowInfo]) {
     if let Ok(mut registry) = observed_origin_registry().lock() {
         for window in windows {
@@ -3043,26 +3069,26 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
             Ok(ws) if !ws.is_empty() => {
                 if let Some(pid) = filter_pid {
                     if let Some(filtered) = native_windows_for_pid(ws, pid) {
-                        return filtered;
+                        return listed_windows(filtered);
                     }
                 } else {
-                    return ws;
+                    return listed_windows(ws);
                 }
                 // A compositor window without pid metadata cannot satisfy a
                 // pid-scoped request. Continue to the AT-SPI registry.
                 let ws = wayland_atspi_windows(filter_pid);
                 if !ws.is_empty() {
-                    return ws;
+                    return listed_windows(ws);
                 }
             }
             Ok(_) => {
                 if let Some(ws) = shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
                 {
-                    return ws;
+                    return listed_windows(ws);
                 }
                 let ws = wayland_atspi_windows(filter_pid);
                 if !ws.is_empty() {
-                    return ws;
+                    return listed_windows(ws);
                 }
             }
             Err(e) => {
@@ -3071,12 +3097,12 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                     tracing::debug!(
                         "native Wayland protocols unavailable ({e}); using compositor helper"
                     );
-                    return ws;
+                    return listed_windows(ws);
                 }
                 tracing::warn!("native Wayland list_windows failed: {e}; trying AT-SPI registry");
                 let ws = wayland_atspi_windows(filter_pid);
                 if !ws.is_empty() {
-                    return ws;
+                    return listed_windows(ws);
                 }
             }
         }
@@ -3104,7 +3130,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
             merge_atspi_windows(&mut ws, &seen, wayland_atspi_windows(filter_pid));
         }
     }
-    ws
+    listed_windows(ws)
 }
 
 fn merge_atspi_windows(
@@ -3491,6 +3517,30 @@ mod tests {
 
         assert_eq!(captured_xid.get(), Some(42));
         assert_eq!(bytes, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn listed_wayland_identity_remains_valid_when_current_enumeration_hides_it() {
+        let pid = 0xf2962;
+        let window_id = 0xf2962_0001;
+        assert!(!window_was_listed_for_pid(pid, window_id));
+
+        remember_listed_windows(&[WindowInfo {
+            xid: window_id,
+            pid: Some(pid),
+            app_name: String::new(),
+            title: String::new(),
+            is_on_screen: false,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        }]);
+
+        assert!(window_was_listed_for_pid(pid, window_id));
+        assert!(!window_was_listed_for_pid(pid + 1, window_id));
+        assert!(!window_was_listed_for_pid(pid, window_id + 1));
     }
 
     #[test]

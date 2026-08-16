@@ -673,6 +673,7 @@ impl Tool for GetWindowStateTool {
             crate::wayland::list_windows_dispatch(Some(pid))
                 .iter()
                 .any(|window| window.xid == xid && window.pid == Some(pid))
+                || crate::wayland::window_was_listed_for_pid(pid, xid)
         } else {
             crate::x11::window_belongs_to_pid(xid, pid)
         };

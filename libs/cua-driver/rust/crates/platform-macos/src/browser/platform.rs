@@ -10,9 +10,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareOutcome, PrepareRequest,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -139,6 +139,72 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
     } else {
         BrowserProduct::Other
     }
+}
+
+fn isolated_browser_candidates() -> Vec<(PathBuf, &'static str, &'static str)> {
+    // pid-free launch deliberately supports only vendor-signed system-wide
+    // installations. Chromium builds have no stable vendor team identity, so
+    // callers can still select one by supplying its already-running pid.
+    vec![
+        (
+            PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            "com.google.Chrome",
+            "EQHXZ8M8AV",
+        ),
+        (
+            PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            "com.microsoft.edgemac",
+            "UBF8T346G9",
+        ),
+    ]
+}
+
+fn codesign_identity_matches(details: &str, identifier: &str, team_identifier: &str) -> bool {
+    let mut observed_identifier = None;
+    let mut observed_team = None;
+    for line in details.lines() {
+        if let Some(value) = line.strip_prefix("Identifier=") {
+            observed_identifier = Some(value.trim());
+        } else if let Some(value) = line.strip_prefix("TeamIdentifier=") {
+            observed_team = Some(value.trim());
+        }
+    }
+    observed_identifier == Some(identifier) && observed_team == Some(team_identifier)
+}
+
+fn has_trusted_codesign_identity(
+    executable: &std::path::Path,
+    identifier: &str,
+    team_identifier: &str,
+) -> bool {
+    let requirement = format!(
+        "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
+    );
+    let verified = std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--strict", "--test-requirement", &requirement])
+        .arg(executable)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !verified {
+        return false;
+    }
+    let Ok(details) = std::process::Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(executable)
+        .stdin(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    details.status.success()
+        && codesign_identity_matches(
+            &String::from_utf8_lossy(&details.stderr),
+            identifier,
+            team_identifier,
+        )
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {
@@ -396,6 +462,25 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for MacOsBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        for (candidate, identifier, team_identifier) in isolated_browser_candidates() {
+            let Ok(executable) = select_isolated_browser_executable([candidate]) else {
+                continue;
+            };
+            if has_trusted_codesign_identity(
+                std::path::Path::new(&executable),
+                identifier,
+                team_identifier,
+            ) {
+                return Ok(executable);
+            }
+        }
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "no vendor-signed system Chromium executable is available for isolated launch",
+        ))
+    }
+
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
     }
@@ -903,7 +988,13 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -923,6 +1014,45 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_browser_candidates_are_vendor_attested_system_installs() {
+        let candidates = isolated_browser_candidates();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].1, "com.google.Chrome");
+        assert_eq!(candidates[0].2, "EQHXZ8M8AV");
+        assert!(candidates[0]
+            .0
+            .ends_with("Google Chrome.app/Contents/MacOS/Google Chrome"));
+        assert_eq!(candidates[1].1, "com.microsoft.edgemac");
+        assert_eq!(candidates[1].2, "UBF8T346G9");
+        assert!(candidates[1]
+            .0
+            .ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"));
+        assert!(candidates
+            .iter()
+            .all(|(candidate, _, _)| candidate.is_absolute()));
+    }
+
+    #[test]
+    fn codesign_identity_requires_exact_identifier_and_team() {
+        let details = "Identifier=com.google.Chrome\nTeamIdentifier=EQHXZ8M8AV\n";
+        assert!(codesign_identity_matches(
+            details,
+            "com.google.Chrome",
+            "EQHXZ8M8AV"
+        ));
+        assert!(!codesign_identity_matches(
+            details,
+            "com.google.Chrome",
+            "ATTACKER00"
+        ));
+        assert!(!codesign_identity_matches(
+            "Identifier=com.google.Chrome\nTeamIdentifier=\n",
+            "com.google.Chrome",
+            "EQHXZ8M8AV"
+        ));
+    }
 
     fn window(window_id: u32, pid: i32, title: &str) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {

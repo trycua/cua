@@ -82,7 +82,7 @@ fn tools_list_schema_shape() {
         "get_browser_state should advertise opt-in exact-tab capture"
     );
     for (name, required) in [
-        ("browser_prepare", &["pid"][..]),
+        ("browser_prepare", &[][..]),
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),
         ("browser_click", &["target_id", "tab_id"][..]),
         ("browser_type", &["target_id", "tab_id", "ref", "text"][..]),
@@ -109,6 +109,20 @@ fn tools_list_schema_shape() {
             );
         }
     }
+    let prepare = tools
+        .iter()
+        .find(|tool| tool["name"] == "browser_prepare")
+        .expect("browser_prepare not found in tools/list");
+    assert!(
+        prepare["inputSchema"]["anyOf"]
+            .as_array()
+            .is_some_and(|alternatives| alternatives.iter().any(|alternative| {
+                alternative["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|field| field == "pid"))
+            })),
+        "browser_prepare schema must retain a pid-required alternative"
+    );
 
     const DELIVERY_MODE_TOOLS: &[&str] = &[
         "click",

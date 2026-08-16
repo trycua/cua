@@ -670,20 +670,22 @@ impl BrowserEngine {
             ));
         }
 
-        match self.platform.prepare_endpoint(request.clone()).await {
-            Ok(mut outcome) => {
-                if outcome.prepared_pid.is_none() {
-                    outcome.prepared_pid = outcome
-                        .endpoint
-                        .as_ref()
-                        .map(|endpoint| endpoint.ownership.owner_pid);
+        if request.pid.is_some() {
+            match self.platform.prepare_endpoint(request.clone()).await {
+                Ok(mut outcome) => {
+                    if outcome.prepared_pid.is_none() {
+                        outcome.prepared_pid = outcome
+                            .endpoint
+                            .as_ref()
+                            .map(|endpoint| endpoint.ownership.owner_pid);
+                    }
+                    return Ok(outcome);
                 }
-                return Ok(outcome);
+                Err(error) if error.code != BrowserRefusalCode::BrowserRequiresSetup => {
+                    return Err(error)
+                }
+                Err(_) => {}
             }
-            Err(error) if error.code != BrowserRefusalCode::BrowserRequiresSetup => {
-                return Err(error)
-            }
-            Err(_) => {}
         }
 
         if !request.allow_launch {
@@ -699,20 +701,29 @@ impl BrowserEngine {
             )
         })?;
         validate_profile(profile_request)?;
-        let classification = self.platform.classify_browser(request.pid).await?;
-        if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
-            return Err(unsupported_engine_refusal(
-                &classification,
-                "prepare_isolated_profile",
-            ));
-        }
-        let fingerprint = self.platform.process_fingerprint(request.pid).await?;
-        let executable = fingerprint.executable.ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                "could not prove the requested browser executable for isolated launch",
-            )
-        })?;
+        let executable = if let Some(pid) = request.pid {
+            let classification = self.platform.classify_browser(pid).await?;
+            if !classification.supports_cdp
+                || classification.engine != BrowserEngineFamily::Chromium
+            {
+                return Err(unsupported_engine_refusal(
+                    &classification,
+                    "prepare_isolated_profile",
+                ));
+            }
+            self.platform
+                .process_fingerprint(pid)
+                .await?
+                .executable
+                .ok_or_else(|| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "could not prove the requested browser executable for isolated launch",
+                    )
+                })?
+        } else {
+            self.platform.isolated_browser_executable()?
+        };
         let prepared_profile = prepare_profile(profile_request)?;
         let mut command = isolated_browser_command(&executable, &prepared_profile.path);
         let mut child = command.spawn().map_err(|error| {
@@ -765,7 +776,7 @@ impl BrowserEngine {
         Ok(PrepareOutcome {
             action: PrepareAction::LaunchedIsolatedBrowser,
             endpoint: Some(endpoint),
-            message: "Launched a separate driver-owned isolated Chromium process; the requested browser process was not modified or terminated.".to_owned(),
+            message: "Launched a separate driver-owned isolated Chromium process; no existing browser process was modified or terminated.".to_owned(),
             prepared_pid: Some(prepared_pid),
             side_effects: PrepareSideEffects {
                 launched_browser: true,
@@ -788,6 +799,12 @@ impl BrowserEngine {
             Unrestricted,
         }
 
+        let pid = request.pid.ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserConsentRequired,
+                "strategy=existing_profile requires an exact pid approval anchor",
+            )
+        })?;
         let window_id = request.window_id.ok_or_else(|| {
             refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
@@ -823,7 +840,7 @@ impl BrowserEngine {
                 .authorize_call(
                     "browser_prepare",
                     &serde_json::json!({
-                        "pid": request.pid,
+                        "pid": pid,
                         "window_id": window_id,
                         "strategy": {"kind": "existing_profile"},
                     }),
@@ -852,18 +869,18 @@ impl BrowserEngine {
             ));
         }
 
-        let classification = self.platform.classify_browser(request.pid).await?;
+        let classification = self.platform.classify_browser(pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
             return Err(unsupported_engine_refusal(
                 &classification,
                 "attach_existing_profile",
             ));
         }
-        self.native_window_checked(request.pid, window_id).await?;
-        let fingerprint = self.platform.process_fingerprint(request.pid).await?;
+        self.native_window_checked(pid, window_id).await?;
+        let fingerprint = self.platform.process_fingerprint(pid).await?;
         let mut setup = ExistingProfileSetupOutcome::default();
         let setup_request = ExistingProfileSetupRequest {
-            pid: request.pid,
+            pid,
             window_id,
             browser: classification.product_kind,
         };
@@ -871,7 +888,7 @@ impl BrowserEngine {
         let mut setup_guard = None;
         let mut endpoint = self
             .platform
-            .discover_existing_profile_endpoint(request.pid)
+            .discover_existing_profile_endpoint(pid)
             .await?;
         if endpoint.is_none() {
             setup = self
@@ -887,14 +904,14 @@ impl BrowserEngine {
             // Setup is allowed to interact only with the already-approved
             // process/window generation. Re-prove both before accepting the
             // newly exposed listener.
-            if let Err(error) = self.native_window_checked(request.pid, window_id).await {
+            if let Err(error) = self.native_window_checked(pid, window_id).await {
                 return Err(setup_guard
                     .as_mut()
                     .expect("setup guard exists while setup is pending")
                     .abort(with_setup_side_effects(error, &setup))
                     .await);
             }
-            let current_fingerprint = match self.platform.process_fingerprint(request.pid).await {
+            let current_fingerprint = match self.platform.process_fingerprint(pid).await {
                 Ok(fingerprint) => fingerprint,
                 Err(error) => {
                     return Err(setup_guard
@@ -920,11 +937,7 @@ impl BrowserEngine {
             }
             endpoint = setup.endpoint.clone();
             if endpoint.is_none() {
-                endpoint = match self
-                    .platform
-                    .discover_existing_profile_endpoint(request.pid)
-                    .await
-                {
+                endpoint = match self.platform.discover_existing_profile_endpoint(pid).await {
                     Ok(endpoint) => endpoint,
                     Err(error) => {
                         return Err(setup_guard
@@ -953,7 +966,7 @@ impl BrowserEngine {
                 return Err(error);
             }
         };
-        if endpoint.ownership.owner_pid != request.pid {
+        if endpoint.ownership.owner_pid != pid {
             let error = with_setup_side_effects(
                 refusal(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
@@ -987,7 +1000,7 @@ impl BrowserEngine {
                 request.session.clone(),
                 transport_session.to_owned(),
                 serde_json::json!({
-                    "pid": request.pid,
+                    "pid": pid,
                     "window_id": window_id,
                     "process_fingerprint": fingerprint.clone(),
                     "browser_product": classification.product_kind,
@@ -1020,11 +1033,7 @@ impl BrowserEngine {
         };
 
         let previous_grant = self
-            .existing_profile_grant(
-                &request.session,
-                request.transport_session.as_deref(),
-                request.pid,
-            )
+            .existing_profile_grant(&request.session, request.transport_session.as_deref(), pid)
             .await;
         let previous_grant = match previous_grant {
             Ok(grant) => grant,
@@ -1047,7 +1056,7 @@ impl BrowserEngine {
         let grant = self.existing_profile_grants.mint(
             &request.session,
             request.transport_session.as_deref(),
-            request.pid,
+            pid,
             window_id,
             fingerprint,
             "chromium".to_owned(),
@@ -1079,7 +1088,7 @@ impl BrowserEngine {
                     &mut claim,
                     self.platform
                         .handle_existing_profile_consent(BrowserConsentRequest {
-                            pid: request.pid,
+                            pid,
                             window_id,
                             attempt: 1,
                         }),
@@ -1095,7 +1104,7 @@ impl BrowserEngine {
                         self.revoke_existing_profile_grant(
                             &request.session,
                             request.transport_session.as_deref(),
-                            request.pid,
+                            pid,
                         )
                         .await;
                         let error = with_setup_side_effects(error, &setup);
@@ -1127,7 +1136,7 @@ impl BrowserEngine {
             self.revoke_existing_profile_grant(
                 &request.session,
                 request.transport_session.as_deref(),
-                request.pid,
+                pid,
             )
             .await;
             let error = with_prepare_side_effects(
@@ -1163,7 +1172,7 @@ impl BrowserEngine {
                     self.revoke_existing_profile_grant(
                         &request.session,
                         request.transport_session.as_deref(),
-                        request.pid,
+                        pid,
                     )
                     .await;
                     return Err(with_prepare_side_effects(
@@ -1175,13 +1184,13 @@ impl BrowserEngine {
             }
         }
         self.store
-            .invalidate_endpoint_generation(request.pid, previous_generation);
+            .invalidate_endpoint_generation(pid, previous_generation);
 
         Ok(PrepareOutcome {
             action: PrepareAction::AttachedExistingProfile,
             endpoint: Some(endpoint),
             message: "Attached to the approved existing Chromium profile. Bind the native window again before using browser capabilities.".to_owned(),
-            prepared_pid: Some(request.pid),
+            prepared_pid: Some(pid),
             side_effects: PrepareSideEffects {
                 displayed_consent_prompt,
                 changed_preferences: setup.enabled_remote_debugging,

@@ -995,6 +995,48 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
     .flatten()
 }
 
+/// Chrome 136+ can enable remote debugging through its settings toggle. The
+/// resulting endpoint deliberately does not serve /json/version; the browser
+/// publishes its browser-level WebSocket path through the user-data
+/// DevToolsActivePort file instead. Match that path for an exact-pid loopback
+/// port without relying on any localized UI state.
+async fn browser_websocket_url_from_active_port_file(port: u16) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        let local = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        let roots = [
+            local.join("Google").join("Chrome").join("User Data"),
+            local.join("Chromium").join("User Data"),
+            local
+                .join("Google")
+                .join("Chrome for Testing")
+                .join("User Data"),
+            local.join("Microsoft").join("Edge").join("User Data"),
+        ];
+        for root in roots {
+            let Ok(text) = std::fs::read_to_string(root.join("DevToolsActivePort")) else {
+                continue;
+            };
+            let mut lines = text.lines();
+            let (Some(port_line), Some(path_line)) = (lines.next(), lines.next()) else {
+                continue;
+            };
+            if port_line.trim().parse::<u16>().ok() != Some(port) {
+                continue;
+            }
+            let path = path_line.trim();
+            if path.starts_with("/devtools/browser/") {
+                return Some(format!("ws://127.0.0.1:{port}{path}"));
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 fn select_provisional_setup_port(
     ports: &[u16],
     listeners_before: &[u16],
@@ -1029,7 +1071,11 @@ const ENDPOINT_DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(100);
 async fn browser_endpoints_once(pid: u32) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
     let mut endpoints = Vec::new();
     for (port, owner_pid) in loopback_listeners_for_exact_pid(pid).await? {
-        if let Some(ws_url) = browser_websocket_url(port).await {
+        let ws_url = match browser_websocket_url(port).await {
+            Some(url) => Some(url),
+            None => browser_websocket_url_from_active_port_file(port).await,
+        };
+        if let Some(ws_url) = ws_url {
             // Re-read both the socket owner and process identity after the
             // HTTP probe so pid recycling during discovery cannot become
             // exact ownership evidence.

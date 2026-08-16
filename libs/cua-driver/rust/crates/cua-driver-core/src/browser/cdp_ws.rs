@@ -22,6 +22,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -256,8 +257,21 @@ impl Drop for CdpConnection {
 impl CdpConnection {
     pub async fn connect(ws_url: &str) -> anyhow::Result<Self> {
         validate_loopback_ws_url(ws_url).map_err(|e| anyhow::anyhow!(e))?;
+        // Chrome 136+ settings-toggle endpoints (DevToolsActivePort mode)
+        // refuse the upgrade without an http://localhost-family Origin on the
+        // handshake. Classic --remote-debugging-port endpoints ignore it.
+        let request = ws_url
+            .into_client_request()
+            .map_err(|e| anyhow::anyhow!("could not build CDP request: {e}"))?;
+        if let Some(port) = loopback_port(ws_url) {
+            request.headers_mut().insert(
+                http::header::ORIGIN,
+                http::HeaderValue::from_str(&format!("http://127.0.0.1:{port}"))
+                    .map_err(|e| anyhow::anyhow!("invalid CDP Origin header: {e}"))?,
+            );
+        }
         let (ws, _resp) =
-            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(ws_url))
+            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request))
                 .await
                 .map_err(|_| anyhow::anyhow!("CDP connect to {ws_url} timed out"))??;
         let (write, read) = ws.split();

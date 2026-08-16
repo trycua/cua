@@ -17,6 +17,7 @@ use std::{
 };
 
 use cua_driver_core::history::KeyProvider;
+use cua_driver_testkit::ax::{element_index_by_id, element_index_containing};
 use cua_driver_testkit::e2e::{
     recording_evidence, write_declaration_from_env, write_result_from_env, CaseResult, CaseSpec,
     Delivery, DriverRoute, Observation, OracleKind, Scope, Targeting, TestStatus,
@@ -247,6 +248,39 @@ fn wait_for_window_position(
     }
 }
 
+fn wait_for_window_text(
+    driver: &mut McpDriver,
+    pid: u32,
+    window_id: u64,
+    expected: &str,
+) -> cua_driver_testkit::ToolResponse {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = driver.call(
+            "get_window_state",
+            json!({
+                "pid": pid,
+                "window_id": window_id,
+                "capture_mode": "ax"
+            }),
+        );
+        assert!(
+            !state.is_error(),
+            "independent accessibility readback failed: {}",
+            state.text()
+        );
+        if state.tree_text().contains(expected) {
+            return state;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "window state did not contain {expected:?}: {}",
+            state.tree_text()
+        );
+        sleep(Duration::from_millis(50));
+    }
+}
+
 fn assert_no_private_fields(value: &Value) {
     const FORBIDDEN_KEYS: &[&str] = &[
         "screenshot",
@@ -427,16 +461,29 @@ fn key_references() -> Vec<String> {
 #[ignore = "requires an installed local product, native credential store, GUI fixture, and daemon"]
 fn encrypted_history_survives_restart_and_cryptographically_purges() {
     let started_at = Instant::now();
+    let pure_wayland = cfg!(target_os = "linux")
+        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_none();
+    let (case_action, case_route) = if pure_wayland {
+        ("left_click", DriverRoute::LinuxAtSpiAction)
+    } else {
+        ("computer_history_continuity", DriverRoute::WindowState)
+    };
+    let case_oracles = if pure_wayland {
+        vec![OracleKind::AxState, OracleKind::Protocol]
+    } else {
+        vec![OracleKind::Protocol]
+    };
     let case = CaseSpec::delivered(
         format!("{}-computer-history-continuity", std::env::consts::OS),
         "electron",
         "electron",
-        "computer_history_continuity",
+        case_action,
         Targeting::Ax,
         Delivery::Foreground,
         Scope::Window,
-        DriverRoute::WindowState,
-        vec![OracleKind::Protocol],
+        case_route,
+        case_oracles.clone(),
     );
     write_declaration_from_env(&case).expect("write history E2E declaration");
 
@@ -490,28 +537,88 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
     );
     let (pid, window_id, bounds) = launch_fixture(&mut driver);
     driver.start_behavior_recording();
-    let requested_x = bounds["x"].as_f64().expect("fixture x") + 18.0;
-    let requested_y = bounds["y"].as_f64().expect("fixture y") + 12.0;
-    let moved = driver.call(
-        "set_window_frame",
-        json!({
-            "pid": pid,
-            "window_id": window_id,
-            "x": requested_x,
-            "y": requested_y,
-            "width": bounds["width"],
-            "height": bounds["height"],
-            "session": RAW_SESSION
-        }),
-    );
-    assert!(
-        !moved.is_error(),
-        "set_window_frame failed: {}",
-        moved.text()
-    );
-    assert_eq!(moved.action_effect(), Some("confirmed"));
-    let _settled_bounds =
-        wait_for_window_position(&mut driver, pid, window_id, requested_x, requested_y);
+    let (capability, expected_effect, expected_route) = if pure_wayland {
+        let snapshot = driver.call(
+            "get_window_state",
+            json!({
+                "pid": pid,
+                "window_id": window_id,
+                "capture_mode": "ax"
+            }),
+        );
+        assert!(
+            !snapshot.is_error(),
+            "Wayland history snapshot failed: {}",
+            snapshot.text()
+        );
+        assert!(
+            snapshot.tree_text().contains("counter=0"),
+            "Wayland fixture did not expose its initial counter state: {}",
+            snapshot.tree_text()
+        );
+        let element_index = element_index_by_id(snapshot.tree_text(), "btn-increment")
+            .or_else(|| element_index_containing(snapshot.tree_text(), "btn-increment"))
+            .or_else(|| element_index_containing(snapshot.tree_text(), "Increment"))
+            .expect("Wayland fixture exposed no accessible increment button");
+        let clicked = driver.call(
+            "click",
+            json!({
+                "pid": pid,
+                "window_id": window_id,
+                "element_index": element_index,
+                "snapshot_id": snapshot.snapshot_id(),
+                "delivery_mode": "foreground",
+                "session": RAW_SESSION
+            }),
+        );
+        assert!(
+            !clicked.is_error(),
+            "Wayland accessibility click failed: {}",
+            clicked.text()
+        );
+        let effect = clicked
+            .action_effect()
+            .expect("Wayland click emitted no action effect");
+        assert!(
+            matches!(effect, "confirmed" | "unverifiable"),
+            "Wayland click did not produce a delivered effect: {}",
+            clicked.raw
+        );
+        let _settled_state = wait_for_window_text(&mut driver, pid, window_id, "counter=1");
+        (
+            "input.pointer.click.left".to_owned(),
+            effect.to_owned(),
+            "accessibility",
+        )
+    } else {
+        let requested_x = bounds["x"].as_f64().expect("fixture x") + 18.0;
+        let requested_y = bounds["y"].as_f64().expect("fixture y") + 12.0;
+        let moved = driver.call(
+            "set_window_frame",
+            json!({
+                "pid": pid,
+                "window_id": window_id,
+                "x": requested_x,
+                "y": requested_y,
+                "width": bounds["width"],
+                "height": bounds["height"],
+                "session": RAW_SESSION
+            }),
+        );
+        assert!(
+            !moved.is_error(),
+            "set_window_frame failed: {}",
+            moved.text()
+        );
+        assert_eq!(moved.action_effect(), Some("confirmed"));
+        let _settled_bounds =
+            wait_for_window_position(&mut driver, pid, window_id, requested_x, requested_y);
+        (
+            "window.frame.set".to_owned(),
+            "confirmed".to_owned(),
+            "system_api",
+        )
+    };
     let ended = driver.call("end_session", json!({"session": RAW_SESSION}));
     assert!(!ended.is_error(), "end_session failed: {}", ended.text());
     assert_ready(&history_cli("flush", &[]));
@@ -523,11 +630,12 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
         .into_iter()
         .flatten()
         .find(|event| {
-            event["data"]["capability"] == "window.frame.set"
+            event["data"]["capability"].as_str() == Some(capability.as_str())
                 && event["data"]["payload"]["kind"] == "action_completed"
-                && event["data"]["payload"]["effect"] == "confirmed"
+                && event["data"]["payload"]["effect"].as_str() == Some(expected_effect.as_str())
+                && event["data"]["payload"]["route"] == expected_route
         })
-        .expect("history did not contain the confirmed window-frame action");
+        .expect("history did not contain the delivered platform action");
     let action_id = completion["data"]["action_id"]
         .as_str()
         .expect("history action has no opaque id")
@@ -551,7 +659,7 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
     );
     for path in ciphertext {
         let bytes = fs::read(&path).expect("read encrypted history chunk");
-        for forbidden in [RAW_SESSION, "window.frame.set", "action_completed"] {
+        for forbidden in [RAW_SESSION, capability.as_str(), "action_completed"] {
             assert!(
                 !bytes
                     .windows(forbidden.len())
@@ -577,8 +685,10 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
             .flatten()
             .any(|event| {
                 event["data"]["action_id"].as_str() == Some(&action_id)
-                    && event["data"]["capability"] == "window.frame.set"
+                    && event["data"]["capability"].as_str() == Some(capability.as_str())
                     && event["data"]["payload"]["kind"] == "action_completed"
+                    && event["data"]["payload"]["effect"].as_str() == Some(expected_effect.as_str())
+                    && event["data"]["payload"]["route"] == expected_route
             }),
         "restarted daemon could not hydrate the recorded action"
     );
@@ -608,7 +718,7 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
     );
     drop(restarted);
 
-    let observation = Observation::delivered(vec![OracleKind::Protocol], evidence);
+    let observation = Observation::delivered(case_oracles, evidence);
     let result = CaseResult::evaluate(case, observation, started_at.elapsed());
     write_result_from_env(&result).expect("write history E2E result");
     assert_eq!(result.test_status, TestStatus::Pass, "{}", result.message);

@@ -226,25 +226,31 @@ fn observed_origin_registry() -> &'static Mutex<HashMap<u32, (i32, i32)>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn listed_window_registry() -> &'static Mutex<HashSet<(u32, u64)>> {
-    static REGISTRY: OnceLock<Mutex<HashSet<(u32, u64)>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(HashSet::new()))
+fn listed_window_registry() -> &'static Mutex<HashMap<(u32, u64), u64>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<(u32, u64), u64>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn remember_listed_windows(windows: &[WindowInfo]) {
     if let Ok(mut registry) = listed_window_registry().lock() {
-        registry.extend(
-            windows
-                .iter()
-                .filter_map(|window| window.pid.map(|pid| (pid, window.xid))),
-        );
+        for window in windows {
+            if let Some((pid, instance_id)) = window.pid.and_then(|pid| {
+                crate::proc_fs::process_instance_id(pid).map(|instance_id| (pid, instance_id))
+            }) {
+                registry.insert((pid, window.xid), instance_id);
+            }
+        }
     }
 }
 
 pub fn window_was_listed_for_pid(pid: u32, window_id: u64) -> bool {
+    let current_instance = crate::proc_fs::process_instance_id(pid);
     listed_window_registry()
         .lock()
-        .is_ok_and(|registry| registry.contains(&(pid, window_id)))
+        .ok()
+        .and_then(|registry| registry.get(&(pid, window_id)).copied())
+        == current_instance
+        && current_instance.is_some()
 }
 
 fn listed_windows(windows: Vec<WindowInfo>) -> Vec<WindowInfo> {
@@ -3521,7 +3527,7 @@ mod tests {
 
     #[test]
     fn listed_wayland_identity_remains_valid_when_current_enumeration_hides_it() {
-        let pid = 0xf2962;
+        let pid = std::process::id();
         let window_id = 0xf2962_0001;
         assert!(!window_was_listed_for_pid(pid, window_id));
 

@@ -211,6 +211,42 @@ fn workspace_for_pid(
 }
 
 #[cfg(target_os = "linux")]
+fn sway_window_id_for_pid(node: &serde_json::Value, pid: u32) -> Option<u64> {
+    if node["pid"].as_u64() == Some(pid as u64) {
+        return node["id"].as_u64();
+    }
+    node["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(node["floating_nodes"].as_array().into_iter().flatten())
+        .find_map(|child| sway_window_id_for_pid(child, pid))
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_public_window_id(driver: &mut McpDriver, pid: u32, expected: u64) -> u64 {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        let response = driver.call("list_windows", serde_json::json!({"pid": pid}));
+        if response.structured()["windows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|window| {
+                window["pid"].as_u64() == Some(pid as u64)
+                    && window["window_id"].as_u64() == Some(expected)
+            })
+        {
+            return expected;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!(
+        "public list_windows did not converge on compositor-attested window id {expected} for pid {pid}"
+    );
+}
+
+#[cfg(target_os = "linux")]
 fn switch_sway_workspace(name: &str) {
     let output = Command::new("swaymsg")
         .args(["workspace", name])
@@ -525,10 +561,14 @@ fn off_workspace_xwayland_capture_refuses_unbound_pixels() {
                     .stderr(Stdio::null()),
             )
             .unwrap_or_else(|error| panic!("launch real XWayland fixture {exe:?}: {error}"));
-        let (pid, wid) = resolve_new_window(&mut driver, "CuaTestHarness GTK3", &before)
+        let (pid, _) = resolve_new_window(&mut driver, "CuaTestHarness GTK3", &before)
             .expect("resolve real XWayland fixture through public list_windows");
-        let target_workspace = workspace_for_pid(&sway_json(&["-t", "get_tree"]), pid, None);
+        let sway_tree = sway_json(&["-t", "get_tree"]);
+        let target_workspace = workspace_for_pid(&sway_tree, pid, None);
         assert_eq!(target_workspace.as_deref(), Some("98"));
+        let compositor_window_id = sway_window_id_for_pid(&sway_tree, pid)
+            .expect("Sway must expose the real XWayland fixture container");
+        let wid = wait_for_public_window_id(&mut driver, pid, compositor_window_id);
 
         let tree_before = snapshot_settled_tree_only(&mut driver, pid, wid);
         assert!(

@@ -328,9 +328,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion:
   lines.push(escapeMdxText(docs.abstract) + ' Install via the official script:');
   lines.push('');
   lines.push('```sh');
-  lines.push(
-    'curl -fsSL https://cua.ai/driver/install.sh | bash'
-  );
+  lines.push('curl -fsSL https://cua.ai/driver/install.sh | bash');
   lines.push('```');
   lines.push('');
   lines.push(
@@ -642,7 +640,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
   lines.push('');
   lines.push('<Callout type="info">');
   lines.push(
-    "  **Runtime ownership.** On Windows and Linux, bare `cua-driver mcp` owns its SDK runtime directly and shuts it down on stdin EOF. On macOS it proxies to the installed `CuaDriver.app` daemon so AX and Screen Recording grants retain the app-bundle identity. Passing `--socket` selects an explicit daemon/service endpoint on every platform. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance."
+    '  **Runtime ownership.** On Windows and Linux, bare `cua-driver mcp` owns its SDK runtime directly and shuts it down on stdin EOF. On macOS it proxies to the installed `CuaDriver.app` daemon so AX and Screen Recording grants retain the app-bundle identity. Passing `--socket` selects an explicit daemon/service endpoint on every platform. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance.'
   );
   lines.push('</Callout>');
   lines.push('');
@@ -708,12 +706,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
     },
     {
       title: 'Maintenance tools',
-      tools: [
-        'check_permissions',
-        'health_report',
-        'check_for_update',
-        'install_ffmpeg',
-      ],
+      tools: ['check_permissions', 'health_report', 'check_for_update', 'install_ffmpeg'],
     },
   ];
 

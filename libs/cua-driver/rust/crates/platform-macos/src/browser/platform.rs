@@ -10,9 +10,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareOutcome, PrepareRequest,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -139,6 +139,25 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
     } else {
         BrowserProduct::Other
     }
+}
+
+fn isolated_browser_candidates(home: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let user_applications = home
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join("Applications"));
+    let mut candidates = Vec::new();
+    for relative in [
+        "Google Chrome.app/Contents/MacOS/Google Chrome",
+        "Chromium.app/Contents/MacOS/Chromium",
+        "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ] {
+        candidates.push(PathBuf::from("/Applications").join(relative));
+        if let Some(applications) = &user_applications {
+            candidates.push(applications.join(relative));
+        }
+    }
+    candidates
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {
@@ -396,6 +415,11 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for MacOsBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        let home = std::env::var_os("HOME");
+        select_isolated_browser_executable(isolated_browser_candidates(home.as_deref()))
+    }
+
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
     }
@@ -903,7 +927,13 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -923,6 +953,16 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_browser_candidates_prioritize_products_and_ignore_relative_home() {
+        let candidates = isolated_browser_candidates(Some(std::ffi::OsStr::new("relative-home")));
+        assert_eq!(candidates.len(), 3);
+        assert!(candidates[0].ends_with("Google Chrome.app/Contents/MacOS/Google Chrome"));
+        assert!(candidates[1].ends_with("Chromium.app/Contents/MacOS/Chromium"));
+        assert!(candidates[2].ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"));
+        assert!(candidates.iter().all(|candidate| candidate.is_absolute()));
+    }
 
     fn window(window_id: u32, pid: i32, title: &str) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {

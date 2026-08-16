@@ -118,10 +118,15 @@ a matching manifest, and unrestricted mode requires the launcher's dangerous
 acknowledgement. `allow_launch: true` states that this call may create the
 separate process; it does not widen runtime authorization.
 
-When `pid` is omitted, the driver selects the first installed supported
-browser in this order: Google Chrome, Chromium, then Microsoft Edge. Supply a
-Chromium-family browser pid when the isolated launch must use that process's
-exact executable. The pid remains required for existing-profile attachment.
+When `pid` is omitted, the driver uses only a platform-attested installation.
+On macOS and Windows it accepts vendor-signed system installations in this
+order: Google Chrome, then Microsoft Edge. On Linux it accepts exact
+root-owned, non-group/world-writable package payloads in this order: Google
+Chrome, Chromium, then Microsoft Edge. User application directories, `PATH`
+entries, redirected paths, and unsigned or mismatched products fail closed.
+Supply a Chromium-family browser pid when the isolated launch must use that
+process's exact executable, including Chromium on macOS or Windows. The pid
+remains required for existing-profile attachment.
 
 Use `isolated_named` with a path-safe `name` for a reusable driver-managed
 profile. Preparation launches a separate browser and never copies, modifies,

@@ -17,9 +17,11 @@ use super::types::{
     BrowserClassification, BrowserProduct, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint,
 };
 
-/// Select the first installed candidate and return its canonical path. The
-/// adapter-provided order is the public product preference for pid-free
-/// isolated launches.
+/// Select the first installed, non-redirected candidate and return its
+/// canonical path. Native adapters must supply only trusted installation
+/// locations in public product-preference order. Rejecting redirects prevents
+/// a known browser path from becoming an arbitrary executable through a
+/// symlink or junction controlled outside the trusted installation.
 pub fn select_isolated_browser_executable(
     candidates: impl IntoIterator<Item = PathBuf>,
 ) -> Result<String, BrowserRefusal> {
@@ -36,12 +38,34 @@ pub fn select_isolated_browser_executable(
                 ),
             )
         })?;
+        if !same_installation_path(&candidate, &canonical) {
+            continue;
+        }
         return Ok(canonical.to_string_lossy().into_owned());
     }
     Err(BrowserRefusal::new(
         super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
         "no supported installed Chromium executable is available for isolated launch",
     ))
+}
+
+fn same_installation_path(candidate: &std::path::Path, canonical: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        let normalize = |path: &std::path::Path| {
+            let value = path.to_string_lossy();
+            value
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&value)
+                .replace('/', "\\")
+                .to_ascii_lowercase()
+        };
+        normalize(candidate) == normalize(canonical)
+    }
+    #[cfg(not(windows))]
+    {
+        candidate == canonical
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -411,13 +435,14 @@ mod tests {
     #[test]
     fn isolated_browser_selection_uses_first_installed_canonical_candidate() {
         let root = tempfile::tempdir().expect("temporary browser candidates");
-        let first = root.path().join("chrome");
-        let second = root.path().join("chromium");
+        let canonical_root = std::fs::canonicalize(root.path()).expect("canonical temp root");
+        let first = canonical_root.join("chrome");
+        let second = canonical_root.join("chromium");
         std::fs::write(&first, b"first").expect("first candidate");
         std::fs::write(&second, b"second").expect("second candidate");
 
         let selected = select_isolated_browser_executable([
-            root.path().join("missing"),
+            canonical_root.join("missing"),
             first.clone(),
             second,
         ])
@@ -426,6 +451,26 @@ mod tests {
         assert_eq!(
             std::path::PathBuf::from(selected),
             std::fs::canonicalize(first).expect("canonical first candidate")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_browser_selection_rejects_symlinked_candidate() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("temporary browser candidates");
+        let canonical_root = std::fs::canonicalize(root.path()).expect("canonical temp root");
+        let arbitrary = canonical_root.join("arbitrary");
+        let redirected = canonical_root.join("chrome");
+        std::fs::write(&arbitrary, b"not a browser").expect("arbitrary executable fixture");
+        symlink(&arbitrary, &redirected).expect("redirected browser fixture");
+
+        let error = select_isolated_browser_executable([redirected])
+            .expect_err("redirected browser path must fail closed");
+        assert_eq!(
+            error.code,
+            super::super::refusal::BrowserRefusalCode::BrowserRouteUnavailable
         );
     }
 }

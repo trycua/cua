@@ -22,12 +22,16 @@ use cua_driver_core::browser::types::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, RECT};
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Shell::{
+    FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
+};
 use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROOT};
 
 #[derive(Clone)]
@@ -136,42 +140,105 @@ fn browser_product(name: &str) -> BrowserProduct {
 }
 
 fn isolated_browser_candidates_from_roots(
-    program_files: PathBuf,
-    program_files_x86: PathBuf,
-    local_app_data: Option<PathBuf>,
-) -> Vec<PathBuf> {
-    let mut candidates = vec![
-        program_files.join(r"Google\Chrome\Application\chrome.exe"),
-        program_files_x86.join(r"Google\Chrome\Application\chrome.exe"),
-    ];
-    if let Some(local_app_data) = local_app_data.as_ref().filter(|path| path.is_absolute()) {
-        candidates.push(local_app_data.join(r"Google\Chrome\Application\chrome.exe"));
-    }
-    candidates.extend([
-        program_files.join(r"Chromium\Application\chrome.exe"),
-        program_files_x86.join(r"Chromium\Application\chrome.exe"),
-    ]);
-    if let Some(local_app_data) = local_app_data.as_ref().filter(|path| path.is_absolute()) {
-        candidates.push(local_app_data.join(r"Chromium\Application\chrome.exe"));
-    }
-    candidates.extend([
-        program_files.join(r"Microsoft\Edge\Application\msedge.exe"),
-        program_files_x86.join(r"Microsoft\Edge\Application\msedge.exe"),
-    ]);
-    candidates
+    program_files: &std::path::Path,
+    program_files_x86: &std::path::Path,
+) -> Vec<(PathBuf, &'static str, &'static str)> {
+    // Per-user and environment-derived paths are intentionally excluded. The
+    // remaining protected installation locations must also carry a valid
+    // vendor Authenticode identity before core can spawn them.
+    vec![
+        (
+            program_files.join(r"Google\Chrome\Application\chrome.exe"),
+            "CN=Google LLC",
+            "O=Google LLC",
+        ),
+        (
+            program_files_x86.join(r"Google\Chrome\Application\chrome.exe"),
+            "CN=Google LLC",
+            "O=Google LLC",
+        ),
+        (
+            program_files.join(r"Microsoft\Edge\Application\msedge.exe"),
+            "CN=Microsoft Corporation",
+            "O=Microsoft Corporation",
+        ),
+        (
+            program_files_x86.join(r"Microsoft\Edge\Application\msedge.exe"),
+            "CN=Microsoft Corporation",
+            "O=Microsoft Corporation",
+        ),
+    ]
 }
 
-fn isolated_browser_candidates() -> Vec<PathBuf> {
-    let program_files = std::env::var_os("ProgramFiles")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
-    let program_files_x86 = std::env::var_os("ProgramFiles(x86)")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
-    let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    isolated_browser_candidates_from_roots(program_files, program_files_x86, local_app_data)
+fn known_folder_path(id: &windows::core::GUID) -> Result<PathBuf, BrowserRefusal> {
+    let raw = unsafe { SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None) }.map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not resolve trusted Windows installation root: {error}"),
+        )
+    })?;
+    let decoded = unsafe { raw.to_string() };
+    unsafe { CoTaskMemFree(Some(raw.0.cast())) };
+    decoded.map(PathBuf::from).map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("trusted Windows installation root was not valid Unicode: {error}"),
+        )
+    })
+}
+
+fn isolated_browser_candidates(
+) -> Result<Vec<(PathBuf, &'static str, &'static str)>, BrowserRefusal> {
+    let program_files = known_folder_path(&FOLDERID_ProgramFiles)?;
+    let program_files_x86 = known_folder_path(&FOLDERID_ProgramFilesX86)?;
+    Ok(isolated_browser_candidates_from_roots(
+        &program_files,
+        &program_files_x86,
+    ))
+}
+
+fn authenticode_identity_matches(details: &str, expected_cn: &str, expected_org: &str) -> bool {
+    let mut lines = details.lines();
+    if lines.next().map(str::trim) != Some("Valid") {
+        return false;
+    }
+    let Some(subject) = lines.next() else {
+        return false;
+    };
+    let fields = subject.split(',').map(str::trim).collect::<Vec<_>>();
+    fields.contains(&expected_cn) && fields.contains(&expected_org)
+}
+
+fn has_trusted_authenticode_identity(
+    executable: &std::path::Path,
+    expected_cn: &str,
+    expected_org: &str,
+) -> bool {
+    let Ok(system32) = system_directory_path() else {
+        return false;
+    };
+    let powershell = system32.join(r"WindowsPowerShell\v1.0\powershell.exe");
+    let Ok(output) = std::process::Command::new(powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$signature = Get-AuthenticodeSignature -LiteralPath $args[0]; Write-Output $signature.Status; Write-Output $signature.SignerCertificate.Subject",
+        ])
+        .arg(executable)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    output.status.success()
+        && authenticode_identity_matches(
+            &String::from_utf8_lossy(&output.stdout),
+            expected_cn,
+            expected_org,
+        )
 }
 
 fn allows_embedded_descendant_endpoint(executable_path: &str) -> bool {
@@ -385,7 +452,7 @@ fn parse_netstat_loopback_ports(text: &str, allowed_pids: &[u32]) -> Vec<u16> {
     ports
 }
 
-fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
+fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
     let mut buffer = [0u16; 32768];
     let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
     if length == 0 || length >= buffer.len() {
@@ -394,7 +461,11 @@ fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
             "could not resolve the trusted Windows system directory",
         ));
     }
-    Ok(PathBuf::from(String::from_utf16_lossy(&buffer[..length])).join("netstat.exe"))
+    Ok(PathBuf::from(String::from_utf16_lossy(&buffer[..length])))
+}
+
+fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
+    Ok(system_directory_path()?.join("netstat.exe"))
 }
 
 async fn netstat_loopback_listeners(
@@ -851,7 +922,22 @@ where
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
     fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
-        select_isolated_browser_executable(isolated_browser_candidates())
+        for (candidate, expected_cn, expected_org) in isolated_browser_candidates()? {
+            let Ok(executable) = select_isolated_browser_executable([candidate]) else {
+                continue;
+            };
+            if has_trusted_authenticode_identity(
+                std::path::Path::new(&executable),
+                expected_cn,
+                expected_org,
+            ) {
+                return Ok(executable);
+            }
+        }
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "no vendor-signed protected Chromium executable is available for isolated launch",
+        ))
     }
 
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
@@ -1362,23 +1448,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn isolated_browser_candidates_omit_missing_or_relative_user_root() {
-        let program_files = PathBuf::from(r"C:\Program Files");
-        let program_files_x86 = PathBuf::from(r"C:\Program Files (x86)");
-        let without_user = isolated_browser_candidates_from_roots(
-            program_files.clone(),
-            program_files_x86.clone(),
-            None,
+    fn isolated_browser_candidates_are_vendor_attested_protected_installs() {
+        let candidates = isolated_browser_candidates_from_roots(
+            std::path::Path::new(r"D:\Apps"),
+            std::path::Path::new(r"E:\Apps32"),
         );
-        let relative_user = isolated_browser_candidates_from_roots(
-            program_files,
-            program_files_x86,
-            Some(PathBuf::from("relative-user-root")),
+        assert_eq!(candidates.len(), 4);
+        assert_eq!(
+            candidates[0].0,
+            PathBuf::from(r"D:\Apps\Google\Chrome\Application\chrome.exe")
         );
-        assert_eq!(without_user, relative_user);
-        assert!(without_user[0].ends_with(r"Google\Chrome\Application\chrome.exe"));
-        assert!(without_user[2].ends_with(r"Chromium\Application\chrome.exe"));
-        assert!(without_user[4].ends_with(r"Microsoft\Edge\Application\msedge.exe"));
+        assert_eq!(
+            candidates[1].0,
+            PathBuf::from(r"E:\Apps32\Google\Chrome\Application\chrome.exe")
+        );
+        assert_eq!(
+            candidates[2].0,
+            PathBuf::from(r"D:\Apps\Microsoft\Edge\Application\msedge.exe")
+        );
+    }
+
+    #[test]
+    fn authenticode_identity_requires_valid_exact_publisher_fields() {
+        let details = "Valid\r\nCN=Google LLC, O=Google LLC, L=Mountain View\r\n";
+        assert!(authenticode_identity_matches(
+            details,
+            "CN=Google LLC",
+            "O=Google LLC"
+        ));
+        assert!(!authenticode_identity_matches(
+            "NotSigned\r\nCN=Google LLC, O=Google LLC\r\n",
+            "CN=Google LLC",
+            "O=Google LLC"
+        ));
+        assert!(!authenticode_identity_matches(
+            "Valid\r\nCN=Google LLC, O=Google LLC Evil\r\n",
+            "CN=Google LLC",
+            "O=Google LLC"
+        ));
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

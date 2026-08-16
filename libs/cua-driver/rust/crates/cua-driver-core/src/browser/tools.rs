@@ -587,7 +587,9 @@ impl BrowserPrepareTool {
                 endpoints are detected without side effects. Acting setup \
                 for an isolated profile follows the runtime permission mode and optional \
                 capability manifest. It requires allow_launch=true, launches a separate browser, and never \
-                copies, modifies, or terminates the requested user profile. Existing-profile \
+                copies, modifies, or terminates the requested user profile. Without pid, only a \
+                platform-attested system Chrome/Edge installation (or a root-owned package \
+                payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile \
                 attachment is explicit and follows the runtime's immutable permission mode: \
                 standard requires an explicit --grant existing-profile launch grant or an \
                 embedding authorization host, bounded requires a launch-approved exact resource \

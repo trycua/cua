@@ -57,8 +57,8 @@ use super::store::{
     SnapshotRecord, TabRecord, TargetRecord,
 };
 use super::types::{
-    BindingQuality, BrowserClassification, BrowserEngineFamily, NativeWindowInfo, OwnedEndpoint,
-    Rect,
+    BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
+    EndpointAccessClass, NativeWindowInfo, OwnedEndpoint, Rect,
 };
 
 /// Bounds tolerance (device pixels) for native ↔ CDP window correlation.
@@ -170,6 +170,39 @@ pub(super) fn unsupported_engine_refusal(
         "required_protocol": protocol,
         "limitation": limitation,
     }))
+}
+
+fn endpoint_access_class(
+    has_existing_profile_grant: bool,
+    driver_owned: bool,
+    process_role: BrowserProcessRole,
+) -> Result<EndpointAccessClass, BrowserRefusal> {
+    if has_existing_profile_grant {
+        return Ok(EndpointAccessClass::ExistingProfileApproved);
+    }
+    if driver_owned {
+        return Ok(EndpointAccessClass::DriverOwned);
+    }
+    match process_role {
+        BrowserProcessRole::EmbeddedApplication => Ok(EndpointAccessClass::EmbeddedApplication),
+        BrowserProcessRole::StandaloneConsumer => Err(refuse(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "this standalone browser profile requires explicit existing-profile approval before Cua can inspect its DevTools endpoint",
+        )
+        .with_detail(json!({
+            "reason": "consumer_profile_endpoint_requires_grant",
+            "supported_strategies": ["existing_profile"],
+            "next_action": "browser_prepare",
+        }))),
+        BrowserProcessRole::Helper => Err(refuse(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the requested pid is a browser renderer, GPU, or utility helper; select the exact top-level browser process instead",
+        )),
+        BrowserProcessRole::Unknown => Err(refuse(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the browser process role is ambiguous, so endpoint access cannot be authorized",
+        )),
+    }
 }
 
 /// Everything revalidation proves before a mutation proceeds. The
@@ -879,11 +912,7 @@ impl BrowserEngine {
             return self.connect(&record.ws_url).await;
         }
         let (conn, grant) = self
-            .connect_existing_profile(
-                session,
-                record.grant_transport_session.as_deref(),
-                record.pid,
-            )
+            .connect_existing_profile(session, record.transport_session.as_deref(), record.pid)
             .await?;
         if grant.generation != record.generation {
             return Err(refuse(
@@ -1129,11 +1158,17 @@ impl BrowserEngine {
             return Err(unsupported_engine_refusal(&class, "bind_native_window"));
         }
 
-        let native = self.native_window_checked(pid, window_id).await?;
-        let fingerprint = self.platform.process_fingerprint(pid).await?;
         let mut grant = self
             .existing_profile_grant(session, transport_session, pid)
             .await?;
+        let driver_owned = self.is_driver_owned_pid_for_session(session, pid)
+            || transport_session
+                .is_some_and(|owner| self.is_driver_owned_pid_for_session(owner, pid));
+        let access_class =
+            endpoint_access_class(grant.is_some(), driver_owned, class.process_role)?;
+
+        let native = self.native_window_checked(pid, window_id).await?;
+        let fingerprint = self.platform.process_fingerprint(pid).await?;
         let endpoint = if let Some(live_grant) = &grant {
             self.existing_profile_endpoint(pid, &live_grant.endpoint_ws_url)
                 .await?
@@ -1240,8 +1275,13 @@ impl BrowserEngine {
             window_id,
             ws_url: endpoint.ws_url.clone(),
             endpoint_owner_pid: endpoint.ownership.owner_pid,
+            endpoint_transport: endpoint.transport,
+            endpoint_access_class: access_class,
             generation: grant.as_ref().map_or(0, |grant| grant.generation),
-            grant_transport_session: grant.as_ref().map(|grant| grant.transport_session.clone()),
+            transport_session: grant
+                .as_ref()
+                .map(|grant| grant.transport_session.clone())
+                .or_else(|| transport_session.map(str::to_owned)),
             fingerprint,
             native_title: native.title.clone(),
             native_bounds: native.bounds,
@@ -1316,11 +1356,7 @@ impl BrowserEngine {
         }
         if record.generation > 0 {
             let grant = self
-                .existing_profile_grant(
-                    session,
-                    record.grant_transport_session.as_deref(),
-                    record.pid,
-                )
+                .existing_profile_grant(session, record.transport_session.as_deref(), record.pid)
                 .await?
                 .ok_or_else(|| {
                     refuse(
@@ -1332,6 +1368,44 @@ impl BrowserEngine {
                 return Err(refuse(
                     BrowserRefusalCode::BrowserBindingStale,
                     "the browser connection generation changed; re-run get_browser_state",
+                ));
+            }
+        }
+
+        match record.endpoint_access_class {
+            EndpointAccessClass::DriverOwned => {
+                let lifecycle_is_live = self.is_driver_owned_pid_for_session(session, record.pid)
+                    || record.transport_session.as_deref().is_some_and(|owner| {
+                        self.is_driver_owned_pid_for_session(owner, record.pid)
+                    });
+                if !lifecycle_is_live {
+                    return Err(refuse(
+                        BrowserRefusalCode::BrowserConsentRequired,
+                        "the driver-owned browser lifecycle ended; prepare and bind it again",
+                    ));
+                }
+            }
+            EndpointAccessClass::ExistingProfileApproved => {
+                if record.generation == 0 {
+                    return Err(refuse(
+                        BrowserRefusalCode::BrowserBindingStale,
+                        "the approved existing-profile binding has no live connection generation",
+                    ));
+                }
+            }
+            EndpointAccessClass::EmbeddedApplication => {
+                let classification = self.platform.classify_browser(record.pid).await?;
+                if classification.process_role != BrowserProcessRole::EmbeddedApplication {
+                    return Err(refuse(
+                        BrowserRefusalCode::BrowserBindingStale,
+                        "the process is no longer proven to be the approved embedded browser host",
+                    ));
+                }
+            }
+            EndpointAccessClass::ExternalConsumerBrowser => {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "a standalone consumer browser cannot use the generation-zero endpoint route",
                 ));
             }
         }
@@ -1366,6 +1440,12 @@ impl BrowserEngine {
                 BrowserRefusalCode::BrowserBindingStale,
                 "the owned DevTools endpoint changed since binding — re-run \
                  get_browser_state",
+            ));
+        }
+        if endpoint.transport != record.endpoint_transport {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the DevTools endpoint transport changed since binding; prepare and bind again",
             ));
         }
 
@@ -2726,6 +2806,42 @@ fn collect_interactive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_access_policy_requires_grants_for_standalone_consumers() {
+        assert_eq!(
+            endpoint_access_class(true, false, BrowserProcessRole::StandaloneConsumer).unwrap(),
+            EndpointAccessClass::ExistingProfileApproved
+        );
+        assert_eq!(
+            endpoint_access_class(false, true, BrowserProcessRole::StandaloneConsumer).unwrap(),
+            EndpointAccessClass::DriverOwned
+        );
+        assert_eq!(
+            endpoint_access_class(false, false, BrowserProcessRole::EmbeddedApplication).unwrap(),
+            EndpointAccessClass::EmbeddedApplication
+        );
+
+        let consumer = endpoint_access_class(false, false, BrowserProcessRole::StandaloneConsumer)
+            .unwrap_err();
+        assert_eq!(consumer.code, BrowserRefusalCode::BrowserConsentRequired);
+        assert_eq!(
+            consumer.detail.unwrap()["reason"],
+            "consumer_profile_endpoint_requires_grant"
+        );
+        assert_eq!(
+            endpoint_access_class(false, false, BrowserProcessRole::Helper)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(
+            endpoint_access_class(false, false, BrowserProcessRole::Unknown)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserRouteUnavailable
+        );
+    }
 
     #[test]
     fn viewport_point_maps_below_browser_chrome_in_live_native_bounds() {

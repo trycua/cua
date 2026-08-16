@@ -79,6 +79,16 @@ jobs:
             libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev ffmpeg
           google-chrome --version
+          chrome_payload="$(readlink -f "$(command -v google-chrome)")"
+          if [[ "$chrome_payload" != /opt/google/chrome/google-chrome ]]; then
+            echo "Hosted Chrome did not resolve to the supported system package payload: $chrome_payload" >&2
+            exit 1
+          fi
+          # Pid-free isolated launch accepts only a root-owned installation
+          # whose complete path is not group- or world-writable. Normalize the
+          # disposable hosted image to that same production trust contract.
+          sudo chown root:root /opt /opt/google /opt/google/chrome "$chrome_payload"
+          sudo chmod go-w /opt /opt/google /opt/google/chrome "$chrome_payload"
       - name: Build source driver on Windows
         if: runner.os == 'Windows'
         shell: pwsh

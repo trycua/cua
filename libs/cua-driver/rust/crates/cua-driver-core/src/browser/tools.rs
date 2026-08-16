@@ -560,6 +560,8 @@ impl Tool for GetBrowserStateTool {
                     "target_id": target_id,
                     "binding_quality": quality,
                     "binding_route": binding_route,
+                    "endpoint_transport": record.endpoint_transport,
+                    "endpoint_access_class": record.endpoint_access_class,
                     "mutation_allowed": record.quality == BindingQuality::Exact,
                     "native_title": record.native_title,
                     "tabs": tabs,
@@ -2504,6 +2506,7 @@ mod tests {
                     product_kind: BrowserProduct::GoogleChrome,
                     product: Some("MockChrome".into()),
                     channel: Some("stable".into()),
+                    process_role: crate::browser::types::BrowserProcessRole::StandaloneConsumer,
                     supports_cdp: true,
                 },
                 3 => BrowserClassification {
@@ -2512,6 +2515,7 @@ mod tests {
                     product_kind: BrowserProduct::Safari,
                     product: Some("MockSafari".into()),
                     channel: None,
+                    process_role: crate::browser::types::BrowserProcessRole::StandaloneConsumer,
                     supports_cdp: false,
                 },
                 4 => BrowserClassification {
@@ -2520,6 +2524,7 @@ mod tests {
                     product_kind: BrowserProduct::Firefox,
                     product: Some("MockFirefox".into()),
                     channel: None,
+                    process_role: crate::browser::types::BrowserProcessRole::StandaloneConsumer,
                     supports_cdp: false,
                 },
                 _ => BrowserClassification {
@@ -2528,6 +2533,7 @@ mod tests {
                     product_kind: BrowserProduct::Other,
                     product: None,
                     channel: None,
+                    process_role: crate::browser::types::BrowserProcessRole::Unknown,
                     supports_cdp: false,
                 },
             })
@@ -2825,14 +2831,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_endpoint_refuses_requires_setup_without_preparing() {
+    async fn standalone_consumer_refuses_existing_profile_approval_without_preparing() {
         let tool = GetBrowserStateTool::new(engine());
         let result = tool
             .invoke(json!({ "pid": 1, "window_id": 7, "_session_id": "run-1" }))
             .await;
         let s = structured(&result);
         assert_eq!(s["status"], "refused");
-        assert_eq!(s["refusal"]["code"], "browser_requires_setup");
+        assert_eq!(s["refusal"]["code"], "browser_consent_required");
+        assert_eq!(
+            s["refusal"]["detail"]["reason"],
+            "consumer_profile_endpoint_requires_grant"
+        );
+        assert_eq!(s["refusal"]["detail"]["next_action"], "browser_prepare");
     }
 
     #[tokio::test]
@@ -3003,8 +3014,11 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,
+                endpoint_access_class:
+                    crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
-                grant_transport_session: None,
+                transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(1),
@@ -3061,8 +3075,11 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,
+                endpoint_access_class:
+                    crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
-                grant_transport_session: None,
+                transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(999),
@@ -3104,8 +3121,11 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,
+                endpoint_access_class:
+                    crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
-                grant_transport_session: None,
+                transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(1),

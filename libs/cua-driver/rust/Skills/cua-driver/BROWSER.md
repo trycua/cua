@@ -95,11 +95,13 @@ geometry, a moved tab, process restart, endpoint-owner mismatch, or any other
 ambiguity must be re-bound or refused. Do not pick another window because its
 title looks close.
 
-## 2. Prepare only when the bind requests setup
+## 2. Prepare only when the bind requests approval or setup
 
 `get_browser_state` is strictly read-only. It never launches a browser,
 changes a profile, enables remote debugging, or accepts a consent prompt. If
-it returns `browser_requires_setup`, choose one explicit preparation flow.
+it returns `browser_requires_setup` or `browser_consent_required`, choose one
+explicit preparation flow. A standalone consumer browser cannot bind through
+a DevTools listener merely because the listener belongs to that process.
 
 ### Driver-owned isolated profile
 
@@ -176,11 +178,38 @@ transition on that same control. Unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click; the fallback does not
 authorize generic pixel interaction.
 
+Chrome 144 and later can expose its agent auto-connect bridge from the running
+profile. After approval, Cua reads the exact port and browser WebSocket path
+from that process's `DevToolsActivePort` file, cross-checks the loopback socket
+owner, and connects without restarting Chrome. Cookies, extensions, tabs, and
+other browser state remain in the original profile. A custom user-data path is
+discovery evidence only and never grants profile access. See Chrome's
+[agent auto-connect guide](https://developer.chrome.com/docs/devtools/agents/use-cases/auto-connect).
+
+The bind result reports `endpoint_transport` and `endpoint_access_class`
+without exposing a port, WebSocket path, or profile path. Existing-profile
+sockets enforce a fixed CDP method policy. The policy permits the commands
+used internally by typed browser tools and refuses caller-directed raw target access,
+`Runtime.enable`, persistent page scripts, request interception, and browser
+identity overrides.
+
 The grant lives only in the runtime, is scoped and expiring, and is discarded
 when the runtime shuts down. A bounded reconnect can reuse it only while the same
 process/profile proof remains valid. After preparation or reconnect, discard
 all previous target, tab, and ref values, list windows again when the pid
 changed, and bind again.
+
+Chrome's remote-debugging setting can remain enabled after the Cua session
+ends or Chrome restarts. Session cleanup revokes the in-memory grant and closes
+the Cua socket, but it leaves Chrome running and does not change browser
+preferences. The user can disable the setting from Chrome's fixed
+remote-debugging page.
+
+On the attached path tested during development, `navigator.webdriver` remained
+`false`. Treat that as an observation, since browser releases may change it.
+Websites also use network reputation, account history, session behavior,
+browser state, and interaction signals. Existing-profile attachment cannot
+promise fewer CAPTCHAs or bypass a site's checks.
 
 Never:
 
@@ -444,7 +473,9 @@ result from the current host, process, window, session, and tab.
 - `browser_consent_required`: restart standard mode with the trusted launch
   grant, use a capability manifest that admits the exact resource while the
   selected profile remains independently binding, or let the embedding host
-  decide the attested request. Do not automate a generic approval dialog.
+  decide the attested request. When detail contains
+  `next_action: browser_prepare`, run that explicit operation for the exact pid
+  and window. Do not automate a generic approval dialog.
 - `browser_binding_ambiguous` or heuristic binding: resolve the native-window
   ambiguity and bind again; do not mutate.
 - `browser_ref_stale`: snapshot again and use a new ref.

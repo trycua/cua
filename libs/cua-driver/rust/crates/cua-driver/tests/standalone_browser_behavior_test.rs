@@ -1393,9 +1393,20 @@ fn bind(fixture: &mut BrowserFixture, session: &str) -> (String, String, ToolRes
     assert!(!started.is_error(), "start_session failed: {}", started.raw);
     let prepared = fixture.driver.call(
         "browser_prepare",
-        serde_json::json!({ "pid": fixture.pid as i64, "session": session }),
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.window_id,
+            "session": session,
+            "strategy": {"kind": "existing_profile"},
+        }),
     );
-    assert_eq!(prepared.structured()["prepared"], true, "{}", prepared.raw);
+    assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+    assert_eq!(
+        prepared.structured()["action"],
+        "attached_existing_profile",
+        "{}",
+        prepared.raw
+    );
     // A newly mapped Wayland toplevel can briefly appear with a protocol-local
     // id before the compositor publishes its stable pid/geometry identity.
     // Model the real client preamble: re-list windows and bind only the id the
@@ -4471,10 +4482,18 @@ fn run_two_window_collision(spec: &BrowserSpec) {
                     "browser_prepare",
                     serde_json::json!({
                         "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
                         "session": session,
+                        "strategy": {"kind": "existing_profile"},
                     }),
                 );
-                assert_eq!(prepared.structured()["prepared"], true, "{}", prepared.raw);
+                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                assert_eq!(
+                    prepared.structured()["action"],
+                    "attached_existing_profile",
+                    "{}",
+                    prepared.raw
+                );
                 let refused = fixture.driver.call(
                     "get_browser_state",
                     serde_json::json!({

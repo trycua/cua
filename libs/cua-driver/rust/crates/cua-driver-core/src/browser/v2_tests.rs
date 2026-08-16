@@ -32,9 +32,9 @@ use super::tools::{
     BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 
 // ── Scripted Chromium fixture ────────────────────────────────────────────────
@@ -663,6 +663,8 @@ struct FixturePlatform {
     ws_url: String,
     trusted_input_limited: bool,
     managed_endpoint_visible: bool,
+    process_role: BrowserProcessRole,
+    managed_discovery_invoked: Arc<AtomicBool>,
     existing_endpoint_visible: Arc<AtomicBool>,
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
@@ -683,6 +685,9 @@ impl BrowserPlatform for FixturePlatform {
             product_kind: BrowserProduct::GoogleChrome,
             product: Some("MockChrome".into()),
             channel: Some("stable".into()),
+            // The mock endpoint is an explicit in-process harness, not a
+            // personal standalone browser profile.
+            process_role: self.process_role,
             supports_cdp: true,
         })
     }
@@ -718,6 +723,7 @@ impl BrowserPlatform for FixturePlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        self.managed_discovery_invoked.store(true, Ordering::SeqCst);
         if !self.managed_endpoint_visible {
             return Ok(None);
         }
@@ -734,6 +740,7 @@ impl BrowserPlatform for FixturePlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: self.ws_url.clone(),
             http_port: None,
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -754,6 +761,7 @@ impl BrowserPlatform for FixturePlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: self.ws_url.clone(),
             http_port: None,
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -779,6 +787,7 @@ impl BrowserPlatform for FixturePlatform {
             endpoint: Some(OwnedEndpoint {
                 ws_url: self.ws_url.clone(),
                 http_port: None,
+                transport: EndpointTransport::DevToolsActivePort,
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: 1,
@@ -869,6 +878,8 @@ async fn fixture_with_platform(
         ws_url: server.ws_url(),
         trusted_input_limited,
         managed_endpoint_visible: true,
+        process_role: BrowserProcessRole::EmbeddedApplication,
+        managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
         existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
@@ -920,6 +931,8 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             ws_url: server.ws_url(),
             trusted_input_limited: false,
             managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
             existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
@@ -947,6 +960,8 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             ws_url: server.ws_url(),
             trusted_input_limited: false,
             managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
             existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
@@ -990,6 +1005,48 @@ async fn bind(f: &Fixture) -> (String, String) {
 }
 
 #[tokio::test]
+async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discovery() {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state)).await;
+    let managed_discovery_invoked = Arc::new(AtomicBool::new(false));
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        ws_url: server.ws_url(),
+        trusted_input_limited: false,
+        managed_endpoint_visible: true,
+        process_role: BrowserProcessRole::StandaloneConsumer,
+        managed_discovery_invoked: managed_discovery_invoked.clone(),
+        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+        setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
+    }));
+
+    let result = GetBrowserStateTool::new(engine)
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused");
+    assert_eq!(refusal["refusal"]["code"], "browser_consent_required");
+    assert_eq!(
+        refusal["refusal"]["detail"]["reason"],
+        "consumer_profile_endpoint_requires_grant"
+    );
+    assert_eq!(
+        refusal["refusal"]["detail"]["next_action"],
+        "browser_prepare"
+    );
+    assert!(
+        !managed_discovery_invoked.load(Ordering::SeqCst),
+        "read-only bind must not inspect a consent-gated endpoint"
+    );
+    assert!(
+        !setup_invoked.load(Ordering::SeqCst),
+        "read-only bind must never invoke browser setup UI"
+    );
+}
+
+#[tokio::test]
 async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
     // Match Chrome's per-instance toggle: the endpoint is discoverable only
     // through the approved existing-profile route, never as driver-managed.
@@ -1022,6 +1079,103 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() {
+    const TRANSPORT: &str = "transport-v2-method-policy";
+    let (f, _) = protected_existing_profile_fixture().await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT
+        }))
+        .await;
+    let bound = structured(&state);
+    assert_eq!(bound["status"], "ok", "{bound}");
+    let target = bound["target_id"].as_str().unwrap().to_owned();
+    let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let input = ref_of(&snap, "main", "Shadow Input");
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": button,
+            "input_route": "dom_event",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&clicked)["status"],
+        "ok",
+        "{}",
+        structured(&clicked)
+    );
+    let typed = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": input,
+            "text": "policy-check",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&typed)["status"], "ok", "{}", structured(&typed));
+    let navigated = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/policy-check",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&navigated)["status"],
+        "ok",
+        "{}",
+        structured(&navigated)
+    );
+
+    let forbidden = [
+        "Runtime.enable",
+        "Target.setDiscoverTargets",
+        "Page.addScriptToEvaluateOnNewDocument",
+        "Network.enable",
+        "Fetch.enable",
+        "Emulation.setUserAgentOverride",
+        "Emulation.setDeviceMetricsOverride",
+        "Emulation.setTimezoneOverride",
+    ];
+    let calls = f.state.lock().unwrap().calls.clone();
+    for method in forbidden {
+        assert!(
+            calls.iter().all(|(_, observed, _)| observed != method),
+            "existing-profile operation emitted forbidden CDP method {method}: {calls:?}"
+        );
+    }
+
+    crate::session::fire_session_end(TRANSPORT);
 }
 
 #[tokio::test]
@@ -1106,6 +1260,8 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
             ws_url: format!("ws://{address}/devtools/browser"),
             trusted_input_limited: false,
             managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
             existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: Arc::new(AtomicBool::new(false)),
@@ -1148,6 +1304,8 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
             ws_url: format!("ws://{address}/devtools/browser"),
             trusted_input_limited: false,
             managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
             existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),

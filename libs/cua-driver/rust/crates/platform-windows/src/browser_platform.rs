@@ -1669,16 +1669,16 @@ mod tests {
         };
 
         if !trusted_windows_installation(&installed.0, &installed.1) {
-            let mut diagnostics = vec![format!(
-                "executable: {:?}",
-                current_token_write_denial_reason(&installed.0, false)
+            let mut diagnostics = vec![(
+                "executable".to_string(),
+                current_token_write_denial_reason(&installed.0, false),
             )];
             let mut current = installed.0.parent();
             let mut index = 0;
             while let Some(directory) = current {
-                diagnostics.push(format!(
-                    "ancestor_{index}: {:?}",
-                    current_token_write_denial_reason(directory, true)
+                diagnostics.push((
+                    format!("ancestor_{index}"),
+                    current_token_write_denial_reason(directory, true),
                 ));
                 if directory == installed.1 {
                     break;
@@ -1686,9 +1686,17 @@ mod tests {
                 current = directory.parent();
                 index += 1;
             }
+            for (location, reason) in &diagnostics {
+                if let Some(reason) = reason {
+                    assert!(
+                        reason.starts_with("current token was granted "),
+                        "{location} refusal must prove write-capable token posture, not an unexpected probe failure: {reason}"
+                    );
+                }
+            }
             assert!(
-                diagnostics.iter().any(|entry| !entry.ends_with("None")),
-                "a refused installation must identify a fail-closed probe: {diagnostics:?}"
+                diagnostics.iter().any(|(_, reason)| reason.is_some()),
+                "a refused installation must identify an explicitly granted write right: {diagnostics:?}"
             );
             eprintln!(
                 "installed browser correctly refused for this write-capable runner token: {diagnostics:?}"

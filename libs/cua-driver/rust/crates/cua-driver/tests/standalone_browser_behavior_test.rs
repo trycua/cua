@@ -24,7 +24,9 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
-use cua_driver_testkit::{spawn_in_job, BrowserFixtureServer, Driver, McpDriver, ToolResponse};
+use cua_driver_testkit::{
+    spawn_in_job, BrowserFixtureServer, Driver, McpDriver, RawDriver, ToolResponse,
+};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -2324,6 +2326,79 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             observation
         },
     );
+}
+
+#[test]
+#[ignore = "requires an installed standalone Chromium browser"]
+fn standalone_browser_prepare_isolated_source_smoke() {
+    let _guard = STANDALONE_BROWSER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let driver_profiles = driver_profile_root();
+    let profiles_before = profile_entries(&driver_profiles);
+    let mut driver = RawDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ])
+    .expect("source-built driver daemon");
+
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
+    }));
+    driver.recv();
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "start_session", "arguments": {"session": "pid-free-source-smoke"}}
+    }));
+    let started = driver.recv();
+    assert_eq!(
+        started["result"]["isError"],
+        serde_json::Value::Null,
+        "{started}"
+    );
+
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {
+            "name": "browser_prepare",
+            "arguments": {
+                "session": "pid-free-source-smoke",
+                "allow_launch": true,
+                "profile": {"mode": "isolated_new"}
+            }
+        }
+    }));
+    let prepared = driver.recv();
+    assert_eq!(
+        prepared["result"]["structuredContent"]["action"], "launched_isolated_browser",
+        "{prepared}"
+    );
+    assert!(
+        prepared["result"]["structuredContent"]["prepared_pid"]
+            .as_i64()
+            .is_some_and(|pid| pid > 0),
+        "{prepared}"
+    );
+
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "end_session", "arguments": {"session": "pid-free-source-smoke"}}
+    }));
+    let ended = driver.recv();
+    assert_eq!(
+        ended["result"]["isError"],
+        serde_json::Value::Null,
+        "{ended}"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while profile_entries(&driver_profiles) != profiles_before {
+        assert!(
+            Instant::now() < deadline,
+            "isolated_new profile remained after source-daemon end_session"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

@@ -222,11 +222,25 @@ fn has_trusted_authenticode_identity(
     expected_cn: &str,
     expected_org: &str,
 ) -> bool {
-    let Ok(system32) = system_directory_path() else {
+    let Ok(output) = authenticode_output(executable) else {
         return false;
     };
+    output.status.success()
+        && authenticode_identity_matches(
+            &String::from_utf8_lossy(&output.stdout),
+            expected_cn,
+            expected_org,
+        )
+}
+
+fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::process::Output> {
+    let Ok(system32) = system_directory_path() else {
+        return Err(std::io::Error::other(
+            "could not resolve the Windows system directory",
+        ));
+    };
     let powershell = system32.join(r"WindowsPowerShell\v1.0\powershell.exe");
-    let Ok(output) = std::process::Command::new(powershell)
+    std::process::Command::new(powershell)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -238,17 +252,7 @@ fn has_trusted_authenticode_identity(
         // Windows PowerShell would parse it as part of the command string.
         .env("CUA_BROWSER_ATTEST_PATH", executable)
         .stdin(Stdio::null())
-        .stderr(Stdio::null())
         .output()
-    else {
-        return false;
-    };
-    output.status.success()
-        && authenticode_identity_matches(
-            &String::from_utf8_lossy(&output.stdout),
-            expected_cn,
-            expected_org,
-        )
 }
 
 fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
@@ -1594,14 +1598,40 @@ mod tests {
 
     #[test]
     fn installed_vendor_browser_tree_is_not_effectively_writable() {
-        let installed = isolated_browser_candidates()
-            .expect("trusted Known Folder roots")
-            .into_iter()
+        let candidates = isolated_browser_candidates().expect("trusted Known Folder roots");
+        let installed = candidates
+            .iter()
             .find(|(candidate, _, expected_cn, expected_org)| {
                 candidate.is_file()
                     && has_trusted_authenticode_identity(candidate, expected_cn, expected_org)
-            })
-            .expect("Windows CI image must provide signed Chrome or Edge");
+            });
+        let Some(installed) = installed else {
+            let diagnostics = candidates
+                .iter()
+                .map(|(candidate, _, _, _)| {
+                    let name = candidate
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("unknown.exe");
+                    if !candidate.is_file() {
+                        return format!("{name}: missing");
+                    }
+                    match authenticode_output(candidate) {
+                        Ok(output) => format!(
+                            "{name}: exit={:?}, stdout_utf8={:?}, stdout_bytes={:?}, stderr_utf8={:?}",
+                            output.status.code(),
+                            String::from_utf8_lossy(&output.stdout),
+                            output.stdout,
+                            String::from_utf8_lossy(&output.stderr),
+                        ),
+                        Err(error) => format!("{name}: invocation_error={error}"),
+                    }
+                })
+                .collect::<Vec<_>>();
+            panic!(
+                "Windows CI image must provide signed Chrome or Edge; diagnostics: {diagnostics:?}"
+            );
+        };
 
         assert!(trusted_windows_installation(&installed.0, &installed.1));
     }

@@ -256,7 +256,7 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
         .output()
 }
 
-fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
+fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
 
     // This launch boundary protects the current agent token from executing a
@@ -267,26 +267,26 @@ fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    let rights: &[u32] = if directory {
+    let rights: &[(&str, u32)] = if directory {
         &[
-            FILE_ADD_FILE.0,
-            FILE_ADD_SUBDIRECTORY.0,
-            FILE_DELETE_CHILD.0,
-            FILE_WRITE_EA.0,
-            FILE_WRITE_ATTRIBUTES.0,
-            DELETE.0,
-            WRITE_DAC.0,
-            WRITE_OWNER.0,
+            ("add_file", FILE_ADD_FILE.0),
+            ("add_subdirectory", FILE_ADD_SUBDIRECTORY.0),
+            ("delete_child", FILE_DELETE_CHILD.0),
+            ("write_ea", FILE_WRITE_EA.0),
+            ("write_attributes", FILE_WRITE_ATTRIBUTES.0),
+            ("delete", DELETE.0),
+            ("write_dac", WRITE_DAC.0),
+            ("write_owner", WRITE_OWNER.0),
         ]
     } else {
         &[
-            FILE_WRITE_DATA.0,
-            FILE_APPEND_DATA.0,
-            FILE_WRITE_EA.0,
-            FILE_WRITE_ATTRIBUTES.0,
-            DELETE.0,
-            WRITE_DAC.0,
-            WRITE_OWNER.0,
+            ("write_data", FILE_WRITE_DATA.0),
+            ("append_data", FILE_APPEND_DATA.0),
+            ("write_ea", FILE_WRITE_EA.0),
+            ("write_attributes", FILE_WRITE_ATTRIBUTES.0),
+            ("delete", DELETE.0),
+            ("write_dac", WRITE_DAC.0),
+            ("write_owner", WRITE_OWNER.0),
         ]
     };
     let flags = if directory {
@@ -294,7 +294,7 @@ fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
     } else {
         FILE_FLAGS_AND_ATTRIBUTES(0)
     };
-    for &right in rights {
+    for &(name, right) in rights {
         match unsafe {
             CreateFileW(
                 PCWSTR(wide.as_ptr()),
@@ -308,13 +308,17 @@ fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
         } {
             Ok(handle) => {
                 let _ = unsafe { CloseHandle(handle) };
-                return false;
+                return Some(format!("current token was granted {name}"));
             }
             Err(error) if error.code() == E_ACCESSDENIED => {}
-            Err(_) => return false,
+            Err(error) => return Some(format!("{name} probe failed closed: {error}")),
         }
     }
-    true
+    None
+}
+
+fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
+    current_token_write_denial_reason(path, directory).is_none()
 }
 
 fn trusted_windows_installation(
@@ -1634,7 +1638,26 @@ mod tests {
             );
         };
 
-        assert!(trusted_windows_installation(&installed.0, &installed.1));
+        if !trusted_windows_installation(&installed.0, &installed.1) {
+            let mut diagnostics = vec![format!(
+                "executable: {:?}",
+                current_token_write_denial_reason(&installed.0, false)
+            )];
+            let mut current = installed.0.parent();
+            let mut index = 0;
+            while let Some(directory) = current {
+                diagnostics.push(format!(
+                    "ancestor_{index}: {:?}",
+                    current_token_write_denial_reason(directory, true)
+                ));
+                if directory == installed.1 {
+                    break;
+                }
+                current = directory.parent();
+                index += 1;
+            }
+            panic!("installed browser tree was writable or could not be proved: {diagnostics:?}");
+        }
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

@@ -79,7 +79,7 @@ def _pool_access_denied(namespace: str, error: SdkError.Status) -> Exception:
             body=error.body,
         )
     return PoolAccessDeniedError(
-        f"Fleet denied {error.operation!r} on pool namespace {namespace!r} "
+        f"Fleet denied {error.operation} on pool namespace '{namespace}' "
         f"(HTTP {error.status}: {error.body}). Pool names are globally unique "
         "across accounts, so this name may already be taken — try a new pool "
         "name. If that does not work, contact support on Discord: "

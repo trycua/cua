@@ -9,7 +9,6 @@ import monoFont from "@cua/design/assets/fonts/jetbrains-mono-normal-latin.woff2
 import displayFont from "@cua/design/assets/fonts/instrument-serif-normal-latin.woff2"
 import { App } from "./App"
 import { AuthProvider } from "./auth/AuthProvider"
-import { DeviceAuthorization } from "./pages/DeviceAuthorization"
 import "./shell.css"
 
 applyMode(Mode.Dark)
@@ -54,16 +53,10 @@ for (const href of [urbanistFont, monoFont, displayFont]) {
   document.head.appendChild(link)
 }
 
-const isDeviceAuthorization = window.location.pathname === "/device"
-
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {isDeviceAuthorization ? (
-      <DeviceAuthorization />
-    ) : (
-      <AuthProvider>
-        <App />
-      </AuthProvider>
-    )}
+    <AuthProvider>
+      <App />
+    </AuthProvider>
   </React.StrictMode>,
 )

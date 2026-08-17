@@ -11,6 +11,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from .main import app as fastapi_app
+from .network_security import resolve_bind_host
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class Server:
             ssl_keyfile: Path to SSL private key file (for HTTPS)
             ssl_certfile: Path to SSL certificate file (for HTTPS)
         """
-        self.host = host
+        self.host = resolve_bind_host(host)
         self.port = port
         self.log_level = log_level
         self.ssl_keyfile = ssl_keyfile

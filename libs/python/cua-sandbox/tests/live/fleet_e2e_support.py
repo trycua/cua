@@ -53,15 +53,29 @@ class HttpxFleetClient(HttpClient):
         await self._client.aclose()
 
 
-def build_namespace_name(lane: str, event_name: str) -> str:
-    event_class = {
+def has_oauth_credentials() -> bool:
+    return bool(os.environ.get("CUA_CLIENT_ID") and os.environ.get("CUA_CLIENT_SECRET"))
+
+
+def _event_class(event_name: str) -> str:
+    return {
         "schedule": "schedule",
         "push": "push",
         "workflow_dispatch": "manual",
     }.get(event_name, "manual")
-    raw = f"cua-live-{lane}-{event_class}".lower()
-    normalized = re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
+
+
+def _normalize_namespace_name(raw: str) -> str:
+    normalized = re.sub(r"[^a-z0-9-]+", "-", raw.lower()).strip("-")
     return normalized[:63].rstrip("-")
+
+
+def build_namespace_name(lane: str, event_name: str) -> str:
+    return _normalize_namespace_name(f"cua-live-{lane}-{_event_class(event_name)}")
+
+
+def build_pool_namespace_name(mode: str, lane: str, event_name: str) -> str:
+    return _normalize_namespace_name(f"cua-live-pool-{mode}-{lane}-{_event_class(event_name)}")
 
 
 def build_fleet_client() -> tuple[CyclopsClient, HttpxFleetClient]:

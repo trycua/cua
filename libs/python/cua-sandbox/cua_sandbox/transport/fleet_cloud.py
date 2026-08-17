@@ -309,7 +309,11 @@ class _FleetClient:
                 service,
                 "/status",
                 HttpRequest(
-                    method="GET", url="https://service.invalid/status", headers=[], body=None
+                    method="GET",
+                    url="https://service.invalid/status",
+                    headers=[],
+                    body=None,
+                    timeout_secs=30,
                 ),
             )
             if 200 <= response.status < 500:

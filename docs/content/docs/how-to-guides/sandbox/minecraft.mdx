@@ -428,6 +428,8 @@ Booted locally, that image printed `Image(windows/registry:latest, kind=vm, ...)
   Expect the first Fleet boot on a given node to be slow: it has to pull the whole image before the sandbox can start, and Fleet enforces a **300-second bind deadline** that `time_to_start=` does not extend, so a cold pull can surface as `BindDeadlineExceeded: no adoptable Sandbox within 300s`.
 
   A second failure to expect is `403 k8s request is not allowed` on `update template`. A template can be **created but never updated**: both branches of the gateway's image policy are guarded by `input.method != "PATCH"`, so any request that takes the update path is refused, with the same opaque message you get for a disallowed image. Reusing the sandbox name guarantees it. A fresh name usually avoids it but **not reliably** — of four boots of the same image, one reused name and one fresh name both returned 403, while two other fresh names reached `READY` in 157 s and 187 s. Retry; it is intermittent, and nothing about your image changes the outcome.
+
+  The SDK surfaces these 403s as `PoolAccessDeniedError`. The same error also appears when the pool name you chose is already owned by **another account** — pool names are globally unique across accounts — and in that case the fix is a different pool name, not a retry.
 </Callout>
 
 The reader's remaining work is the part that has to be theirs: open Prism, *Accounts → Add Microsoft*, approve the device code, and click Launch.
@@ -440,9 +442,10 @@ The image and the agent loop are identical on Fleet. Two things change: there is
 
 ```python
 import httpx
-from cua import Image, Sandbox
+from cua import Image, Pool, Sandbox
 
-sb = await Sandbox.create(Image.windows().expose(3000), name='mc-fleet', time_to_start=900)
+pool = await Pool.apply(Image.windows().expose(3000), name='mc-fleet')
+sb = await Sandbox.create(pool=pool, name='mc-fleet', time_to_start=900)
 
 tunnel = await sb.tunnel.forward(3000)
 # https://run.cua.ai/api/svc/<namespace>/<sandbox>-port-3000/
@@ -462,7 +465,7 @@ That is the same `run()` as above, with only the URL and an auth header changed.
 
 Notice there is no `-cpu host` here. That flag exists on the local path because the bare-metal runtime defaults to the thin `qemu64` model; a Fleet sandbox is provisioned for you and already reports a full host CPU — `Intel Xeon Processor (SapphireRapids)`, with AVX, AVX2 and AVX-512 all present — so there is nothing to override, and no QEMU arguments to pass.
 
-`Sandbox.create` also accepts `cpu` and `memory_mb`, but sizing a Fleet sandbox is account-dependent: passing them routes the request through a gated custom-resource path, which returned `403 create pool: k8s request is not allowed` at every size until a card-on-file requirement was lifted for the account. The default sandbox — 4 vCPU and 4 GB — is what this guide was written against, and it is enough.
+`Pool.apply` also accepts `cpu` and `memory_mb`, but sizing a Fleet sandbox is account-dependent: passing them routes the request through a gated custom-resource path, which returned `403 create pool: k8s request is not allowed` at every size until a card-on-file requirement was lifted for the account. The default sandbox — 4 vCPU and 4 GB — is what this guide was written against, and it is enough.
 
 <Callout type="warn">
   **On Fleet the game needs one extra environment variable: `GALLIUM_DRIVER=softpipe`.** With Mesa's default llvmpipe renderer, Minecraft dies during resource loading every time — `Process crashed with exitcode -2147024809`, no Java exception, no `hs_err` file, nothing in the Windows event log, the log simply stopping after `Reloading ResourceManager`. Switching Mesa to its `softpipe` rasteriser fixes it, and the game runs.

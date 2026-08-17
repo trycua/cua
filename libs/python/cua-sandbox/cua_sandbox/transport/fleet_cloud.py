@@ -41,6 +41,7 @@ from fleet_sdk import (
     PreservedJson,
     SandboxServiceBuilder,
     SandboxTemplateRefBuilder,
+    SdkError,
     ServiceProtocol,
     VmTemplateBuilder,
     WarmPoolAutoscaling,
@@ -57,6 +58,37 @@ _CLAIM_HASH_LENGTH = 16
 # whole wait_service_ready deadline. Ignored by cua-fleet <= 0.1.8, whose
 # native client applies the same 30-second default.
 _READINESS_PROBE_TIMEOUT_SECS = 30
+
+
+# Newer Fleet SDKs raise SdkError.PoolAccessDenied from the Rust core for 403s
+# on pool-namespace writes, so every language binding shares one message. Use
+# that type when the installed cua-fleet provides it; otherwise map the plain
+# 403 Status errors older SDKs raise into an equivalent local error.
+_UPSTREAM_POOL_ACCESS_DENIED = getattr(SdkError, "PoolAccessDenied", None)
+
+if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+    PoolAccessDeniedError = _UPSTREAM_POOL_ACCESS_DENIED
+else:
+
+    class PoolAccessDeniedError(PermissionError):  # type: ignore[no-redef]
+        """Fleet refused a pool or template operation for this credential."""
+
+
+def _pool_access_denied(namespace: str, error: SdkError.Status) -> Exception:
+    if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+        return _UPSTREAM_POOL_ACCESS_DENIED(
+            operation=error.operation,
+            namespace=namespace,
+            status=error.status,
+            body=error.body,
+        )
+    return PoolAccessDeniedError(
+        f"Fleet denied {error.operation} on pool namespace '{namespace}' "
+        f"(HTTP {error.status}: {error.body}). Pool names are globally unique "
+        "across accounts, so this name may already be taken — try a new pool "
+        "name. If that does not work, contact support on Discord: "
+        "https://discord.gg/mVnXXpdE85"
+    )
 
 
 def _claim_name(pool_name: str) -> str:
@@ -455,10 +487,15 @@ class FleetCloudTransport(FleetTransport):
                             self._pool = await self._sdk.wait_pool(self._pool)
                     else:
                         self._validate_image(self._image)
-                        self._pool = await self._sdk.reconcile_pool(self._pool_request())
-                        self._template = await self._sdk.reconcile_template(
-                            self._template_request()
-                        )
+                        try:
+                            self._pool = await self._sdk.reconcile_pool(self._pool_request())
+                            self._template = await self._sdk.reconcile_template(
+                                self._template_request()
+                            )
+                        except SdkError.Status as error:
+                            if error.status == 403:
+                                raise _pool_access_denied(self._pool_name, error) from error
+                            raise
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
                     if self._image is None and not self._create_claim:

@@ -5,10 +5,12 @@ as interface objects backed by a Transport.
 
 Usage::
 
-    from cua_sandbox import Sandbox, Image
+    from cua_sandbox import Image, Pool, Sandbox
 
-    # Provision a new persistent sandbox
-    sb = await Sandbox.create(Image.desktop("ubuntu"))
+    # Provision a persistent sandbox from an explicitly named pool
+    # (pool names are globally unique across accounts)
+    pool = await Pool.apply(Image.desktop("ubuntu"), name="my-pool")
+    sb = await Sandbox.create(pool=pool, name="my-claim")
     await sb.shell.run("uname -a")
     await sb.disconnect()
 
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import random
+import secrets
 import time
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -613,8 +616,9 @@ class Sandbox:
         """Provision or claim a persistent sandbox and return it connected.
 
         Supplying ``pool`` claims from an existing Fleet pool without changing
-        its configuration. Otherwise, registry images are applied as a
-        deterministic reusable pool before a claim is acquired.
+        its configuration. Fleet registry images require an explicitly named
+        pool — apply one with ``Pool.apply(image, name=...)`` and pass it as
+        ``pool=`` — because pool names are globally unique across accounts.
         """
         from cua_sandbox.pool import Pool
 
@@ -671,38 +675,14 @@ class Sandbox:
             and runtime is None
         )
         if fleet_image:
-            if disk_gb is not None or region != "us-east-1" or request_timeout is not None:
-                raise NotImplementedError("the requested option is not supported by Fleet")
-            services = {
-                "server": server_port,
-                **{f"port-{port}": port for port in image._ports if port != server_port},
-            }
-            resolved_pool = await Pool.apply(
-                image,
-                replicas=replicas,
-                cpu=cpu,
-                memory_mb=memory_mb,
-                services=services,
+            raise ValueError(
+                "Sandbox.create requires an explicitly named pool for Fleet "
+                "registry images because pool names are globally unique "
+                "across accounts. Apply a pool first, then claim from it:\n"
+                '    pool = await Pool.apply(image, name="my-pool")\n'
+                '    sandbox = await Sandbox.create(pool=pool, name="my-claim")\n'
+                "Or use Sandbox.ephemeral(image, ...) for a disposable sandbox."
             )
-            sandbox = await resolved_pool.claim(
-                name=name, spec=claim_spec, service=service, time_to_start=time_to_start
-            )
-            sandbox_claim_name = getattr(sandbox, "claim_name", None)
-            sandbox_pool_name = getattr(sandbox, "pool_name", None)
-            claim_name = (
-                sandbox_claim_name
-                if isinstance(sandbox_claim_name, str) and sandbox_claim_name
-                else name
-            )
-            pool_name = (
-                sandbox_pool_name
-                if isinstance(sandbox_pool_name, str) and sandbox_pool_name
-                else resolved_pool.name
-            )
-            await _keep_alive_or_close(sandbox, keep_alive_minutes)
-            if claim_name is not None:
-                await _save_fleet_claim_or_close(sandbox, claim_name, pool_name)
-            return sandbox
 
         if image is None:
             raise ValueError("image is required when pool is omitted")
@@ -822,6 +802,11 @@ class Sandbox:
         )
         if keep_pool and not fleet_image:
             raise ValueError("keep_pool is only supported for Fleet registry images")
+        if keep_pool and name is None:
+            raise ValueError(
+                "keep_pool requires name= so later runs can find and reuse the "
+                "kept pool; pool names are globally unique across accounts"
+            )
 
         if pool is not None:
             sandbox = await cls.create(
@@ -867,14 +852,16 @@ class Sandbox:
                 "server": server_port,
                 **{f"port-{port}": port for port in image._ports if port != server_port},
             }
-            pool_options = {"name": name} if name is not None else {}
+            # A random pool name keeps this disposable pool out of foreign
+            # namespaces: pool names are globally unique across accounts.
+            pool_name = name if name is not None else f"cua-eph-{secrets.token_hex(6)}"
             owned_pool = await Pool.apply(
                 image,
+                name=pool_name,
                 replicas=replicas,
                 cpu=cpu,
                 memory_mb=memory_mb,
                 services=services,
-                **pool_options,
             )
             sandbox = None
             try:

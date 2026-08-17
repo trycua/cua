@@ -126,7 +126,7 @@ class Pool:
         cls,
         image: Image,
         *,
-        name: str | None = None,
+        name: str,
         replicas: int = 1,
         cpu: int | None = None,
         memory_mb: int | None = None,

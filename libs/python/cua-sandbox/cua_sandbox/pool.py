@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from typing import Any, Callable, Coroutine, Generic, TypeVar, cast
 
-from cua_sandbox.image import Image, cloud_registry_image
+from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.fleet import FleetTransport
-from cua_sandbox.transport.fleet_cloud import FleetCloudTransport, _FleetClient
+from cua_sandbox.transport.fleet_cloud import (
+    FleetCloudTransport,
+    _FleetClient,
+    _pool_access_denied,
+)
 from fleet_sdk import (
     Claim,
     ClaimSpec,
@@ -72,7 +74,12 @@ class Template:
             raise TypeError("Template.reconcile requires a CreateTemplateRequest")
         client = _FleetClient()
         try:
-            return cls(await client.reconcile_template(request))
+            try:
+                return cls(await client.reconcile_template(request))
+            except SdkError.Status as error:
+                if error.status == 403:
+                    raise _pool_access_denied(request.namespace, error) from error
+                raise
         finally:
             await client.close()
 
@@ -214,7 +221,12 @@ class Pool:
             raise TypeError("Pool.reconcile requires a CreatePoolRequest")
         client = _FleetClient()
         try:
-            return cls(await client.reconcile_pool(request))
+            try:
+                return cls(await client.reconcile_pool(request))
+            except SdkError.Status as error:
+                if error.status == 403:
+                    raise _pool_access_denied(request.namespace, error) from error
+                raise
         finally:
             await client.close()
 
@@ -231,40 +243,23 @@ class Pool:
         cls,
         image: Image,
         *,
-        name: str | None = None,
+        name: str,
         replicas: int = 1,
         cpu: int | None = None,
         memory_mb: int | None = None,
         services: dict[str, int] | None = None,
         autoscaling: WarmPoolAutoscaling | None = None,
     ) -> "Pool":
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                "Pool.apply requires an explicit non-empty pool name; pool "
+                "names are globally unique across accounts"
+            )
         FleetCloudTransport._validate_image(image)
         effective_services = services or {
             "server": 8000,
             **{f"port-{port}": port for port in image._ports if port != 8000},
         }
-        if name is None:
-            identity_fields: dict[str, Any] = {
-                "image": cloud_registry_image(image),
-                "replicas": replicas,
-                "cpu": cpu,
-                "memory_mb": memory_mb,
-                "services": sorted(effective_services.items()),
-            }
-            # Included only when set so pools created before autoscaling
-            # support keep their deterministic names.
-            if autoscaling is not None:
-                identity_fields["autoscaling"] = {
-                    "min_pool_size": autoscaling.min_pool_size,
-                    "initial_pool_size": autoscaling.initial_pool_size,
-                    "max_pool_size": autoscaling.max_pool_size,
-                }
-            identity = json.dumps(
-                identity_fields,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            name = f"cua-{hashlib.sha256(identity.encode()).hexdigest()[:12]}"
         transport = FleetCloudTransport(
             image=image,
             name=name,
@@ -278,7 +273,12 @@ class Pool:
         try:
             template = await Template.reconcile(transport._template_request())
         except BaseException:
-            await pool.delete()
+            try:
+                await pool.delete()
+            except Exception:
+                logger.exception(
+                    "Failed to roll back Fleet pool %r after template reconcile failure", name
+                )
             raise
         pool._owned_template = template.resource
         return pool

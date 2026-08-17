@@ -114,7 +114,7 @@ test.describe("Settings GitHub trust policies", () => {
     ).toHaveLength(1)
   })
 
-  test("orders account, API keys, GitHub OIDC, and payment method", async ({
+  test("orders account, payment method, and GitHub OIDC", async ({
     page,
   }) => {
     await page.route("**/api/config", route =>
@@ -140,41 +140,35 @@ test.describe("Settings GitHub trust policies", () => {
       name: "Account",
       exact: true,
     })
-    const apiKeysHeading = page.getByRole("heading", {
-      name: "API keys",
-      exact: true,
-    })
     const githubToggle = page.getByRole("button", {
       name: "GitHub Actions OIDC",
     })
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible()
     await expect(accountHeading).toBeVisible()
-    await expect(apiKeysHeading).toBeVisible()
     await expect(paymentHeading).toBeVisible()
     await expect(githubToggle).toBeVisible()
+    await expect(
+      page.getByRole("heading", { name: "API keys", exact: true }),
+    ).toHaveCount(0)
     const sectionOrder = await page.evaluate(() => {
       const elements = [...document.querySelectorAll("h1, h2, h3, h4, button")]
       const indexOf = (label: string) =>
         elements.findIndex(element => element.textContent?.trim().startsWith(label))
       return [
         indexOf("Account"),
-        indexOf("API keys"),
-        indexOf("GitHub Actions OIDC"),
         indexOf("Payment method"),
+        indexOf("GitHub Actions OIDC"),
       ]
     })
     expect(sectionOrder.every(index => index >= 0)).toBe(true)
     expect(sectionOrder).toEqual([...sectionOrder].sort((a, b) => a - b))
-    await page.getByRole("button", { name: "Manage API keys" }).click()
-    await expect(page).toHaveURL(/\/user-keys$/)
-    await page.goto("/settings")
     await expect(page.getByLabel("Display name")).toBeHidden()
 
     await githubToggle.click()
     await expect(page.getByLabel("Display name")).toBeVisible()
   })
 
-  test("keeps account and API keys usable when GitHub settings fail", async ({ page }) => {
+  test("keeps account usable when GitHub settings fail", async ({ page }) => {
     await page.unroute("**/api/github-trust-policies")
     await page.route("**/api/github-trust-policies", route =>
       route.fulfill({ status: 503, body: "temporarily unavailable" }),
@@ -182,7 +176,6 @@ test.describe("Settings GitHub trust policies", () => {
 
     await page.goto("/settings")
     await expect(page.getByRole("heading", { name: "Account" })).toBeVisible()
-    await expect(page.getByRole("button", { name: "Manage API keys" })).toBeVisible()
     await expect(
       page.getByText("GitHub Actions settings are unavailable. Expand to retry."),
     ).toBeVisible()

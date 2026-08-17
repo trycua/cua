@@ -2,7 +2,6 @@
 // policies for backend automation.
 
 import { useEffect, useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
 import Alert from "@cloudscape-design/components/alert"
 import Box from "@cloudscape-design/components/box"
 import Container from "@cloudscape-design/components/container"
@@ -26,7 +25,6 @@ import { useFeatureFlags } from "../components/FeatureFlagContext"
 import { useFlash } from "../components/FlashContext"
 import { PageEmpty, PageError } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
-import { localVisualPreviewPath } from "../local-visual-preview"
 import {
   type GitHubTrustPolicy,
   githubTrustPoliciesApi,
@@ -35,7 +33,6 @@ import {
 import { BillingSettings } from "./Billing"
 
 export function Settings() {
-  const navigate = useNavigate()
   const flash = useFlash()
   const { sub, name } = userInfo()
   const { billing } = useFeatureFlags()
@@ -245,7 +242,7 @@ steps:
     <PageShell
       eyebrow="Account"
       title="Settings"
-      description="Manage your identity, credentials, automation access, and payment method."
+      description="Manage your identity, payment method, and automation access."
     >
       <SpaceBetween size="l">
         <Container
@@ -290,28 +287,7 @@ steps:
           </SpaceBetween>
         </Container>
 
-      <Container
-        header={
-          <Header
-            variant="h2"
-            description="API keys are managed remotely and changes take effect immediately."
-            actions={
-              <CuaButton
-                onClick={() => navigate(localVisualPreviewPath("/user-keys"))}
-              >
-                Manage API keys
-              </CuaButton>
-            }
-          >
-            API keys
-          </Header>
-        }
-      >
-        <Box color="text-body-secondary">
-          Create scoped credentials for local tools, CI workflows, and other
-          automation that calls Cua on your behalf.
-        </Box>
-      </Container>
+      {billing && <BillingSettings />}
 
       <ExpandableSection
         variant="container"
@@ -508,8 +484,6 @@ steps:
           </SpaceBetween>
         )}
       </ExpandableSection>
-
-      {billing && <BillingSettings />}
 
       {confirmDelete && (
         <Modal

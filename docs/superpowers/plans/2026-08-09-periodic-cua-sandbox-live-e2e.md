@@ -930,8 +930,11 @@ The warm pool keeps `replicas=1` so claims bind to pre-provisioned capacity;
 the cold pool expresses scale-to-zero with
 `WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=0, max_pool_size=1)`
 because pool reconciliation rejects `replicas` below one. Each run records
-`pool_pre_existed` and replica counts from `Pool.get`, reconciles the pinned
-configuration idempotently with `Pool.apply`, claims through
+`pool_pre_existed` and replica counts from `Pool.get`, treating both 403 and
+404 as not-pre-existed (`is_pool_missing_error`) because Fleet evaluates
+authorization before existence for namespaces that have not been created
+yet, reconciles the pinned configuration idempotently with `Pool.apply`,
+claims through
 `Sandbox.ephemeral(pool=..., name=...)` with the claim name fixed to the
 namespace, and exits with a claim-only release. After release the monitor
 polls until claims are absent and requires the reconciled inventory to contain

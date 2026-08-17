@@ -22,6 +22,12 @@ def not_found(operation: str = "get pool") -> SdkError.Status:
     return SdkError.Status(operation, 404, b"not found")
 
 
+def forbidden(operation: str = "get pool") -> SdkError.Status:
+    # Fleet returns 403 for pool reads in namespaces that have not been
+    # created yet, because RBAC is evaluated before existence.
+    return SdkError.Status(operation, 403, b"forbidden")
+
+
 class FakePoolHandle:
     def __init__(self, resource) -> None:
         self._resource = resource
@@ -227,6 +233,36 @@ async def test_pool_pre_existed_false_is_recorded_for_public_sdk_404(monkeypatch
     assert summary["pool_pre_existed"] is False
     assert "ready_replicas_before" not in summary
     assert summary["warm_bind_sla_applied"] is False
+
+
+@pytest.mark.asyncio
+async def test_pool_pre_existed_false_is_recorded_for_uncreated_namespace_403(
+    monkeypatch, tmp_path
+) -> None:
+    namespace = "cua-live-pool-warm-test-schedule"
+    harness = install_pool_runner(monkeypatch, tmp_path, mode="warm", namespace=namespace)
+    harness.get_results = [forbidden(), make_pool_resource(namespace)]
+
+    await pool_live.run_fleet_pool_live("warm")
+
+    summary = harness.summaries["summary-pool-warm.json"]
+    assert summary["pool_pre_existed"] is False
+    assert "ready_replicas_before" not in summary
+    assert summary["warm_bind_sla_applied"] is False
+
+
+@pytest.mark.asyncio
+async def test_observe_propagates_non_missing_pool_errors(monkeypatch, tmp_path) -> None:
+    namespace = "cua-live-pool-warm-test-schedule"
+    harness = install_pool_runner(monkeypatch, tmp_path, mode="warm", namespace=namespace)
+    harness.get_results = [SdkError.Status("get pool", 500, b"failure")]
+
+    with pytest.raises(SdkError.Status):
+        await pool_live.run_fleet_pool_live("warm")
+
+    assert harness.apply_calls == []
+    summary = harness.summaries["summary-pool-warm.json"]
+    assert summary["error"] == {"type": "Status"}
 
 
 @pytest.mark.asyncio

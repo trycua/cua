@@ -14,6 +14,7 @@ from tests.live.fleet_e2e_support import (
     build_pool_namespace_name,
     collect_resource_inventory,
     has_oauth_credentials,
+    is_pool_missing_error,
     wait_claims_absent,
     write_summary,
 )
@@ -72,6 +73,21 @@ def test_build_pool_namespace_name_normalizes_invalid_overlong_input() -> None:
     assert len(name) <= 63
     assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", name)
     assert name.startswith("cua-live-pool-warm-published-package-")
+
+
+@pytest.mark.parametrize(
+    ("error", "missing"),
+    [
+        (SdkError.Status("get pool", 404, b"not found"), True),
+        (SdkError.Status("get pool", 403, b"forbidden"), True),
+        (SdkError.Status("get pool", 500, b"failure"), False),
+        (RuntimeError("transport down"), False),
+    ],
+)
+def test_is_pool_missing_error_mirrors_reconcile_semantics(
+    error: BaseException, missing: bool
+) -> None:
+    assert is_pool_missing_error(error) is missing
 
 
 def test_support_has_oauth_credentials_requires_both_values(monkeypatch) -> None:

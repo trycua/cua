@@ -3,21 +3,20 @@
 from pathlib import Path
 import unittest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class TestCuaFleetReleaseWiring(unittest.TestCase):
     """Keep Fleet's promotion workflow aligned with canonical SDK wheels."""
 
-    def test_publisher_promotes_cua_fleet_0_1_11(self) -> None:
+    def test_publisher_promotes_cua_fleet_0_1_12(self) -> None:
         workflow = (REPO_ROOT / ".github/workflows/cd-py-fleet.yml").read_text()
         expected_sources = {
-            "cua_fleet-0.1.11-py3-none-manylinux_2_34_x86_64.whl": "0539a40aac915368362dd2f3e90d4b6d233e7bece77d13a5733d8cecb7298731",
-            "cua_fleet-0.1.11-py3-none-manylinux_2_34_aarch64.whl": "c76052d9cb1710936a59709fd5a2894fe9fb43fe89e2a0313ad0b88faf4c2b1e",
-            "cua_fleet-0.1.11-py3-none-macosx_10_12_x86_64.whl": "5884a26388b44e9cf59314d20b9aae34f278c48b108d927ebaf802b8d5b7d7f6",
-            "cua_fleet-0.1.11-py3-none-macosx_11_0_arm64.whl": "1f6d1532f76166fe30001c68765c4f3fcb94e9b713751f7a009d3780f523aa9c",
-            "cua_fleet-0.1.11-py3-none-win_amd64.whl": "da8e1c40abcd3fee5cdab48801d4bd43a277ecddb7afebcba3d9885d9ec5d431",
+            "cua_fleet-0.1.12-py3-none-manylinux_2_34_x86_64.whl": "d8ef6a0c8ac6e6f8dda937e3aebeef7f5b4fa9e3f29edc55a602a1c874f3f96a",
+            "cua_fleet-0.1.12-py3-none-manylinux_2_34_aarch64.whl": "0a39e52cbec94a2bc71f45282dd34c896fd154bc7f7a137fc6ceff82edfc0973",
+            "cua_fleet-0.1.12-py3-none-macosx_10_12_x86_64.whl": "d5114ba97ef208e257bef261f6d3585b265f1f2c32cb627bcc9f44d753e60b75",
+            "cua_fleet-0.1.12-py3-none-macosx_11_0_arm64.whl": "82762fae4943b20aae05b39362f5bd0c179f84c16dac1e948debb3d58db5adc2",
+            "cua_fleet-0.1.12-py3-none-win_amd64.whl": "c280d7ceadedc1d5c4c59869940c3390aac321f12ac9c9ee52250f212b6aac75",
         }
 
         self.assertIn("https://wheels.cua.ai/simple/cua-fleet/$WHEEL", workflow)

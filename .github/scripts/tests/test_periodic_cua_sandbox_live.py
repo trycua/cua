@@ -370,6 +370,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         self.assertIn("unexpected_inventory", pool_test)
         self.assertIn("module_origins", pool_test)
         self.assertIn("pool_pre_existed", pool_test)
+        self.assertIn("is_pool_missing_error", pool_test)
         self.assertNotIn("pool.delete(", pool_test)
         self.assertNotIn("delete_pool", pool_test)
         self.assertNotIn("delete_namespace", pool_test)

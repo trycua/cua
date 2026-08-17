@@ -16,7 +16,7 @@ from tests.live.fleet_e2e_support import (
     build_pool_namespace_name,
     collect_resource_inventory,
     has_oauth_credentials,
-    is_not_found_error,
+    is_pool_missing_error,
     wait_claims_absent,
     write_summary,
 )
@@ -103,7 +103,7 @@ async def run_fleet_pool_live(mode: str) -> None:
         try:
             existing = await Pool.get(namespace)
         except BaseException as error:
-            if not is_not_found_error(error):
+            if not is_pool_missing_error(error):
                 raise
             summary["pool_pre_existed"] = False
         else:

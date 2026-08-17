@@ -2,8 +2,8 @@ import base64
 import json
 
 import pytest
-from cua_sandbox.transport.fleet import FleetTransport
-from fleet_sdk import HttpResponse, Sandbox
+from cua_sandbox.transport.fleet import FleetTransport, build_http_request
+from fleet_sdk import HttpRequest, HttpResponse, Sandbox
 
 
 class FakeSDK:
@@ -64,3 +64,30 @@ async def test_connect_rejects_missing_service():
     )
     with pytest.raises(ValueError, match="does not expose service"):
         await transport.connect()
+
+
+def test_build_http_request_constructs_the_record_through_the_builder():
+    bounded = build_http_request(
+        method="GET", url="https://service.invalid/status", timeout_secs=30
+    )
+    unbounded = build_http_request(method="GET", url="https://service.invalid/status")
+
+    assert isinstance(bounded, HttpRequest)
+    assert (bounded.method, bounded.headers, bounded.body) == ("GET", [], None)
+    assert bounded.timeout_secs == 30
+    assert unbounded.timeout_secs is None
+
+
+@pytest.mark.asyncio
+async def test_requests_are_bounded_by_the_transport_timeout():
+    sdk = FakeSDK([response(), response()])
+    transport = FleetTransport(sdk=sdk, bound=sandbox())
+    await transport.connect()
+    fractional = FleetTransport(sdk=sdk, bound=sandbox(), timeout=0.5)
+    await fractional.connect()
+
+    await transport.request_service("api", method="GET", path="/status")
+    await fractional.request_service("api", method="GET", path="/status")
+
+    assert sdk.calls[0][3].timeout_secs == 30
+    assert sdk.calls[1][3].timeout_secs == 1

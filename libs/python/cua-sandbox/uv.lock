@@ -133,15 +133,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asyncio"
-version = "4.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/71/ea/26c489a11f7ca862d5705db67683a7361ce11c23a7b98fc6c2deaeccede2/asyncio-4.0.0.tar.gz", hash = "sha256:570cd9e50db83bc1629152d4d0b7558d6451bb1bfd5dfc2e935d96fc2f40329b", size = 5371, upload-time = "2025-08-05T02:51:46.605Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/57/64/eff2564783bd650ca25e15938d1c5b459cda997574a510f7de69688cb0b4/asyncio-4.0.0-py3-none-any.whl", hash = "sha256:c1eddb0659231837046809e68103969b2bef8b0400d59cfa6363f6b5ed8cc88b", size = 5555, upload-time = "2025-08-05T02:51:45.767Z" },
-]
-
-[[package]]
 name = "attrs"
 version = "25.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -419,7 +410,6 @@ source = { editable = "../agent" }
 dependencies = [
     { name = "aiohttp" },
     { name = "anyio" },
-    { name = "asyncio" },
     { name = "certifi" },
     { name = "cua-core" },
     { name = "httpx" },
@@ -441,7 +431,6 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'uitars-hf'" },
     { name = "aiohttp", specifier = ">=3.9.3" },
     { name = "anyio", specifier = ">=4.4.1" },
-    { name = "asyncio" },
     { name = "blobfile", marker = "extra == 'all'", specifier = ">=3.0.0" },
     { name = "blobfile", marker = "extra == 'opencua-hf'", specifier = ">=3.0.0" },
     { name = "certifi", specifier = ">=2024.2.2" },
@@ -539,19 +528,19 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-fleet"
-version = "0.1.8"
+version = "0.1.11"
 source = { registry = "https://wheels.cua.ai/simple" }
 wheels = [
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:20611a14c185157e6f41502e1bbdcc1e98663347e94463ca538755b0efc173bb" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7c21d0a36a8d74bfe0768422e4f3d9367ee51837920e2c22ee57521fc93c4f3b" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:d7604668a7186d06cefb2bd23974b033c0b2cda61ccbe88d944af622b37f58d3" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:0bac329552d351604ad15b7eb4f4f3ed944921083238d74f51277d657d8f0a34" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-win_amd64.whl", hash = "sha256:d78fe6934a2f650dcf5b105a08833418245c720765da9c3b40e160b86a3d203d" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.11-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:5884a26388b44e9cf59314d20b9aae34f278c48b108d927ebaf802b8d5b7d7f6" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.11-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1f6d1532f76166fe30001c68765c4f3fcb94e9b713751f7a009d3780f523aa9c" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.11-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:c76052d9cb1710936a59709fd5a2894fe9fb43fe89e2a0313ad0b88faf4c2b1e" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.11-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:0539a40aac915368362dd2f3e90d4b6d233e7bece77d13a5733d8cecb7298731" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.11-py3-none-win_amd64.whl", hash = "sha256:da8e1c40abcd3fee5cdab48801d4bd43a277ecddb7afebcba3d9885d9ec5d431" },
 ]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.1.28"
+version = "0.3.6"
 source = { editable = "." }
 dependencies = [
     { name = "cua-auto" },
@@ -588,7 +577,7 @@ dev = [
 requires-dist = [
     { name = "cua-auto", specifier = ">=0.1.2" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
-    { name = "cua-fleet", specifier = "==0.1.8" },
+    { name = "cua-fleet", specifier = "==0.1.11" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "oras", specifier = ">=0.2.40" },
@@ -631,7 +620,7 @@ name = "ewmhlib"
 version = "0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "python-xlib" },
+    { name = "python-xlib", marker = "sys_platform == 'linux'" },
     { name = "typing-extensions" },
 ]
 wheels = [

@@ -1010,6 +1010,13 @@ class RustBufferStream
     return HttpClient.uniffi_allocate(handle)
   end
 
+  # The Object type HttpRequestBuilder.
+
+  def readTypeHttpRequestBuilder
+    handle = unpack_from 8, 'Q>'
+    return HttpRequestBuilder.uniffi_allocate(handle)
+  end
+
   # The Object type TemplateBuilder.
 
   def readTypeTemplateBuilder
@@ -1689,6 +1696,13 @@ class RustBufferBuilder
 
   def write_TypeHttpClient(obj)
     handle = HttpClient.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
+  # The Object type HttpRequestBuilder.
+
+  def write_TypeHttpRequestBuilder(obj)
+    handle = HttpRequestBuilder.uniffi_lower obj
     pack_into(8, 'Q>', handle)
   end
 
@@ -2750,6 +2764,33 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit,
     [:uint64, :uint32, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_clone_httprequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_free_httprequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_body,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_method,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs,
+    [:uint64, :uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_url,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_clone_templatebuilder,
     [:uint64, RustCallStatus.by_ref],
     :uint64
@@ -2930,6 +2971,24 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version,
     [RustCallStatus.by_ref],
     :uint16
@@ -2982,6 +3041,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new,
@@ -3224,7 +3286,7 @@ end
 class HttpRequest
   attr_reader :method, :url, :headers, :body, :timeout_secs
 
-  def initialize(method:, url:, headers:, body:, timeout_secs:)
+  def initialize(method:, url:, headers:, body:, timeout_secs: nil)
     @method = method
     @url = url
     @headers = headers
@@ -4469,6 +4531,93 @@ end
 
     result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit,uniffi_clone_handle(),value)
     return CyclopsTokenProviderConfigurationBuilder.uniffi_allocate(result)
+  end
+
+end
+
+  class HttpRequestBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      FleetSdk.rust_call(
+        :uniffi_cyclops_sdk_fn_free_httprequestbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a HttpRequestBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return FleetSdk.rust_call(
+      :uniffi_cyclops_sdk_fn_clone_httprequestbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def body(value)
+        value = FleetSdk::uniffi_bytes(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_body,uniffi_clone_handle(),RustBuffer.allocFromBytes(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def build()
+    result = FleetSdk.rust_call_with_error(SdkBuildError,:uniffi_cyclops_sdk_fn_method_httprequestbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeHttpRequest
+  end
+  def headers(value)
+        value = value
+        RustBuffer.check_lower_SequenceTypeHttpHeader(value)
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers,uniffi_clone_handle(),RustBuffer.alloc_from_SequenceTypeHttpHeader(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def method(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_method,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def timeout_secs(value)
+        value = FleetSdk::uniffi_in_range(value, "u64", 0, 2**64)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs,uniffi_clone_handle(),value)
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def url(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_url,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
   end
 
 end

@@ -32,7 +32,7 @@ def initialize_mcp(client, sandbox)
   body = JSON.generate(jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'cyclops-uniffi-ruby', version: '0.1.0' } }).b
   deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 300
   loop do
-    response = client.service_request(sandbox, 'mcp', '/mcp', FleetSdk::HttpRequest.new(method: 'POST', url: 'https://ignored.invalid/mcp', headers: [FleetSdk::HttpHeader.new(name: 'accept', value: 'application/json, text/event-stream'), FleetSdk::HttpHeader.new(name: 'content-type', value: 'application/json')], body: body, timeout_secs: nil))
+    response = client.service_request(sandbox, 'mcp', '/mcp', FleetSdk::HttpRequestBuilder.new.method('POST').url('https://ignored.invalid/mcp').headers([FleetSdk::HttpHeader.new(name: 'accept', value: 'application/json, text/event-stream'), FleetSdk::HttpHeader.new(name: 'content-type', value: 'application/json')]).body(body).build)
     return response.status if response.status.between?(200, 299)
     if [502, 503, 504].include?(response.status) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
       sleep 5

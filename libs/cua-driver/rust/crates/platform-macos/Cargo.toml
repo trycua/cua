@@ -60,6 +60,9 @@ objc2-quartz-core = { version = "0.2", features = ["CALayer"] }
 # convenience that finalises an mp4 in-process, removing the per-binary
 # Screen Recording TCC prompt that subprocess capture would otherwise trip.
 screencapturekit = { version = "6", features = ["macos_15_0"] }
+security-framework = { version = "3.7.0", default-features = false, features = ["OSX_10_15"] }
+zeroize = { workspace = true }
+getrandom = { workspace = true }
 
 # tiny-skia for cursor rendering
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }

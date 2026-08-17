@@ -95,9 +95,9 @@ pub fn scope_schema() -> Value {
 pub fn element_index_schema() -> Value {
     json!({
         "type": "integer",
-        "description": "Element index from get_window_state. Cua Driver 0.17 \
-            requires the matching `snapshot_id` alongside it. Prefer \
-            `element_token`, which carries both values."
+        "description": "Element index from get_window_state. Requires the \
+            matching `snapshot_id` alongside it. Prefer `element_token`, \
+            which carries both values."
     })
 }
 

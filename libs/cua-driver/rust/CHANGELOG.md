@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.20.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.19.3...cua-driver-rs-v0.20.0) (2026-08-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** remove browser approval tokens ([#3185](https://github.com/trycua/cua/issues/3185))
+
+### Features
+
+* add immutable Driver and Lume nightly releases ([8cef90b](https://github.com/trycua/cua/commit/8cef90b7ce6f85793a0ca3a3ddc050eac01b6b83))
+* add persistent Driver and Lume release channels ([0813659](https://github.com/trycua/cua/commit/0813659ac237cd46da21c2a51f9a95f27a3e7845))
+* **cua-driver:** add implicit lifecycle sessions ([#3013](https://github.com/trycua/cua/issues/3013)) ([858ef13](https://github.com/trycua/cua/commit/858ef13a5b1f2630b074d8f588a25cb0b19cab25))
+* **cua-driver:** apply capability manifests across permission profiles ([#3015](https://github.com/trycua/cua/issues/3015)) ([3a53e53](https://github.com/trycua/cua/commit/3a53e53f99dcf8d5ed761c5cd0b5dd039c916121))
+* **cua-driver:** remove browser approval tokens ([#3185](https://github.com/trycua/cua/issues/3185)) ([0d7c011](https://github.com/trycua/cua/commit/0d7c011eb31526d9c2b500806f35523dc2bdfb0e))
+
+
+### Bug Fixes
+
+* **cua-driver:** align agent guidance with lifecycle sessions ([#3041](https://github.com/trycua/cua/issues/3041)) ([dbde09e](https://github.com/trycua/cua/commit/dbde09e0bfd39abbc374e2e9aade86086e773bb8))
+* **cua-driver:** hide policy-disabled MCP tools ([#3132](https://github.com/trycua/cua/issues/3132)) ([1532830](https://github.com/trycua/cua/commit/1532830d3d5c6e5db22198130d82a4741a7b4a2f))
+* **cua-driver:** preserve direct MCP session ownership ([#3079](https://github.com/trycua/cua/issues/3079)) ([d509687](https://github.com/trycua/cua/commit/d5096871d088c2e5b5942d678f2c127840061d7d))
+* **cua-driver:** preserve named CLI sessions ([#3144](https://github.com/trycua/cua/issues/3144)) ([1803e52](https://github.com/trycua/cua/commit/1803e52d0c4a94d88787706cfe89eccb6dc723db))
+* **cua-driver:** reject misplaced MCP permission flags ([#3085](https://github.com/trycua/cua/issues/3085)) ([a5bc265](https://github.com/trycua/cua/commit/a5bc2651c10dc64f4779f2c9fd99bfddb9905ffb))
+* **cua-driver:** stage current skill pack on Windows local installs ([#3083](https://github.com/trycua/cua/issues/3083)) ([b4bc58a](https://github.com/trycua/cua/commit/b4bc58a3a262f30fcd9d6772851cde0f3429deb6))
+* **cua-driver:** verify foreground focus before input ([#3068](https://github.com/trycua/cua/issues/3068)) ([f9192dd](https://github.com/trycua/cua/commit/f9192dde69dd85ff6c5ad0bf4731d33ebc7d20d3))
+* **cua-driver:** write the update-check cache to the canonical home ([#3032](https://github.com/trycua/cua/issues/3032)) ([69e5774](https://github.com/trycua/cua/commit/69e57742751407258f2189ec2c4bb21fba78da2e))
+
 ## [0.19.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.19.2...cua-driver-rs-v0.19.3) (2026-08-10)
 
 

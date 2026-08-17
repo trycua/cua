@@ -861,7 +861,6 @@ pub(crate) fn inherited_managed_environment_name(name: &str) -> bool {
         "CUA_DRIVER_PERMISSION_MODE"
             | "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
             | "CUA_DRIVER_DISABLE_UNRESTRICTED"
-            | "CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL"
             | "CUA_DRIVER_SESSION_POLICY_FILE"
             | "CUA_DRIVER_SESSION_POLICY_APPROVED"
             | "CUA_DRIVER_CAPABILITY_MANIFEST_FILE"

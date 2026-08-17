@@ -54,7 +54,17 @@ modality or permission authority. Use only cua_driver MCP tools for desktop
 observation and interaction. Inspect before each action and verify afterward.
 If a mutation times out, observe before any retry; never blindly replay an
 action with an unknown outcome. Return a concise result and name anything
-unverified.
+unverified. When both history_status and history_query are advertised and the
+task asks to continue, resume, or recall prior Cua work, call history_status
+first. If history is healthy and access is admitted, make one bounded initial
+history_query before broad application or window discovery. Use its
+metadata only as a lead and verify current state; omitted content, geometry,
+arguments, results, and user intent remain unknown. Continue without history
+if either tool is absent, access is denied, results are empty, or history is
+unhealthy. Do not query history for unrelated tasks merely because the tools
+exist, and never mutate history lifecycle or settings. Make another bounded
+query only for a relevant session or sequence boundary, never to reconstruct
+excluded fields.
 """
         )
         print(result.final_response)

@@ -9,8 +9,10 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping, Sequence
 
 import release_attribution
@@ -54,7 +56,6 @@ def load_registry(
     path: Path = DEFAULT_REGISTRY,
     *,
     root: Path = ROOT,
-    require_stable_state: bool = True,
 ) -> dict[str, Any]:
     registry = read_json(path)
     if registry.get("schemaVersion") != 1:
@@ -127,21 +128,18 @@ def load_registry(
             raise ChannelError(
                 f"component {name} stable prefix must match Release Please: {expected_prefix}"
             )
-        if require_stable_state:
-            authority = (
-                repository_path(root, component["versionAuthorityFile"])
-                .read_text(encoding="utf-8")
-                .strip()
+        authority = (
+            repository_path(root, component["versionAuthorityFile"])
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+        if not SEMVER_RE.fullmatch(authority):
+            raise ChannelError(f"component {name} authority is not a stable version: {authority!r}")
+        if release_manifest.get(package_path) != authority:
+            raise ChannelError(
+                f"component {name} authority {authority} differs from Release Please manifest "
+                f"{release_manifest.get(package_path)!r}"
             )
-            if not SEMVER_RE.fullmatch(authority):
-                raise ChannelError(
-                    f"component {name} authority is not a stable version: {authority!r}"
-                )
-            if release_manifest.get(package_path) != authority:
-                raise ChannelError(
-                    f"component {name} authority {authority} differs from Release Please manifest "
-                    f"{release_manifest.get(package_path)!r}"
-                )
     return registry
 
 
@@ -150,13 +148,8 @@ def component_descriptor(
     path: Path = DEFAULT_REGISTRY,
     *,
     root: Path = ROOT,
-    require_stable_state: bool = True,
 ) -> dict[str, Any]:
-    registry = load_registry(
-        path,
-        root=root,
-        require_stable_state=require_stable_state,
-    )
+    registry = load_registry(path, root=root)
     try:
         return dict(registry["components"][name])
     except KeyError as error:
@@ -278,6 +271,39 @@ def _rewrite_cargo_lock(
     return len(seen)
 
 
+def _rewrite_version_site(
+    site: Mapping[str, Any],
+    path: Path,
+    old_version: str,
+    new_version: str,
+    *,
+    manifest_path: Path | None = None,
+) -> None:
+    kind = site["kind"]
+    if kind == "plain":
+        if path.read_text(encoding="utf-8").strip() != old_version:
+            raise ChannelError(f"plain version site {site['path']} differs from {old_version}")
+        path.write_text(f"{new_version}\n", encoding="utf-8")
+    elif kind == "regex":
+        original = path.read_text(encoding="utf-8")
+        replacement = str(site["replacement"]).replace("{version}", new_version)
+        rewritten, count = re.subn(str(site["pattern"]), replacement, original)
+        if count != int(site["expectedMatches"]):
+            raise ChannelError(
+                f"version site {site['path']} matched {count} times, "
+                f"expected {site['expectedMatches']}"
+            )
+        path.write_text(rewritten, encoding="utf-8")
+    elif kind == "cargo-workspace-lock":
+        if manifest_path is None:
+            raise ChannelError(
+                f"cargo lock version site {site['path']} requires its manifest in the staged tree"
+            )
+        _rewrite_cargo_lock(path, manifest_path, old_version, new_version)
+    else:
+        raise ChannelError(f"unsupported version site kind: {kind!r}")
+
+
 def apply_version(
     name: str,
     version: str,
@@ -293,27 +319,83 @@ def apply_version(
     changed: list[str] = []
     for site in component["buildVersionSites"]:
         path = repository_path(root, site["path"])
-        kind = site["kind"]
-        if kind == "plain":
-            if path.read_text(encoding="utf-8").strip() != old_version:
-                raise ChannelError(f"plain version site {site['path']} differs from {old_version}")
-            path.write_text(f"{version}\n", encoding="utf-8")
-        elif kind == "regex":
-            original = path.read_text(encoding="utf-8")
-            replacement = str(site["replacement"]).replace("{version}", version)
-            rewritten, count = re.subn(str(site["pattern"]), replacement, original)
-            if count != int(site["expectedMatches"]):
-                raise ChannelError(
-                    f"version site {site['path']} matched {count} times, "
-                    f"expected {site['expectedMatches']}"
-                )
-            path.write_text(rewritten, encoding="utf-8")
-        elif kind == "cargo-workspace-lock":
-            manifest = repository_path(root, site["manifestPath"])
-            _rewrite_cargo_lock(path, manifest, old_version, version)
-        else:
-            raise ChannelError(f"unsupported version site kind: {kind!r}")
+        manifest = (
+            repository_path(root, site["manifestPath"])
+            if site["kind"] == "cargo-workspace-lock"
+            else None
+        )
+        _rewrite_version_site(site, path, old_version, version, manifest_path=manifest)
         changed.append(str(site["path"]))
+    return changed
+
+
+def stage_versioned_tree(
+    name: str,
+    version: str,
+    source: str,
+    destination: str,
+    *,
+    registry_path: Path = DEFAULT_REGISTRY,
+    root: Path = ROOT,
+) -> list[str]:
+    """Copy one source tree and rewrite only its declared version sites."""
+    nightly_version(version)
+    component = component_descriptor(name, registry_path, root=root)
+    authority = repository_path(root, component["versionAuthorityFile"])
+    old_version = authority.read_text(encoding="utf-8").strip()
+    stable_version(old_version)
+    source_path = repository_path(root, source)
+    destination_path = repository_path(root, destination)
+    if not source_path.is_dir():
+        raise ChannelError(f"versioned tree source is not a directory: {source}")
+    if destination_path.exists():
+        raise ChannelError(f"versioned tree destination already exists: {destination}")
+    if destination_path.resolve().is_relative_to(source_path.resolve()):
+        raise ChannelError("versioned tree destination cannot be inside its source")
+
+    source_pure = PurePosixPath(source)
+    selected: list[tuple[Mapping[str, Any], PurePosixPath]] = []
+    for site in component["buildVersionSites"]:
+        try:
+            relative = PurePosixPath(str(site["path"])).relative_to(source_pure)
+        except ValueError:
+            continue
+        selected.append((site, relative))
+    if not selected:
+        raise ChannelError(
+            f"versioned tree {source!r} contains no declared buildVersionSites for {name}"
+        )
+
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        dir=destination_path.parent,
+        prefix=f".{destination_path.name}.stage-",
+    ) as temporary:
+        staged = Path(temporary) / destination_path.name
+        shutil.copytree(source_path, staged)
+        changed: list[str] = []
+        for site, relative in selected:
+            manifest = None
+            if site["kind"] == "cargo-workspace-lock":
+                try:
+                    manifest_relative = PurePosixPath(str(site["manifestPath"])).relative_to(
+                        source_pure
+                    )
+                except ValueError as error:
+                    raise ChannelError(
+                        f"cargo lock version site {site['path']} cannot be staged without "
+                        f"manifest {site['manifestPath']}"
+                    ) from error
+                manifest = staged / manifest_relative
+            _rewrite_version_site(
+                site,
+                staged / relative,
+                old_version,
+                version,
+                manifest_path=manifest,
+            )
+            changed.append(str(PurePosixPath(destination) / relative))
+        staged.rename(destination_path)
     return changed
 
 
@@ -407,12 +489,7 @@ def build_manifest(
     attribution_config_path: Path | None = None,
     github: release_attribution.GitHubClient | None = None,
 ) -> dict[str, Any]:
-    component = component_descriptor(
-        name,
-        registry_path,
-        root=root,
-        require_stable_state=False,
-    )
+    component = component_descriptor(name, registry_path, root=root)
     parsed = parse_tag(component, "nightly", tag)
     if parsed != version:
         raise ChannelError(f"tag version {parsed} differs from requested version {version}")
@@ -426,11 +503,7 @@ def build_manifest(
     if not base_sha:
         raise ChannelError(f"nightly attribution base has no commit: {previous_tag}")
     _git(root, "merge-base", "--is-ancestor", base_sha, source_sha)
-    registry = load_registry(
-        registry_path,
-        root=root,
-        require_stable_state=False,
-    )
+    registry = load_registry(registry_path, root=root)
     paths = sorted(
         {
             *(str(path) for path in component["changeDetectionPaths"]),
@@ -576,6 +649,12 @@ def parser() -> argparse.ArgumentParser:
     apply.add_argument("--component", required=True)
     apply.add_argument("--version", required=True)
 
+    stage = subparsers.add_parser("stage-versioned-tree")
+    stage.add_argument("--component", required=True)
+    stage.add_argument("--version", required=True)
+    stage.add_argument("--source", required=True)
+    stage.add_argument("--destination", required=True)
+
     plan = subparsers.add_parser("plan")
     plan.add_argument("--component", required=True)
     plan.add_argument("--source-sha", required=True)
@@ -625,6 +704,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "apply-version":
             for changed in apply_version(
                 args.component, args.version, registry_path=args.registry, root=root
+            ):
+                print(changed)
+        elif args.command == "stage-versioned-tree":
+            for changed in stage_versioned_tree(
+                args.component,
+                args.version,
+                args.source,
+                args.destination,
+                registry_path=args.registry,
+                root=root,
             ):
                 print(changed)
         elif args.command == "plan":

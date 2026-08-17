@@ -15,7 +15,6 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
-	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/keycloak"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -35,9 +34,10 @@ type Handlers struct {
 	UserAccounts    UserAccountService
 	WebhookVerifier WebhookVerifier
 
-	GitHubTrustPolicies githubtrust.Store
-
-	StateQueryExecutor StateQueryExecutor
+	// Features carries the database-backed dependencies (the state query
+	// executor and the GitHub trust policy store). It is a pointer because
+	// setupRouter copies Handlers by value; see features.go.
+	Features *Features
 
 	ChatAccess          config.ChatAccessMode
 	Conversations       chat.ConversationStore
@@ -57,6 +57,7 @@ type Handlers struct {
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 	return Handlers{
+		Features:     NewFeatures(),
 		Admin:        admin,
 		UserAccounts: admin,
 		GatewayCfg:   cfg.Gateway,

@@ -11,7 +11,8 @@ ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
 ARTIFACT_HISTORY_ROOT="${REPO_ROOT}/artifacts/cua-driver/macos-history"
 SOURCE_MARKER="${CUA_E2E_SOURCE_MARKER:-${REPO_ROOT}/.cua-e2e-source-sha}"
 SIGNING_KEYCHAIN="${CUA_E2E_SIGNING_KEYCHAIN:-${HOME}/Library/Keychains/cua-driver-signing.keychain-db}"
-SIGNING_CN="CuaDriver Local Signing (cua-driver-rs)"
+LOGIN_KEYCHAIN="${CUA_E2E_LOGIN_KEYCHAIN:-${HOME}/Library/Keychains/login.keychain-db}"
+SIGNING_CN="${CUA_E2E_SIGNING_CN:-CuaDriver Local Signing (cua-driver-rs)}"
 LOCAL_APP="/Applications/CuaDriverLocal.app"
 # install-local.sh intentionally uses a separate namespace from release installs.
 INSTALLED_BIN="${HOME}/.local/bin/cua-driver-local"
@@ -20,8 +21,8 @@ CUA_E2E_MACOS_DAEMON_SOCKET="${CUA_E2E_MACOS_DAEMON_SOCKET:-${HOME}/Library/Cach
 # A run-owned Cargo namespace keeps a certification build off the seed image's
 # and any other commit's target state without deleting a shared cache.
 CARGO_TARGET_ROOT="${CUA_E2E_CARGO_TARGET_ROOT:-${HOME}/Library/Caches/cua-driver-e2e/cargo-target}"
-# Only the shared web-action lanes honor cell and harness filters, so a targeted
-# retry always reruns that internal lane.
+# Shared web-action retries use the shared lane. The supported native SwiftUI
+# cells are routed to the native lane after argument validation.
 RETRY_INTERNAL_LANE=shared
 RETRY_ATTEMPTS_LIMIT=3
 # How long to wait for a daemon mode transition, in one-second polls.
@@ -30,7 +31,14 @@ DAEMON_MODE_WAIT_ATTEMPTS="${CUA_E2E_DAEMON_WAIT_ATTEMPTS:-10}"
 # single-cell rerun can reproduce. The embedded-browser lane is excluded on
 # purpose: filtering to one of its cells leaves the shared web-action lane with
 # no selected cells, which that lane reports as a failure of its own.
-RETRYABLE_LANES=(shared-app-matrix)
+RETRYABLE_LANES=(
+  shared-app-matrix
+  swiftui-harness_swiftui_smoke
+  swiftui-harness_swiftui_counter_background
+  swiftui-harness_swiftui_set_value_background
+  swiftui-harness_swiftui_popover_foreground
+  swiftui-harness_swiftui_verify_state
+)
 
 usage() {
   cat <<'EOF'
@@ -140,6 +148,20 @@ validate_arguments() {
     echo "--retry-only cannot be combined with --standalone-browser" >&2
     return 2
   fi
+
+  if [[ "${RETRY_CELL}" == macos-swiftui-* ]]; then
+    if [[ -n "${RETRY_HARNESS}" && "${RETRY_HARNESS}" != swiftui ]]; then
+      echo "${RETRY_CELL} belongs to the swiftui harness, not ${RETRY_HARNESS}" >&2
+      return 2
+    fi
+    RETRY_HARNESS=swiftui
+    RETRY_INTERNAL_LANE=native
+  elif [[ "${RETRY_HARNESS}" == swiftui ]]; then
+    echo "the swiftui harness requires a macos-swiftui-* retry cell" >&2
+    return 2
+  else
+    RETRY_INTERNAL_LANE=shared
+  fi
 }
 
 # Capture a command's full output before matching it. Piping a producer into
@@ -163,6 +185,30 @@ output_contains() {
     return 1
   fi
   [[ "${CAPTURED_OUTPUT}" == *"${needle}"* ]]
+}
+
+unlock_required_keychains() {
+  local keychain_password="${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}"
+  unset CUA_E2E_SIGNING_KEYCHAIN_PASSWORD
+
+  echo "[SIGNING] Unlocking the golden image's dedicated signing keychain"
+  if [[ -n "${keychain_password}" ]]; then
+    security unlock-keychain -p "${keychain_password}" "${SIGNING_KEYCHAIN}"
+  else
+    security unlock-keychain "${SIGNING_KEYCHAIN}"
+  fi
+
+  if [[ ! -f "${LOGIN_KEYCHAIN}" ]]; then
+    echo "Missing console user's login Keychain: ${LOGIN_KEYCHAIN}" >&2
+    return 2
+  fi
+  echo "[HISTORY] Unlocking the login Keychain for encrypted computer history"
+  if [[ -n "${keychain_password}" ]]; then
+    security unlock-keychain -p "${keychain_password}" "${LOGIN_KEYCHAIN}"
+  else
+    security unlock-keychain "${LOGIN_KEYCHAIN}"
+  fi
+  keychain_password=""
 }
 
 json_string_array() {
@@ -243,6 +289,7 @@ start_unrestricted_daemon() {
     serve \
     --permission-mode unrestricted \
     --dangerously-bypass-approvals \
+    --experimental-history \
     >/dev/null 2>&1
 }
 
@@ -459,6 +506,81 @@ run_full_matrix() {
   return "${status}"
 }
 
+history_hook_p99_ns() {
+  local label="$1"
+  local report="$2"
+  sed -nE "s/^${label}: .*p99=([0-9]+)ns .*$/\\1/p" "${report}"
+}
+
+run_history_hook_benchmark() {
+  local report="${ARTIFACT_DIR}/history-hook-benchmark.txt"
+  local accepted_p99 full_queue_p99
+  echo "[HISTORY] Measuring the synchronous producer hook"
+  (
+    cd "${RUST_ROOT}"
+    cargo run -p cua-driver-core --release --example history_hook_bench
+  ) 2>&1 | tee "${report}"
+  accepted_p99="$(history_hook_p99_ns accepted "${report}")"
+  full_queue_p99="$(history_hook_p99_ns full_queue "${report}")"
+  if [[ ! "${accepted_p99}" =~ ^[0-9]+$ ]] \
+      || [[ ! "${full_queue_p99}" =~ ^[0-9]+$ ]]; then
+    echo "Computer History hook benchmark did not emit parseable p99 results" >&2
+    return 1
+  fi
+  if ((accepted_p99 >= 1000000 || full_queue_p99 >= 1000000)); then
+    echo "Computer History hook p99 exceeded the 1 ms preview gate" >&2
+    return 1
+  fi
+  jq -n \
+    --arg schema 'cua-driver/history-hook-benchmark@v1' \
+    --argjson threshold_ns 1000000 \
+    --argjson accepted_p99_ns "${accepted_p99}" \
+    --argjson full_queue_p99_ns "${full_queue_p99}" \
+    '{schema: $schema, threshold_ns: $threshold_ns,
+      accepted_p99_ns: $accepted_p99_ns,
+      full_queue_p99_ns: $full_queue_p99_ns,
+      status: "pass"}' \
+    > "${ARTIFACT_DIR}/history-hook-benchmark.json"
+}
+
+restart_unrestricted_daemon() {
+  stop_unrestricted_watchdog
+  stop_worker_daemon
+  start_unrestricted_daemon
+  if ! wait_for_permission_mode unrestricted "${DAEMON_MODE_WAIT_ATTEMPTS}"; then
+    printf '%s\n' "${CAPTURED_OUTPUT}" >&2
+    echo "The macOS history gate could not restart its admitted daemon" >&2
+    return 1
+  fi
+  start_unrestricted_watchdog
+}
+
+run_computer_history_gate() {
+  local marker="${ARTIFACT_DIR}/history-continuity-marker.json"
+  local test_binary="computer_history_macos_test"
+  export CUA_TEST_DRIVER_BIN="${CARGO_TARGET_DIR}/release/cua-driver"
+  export CUA_E2E_HISTORY_MARKER="${marker}"
+
+  echo "[HISTORY] Recording one packaged action before daemon restart"
+  (
+    cd "${RUST_ROOT}"
+    cargo test -p cua-driver --release --test "${test_binary}" \
+      history_records_agent_action_before_restart -- \
+      --ignored --exact --nocapture --test-threads=1
+  ) 2>&1 | tee "${ARTIFACT_DIR}/history-before-restart.log"
+
+  echo "[HISTORY] Restarting the packaged daemon and reopening encrypted state"
+  restart_unrestricted_daemon
+  (
+    cd "${RUST_ROOT}"
+    cargo test -p cua-driver --release --test "${test_binary}" \
+      history_reopens_after_restart_and_cryptographically_purges -- \
+      --ignored --exact --nocapture --test-threads=1
+  ) 2>&1 | tee "${ARTIFACT_DIR}/history-after-restart.log"
+
+  run_history_hook_benchmark
+}
+
 RETRY_BUILD_DONE=0
 run_retry_matrix() {
   local status=0
@@ -651,14 +773,16 @@ if [[ ! -f "${SIGNING_KEYCHAIN}" ]]; then
   echo "Create the private seed according to tests/runners/macos-lume/README.md" >&2
   exit 2
 fi
-echo "[SIGNING] Unlocking the golden image's dedicated signing keychain"
-if [[ -n "${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}" ]]; then
-  security unlock-keychain -p "${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD}" "${SIGNING_KEYCHAIN}"
-  unset CUA_E2E_SIGNING_KEYCHAIN_PASSWORD
-else
-  security unlock-keychain "${SIGNING_KEYCHAIN}"
-fi
-if ! output_contains "\"${SIGNING_CN}\"" \
+unlock_required_keychains
+if [[ -n "${CUA_E2E_SIGNING_IDENTITY:-}" ]]; then
+  if [[ ! "${CUA_E2E_SIGNING_IDENTITY}" =~ ^[0-9A-Fa-f]{40}$ ]] \
+      || ! output_contains "${CUA_E2E_SIGNING_IDENTITY}" \
+        security find-identity -v -p codesigning "${SIGNING_KEYCHAIN}"; then
+    echo "The dedicated keychain does not contain the requested exact signing identity" >&2
+    exit 2
+  fi
+  export CUA_DRIVER_LOCAL_SIGNING_IDENTITY="${CUA_E2E_SIGNING_IDENTITY}"
+elif ! output_contains "\"${SIGNING_CN}\"" \
     security find-identity -v -p codesigning "${SIGNING_KEYCHAIN}"; then
   echo "The dedicated keychain has no valid ${SIGNING_CN} identity" >&2
   exit 2
@@ -781,6 +905,8 @@ if [[ "${RETRY_ONLY}" == 1 ]]; then
   echo "macOS retry-only run passed the authorized selection ${RETRY_CELL}"
   exit 0
 fi
+
+run_computer_history_gate
 
 echo "[E2E] Running the canonical macOS matrix"
 MATRIX_STATUS=0

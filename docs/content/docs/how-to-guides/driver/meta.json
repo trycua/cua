@@ -19,6 +19,7 @@
     "write-a-bounded-manifest",
     "personalize-cursor",
     "update",
+    "use-computer-history",
     "troubleshoot-stale-macos-permissions",
     "windows-ssh"
   ]

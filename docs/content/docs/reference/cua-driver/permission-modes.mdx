@@ -124,6 +124,11 @@ not open a Cua confirmation card for routine actions.
 Path canonicalization, browser-origin validation, process identity checks, and
 managed or user policy still apply when standard permits an operation.
 
+Driver-owned isolated browser preparation follows the selected mode and any
+optional capability manifest. Standard allows it as a routine operation,
+bounded requires it to match the manifest, and unrestricted relies on the
+launcher's dangerous acknowledgement.
+
 ## Existing logged-in Chromium profiles
 
 An existing profile can contain live cookies and authenticated sites. Standard
@@ -152,8 +157,6 @@ Other valid authorization paths are:
   `standard` a launch grant or trusted host decision is still required.
 - A `DriverAuthorizationHost` callback installed by an embedding application.
 - `unrestricted` mode with its dangerous acknowledgement.
-- The temporary `browser-approve` compatibility artifact when the trusted
-  launcher explicitly enables it.
 
 An MCP transport marker, model-supplied Boolean, environment variable, or
 ordinary tool argument is never an attachment grant.

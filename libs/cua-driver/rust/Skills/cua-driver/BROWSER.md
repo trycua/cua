@@ -107,18 +107,30 @@ Prefer an isolated profile when the task does not need the user's existing
 cookies or login state:
 
 ```bash
-# Direct CLI/raw clients mint this token interactively. MCP hosts can use their
-# destructive-tool approval flow instead.
-cua-driver browser-approve --pid 4242 --profile-mode isolated_new
-
 cua-driver browser_prepare \
-  '{"pid":4242,"session":"browser-run-1","allow_launch":true,
-    "profile":{"mode":"isolated_new"},"approval_token":"<token>"}'
+  '{"session":"browser-run-1","allow_launch":true,
+    "profile":{"mode":"isolated_new"}}'
 ```
+
+Isolated preparation follows the runtime permission mode and optional
+capability manifest. Standard mode treats it as routine, bounded mode requires
+a matching manifest, and unrestricted mode requires the launcher's dangerous
+acknowledgement. `allow_launch: true` states that this call may create the
+separate process; it does not widen runtime authorization.
+
+When `pid` is omitted, the driver uses only a platform-attested installation.
+On macOS and Windows it accepts vendor-signed system installations in this
+order: Google Chrome, then Microsoft Edge. On Linux it accepts exact
+root-owned, non-group/world-writable package payloads in this order: Google
+Chrome, Chromium, then Microsoft Edge. User application directories, `PATH`
+entries, redirected paths, and unsigned or mismatched products fail closed.
+Supply a Chromium-family browser pid when the isolated launch must use that
+process's exact executable, including Chromium on macOS or Windows. The pid
+remains required for existing-profile attachment.
 
 Use `isolated_named` with a path-safe `name` for a reusable driver-managed
 profile. Preparation launches a separate browser and never copies, modifies,
-or terminates the requested personal profile. The result returns a
+or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 

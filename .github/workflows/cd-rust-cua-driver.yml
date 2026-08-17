@@ -44,6 +44,8 @@ on:
         required: false
       TEAM_ID:
         required: false
+      CUA_DRIVER_PROVISIONING_PROFILE_BASE64:
+        required: false
       RELEASE_APP_ID:
         required: false
       RELEASE_APP_PRIVATE_KEY:
@@ -484,6 +486,50 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - name: Preflight Computer History provisioning profile
+        if: env.DO_NOTARIZE == 'true'
+        env:
+          CUA_DRIVER_PROVISIONING_PROFILE_BASE64: ${{ secrets.CUA_DRIVER_PROVISIONING_PROFILE_BASE64 }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          test "$TEAM_ID" = 'YCK386LBJ7' || {
+            echo "Cua Driver releases must use the pinned YCK386LBJ7 signing team" >&2
+            exit 1
+          }
+          test -n "$CUA_DRIVER_PROVISIONING_PROFILE_BASE64" || {
+            echo "Missing CUA_DRIVER_PROVISIONING_PROFILE_BASE64; restricted Keychain entitlement cannot be released" >&2
+            exit 1
+          }
+          printf '%s' "$CUA_DRIVER_PROVISIONING_PROFILE_BASE64" | base64 --decode \
+            > "$RUNNER_TEMP/CuaDriver.provisionprofile"
+          security cms -D -i "$RUNNER_TEMP/CuaDriver.provisionprofile" \
+            > "$RUNNER_TEMP/CuaDriver.provisioning-profile.plist"
+          python3 - <<'PY'
+          import datetime
+          import os
+          import plistlib
+
+          path = os.path.join(os.environ["RUNNER_TEMP"], "CuaDriver.provisioning-profile.plist")
+          with open(path, "rb") as handle:
+              profile = plistlib.load(handle)
+          team_id = "YCK386LBJ7"
+          expected = f"{team_id}.com.trycua.driver"
+          if team_id not in profile.get("TeamIdentifier", []):
+              raise SystemExit("Cua Driver provisioning profile does not match the pinned release team")
+          entitlements = profile.get("Entitlements", {})
+          if entitlements.get("com.apple.application-identifier") != expected:
+              raise SystemExit("Cua Driver provisioning profile does not match the release application identifier")
+          profile_groups = entitlements.get("keychain-access-groups")
+          if profile_groups not in ([expected], [f"{team_id}.*"]):
+              raise SystemExit("Cua Driver provisioning profile does not authorize the release keychain group")
+          expiry = profile.get("ExpirationDate")
+          now = datetime.datetime.now(datetime.timezone.utc)
+          if expiry is None or expiry.replace(tzinfo=datetime.timezone.utc) <= now:
+              raise SystemExit("Cua Driver provisioning profile is missing an active expiration date")
+          remaining = expiry.replace(tzinfo=datetime.timezone.utc) - now
+          if remaining < datetime.timedelta(days=30):
+              print(f"::warning::Cua Driver provisioning profile expires in {remaining.days} day(s)")
+          PY
       - name: Stage nightly artifact version
         if: inputs.channel == 'nightly'
         run: python3 .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
@@ -598,13 +644,27 @@ jobs:
             grep -A2 LC_RPATH | grep -Fq 'path @loader_path'
           test "$(otool -l release/universal/libcua_driver_sdk.dylib | \
             awk '/LC_BUILD_VERSION/{seen=1} seen && $1 == "minos" {print $2; exit}')" = '13.0'
-      - name: Codesign universal binary (hardened runtime)
+      - name: Codesign bare universal binary (hardened runtime)
         if: env.DO_NOTARIZE == 'true'
         working-directory: libs/cua-driver/rust
         env:
           DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
           TEAM_ID: ${{ secrets.TEAM_ID }}
         run: |
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          source = "scripts/CuaDriver.entitlements"
+          output = "release/CuaDriver.release.entitlements"
+          with open(source, "rb") as handle:
+              entitlements = plistlib.load(handle)
+          application_identifier = f"{os.environ['TEAM_ID']}.com.trycua.driver"
+          entitlements["com.apple.application-identifier"] = application_identifier
+          entitlements["keychain-access-groups"] = [application_identifier]
+          with open(output, "wb") as handle:
+              plistlib.dump(entitlements, handle, sort_keys=True)
+          PY
           IDENTITY="Developer ID Application: ${DEVELOPER_NAME} (${TEAM_ID})"
           codesign --force --timestamp --options runtime \
             --entitlements scripts/CuaDriver.entitlements \
@@ -614,6 +674,19 @@ jobs:
           codesign --force --timestamp --options runtime \
             --sign "$IDENTITY" release/universal/libcua_driver_sdk.dylib
           codesign --verify --strict --verbose=2 release/universal/cua-driver
+          codesign -d --entitlements - --xml release/universal/cua-driver \
+            > release/actual-cua-driver-entitlements.plist
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          with open("release/actual-cua-driver-entitlements.plist", "rb") as handle:
+              actual = plistlib.load(handle)
+          assert "com.apple.application-identifier" not in actual
+          assert "keychain-access-groups" not in actual
+          assert actual.get("com.apple.security.automation.apple-events") is True
+          assert actual.get("com.apple.security.device.screen-capture") is True
+          PY
           codesign --verify --strict --verbose=2 release/universal/cua-cursor-theme
           codesign --verify --strict --verbose=2 release/universal/libcua_driver_sdk.dylib
       - name: Assemble CuaDriver.app bundle
@@ -664,16 +737,80 @@ jobs:
           TEAM_ID: ${{ secrets.TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          CUA_DRIVER_PROVISIONING_PROFILE_BASE64: ${{ secrets.CUA_DRIVER_PROVISIONING_PROFILE_BASE64 }}
         run: |
           IDENTITY="Developer ID Application: ${DEVELOPER_NAME} (${TEAM_ID})"
 
-          # Sign the .app — `--deep` covers the embedded binary too, but
-          # since we already pre-signed the binary explicitly above this
-          # is essentially a no-op on the binary and a fresh signature
-          # on the bundle wrapper.
-          codesign --force --deep --timestamp --options runtime \
-            --entitlements scripts/CuaDriver.entitlements \
+          test -n "$CUA_DRIVER_PROVISIONING_PROFILE_BASE64" || {
+            echo "Missing CUA_DRIVER_PROVISIONING_PROFILE_BASE64; restricted Keychain entitlement cannot be released" >&2
+            exit 1
+          }
+          printf '%s' "$CUA_DRIVER_PROVISIONING_PROFILE_BASE64" | base64 --decode \
+            > release/CuaDriver.app/Contents/embedded.provisionprofile
+          security cms -D -i release/CuaDriver.app/Contents/embedded.provisionprofile \
+            > release/CuaDriver.provisioning-profile.plist
+          python3 - <<'PY'
+          import datetime
+          import os
+          import plistlib
+
+          with open("release/CuaDriver.provisioning-profile.plist", "rb") as handle:
+              profile = plistlib.load(handle)
+          expected = f"{os.environ['TEAM_ID']}.com.trycua.driver"
+          entitlements = profile.get("Entitlements", {})
+          assert os.environ["TEAM_ID"] in profile.get("TeamIdentifier", [])
+          assert entitlements.get("com.apple.application-identifier") == expected
+          assert entitlements.get("keychain-access-groups") in (
+              [expected],
+              [f"{os.environ['TEAM_ID']}.*"],
+          )
+          expiry = profile.get("ExpirationDate")
+          assert expiry is not None and expiry.replace(tzinfo=datetime.timezone.utc) > datetime.datetime.now(datetime.timezone.utc)
+          PY
+
+          # Sign the bundle/main executable without --deep. Nested code was
+          # pre-signed above and must not inherit the main executable's
+          # restricted application/keychain entitlements.
+          codesign --force --timestamp --options runtime \
+            --entitlements release/CuaDriver.release.entitlements \
             --sign "$IDENTITY" release/CuaDriver.app
+          codesign --verify --strict --verbose=2 release/CuaDriver.app
+          codesign -d --entitlements - --xml \
+            release/CuaDriver.app/Contents/MacOS/cua-driver \
+            > release/actual-packaged-cua-driver-entitlements.plist
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          with open("release/actual-packaged-cua-driver-entitlements.plist", "rb") as handle:
+              actual = plistlib.load(handle)
+          expected = f"{os.environ['TEAM_ID']}.com.trycua.driver"
+          assert actual.get("com.apple.application-identifier") == expected
+          assert actual.get("keychain-access-groups") == [expected]
+          with open("release/CuaDriver.provisioning-profile.plist", "rb") as handle:
+              profile_entitlements = plistlib.load(handle).get("Entitlements", {})
+          assert actual.get("com.apple.application-identifier") == profile_entitlements.get("com.apple.application-identifier")
+          assert profile_entitlements.get("keychain-access-groups") in (
+              [expected],
+              [f"{os.environ['TEAM_ID']}.*"],
+          )
+          PY
+          codesign -d --entitlements - --xml \
+            release/CuaDriver.app/Contents/MacOS/cua-cursor-theme \
+            > release/actual-packaged-cursor-entitlements.plist
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          path = "release/actual-packaged-cursor-entitlements.plist"
+          if os.path.getsize(path) == 0:
+              actual = {}
+          else:
+              with open(path, "rb") as handle:
+                  actual = plistlib.load(handle)
+          assert "com.apple.application-identifier" not in actual
+          assert "keychain-access-groups" not in actual
+          PY
           codesign --verify --strict --verbose=2 release/CuaDriver.app
 
           # notarytool wants a zip (or .dmg / .pkg). Build one next to

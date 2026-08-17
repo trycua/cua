@@ -50,7 +50,7 @@ client = FleetSdk::CyclopsClient.connect(FleetSdk::CyclopsConfiguration.new(base
 pool = client.create_pool(FleetSdk::CreatePoolRequest.new(namespace: 'default', spec: spec))
 claim = client.create_claim(FleetSdk::CreateClaimRequest.new(pool: pool, spec: FleetSdk::ClaimSpec.new(sandbox_template_ref: FleetSdk::SandboxTemplateRef.new(name: pool.metadata.name), warmpool: nil, bind_deadline: nil, lifecycle: nil)))
 sandbox = client.wait_claim(claim)
-service = client.service_request(sandbox, 'mcp', '/mcp', FleetSdk::HttpRequest.new(method: 'POST', url: 'https://ignored.invalid/mcp', headers: [], body: '{"offline":true}'.b, timeout_secs: nil))
+service = client.service_request(sandbox, 'mcp', '/mcp', FleetSdk::HttpRequestBuilder.new.method('POST').url('https://ignored.invalid/mcp').headers([]).body('{"offline":true}'.b).build)
 client.delete_claim(claim)
 client.delete_pool(pool)
 transport.assert_exhausted!

@@ -43,13 +43,13 @@ func (h Handlers) ListGitHubTrustPolicies(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusUnauthorized, "missing user")
 		return
 	}
-	if h.GitHubTrustPolicies == nil {
+	if h.Features.TrustStore() == nil {
 		writeErr(w, http.StatusServiceUnavailable, "github trust policies are not configured")
 		return
 	}
 	ctx, cancel := databaseContext(r.Context())
 	defer cancel()
-	policies, err := h.GitHubTrustPolicies.List(ctx, user.ID)
+	policies, err := h.Features.TrustStore().List(ctx, user.ID)
 	if err != nil {
 		writeGitHubTrustStoreErr(w, err, "failed to list github trust policies")
 		return
@@ -71,7 +71,7 @@ func (h Handlers) CreateGitHubTrustPolicy(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusUnauthorized, "missing user")
 		return
 	}
-	if h.GitHubTrustPolicies == nil {
+	if h.Features.TrustStore() == nil {
 		writeErr(w, http.StatusServiceUnavailable, "github trust policies are not configured")
 		return
 	}
@@ -88,7 +88,7 @@ func (h Handlers) CreateGitHubTrustPolicy(w http.ResponseWriter, r *http.Request
 	policy.OwnerSub = user.ID
 	ctx, cancel := databaseContext(r.Context())
 	defer cancel()
-	if err := h.GitHubTrustPolicies.Create(ctx, policy); err != nil {
+	if err := h.Features.TrustStore().Create(ctx, policy); err != nil {
 		writeGitHubTrustStoreErr(w, err, "failed to create github trust policy")
 		return
 	}
@@ -101,14 +101,14 @@ func (h Handlers) UpdateGitHubTrustPolicy(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusUnauthorized, "missing user")
 		return
 	}
-	if h.GitHubTrustPolicies == nil {
+	if h.Features.TrustStore() == nil {
 		writeErr(w, http.StatusServiceUnavailable, "github trust policies are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	ctx, cancel := databaseContext(r.Context())
 	defer cancel()
-	current, err := h.GitHubTrustPolicies.Get(ctx, user.ID, id)
+	current, err := h.Features.TrustStore().Get(ctx, user.ID, id)
 	if err != nil {
 		writeGitHubTrustStoreErr(w, err, "failed to load github trust policy")
 		return
@@ -148,7 +148,7 @@ func (h Handlers) UpdateGitHubTrustPolicy(w http.ResponseWriter, r *http.Request
 	policy.ID = current.ID
 	policy.OwnerSub = current.OwnerSub
 	policy.CreatedAt = current.CreatedAt
-	if err := h.GitHubTrustPolicies.Update(ctx, policy); err != nil {
+	if err := h.Features.TrustStore().Update(ctx, policy); err != nil {
 		if errors.Is(err, githubtrust.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, "github trust policy not found")
 			return
@@ -165,13 +165,13 @@ func (h Handlers) DeleteGitHubTrustPolicy(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusUnauthorized, "missing user")
 		return
 	}
-	if h.GitHubTrustPolicies == nil {
+	if h.Features.TrustStore() == nil {
 		writeErr(w, http.StatusServiceUnavailable, "github trust policies are not configured")
 		return
 	}
 	ctx, cancel := databaseContext(r.Context())
 	defer cancel()
-	found, err := h.GitHubTrustPolicies.Delete(ctx, user.ID, r.PathValue("id"))
+	found, err := h.Features.TrustStore().Delete(ctx, user.ID, r.PathValue("id"))
 	if err != nil {
 		writeGitHubTrustStoreErr(w, err, "failed to delete github trust policy")
 		return
@@ -183,6 +183,10 @@ func (h Handlers) DeleteGitHubTrustPolicy(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// NewGitHubTrustResolver binds a resolver to one store. Production wiring uses
+// NewGitHubTrustResolverFor instead, so the store can be installed after
+// startup; this remains for tests that exercise the resolver against a fixed
+// store.
 func NewGitHubTrustResolver(store githubtrust.Store) auth.GitHubTrustResolver {
 	if store == nil {
 		return nil

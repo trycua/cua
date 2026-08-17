@@ -14,13 +14,10 @@ use crate::protocol::{Content, ToolResult};
 use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
-use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{
-    BrowserVisualActionKind, PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy,
-};
+use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
@@ -584,11 +581,15 @@ impl BrowserPrepareTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_prepare".into(),
-            description: "Explicitly prepare an owned DevTools endpoint for a browser \
-                pid. Existing endpoints are detected without side effects. Acting setup \
-                for an isolated profile requires host approval or a short-lived setup \
-                token plus allow_launch=true. It launches a separate browser and never \
-                copies, modifies, or terminates the requested user profile. Existing-profile \
+            description: "Explicitly prepare an owned DevTools endpoint for a browser. \
+                pid is required for an existing process or existing-profile attachment, \
+                and optional only for allow_launch=true with an isolated profile. Existing \
+                endpoints are detected without side effects. Acting setup \
+                for an isolated profile follows the runtime permission mode and optional \
+                capability manifest. It requires allow_launch=true, launches a separate browser, and never \
+                copies, modifies, or terminates the requested user profile. Without pid, only a \
+                platform-attested system Chrome/Edge installation (or a root-owned package \
+                payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile \
                 attachment is explicit and follows the runtime's immutable permission mode: \
                 standard requires an explicit --grant existing-profile launch grant or an \
                 embedding authorization host, bounded requires a launch-approved exact resource \
@@ -603,12 +604,8 @@ impl BrowserPrepareTool {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Browser process id to prepare." },
+                    "pid": { "type": "integer", "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true." },
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
-                    "approval_token": {
-                        "type": "string",
-                        "description": "Legacy single-use setup token. Existing-profile use is disabled unless a trusted launcher explicitly enables the same-user-writable compatibility path."
-                    },
                     "allow_launch": {
                         "type": "boolean",
                         "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false)."
@@ -632,7 +629,22 @@ impl BrowserPrepareTool {
                     },
                     "session": schema_session(),
                 },
-                "required": ["pid"],
+                "required": [],
+                "anyOf": [
+                    { "required": ["pid"] },
+                    {
+                        "required": ["allow_launch", "profile"],
+                        "properties": {
+                            "allow_launch": { "const": true },
+                            "profile": {
+                                "required": ["mode"],
+                                "properties": {
+                                    "mode": { "enum": ["isolated_new", "isolated_named"] }
+                                }
+                            }
+                        }
+                    }
+                ],
                 "additionalProperties": true
             }),
             read_only: false,
@@ -651,10 +663,6 @@ impl Tool for BrowserPrepareTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.require_i64("pid") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
         let session = match require_explicit_session(&args) {
             Ok(session) => session,
             Err(error) => return error,
@@ -679,27 +687,29 @@ impl Tool for BrowserPrepareTool {
                 }
             },
         };
-        let approval_token = args.opt_str("approval_token");
-        let authorization = if strategy == Some(PrepareStrategy::ExistingProfile) {
-            approval_token.map(PrepareAuthorization::ApprovalArtifact)
-        } else if args
-            .get(MCP_HOST_APPROVAL_ARG)
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            Some(PrepareAuthorization::McpHost)
-        } else {
-            approval_token.map(PrepareAuthorization::ApprovalArtifact)
+        let allow_launch = args.opt_bool("allow_launch").unwrap_or(false);
+        let pid = match args.get("pid") {
+            None => None,
+            Some(_) => match args.require_i64("pid") {
+                Ok(pid) => Some(pid),
+                Err(error) => return error,
+            },
         };
+        let pid_optional = strategy.is_none() && profile.is_some() && allow_launch;
+        if pid.is_none() && !pid_optional {
+            return match args.require_i64("pid") {
+                Ok(_) => unreachable!("pid was already parsed"),
+                Err(error) => error,
+            };
+        }
         let request = PrepareRequest {
             pid,
             window_id: args.opt_u64("window_id"),
             session,
             transport_session: args.opt_str("_transport_session_id"),
-            authorization,
             strategy,
             profile,
-            allow_launch: args.opt_bool("allow_launch").unwrap_or(false),
+            allow_launch,
         };
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
@@ -2617,7 +2627,7 @@ mod tests {
             .expect("browser_prepare properties");
         assert!(!prepare_properties.contains_key("consent"));
         assert!(!prepare_properties.contains_key("allow_restart"));
-        assert!(!prepare_properties.contains_key(MCP_HOST_APPROVAL_ARG));
+        assert!(!prepare_properties.contains_key("approval_token"));
 
         let dialog = BrowserDialogTool::new(e.clone());
         assert_eq!(
@@ -2826,7 +2836,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prepare_requires_non_forgeable_approval_for_acting_setup() {
+    async fn isolated_prepare_uses_runtime_authorization_without_a_token() {
         let tool = BrowserPrepareTool::new(engine());
         let result = tool
             .invoke(json!({
@@ -2838,47 +2848,72 @@ mod tests {
             .await;
         assert_eq!(
             structured(&result)["refusal"]["code"],
-            "browser_consent_required"
+            "browser_route_unavailable"
         );
     }
 
     #[tokio::test]
-    async fn ordinary_mcp_marker_never_approves_an_existing_profile() {
+    async fn isolated_launch_accepts_omitted_pid() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "session": "pid-free-isolated-run"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_profile_still_requires_pid() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-profile-without-pid"
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        let body = serde_json::to_string(&result.content).expect("serialize tool error");
+        assert!(
+            body.contains("Missing required integer field: pid"),
+            "{body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_profile_requires_runtime_authorization() {
         let tool = BrowserPrepareTool::new(engine());
         let result = tool
             .invoke(json!({
                 "pid": 1,
                 "window_id": 7,
                 "strategy": { "kind": "existing_profile" },
-                "session": "existing-profile-run",
-                MCP_HOST_APPROVAL_ARG: true
+                "session": "existing-profile-run"
             }))
             .await;
         let structured = structured(&result);
         assert_eq!(structured["refusal"]["code"], "browser_consent_required");
-        assert!(structured["refusal"]["detail"]["approval_request_id"]
-            .as_str()
-            .is_some());
+        assert_eq!(
+            structured["refusal"]["detail"]["authorization_required"],
+            true
+        );
     }
 
     #[tokio::test]
     async fn existing_strategy_conflicts_fail_before_platform_setup() {
         let tool = BrowserPrepareTool::new(engine());
-        let token = crate::browser::approval::mint_existing_profile_approval(
-            crate::browser::approval::ExistingProfileApprovalScope {
-                pid: 1,
-                window_id: 7,
-                session: "existing-conflict".to_owned(),
-            },
-        )
-        .unwrap();
         let result = tool
             .invoke(json!({
                 "pid": 1,
                 "window_id": 7,
                 "strategy": { "kind": "existing_profile" },
                 "profile": { "mode": "isolated_new" },
-                "approval_token": token,
                 "session": "existing-conflict"
             }))
             .await;

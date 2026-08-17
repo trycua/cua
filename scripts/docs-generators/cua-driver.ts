@@ -11,7 +11,7 @@
  *   npx tsx scripts/docs-generators/cua-driver.ts --check  # Check for drift (CI mode)
  */
 
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -113,6 +113,8 @@ const CUA_DRIVER_BIN = path.join(
 const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'reference', 'cua-driver');
 const TAG_PREFIX = 'cua-driver-rs-v';
 
+export type GitRunner = (command: string, args: readonly string[]) => string;
+
 // ============================================================================
 // Version Discovery
 // ============================================================================
@@ -141,22 +143,59 @@ function resolveCargoCommand(): string {
   throw new Error('cargo not found on PATH; install Rust or set CARGO=/path/to/cargo');
 }
 
+function runGit(command: string, args: readonly string[]): string {
+  return execFileSync(command, [...args], {
+    encoding: 'utf-8',
+    cwd: ROOT_DIR,
+  });
+}
+
 /**
- * Get the latest released version from git tags.
+ * Select the highest stable semantic version from Cua Driver release tags.
+ * Nightlies use their own `nightly-cua-driver-rs-v` prefix and must not affect
+ * the version recorded in stable reference docs.
  */
-export function getLatestReleasedVersion(): string {
-  try {
-    const output = execSync(`git tag | grep "^${TAG_PREFIX}" | sort -V | tail -1`, {
-      encoding: 'utf-8',
-      cwd: ROOT_DIR,
-    }).trim();
-    if (output) {
-      return output.replace(TAG_PREFIX, '');
+export function selectLatestReleasedVersion(tags: readonly string[]): string | undefined {
+  const versions = tags.flatMap((tag) => {
+    const match = tag.match(/^cua-driver-rs-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+    if (!match) return [];
+
+    return [
+      {
+        version: tag.slice(TAG_PREFIX.length),
+        parts: [BigInt(match[1]), BigInt(match[2]), BigInt(match[3])] as const,
+      },
+    ];
+  });
+
+  versions.sort((a, b) => {
+    for (let index = 0; index < a.parts.length; index += 1) {
+      if (a.parts[index] < b.parts[index]) return -1;
+      if (a.parts[index] > b.parts[index]) return 1;
     }
-  } catch {
-    // Fall through
+    return 0;
+  });
+
+  return versions.at(-1)?.version;
+}
+
+/** Get the latest stable released version from git tags. */
+export function getLatestReleasedVersion(git: GitRunner = runGit): string {
+  let output: string;
+  try {
+    output = git('git', ['tag', '--list', `${TAG_PREFIX}*`]);
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : '';
+    throw new Error(`Failed to list Cua Driver release tags with git${detail}`);
   }
-  return '0.0.0';
+
+  const version = selectLatestReleasedVersion(output.split(/\r?\n/).filter(Boolean));
+  if (!version) {
+    throw new Error(
+      `No stable Cua Driver release tag matching ${TAG_PREFIX}<major>.<minor>.<patch> was found`
+    );
+  }
+  return version;
 }
 
 // ============================================================================
@@ -289,9 +328,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion:
   lines.push(escapeMdxText(docs.abstract) + ' Install via the official script:');
   lines.push('');
   lines.push('```sh');
-  lines.push(
-    'curl -fsSL https://cua.ai/driver/install.sh | bash'
-  );
+  lines.push('curl -fsSL https://cua.ai/driver/install.sh | bash');
   lines.push('```');
   lines.push('');
   lines.push(
@@ -603,7 +640,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
   lines.push('');
   lines.push('<Callout type="info">');
   lines.push(
-    "  **Runtime ownership.** On Windows and Linux, bare `cua-driver mcp` owns its SDK runtime directly and shuts it down on stdin EOF. On macOS it proxies to the installed `CuaDriver.app` daemon so AX and Screen Recording grants retain the app-bundle identity. Passing `--socket` selects an explicit daemon/service endpoint on every platform. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance."
+    '  **Runtime ownership.** On Windows and Linux, bare `cua-driver mcp` owns its SDK runtime directly and shuts it down on stdin EOF. On macOS it proxies to the installed `CuaDriver.app` daemon so AX and Screen Recording grants retain the app-bundle identity. Passing `--socket` selects an explicit daemon/service endpoint on every platform. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance.'
   );
   lines.push('</Callout>');
   lines.push('');
@@ -669,12 +706,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
     },
     {
       title: 'Maintenance tools',
-      tools: [
-        'check_permissions',
-        'health_report',
-        'check_for_update',
-        'install_ffmpeg',
-      ],
+      tools: ['check_permissions', 'health_report', 'check_for_update', 'install_ffmpeg'],
     },
   ];
 
@@ -870,7 +902,9 @@ function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
 // Run
 // ============================================================================
 
-main().catch((error) => {
-  console.error('Error:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('Error:', error);
+    process.exit(1);
+  });
+}

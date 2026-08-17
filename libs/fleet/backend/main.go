@@ -334,7 +334,14 @@ func run() error {
 	h.WorkloadAdmin = workloadAdmin
 	h.WorkloadAudience = cfg.Keycloak.WorkloadAudience
 	h.WorkloadTokenURL = cfg.Keycloak.WorkloadTokenURL
-	initializeDatabaseFeatures(ctx, cfg.Database, &h, defaultDatabaseFeatureDependencies())
+	// Install the trust resolver once, bound to the feature registry rather
+	// than to a store instance: auth keeps it in an unguarded package global
+	// that every request reads, so rewriting it from the retry goroutine below
+	// would be a data race.
+	auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolverFor(h.Features))
+	databaseFeatures := defaultDatabaseFeatureDependencies()
+	progress := initializeDatabaseFeatures(ctx, cfg.Database, &h, databaseFeatures)
+	go retryDatabaseFeatures(ctx, cfg.Database, &h, databaseFeatures, progress, databaseRetryInterval)
 
 	if cfg.Chat.Access.Enabled() {
 		h.Conversations = chat.NewMemoryConversationStore()
@@ -351,7 +358,11 @@ func run() error {
 	return nil
 }
 
-const databaseStartupTimeout = 5 * time.Second
+const (
+	databaseStartupTimeout = 5 * time.Second
+	// How often a degraded pod re-attempts its database dependencies.
+	databaseRetryInterval = 30 * time.Second
+)
 
 type databaseFeatureDependencies struct {
 	requireVersion        func(context.Context, string, int64) error
@@ -369,43 +380,125 @@ func defaultDatabaseFeatureDependencies() databaseFeatureDependencies {
 	}
 }
 
-func initializeDatabaseFeatures(parent context.Context, cfg config.DatabaseConfiguration, h *handlers.Handlers, dependencies databaseFeatureDependencies) {
-	h.StateQueryExecutor = nil
-	h.GitHubTrustPolicies = nil
-	auth.SetGitHubTrustResolver(nil)
+// featureProgress records which database-backed dependencies are up, so a
+// retry only re-attempts what is still missing. Re-running the whole
+// initialization would clear a working state query executor every time it
+// retried a broken application database.
+type featureProgress struct {
+	stateQuery    bool
+	applicationDB bool
+}
 
-	if cfg.StateQueryDSN != "" && cfg.StateQueryTenantPassword != "" {
+func (p featureProgress) ready() bool { return p.stateQuery && p.applicationDB }
+
+// initializeDatabaseFeatures is the startup path: it clears anything stale and
+// installs whatever is configured, reporting what came up.
+func initializeDatabaseFeatures(parent context.Context, cfg config.DatabaseConfiguration, h *handlers.Handlers, dependencies databaseFeatureDependencies) featureProgress {
+	h.Features.SetStateQuery(nil)
+	h.Features.SetTrustStore(nil)
+
+	return attemptDatabaseFeatures(parent, cfg, h, dependencies, featureProgress{})
+}
+
+// attemptDatabaseFeatures installs whatever is configured and not already up,
+// leaving working dependencies untouched so it is safe to call repeatedly.
+func attemptDatabaseFeatures(parent context.Context, cfg config.DatabaseConfiguration, h *handlers.Handlers, dependencies databaseFeatureDependencies, progress featureProgress) featureProgress {
+	// The state query executor has its own DSN and its own failure path: it is
+	// initialized before the DATABASE_URL short-circuit below and a failure
+	// here does not stop the rest of this function, so it needs its own gauge.
+	// Reporting it through DatabaseFeaturesReady would claim a healthy
+	// /api/state/query whenever the application database came up fine.
+	switch {
+	case cfg.StateQueryDSN == "" || cfg.StateQueryTenantPassword == "":
+		metrics.StateQueryReady.WithLabelValues("false").Set(1)
+		progress.stateQuery = true
+	case progress.stateQuery:
+		// Already up; leave it alone.
+	default:
 		executor, err := dependencies.newStateQueryExecutor(cfg.StateQueryDSN, cfg.StateQueryTenantPassword)
 		if err != nil {
 			slog.Error("kubernetes state query: executor init failed; /api/state/query will return 503", "err", err)
+			metrics.StateQueryReady.WithLabelValues("true").Set(0)
 		} else {
-			h.StateQueryExecutor = executor
+			h.Features.SetStateQuery(executor)
+			metrics.StateQueryReady.WithLabelValues("true").Set(1)
+			progress.stateQuery = true
 			slog.Info("kubernetes state query: query endpoint enabled")
 		}
 	}
 
 	if cfg.URL == "" {
 		slog.Info("postgres-backed features disabled (DATABASE_URL unset)")
-		return
+		metrics.DatabaseFeaturesReady.WithLabelValues("false").Set(1)
+		progress.applicationDB = true
+		return progress
+	}
+	if progress.applicationDB {
+		return progress
 	}
 
+	// Every path below reports through this gauge. Readiness stays
+	// database-independent by design, so this metric is the only way an
+	// operator learns that a serving pod came up degraded.
+	metrics.DatabaseFeaturesReady.WithLabelValues("true").Set(0)
+
+	// Deliberately the same budget on the retry path: a database that cannot
+	// answer within databaseStartupTimeout is still down as far as this pod is
+	// concerned, and a longer budget would only stretch the tick.
 	ctx, cancel := context.WithTimeout(parent, databaseStartupTimeout)
 	defer cancel()
 
 	if err := dependencies.requireVersion(ctx, cfg.URL, 1); err != nil {
 		slog.Error("postgres database schema unavailable; database-backed routes will return 503", "err", err)
-		return
+		return progress
 	}
 	slog.Info("postgres database schema ready", "version", 1)
 
 	store, err := dependencies.newGitHubTrustStore(ctx, cfg.URL)
 	if err != nil {
 		slog.Error("github trust policies: init failed; /api/github-trust-policies will return 503", "err", err)
-		return
+		return progress
 	}
 	if store != nil {
-		h.GitHubTrustPolicies = store
-		auth.SetGitHubTrustResolver(handlers.NewGitHubTrustResolver(store))
+		h.Features.SetTrustStore(store)
 		slog.Info("github trust policies: enabled")
+	}
+
+	metrics.DatabaseFeaturesReady.WithLabelValues("true").Set(1)
+	progress.applicationDB = true
+	return progress
+}
+
+// retryDatabaseFeatures re-attempts the dependencies that did not come up at
+// startup until they do, then stops. Without it a pod that started during a
+// database outage stays degraded until someone restarts it: initialization runs
+// once, and the serving tier deliberately keeps the pod Ready throughout, so
+// nothing else would ever notice.
+//
+// This is only reachable because the dependencies live behind handlers.Features
+// rather than in the Handlers copy the router captured.
+//
+// ctx is run()'s context.Background(), which nothing cancels today, so in
+// production this goroutine ends with the process. The ctx.Done() case is for
+// tests, and for the day run() grows a real shutdown context.
+func retryDatabaseFeatures(ctx context.Context, cfg config.DatabaseConfiguration, h *handlers.Handlers, dependencies databaseFeatureDependencies, progress featureProgress, interval time.Duration) {
+	if progress.ready() {
+		return
+	}
+	slog.Warn("database features degraded at startup; retrying in the background", "interval", interval)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			progress = attemptDatabaseFeatures(ctx, cfg, h, dependencies, progress)
+			if progress.ready() {
+				slog.Info("database features recovered without a restart")
+				return
+			}
+		}
 	}
 }

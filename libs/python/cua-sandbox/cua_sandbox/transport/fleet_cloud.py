@@ -21,7 +21,7 @@ from cua_sandbox._config import (
 )
 from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
-from cua_sandbox.transport.fleet import FleetTransport
+from cua_sandbox.transport.fleet import FleetTransport, build_http_request
 from fleet_sdk import (
     AccessTokenProvider,
     AccessTokenProviderError,
@@ -53,6 +53,10 @@ logger = logging.getLogger(__name__)
 
 _DNS_LABEL_MAX_LENGTH = 63
 _CLAIM_HASH_LENGTH = 16
+# Bounds each readiness probe so one stalled /status round-trip cannot eat the
+# whole wait_service_ready deadline. Ignored by cua-fleet <= 0.1.8, whose
+# native client applies the same 30-second default.
+_READINESS_PROBE_TIMEOUT_SECS = 30
 
 
 def _claim_name(pool_name: str) -> str:
@@ -308,8 +312,10 @@ class _FleetClient:
                 sandbox,
                 service,
                 "/status",
-                HttpRequest(
-                    method="GET", url="https://service.invalid/status", headers=[], body=None
+                build_http_request(
+                    method="GET",
+                    url="https://service.invalid/status",
+                    timeout_secs=_READINESS_PROBE_TIMEOUT_SECS,
                 ),
             )
             if 200 <= response.status < 500:

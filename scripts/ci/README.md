@@ -111,6 +111,14 @@ Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
 creates a pure Wayland session with Xwayland disabled and delegates every
 scenario to `run-rust-e2e.sh`.
 
+The manually dispatched `sway-xwayland` capture lane uses the same wrapper with
+XWayland forced on. Its capture contract places a real repo-owned GTK3 X11
+fixture on inactive workspace 98, keeps an unrelated Wayland sentinel on the
+active output, and requires `get_window_state` to return
+`surface_identity_unproven` without screenshot bytes or a file. Sway IPC and
+the fixture accessibility state are external focus, workspace, and mutation
+oracles for that targeted regression.
+
 Run the nested compositor wrapper through
 `nix develop .#cua-driver-inject-e2e`. This environment is experimental and
 proves only the private compositor-owned route. Use `run-rust-e2e-desktop.sh`

@@ -122,7 +122,7 @@ func TestListGitHubTrustPolicies_Success(t *testing.T) {
 		}},
 	}
 
-	h := Handlers{GitHubTrustPolicies: store, AuthCfg: authConfigForHandlers()}
+	h := Handlers{Features: FeaturesWith(nil, store), AuthCfg: authConfigForHandlers()}
 	r := httptest.NewRequest(http.MethodGet, "/api/github-trust-policies", nil)
 	r = withUser(r, &auth.User{ID: "user-123", AZP: "cyclops-cs-spa"})
 	w := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestListGitHubTrustPolicies_Success(t *testing.T) {
 
 func TestCreateGitHubTrustPolicy_ValidatesAndPersists(t *testing.T) {
 	store := &fakeGitHubTrustStore{}
-	h := Handlers{GitHubTrustPolicies: store}
+	h := Handlers{Features: FeaturesWith(nil, store)}
 	body := `{"name":"ci","repository":"trycua/cloud","allowed_namespaces":["ns-b","ns-a","ns-a"],"enabled":true}`
 	r := httptest.NewRequest(http.MethodPost, "/api/github-trust-policies", bytes.NewBufferString(body))
 	r = withUser(r, &auth.User{ID: "user-123", AZP: "cyclops-cs-spa"})
@@ -174,7 +174,7 @@ func TestCreateGitHubTrustPolicy_ValidatesAndPersists(t *testing.T) {
 
 func TestPatchGitHubTrustPolicy_NotFound(t *testing.T) {
 	store := &fakeGitHubTrustStore{}
-	h := Handlers{GitHubTrustPolicies: store}
+	h := Handlers{Features: FeaturesWith(nil, store)}
 	r := httptest.NewRequest(http.MethodPatch, "/api/github-trust-policies/missing", bytes.NewBufferString(`{"enabled":false}`))
 	r.SetPathValue("id", "missing")
 	r = withUser(r, &auth.User{ID: "user-123", AZP: "cyclops-cs-spa"})
@@ -189,7 +189,7 @@ func TestPatchGitHubTrustPolicy_NotFound(t *testing.T) {
 
 func TestDeleteGitHubTrustPolicy_Success(t *testing.T) {
 	store := &fakeGitHubTrustStore{deleteFound: true}
-	h := Handlers{GitHubTrustPolicies: store}
+	h := Handlers{Features: FeaturesWith(nil, store)}
 	r := httptest.NewRequest(http.MethodDelete, "/api/github-trust-policies/policy-1", nil)
 	r.SetPathValue("id", "policy-1")
 	r = withUser(r, &auth.User{ID: "user-123", AZP: "cyclops-cs-spa"})
@@ -220,7 +220,7 @@ func TestGitHubTrustPolicies_DisabledStore(t *testing.T) {
 
 func TestGitHubTrustPolicies_StoreError(t *testing.T) {
 	store := &fakeGitHubTrustStore{listErr: errors.New("redis down")}
-	h := Handlers{GitHubTrustPolicies: store}
+	h := Handlers{Features: FeaturesWith(nil, store)}
 	r := httptest.NewRequest(http.MethodGet, "/api/github-trust-policies", nil)
 	r = withUser(r, &auth.User{ID: "user-123", AZP: "cyclops-cs-spa"})
 	w := httptest.NewRecorder()
@@ -272,7 +272,7 @@ func TestGitHubTrustPoliciesUseBoundedDatabaseContext(t *testing.T) {
 			response := httptest.NewRecorder()
 			start := time.Now()
 
-			test.call(Handlers{GitHubTrustPolicies: store}, response, request)
+			test.call(Handlers{Features: FeaturesWith(nil, store)}, response, request)
 
 			assertBoundedDatabaseContext(t, test.context(store), start)
 			if test.name == "update" {
@@ -389,7 +389,7 @@ func TestGitHubTrustPolicies_DatabaseFailuresReturnServiceUnavailable(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := &fakeGitHubTrustStore{listErr: test.err}
-			h := Handlers{GitHubTrustPolicies: store}
+			h := Handlers{Features: FeaturesWith(nil, store)}
 			request := withUser(httptest.NewRequest(http.MethodGet, "/api/github-trust-policies", nil), &auth.User{ID: "user-123"})
 			response := httptest.NewRecorder()
 
@@ -404,7 +404,7 @@ func TestGitHubTrustPolicies_DatabaseFailuresReturnServiceUnavailable(t *testing
 
 func TestGitHubTrustPolicies_PostgresErrorsRemainInternalServerErrors(t *testing.T) {
 	store := &fakeGitHubTrustStore{listErr: &pgconn.PgError{Code: "42501", Message: "permission denied"}}
-	h := Handlers{GitHubTrustPolicies: store}
+	h := Handlers{Features: FeaturesWith(nil, store)}
 	request := withUser(httptest.NewRequest(http.MethodGet, "/api/github-trust-policies", nil), &auth.User{ID: "user-123"})
 	response := httptest.NewRecorder()
 
@@ -421,7 +421,7 @@ func TestUpdateGitHubTrustPolicySharesDatabaseBudget(t *testing.T) {
 		AllowedNamespaces: []string{"ns-a"}, Enabled: true,
 	}
 	store := &fakeGitHubTrustStore{getResult: policy}
-	h := Handlers{GitHubTrustPolicies: store}
+	h := Handlers{Features: FeaturesWith(nil, store)}
 	request := withUser(httptest.NewRequest(http.MethodPatch, "/api/github-trust-policies/policy-1", bytes.NewBufferString(`{"enabled":false}`)), &auth.User{ID: "user-123"})
 	request.SetPathValue("id", "policy-1")
 	response := httptest.NewRecorder()

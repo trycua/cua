@@ -15,6 +15,8 @@ cua-driver-core = { path = "../cua-driver-core" }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
+zeroize = { workspace = true }
+getrandom = { workspace = true }
 # IndexMap gives the keyed cursor render collection deterministic
 # insertion-ordered iteration = stable per-session cursor z-order frame to
 # frame (mirrors platform-macos's per-session overlay).
@@ -24,6 +26,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-rs = "0.3.5"
+keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
 image = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
@@ -81,3 +84,7 @@ windows = { version = "0.58", features = [
     "Win32_System_WinRT_Graphics_Capture",
 ] }
 base64 = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }
+tempfile = "3"

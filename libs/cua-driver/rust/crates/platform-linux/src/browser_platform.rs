@@ -1,14 +1,16 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
+    PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -72,6 +74,40 @@ fn browser_product(identity: &str) -> BrowserProduct {
     } else {
         BrowserProduct::Other
     }
+}
+
+fn isolated_browser_candidates() -> Vec<PathBuf> {
+    // These are the root-managed payload locations of supported Linux
+    // packages, not PATH shims. Core additionally rejects symlinked paths, so
+    // an isolated-launch grant cannot be redirected to a user-controlled file.
+    [
+        "/opt/google/chrome/google-chrome",
+        "/usr/lib/chromium/chromium",
+        "/usr/lib/chromium-browser/chromium-browser",
+        "/opt/microsoft/msedge/msedge",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
+    if !executable.is_absolute() {
+        return false;
+    }
+    let mut current = Some(executable);
+    while let Some(path) = current {
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0
+        {
+            return false;
+        }
+        current = path.parent();
+    }
+    std::fs::metadata(executable)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {
@@ -388,6 +424,21 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for LinuxBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        for candidate in isolated_browser_candidates() {
+            let Ok(executable) = select_isolated_browser_executable([candidate]) else {
+                continue;
+            };
+            if trusted_root_owned_installation(std::path::Path::new(&executable)) {
+                return Ok(executable);
+            }
+        }
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "no root-owned, non-writable system Chromium executable is available for isolated launch",
+        ))
+    }
+
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
     }
@@ -1035,7 +1086,13 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -1055,6 +1112,30 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_browser_candidates_use_only_root_managed_payloads() {
+        let candidates = isolated_browser_candidates();
+        assert!(candidates.iter().all(|candidate| candidate.is_absolute()));
+        assert_eq!(
+            candidates,
+            [
+                "/opt/google/chrome/google-chrome",
+                "/usr/lib/chromium/chromium",
+                "/usr/lib/chromium-browser/chromium-browser",
+                "/opt/microsoft/msedge/msedge",
+            ]
+            .map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn user_owned_writable_candidate_is_not_a_trusted_installation() {
+        let root = tempfile::tempdir().expect("temporary untrusted installation");
+        let executable = root.path().join("google-chrome");
+        std::fs::write(&executable, b"not a browser").expect("untrusted executable fixture");
+        assert!(!trusted_root_owned_installation(&executable));
+    }
 
     #[test]
     fn proc_net_parser_returns_only_loopback_listeners() {

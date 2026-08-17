@@ -11,7 +11,7 @@ from fleet_sdk import (
     CyclopsConfiguration,
     CyclopsCredentials,
     HttpHeader,
-    HttpRequest,
+    HttpRequestBuilder,
     OsGymSandboxTemplateSpec,
     OsGymSandboxWarmPoolSpec,
     SandboxService,
@@ -70,16 +70,17 @@ async def initialize_mcp(client: CyclopsClient, sandbox) -> int:
             sandbox,
             "mcp",
             "/mcp",
-            HttpRequest(
-                method="POST",
-                url="https://ignored.invalid/mcp",
-                headers=[
+            HttpRequestBuilder()
+            .method("POST")
+            .url("https://ignored.invalid/mcp")
+            .headers(
+                [
                     HttpHeader(name="accept", value="application/json, text/event-stream"),
                     HttpHeader(name="content-type", value="application/json"),
-                ],
-                body=body,
-                timeout_secs=None,
-            ),
+                ]
+            )
+            .body(body)
+            .build(),
         )
         if 200 <= response.status < 300:
             return response.status

@@ -93,6 +93,11 @@ jobs:
       - name: Run Windows app-name lookup tests
         working-directory: libs/cua-driver/rust
         run: "cargo test -p platform-windows launch_uwp::tests:: --lib --locked"
+      - name: Run Windows Computer History adapter tests
+        working-directory: libs/cua-driver/rust
+        run: "cargo test -p platform-windows history::tests:: --lib --locked"
+      - name: Validate Windows Computer History uninstall ordering
+        run: .\libs\cua-driver\scripts\tests\uninstall-windows-history-regression.ps1
       - name: Prove unknown app launch stays bounded and responsive
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --test protocol_tools_call_test launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive --locked -- --exact --nocapture"

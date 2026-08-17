@@ -9,6 +9,7 @@ import subprocess
 import pytest
 from jsonschema import Draft202012Validator
 
+import github_release
 import release_channels
 from release_channels import (
     ChannelError,
@@ -20,7 +21,9 @@ from release_channels import (
     load_registry,
     parse_tag,
     plan_nightly,
+    repository_path,
     render_nightly_body,
+    stage_versioned_tree,
 )
 
 
@@ -265,7 +268,7 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
     assert plan["attributionBaseTag"] == plan["previousNightlyTag"]
 
 
-def test_manifest_accepts_an_artifact_tree_with_staged_nightly_versions(
+def test_manifest_uses_stable_authority_with_a_separately_versioned_asset_tree(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     registry, root = copy_version_fixture(tmp_path, "cua-driver-rs")
@@ -277,10 +280,22 @@ def test_manifest_accepts_an_artifact_tree_with_staged_nightly_versions(
     git(root, "tag", "cua-driver-rs-v0.19.3")
     source_sha = git(root, "rev-parse", "HEAD")
     version = "0.19.4-nightly.20260812.42"
-    apply_version("cua-driver-rs", version, registry_path=registry, root=root)
+    source_skill = root / "libs/cua-driver/rust/Skills/cua-driver/SKILL.md"
+    source_before = source_skill.read_text(encoding="utf-8")
+    staged = root / "release-stage/cua-driver-skills"
+    changed = stage_versioned_tree(
+        "cua-driver-rs",
+        version,
+        "libs/cua-driver/rust/Skills/cua-driver",
+        "release-stage/cua-driver-skills",
+        registry_path=registry,
+        root=root,
+    )
 
-    with pytest.raises(ChannelError, match="authority is not a stable version"):
-        load_registry(registry, root=root)
+    assert changed == ["release-stage/cua-driver-skills/SKILL.md"]
+    assert source_skill.read_text(encoding="utf-8") == source_before
+    assert version in (staged / "SKILL.md").read_text(encoding="utf-8")
+    load_registry(registry, root=root)
 
     assets = root / "release-upload"
     assets.mkdir()
@@ -307,6 +322,25 @@ def test_manifest_accepts_an_artifact_tree_with_staged_nightly_versions(
         "version": version,
         "tag": f"nightly-cua-driver-rs-v{version}",
     }
+
+    with pytest.raises(ChannelError, match="destination already exists"):
+        stage_versioned_tree(
+            "cua-driver-rs",
+            version,
+            "libs/cua-driver/rust/Skills/cua-driver",
+            "release-stage/cua-driver-skills",
+            registry_path=registry,
+            root=root,
+        )
+    with pytest.raises(ChannelError, match="contains no declared buildVersionSites"):
+        stage_versioned_tree(
+            "cua-driver-rs",
+            version,
+            ".github",
+            "release-stage/metadata",
+            registry_path=registry,
+            root=root,
+        )
 
 
 def test_nightly_manifest_reuses_pr_attribution_and_renders_contributors(tmp_path: Path):
@@ -380,3 +414,285 @@ def test_nightly_manifest_reuses_pr_attribution_and_renders_contributors(tmp_pat
     assert "never replace stable" in body
     assert "[#42](https://github.com/trycua/cua/pull/42)" in body
     assert body.count("@nightly-contributor") == 2
+
+
+class RehearsalGitHub:
+    def __init__(self, source_sha: str, title: str) -> None:
+        self.source_sha = source_sha
+        self.title = title
+
+    def pulls_for_commit(self, repository: str, commit_sha: str):
+        assert repository == "trycua/cua"
+        assert commit_sha == self.source_sha
+        return [
+            {
+                "number": 42,
+                "merge_commit_sha": commit_sha,
+                "merged_at": "2026-08-12T12:00:00Z",
+            }
+        ]
+
+    def pull(self, repository: str, number: int):
+        assert repository == "trycua/cua"
+        assert number == 42
+        return {
+            "number": 42,
+            "title": self.title,
+            "user": {"login": "nightly-contributor"},
+            "author_association": "NONE",
+            "body": "",
+            "labels": [],
+            "merge_commit_sha": self.source_sha,
+            "merged_at": "2026-08-12T12:00:00Z",
+        }
+
+    def issue(self, repository: str, number: int):
+        raise AssertionError(f"unexpected issue lookup for {repository}#{number}")
+
+
+class RehearsalReleaseApi:
+    def __init__(self, source_sha: str) -> None:
+        self.source_sha = source_sha
+        self.release = None
+        self.assets = []
+        self.posts = []
+        self.patches = []
+        self.uploads = []
+
+    def get(self, path: str):
+        if "/releases?" in path:
+            return [self.release] if self.release else []
+        if "/git/ref/tags/nightly-" in path:
+            return {"object": {"type": "commit", "sha": self.source_sha}}
+        if path.endswith("/assets?per_page=100&page=1"):
+            return list(self.assets)
+        if "/commits/" in path:
+            return {"sha": path.rsplit("/", 1)[1]}
+        raise AssertionError(path)
+
+    def post(self, path: str, body: dict):
+        self.posts.append((path, body))
+        self.release = {
+            "id": 8,
+            "tag_name": body["tag_name"],
+            "draft": body["draft"],
+            "prerelease": body["prerelease"],
+            "body": body["body"],
+            "target_commitish": body["target_commitish"],
+            "upload_url": "https://uploads.example/releases/8/assets{?name,label}",
+            "html_url": f"https://github.com/trycua/cua/releases/tag/{body['tag_name']}",
+        }
+        return self.release
+
+    def upload(self, url: str, path: Path):
+        self.uploads.append((url, path.name))
+        self.assets.append(
+            {
+                "id": len(self.assets) + 1,
+                "name": path.name,
+                "state": "uploaded",
+                "size": path.stat().st_size,
+            }
+        )
+
+    def patch(self, path: str, body: dict):
+        self.patches.append((path, body))
+        self.release.update(body)
+        return self.release
+
+    def delete(self, path: str):
+        raise AssertionError(f"unexpected asset deletion: {path}")
+
+
+@pytest.mark.parametrize(
+    ("component_name", "change_path", "stage_source", "title"),
+    [
+        (
+            "cua-driver-rs",
+            "libs/cua-driver/rust/nightly-rehearsal.txt",
+            "libs/cua-driver/rust/Skills/cua-driver",
+            "fix(cua-driver): rehearse nightly publication",
+        ),
+        (
+            "lume",
+            "libs/lume/nightly-rehearsal.txt",
+            "libs/lume/src",
+            "fix(lume): rehearse nightly publication",
+        ),
+    ],
+)
+def test_nightly_transaction_rehearses_plan_stage_manifest_publish_and_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    component_name: str,
+    change_path: str,
+    stage_source: str,
+    title: str,
+):
+    registry_path, root = copy_version_fixture(tmp_path, component_name)
+    attribution_config = root / ".github/release-attribution-config.json"
+    attribution_config.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / ".github/release-attribution-config.json", attribution_config)
+
+    git(root, "init")
+    git(root, "config", "user.name", "Release Rehearsal")
+    git(root, "config", "user.email", "release-rehearsal@example.com")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "chore: seed stable release fixture")
+    component = component_descriptor(component_name, registry_path, root=root)
+    stable_version = repository_path(root, component["versionAuthorityFile"]).read_text().strip()
+    stable_tag = format_tag(component, "stable", stable_version)
+    git(root, "tag", stable_tag)
+
+    if component_name == "cua-driver-rs":
+        installer = root / "libs/cua-driver/scripts/install.sh"
+        installer.parent.mkdir(parents=True, exist_ok=True)
+        installer.write_text("# stable installer state\n", encoding="utf-8")
+        git(root, "add", str(installer.relative_to(root)))
+        git(
+            root,
+            "commit",
+            "-m",
+            f"chore(cua-driver): advance published installer version to {stable_version} [skip ci]",
+        )
+
+    changed = root / change_path
+    changed.parent.mkdir(parents=True, exist_ok=True)
+    changed.write_text("nightly transaction change\n", encoding="utf-8")
+    git(root, "add", change_path)
+    git(root, "commit", "-m", f"{title} (#42)")
+    source_sha = git(root, "rev-parse", "HEAD")
+
+    monkeypatch.setattr(release_channels, "ROOT", root)
+    releases_path = root / "published-releases.json"
+    releases_path.write_text("[]\n", encoding="utf-8")
+    plan_path = root / "release-plan.json"
+    assert (
+        release_channels.main(
+            [
+                "--registry",
+                str(registry_path),
+                "plan",
+                "--component",
+                component_name,
+                "--source-sha",
+                source_sha,
+                "--date",
+                "20260812",
+                "--run",
+                "42",
+                "--releases",
+                str(releases_path),
+                "--output",
+                str(plan_path),
+            ]
+        )
+        == 0
+    )
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["shouldBuild"] is True
+    assert plan["attributionBaseTag"] == stable_tag
+
+    stage_destination = f"release-stage/{component_name}"
+    assert (
+        release_channels.main(
+            [
+                "--registry",
+                str(registry_path),
+                "stage-versioned-tree",
+                "--component",
+                component_name,
+                "--version",
+                plan["version"],
+                "--source",
+                stage_source,
+                "--destination",
+                stage_destination,
+            ]
+        )
+        == 0
+    )
+    assert repository_path(root, component["versionAuthorityFile"]).read_text().strip() == (
+        stable_version
+    )
+    staged_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (root / stage_destination).rglob("*")
+        if path.is_file()
+    )
+    assert plan["version"] in staged_text
+    assets = root / "release-upload"
+    assets.mkdir()
+    (assets / f"{component_name}.tar.gz").write_bytes(b"nightly artifact")
+    monkeypatch.setattr(
+        release_channels.release_attribution,
+        "GitHubClient",
+        lambda *_args: RehearsalGitHub(source_sha, title),
+    )
+    manifest_path = root / "release-manifest.json"
+    assert (
+        release_channels.main(
+            [
+                "--registry",
+                str(registry_path),
+                "manifest",
+                "--component",
+                component_name,
+                "--version",
+                plan["version"],
+                "--tag",
+                plan["tag"],
+                "--source-sha",
+                source_sha,
+                "--previous-tag",
+                plan["attributionBaseTag"],
+                "--asset-dir",
+                str(assets),
+                "--repository",
+                "trycua/cua",
+                "--output",
+                str(manifest_path),
+            ]
+        )
+        == 0
+    )
+    body_path = root / "release-body.md"
+    assert (
+        release_channels.main(
+            [
+                "render-nightly",
+                "--manifest",
+                str(manifest_path),
+                "--body",
+                str(body_path),
+            ]
+        )
+        == 0
+    )
+    shutil.copy2(manifest_path, assets / "release-manifest.json")
+
+    api = RehearsalReleaseApi(source_sha)
+    monkeypatch.setattr(github_release, "GitHubApi", lambda *_args, **_kwargs: api)
+    publish_args = [
+        "--repository",
+        "trycua/cua",
+        "--tag",
+        plan["tag"],
+        "--sha",
+        source_sha,
+        "--body",
+        str(body_path),
+        "--asset-dir",
+        str(assets),
+        "--channel",
+        "nightly",
+        "--create-if-missing",
+        "--prerelease",
+    ]
+    assert github_release.main(publish_args) == 0
+    first_counts = (len(api.posts), len(api.uploads), len(api.patches))
+    assert github_release.main(publish_args) == 0
+
+    assert api.release["draft"] is False
+    assert api.release["prerelease"] is True
+    assert first_counts == (len(api.posts), len(api.uploads), len(api.patches))

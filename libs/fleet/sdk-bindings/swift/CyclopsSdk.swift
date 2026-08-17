@@ -4232,6 +4232,8 @@ public enum SdkError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     case ClaimFailed(phase: String, status: String
     )
     case ClaimTimeout
+    case PoolAccessDenied(operation: String, namespace: String, status: UInt16, body: String
+    )
 
 
 
@@ -4295,6 +4297,12 @@ public struct FfiConverterTypeSdkError: FfiConverterRustBuffer {
             status: try FfiConverterString.read(from: &buf)
             )
         case 10: return .ClaimTimeout
+        case 11: return .PoolAccessDenied(
+            operation: try FfiConverterString.read(from: &buf),
+            namespace: try FfiConverterString.read(from: &buf),
+            status: try FfiConverterUInt16.read(from: &buf),
+            body: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4360,6 +4368,14 @@ public struct FfiConverterTypeSdkError: FfiConverterRustBuffer {
 
         case .ClaimTimeout:
             writeInt(&buf, Int32(10))
+
+
+        case let .PoolAccessDenied(operation,namespace,status,body):
+            writeInt(&buf, Int32(11))
+            FfiConverterString.write(operation, into: &buf)
+            FfiConverterString.write(namespace, into: &buf)
+            FfiConverterUInt16.write(status, into: &buf)
+            FfiConverterString.write(body, into: &buf)
 
         }
     }

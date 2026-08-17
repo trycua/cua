@@ -42,6 +42,7 @@ impl CyclopsClient {
             &[200, 201, 202],
         )
         .await
+        .map_err(|error| SdkError::deny_pool_access(&template.metadata.namespace, error))
     }
 
     pub async fn list_templates(
@@ -105,6 +106,7 @@ impl CyclopsClient {
             &[200],
         )
         .await
+        .map_err(|error| SdkError::deny_pool_access(&template.metadata.namespace, error))
     }
 
     pub async fn delete_template(self: Arc<Self>, template: Template) -> Result<(), SdkError> {
@@ -119,6 +121,7 @@ impl CyclopsClient {
             &[200, 202, 204, 404],
         )
         .await
+        .map_err(|error| SdkError::deny_pool_access(&template.metadata.namespace, error))
     }
 }
 

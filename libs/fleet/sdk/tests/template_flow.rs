@@ -2,7 +2,7 @@ mod support;
 
 use cyclops_sdk::{
     CreateTemplateRequest, CyclopsClient, CyclopsConfiguration, CyclopsCredentials, HttpHeader,
-    HttpResponse, ResourceMetadata, Template,
+    HttpResponse, ResourceMetadata, SdkError, Template,
 };
 use std::sync::Arc;
 use support::ScriptedHttpClient;
@@ -88,6 +88,81 @@ async fn reconcile_template_keeps_a_pull_secret_the_desired_spec_asks_for() {
         body["spec"]["vmTemplate"]["imagePullSecret"],
         "ecr-credentials"
     );
+}
+
+#[tokio::test]
+async fn reconcile_template_update_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &template(None))),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+
+    let error = client(Arc::clone(&http))
+        .reconcile_template(create_request(None))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ref body,
+        } if operation == "update template"
+            && namespace == NAMESPACE
+            && body == "k8s request is not allowed"
+    ));
+    let message = error.to_string();
+    assert!(message.contains("globally unique"));
+    assert!(message.contains("https://discord.gg/mVnXXpdE85"));
+}
+
+#[tokio::test]
+async fn create_template_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+
+    let error = client(Arc::clone(&http))
+        .create_template(create_request(None))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "create template" && namespace == NAMESPACE
+    ));
+}
+
+#[tokio::test]
+async fn delete_template_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+
+    let error = client(Arc::clone(&http))
+        .delete_template(template(None))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "delete template" && namespace == NAMESPACE
+    ));
 }
 
 fn client(http: Arc<ScriptedHttpClient>) -> Arc<CyclopsClient> {

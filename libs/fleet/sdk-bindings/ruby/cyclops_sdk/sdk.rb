@@ -1331,6 +1331,14 @@ class RustBufferStream
     if variant == 10
         return SdkError::ClaimTimeout.new
     end
+    if variant == 11
+        return SdkError::PoolAccessDenied.new(
+            readString(),
+            readString(),
+            readU16(),
+            readString()
+        )
+    end
 
     raise InternalError, 'Unexpected variant tag for TypeSdkError'
   end
@@ -2265,6 +2273,22 @@ module SdkError
 
     def to_s
      "#{self.class.name}()"
+    end
+  end
+  class PoolAccessDenied < StandardError
+    def initialize(operation, namespace, status, body)
+        @operation = operation
+        @namespace = namespace
+        @status = status
+        @body = body
+        super()
+      end
+
+    attr_reader :operation, :namespace, :status, :body
+
+
+    def to_s
+     "#{self.class.name}(operation=#{@operation.inspect}, namespace=#{@namespace.inspect}, status=#{@status.inspect}, body=#{@body.inspect})"
     end
   end
 

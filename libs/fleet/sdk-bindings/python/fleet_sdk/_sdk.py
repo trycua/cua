@@ -3350,6 +3350,23 @@ class SdkError:  # type: ignore
         def __repr__(self):
             return "SdkError.ClaimTimeout({})".format(str(self))
     _UniffiTempSdkError.ClaimTimeout = ClaimTimeout # type: ignore
+    class PoolAccessDenied(_UniffiTempSdkError):
+
+        def __init__(self, operation, namespace, status, body):
+            super().__init__(", ".join([
+                "operation={!r}".format(operation),
+                "namespace={!r}".format(namespace),
+                "status={!r}".format(status),
+                "body={!r}".format(body),
+            ]))
+            self.operation = operation
+            self.namespace = namespace
+            self.status = status
+            self.body = body
+
+        def __repr__(self):
+            return "SdkError.PoolAccessDenied({})".format(str(self))
+    _UniffiTempSdkError.PoolAccessDenied = PoolAccessDenied # type: ignore
 
 SdkError = _UniffiTempSdkError # type: ignore
 del _UniffiTempSdkError
@@ -3404,6 +3421,13 @@ class _UniffiFfiConverterTypeSdkError(_UniffiConverterRustBuffer):
         if variant == 10:
             return SdkError.ClaimTimeout(
             )
+        if variant == 11:
+            return SdkError.PoolAccessDenied(
+                _UniffiFfiConverterString.read(buf),
+                _UniffiFfiConverterString.read(buf),
+                _UniffiFfiConverterUInt16.read(buf),
+                _UniffiFfiConverterString.read(buf),
+            )
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
@@ -3443,6 +3467,12 @@ class _UniffiFfiConverterTypeSdkError(_UniffiConverterRustBuffer):
             return
         if isinstance(value, SdkError.ClaimTimeout):
             return
+        if isinstance(value, SdkError.PoolAccessDenied):
+            _UniffiFfiConverterString.check_lower(value.operation)
+            _UniffiFfiConverterString.check_lower(value.namespace)
+            _UniffiFfiConverterUInt16.check_lower(value.status)
+            _UniffiFfiConverterString.check_lower(value.body)
+            return
 
     @staticmethod
     def write(value, buf):
@@ -3481,6 +3511,12 @@ class _UniffiFfiConverterTypeSdkError(_UniffiConverterRustBuffer):
             _UniffiFfiConverterString.write(value.status, buf)
         if isinstance(value, SdkError.ClaimTimeout):
             buf.write_i32(10)
+        if isinstance(value, SdkError.PoolAccessDenied):
+            buf.write_i32(11)
+            _UniffiFfiConverterString.write(value.operation, buf)
+            _UniffiFfiConverterString.write(value.namespace, buf)
+            _UniffiFfiConverterUInt16.write(value.status, buf)
+            _UniffiFfiConverterString.write(value.body, buf)
 
 class _UniffiFfiConverterBoolean:
     @classmethod

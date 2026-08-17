@@ -7052,6 +7052,20 @@ sealed class SdkException: kotlin.Exception() {
             get() = ""
     }
 
+    class PoolAccessDenied(
+
+        val `operation`: kotlin.String,
+
+        val `namespace`: kotlin.String,
+
+        val `status`: kotlin.UShort,
+
+        val `body`: kotlin.String
+        ) : SdkException() {
+        override val message
+            get() = "operation=${ `operation` }, namespace=${ `namespace` }, status=${ `status` }, body=${ `body` }"
+    }
+
 
 
 
@@ -7105,6 +7119,12 @@ public object FfiConverterTypeSdkError : FfiConverterRustBuffer<SdkException> {
                 FfiConverterString.read(buf),
                 )
             10 -> SdkException.ClaimTimeout()
+            11 -> SdkException.PoolAccessDenied(
+                FfiConverterString.read(buf),
+                FfiConverterString.read(buf),
+                FfiConverterUShort.read(buf),
+                FfiConverterString.read(buf),
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -7166,6 +7186,14 @@ public object FfiConverterTypeSdkError : FfiConverterRustBuffer<SdkException> {
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
             )
+            is SdkException.PoolAccessDenied -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`operation`)
+                + FfiConverterString.allocationSize(value.`namespace`)
+                + FfiConverterUShort.allocationSize(value.`status`)
+                + FfiConverterString.allocationSize(value.`body`)
+            )
         }
     }
 
@@ -7224,6 +7252,14 @@ public object FfiConverterTypeSdkError : FfiConverterRustBuffer<SdkException> {
             }
             is SdkException.ClaimTimeout -> {
                 buf.putInt(10)
+                Unit
+            }
+            is SdkException.PoolAccessDenied -> {
+                buf.putInt(11)
+                FfiConverterString.write(value.`operation`, buf)
+                FfiConverterString.write(value.`namespace`, buf)
+                FfiConverterUShort.write(value.`status`, buf)
+                FfiConverterString.write(value.`body`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }

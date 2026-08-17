@@ -2542,6 +2542,14 @@ pub fn run_history_cmd(
                 println!(
                     "Controls: history pause | resume | status | list | disable | delete --yes"
                 );
+                // An MCP host that connected while history was unadmitted owns a
+                // direct in-process runtime for its whole lifetime, and that
+                // runtime never registers the history hook. Its actions are
+                // dropped silently while every status surface reports ready, so
+                // say so here rather than let the operator infer it. See #3220.
+                println!(
+                    "Reconnect any agent session that was already connected: sessions started before now do not record actions."
+                );
             } else {
                 println!("{}", serde_json::to_string_pretty(&value).unwrap());
             }

@@ -14,9 +14,9 @@ use cua_driver_core::browser::platform::{
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -108,6 +108,34 @@ fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
     }
     std::fs::metadata(executable)
         .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
+}
+
+fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole {
+    let helper = std::fs::read(format!("/proc/{pid}/cmdline"))
+        .ok()
+        .is_some_and(|bytes| {
+            bytes.split(|byte| *byte == 0).any(|arg| {
+                arg.starts_with(b"--type=") && arg.get(7..).is_some_and(|kind| !kind.is_empty())
+            })
+        });
+    if helper {
+        BrowserProcessRole::Helper
+    } else if product == BrowserProduct::Electron {
+        BrowserProcessRole::EmbeddedApplication
+    } else if matches!(
+        product,
+        BrowserProduct::GoogleChrome
+            | BrowserProduct::Chromium
+            | BrowserProduct::MicrosoftEdge
+            | BrowserProduct::Brave
+            | BrowserProduct::Vivaldi
+            | BrowserProduct::Opera
+            | BrowserProduct::Arc
+    ) {
+        BrowserProcessRole::StandaloneConsumer
+    } else {
+        BrowserProcessRole::Unknown
+    }
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {
@@ -335,6 +363,7 @@ fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusa
     Ok(Some(OwnedEndpoint {
         ws_url: format!("ws://127.0.0.1:{port}{path}"),
         http_port: Some(port),
+        transport: EndpointTransport::DevToolsActivePort,
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
             owner_pid: pid,
@@ -486,6 +515,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             product_kind,
             product: Some(process.name),
             channel: None,
+            process_role: process_role_for_pid(pid, product_kind),
             supports_cdp: chromium,
         })
     }
@@ -692,9 +722,6 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        if let Some(endpoint) = active_port_endpoint(pid)? {
-            return Ok(Some(endpoint));
-        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -708,6 +735,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 return Ok(Some(OwnedEndpoint {
                     ws_url,
                     http_port: Some(port),
+                    transport: EndpointTransport::LegacyJsonVersion,
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::ListeningSocketPid,
                         owner_pid: pid,
@@ -746,6 +774,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             [(port, ws_url)] => Ok(Some(OwnedEndpoint {
                 ws_url: ws_url.clone(),
                 http_port: Some(*port),
+                transport: EndpointTransport::LegacyJsonVersion,
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: pid,
@@ -771,6 +800,15 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 "the approved existing-profile endpoint is not loopback-only",
             ));
         };
+        if let Some(endpoint) = active_port_endpoint(pid)? {
+            if endpoint.ws_url != expected_ws_url {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the browser's exact DevTools endpoint changed after approval",
+                ));
+            }
+            return Ok(Some(endpoint));
+        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -785,6 +823,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: expected_ws_url.to_owned(),
             http_port: Some(port),
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -910,6 +949,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     break Ok(OwnedEndpoint {
                         ws_url: ws_url.clone(),
                         http_port: Some(*port),
+                        transport: EndpointTransport::LegacyJsonVersion,
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,

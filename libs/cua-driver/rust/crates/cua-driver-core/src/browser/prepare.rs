@@ -559,6 +559,7 @@ async fn wait_for_spawned_endpoint(
                         return Ok(OwnedEndpoint {
                             ws_url: format!("ws://127.0.0.1:{port}{path}"),
                             http_port: Some(port),
+                            transport: super::types::EndpointTransport::SpawnedExact,
                             ownership: EndpointOwnershipProof {
                                 method: EndpointOwnershipMethod::SpawnedByDriver,
                                 owner_pid: i64::from(child.id()),
@@ -606,6 +607,7 @@ async fn attest_spawned_endpoint(
                 return Ok(OwnedEndpoint {
                     ws_url: live.ws_url,
                     http_port: live.http_port,
+                    transport: super::types::EndpointTransport::SpawnedExact,
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::SpawnedByDriver,
                         // The platform already proved the exact listener is in

@@ -28,9 +28,12 @@ binding.
 </Callout>
 
 First use `list_apps` and `list_windows` as usual, then call
-`get_browser_state` with the selected native `(pid, window_id)`. If that browser
-already exposes an owned loopback DevTools endpoint, the driver binds it without
-changing the browser.
+`get_browser_state` with the selected native `(pid, window_id)`. Driver-owned
+profiles and supported embedded applications can bind through an exact owned
+endpoint. A standalone Chrome or Edge profile still requires explicit
+existing-profile approval, even when the browser already exposes a loopback
+DevTools endpoint. In that case, `get_browser_state` returns
+`browser_consent_required` with `next_action: browser_prepare`.
 
 Do not pass remote-debugging flags or a user-data directory through
 `launch_app`. Cua Driver rejects those flags because they could expose a
@@ -141,6 +144,12 @@ browser_prepare({
   "strategy": {"kind": "existing_profile"}
 })
 ```
+
+On Chrome 144 and later, the approved preparation flow can attach through the
+running profile's agent auto-connect endpoint. It does not restart Chrome, so
+the profile keeps its current tabs, extensions, cookies, and sign-in state.
+The endpoint proves which browser owns the connection; it does not replace the
+existing-profile authorization.
 
 > **Warning:** Unrestricted mode has no runtime Cua approval prompts and makes
 > no prompt-injection safety claim. Prefer `isolated_new`, or a bounded

@@ -16,9 +16,9 @@ use cua_driver_core::browser::platform::{
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows::core::PCWSTR;
@@ -132,7 +132,8 @@ fn browser_product(name: &str) -> BrowserProduct {
         .next()
         .unwrap_or(name)
         .to_ascii_lowercase();
-    match executable.trim_end_matches(".exe") {
+    let executable = executable.trim_end_matches(".exe");
+    match executable {
         "chrome" => BrowserProduct::GoogleChrome,
         "chromium" => BrowserProduct::Chromium,
         "msedge" => BrowserProduct::MicrosoftEdge,
@@ -142,6 +143,12 @@ fn browser_product(name: &str) -> BrowserProduct {
         "arc" => BrowserProduct::Arc,
         "electron" => BrowserProduct::Electron,
         "firefox" => BrowserProduct::Firefox,
+        _ if executable
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|token| token == "electron") =>
+        {
+            BrowserProduct::Electron
+        }
         _ => BrowserProduct::Other,
     }
 }
@@ -347,6 +354,223 @@ fn trusted_windows_installation_with_probe(
         current = directory.parent();
     }
     false
+}
+
+fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
+    let root = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
+    let relative = match product {
+        BrowserProduct::GoogleChrome => ["Google", "Chrome", "User Data"].as_slice(),
+        BrowserProduct::MicrosoftEdge => ["Microsoft", "Edge", "User Data"].as_slice(),
+        BrowserProduct::Chromium => ["Chromium", "User Data", ""].as_slice(),
+        BrowserProduct::Brave => ["BraveSoftware", "Brave-Browser", "User Data"].as_slice(),
+        BrowserProduct::Vivaldi => ["Vivaldi", "User Data", ""].as_slice(),
+        _ => return None,
+    };
+    Some(
+        relative
+            .iter()
+            .filter(|part| !part.is_empty())
+            .fold(root, |path, part| path.join(part)),
+    )
+}
+
+fn parse_windows_command_line(command_line: &str) -> Vec<String> {
+    let chars = command_line.chars().collect::<Vec<_>>();
+    let mut args = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+        if index == chars.len() {
+            break;
+        }
+        let mut arg = String::new();
+        let mut quoted = false;
+        while index < chars.len() {
+            if !quoted && chars[index].is_whitespace() {
+                break;
+            }
+            let mut slashes = 0;
+            while index < chars.len() && chars[index] == '\\' {
+                slashes += 1;
+                index += 1;
+            }
+            if index < chars.len() && chars[index] == '"' {
+                arg.extend(std::iter::repeat_n('\\', slashes / 2));
+                if slashes % 2 == 0 {
+                    quoted = !quoted;
+                } else {
+                    arg.push('"');
+                }
+                index += 1;
+            } else {
+                arg.extend(std::iter::repeat_n('\\', slashes));
+                if index < chars.len() && (quoted || !chars[index].is_whitespace()) {
+                    arg.push(chars[index]);
+                    index += 1;
+                }
+            }
+        }
+        args.push(arg);
+    }
+    args
+}
+
+fn is_windows_absolute_path(path: &std::path::Path) -> bool {
+    let value = path.as_os_str().to_string_lossy();
+    let bytes = value.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/'))
+        || value.starts_with(r"\\")
+}
+
+fn user_data_dir_from_command_line(
+    command_line: &str,
+    default: Option<PathBuf>,
+) -> Result<Option<PathBuf>, BrowserRefusal> {
+    let args = parse_windows_command_line(command_line);
+    let mut directories = Vec::new();
+    for (index, arg) in args.iter().enumerate() {
+        if let Some(path) = arg.strip_prefix("--user-data-dir=") {
+            if !path.is_empty() {
+                directories.push(PathBuf::from(path));
+            }
+        } else if arg == "--user-data-dir" {
+            if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
+                directories.push(PathBuf::from(path));
+            }
+        }
+    }
+    directories.sort();
+    directories.dedup();
+    match directories.as_slice() {
+        [] => Ok(default),
+        [path] if is_windows_absolute_path(path) => Ok(Some(path.clone())),
+        [_] => Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the browser uses a relative --user-data-dir that cannot be attested without its launch working directory",
+        )),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "browser process has multiple distinct --user-data-dir arguments",
+        )),
+    }
+}
+
+fn system_powershell_path() -> Result<PathBuf, BrowserRefusal> {
+    let system = system_netstat_path()?
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "could not resolve the trusted Windows system directory",
+            )
+        })?;
+    Ok(system.join("WindowsPowerShell\\v1.0\\powershell.exe"))
+}
+
+async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
+    let powershell = system_powershell_path()?;
+    let script = format!(
+        "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop).CommandLine"
+    );
+    let output = tokio::process::Command::new(powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect browser arguments: {error}"),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} arguments are unavailable"),
+        ));
+    }
+    let command_line = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if command_line.is_empty() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} has no command line"),
+        ));
+    }
+    Ok(command_line)
+}
+
+fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let port = lines.next()?.parse::<u16>().ok()?;
+    let path = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let instance = path.strip_prefix("/devtools/browser/")?;
+    (!instance.is_empty()
+        && instance
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
+    .then_some((port, path))
+}
+
+async fn active_port_endpoint(
+    pid: u32,
+    product: BrowserProduct,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    let default = default_user_data_dir(product);
+    let user_data_dir = match browser_command_line(pid).await {
+        Ok(command_line) => user_data_dir_from_command_line(&command_line, default.clone())?,
+        Err(_) => default,
+    };
+    let Some(user_data_dir) = user_data_dir else {
+        return Ok(None);
+    };
+    let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not read the browser's DevToolsActivePort file: {error}"),
+            ))
+        }
+    };
+    let Some((port, path)) = parse_devtools_active_port(&text) else {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the browser's DevToolsActivePort file did not contain one exact browser endpoint",
+        ));
+    };
+    if !loopback_ports_for_exact_pid(pid).await?.contains(&port) {
+        return Ok(None);
+    }
+    Ok(Some(OwnedEndpoint {
+        ws_url: format!("ws://127.0.0.1:{port}{path}"),
+        http_port: Some(port),
+        transport: EndpointTransport::DevToolsActivePort,
+        ownership: EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+            owner_pid: i64::from(pid),
+            listener_pid: Some(i64::from(pid)),
+            detail: Some(
+                "exact OS-reported argv profile port file plus loopback listener owner".to_owned(),
+            ),
+        },
+    }))
 }
 
 fn allows_embedded_descendant_endpoint(executable_path: &str) -> bool {
@@ -943,10 +1167,12 @@ fn owned_endpoint_from_listener(
     ws_url: String,
     listener_pid: u32,
     context: &str,
+    transport: EndpointTransport,
 ) -> OwnedEndpoint {
     OwnedEndpoint {
         ws_url,
         http_port: Some(port),
+        transport,
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::ListeningSocketPid,
             // The discovery route proved listener_pid under its documented
@@ -966,6 +1192,7 @@ fn select_unique_owned_endpoint(
     root_pid: i64,
     discovered: Vec<(u16, String, u32)>,
     context: &str,
+    transport: EndpointTransport,
 ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
     match discovered.as_slice() {
         [] => Ok(None),
@@ -975,6 +1202,7 @@ fn select_unique_owned_endpoint(
             ws_url.clone(),
             *listener_pid,
             context,
+            transport,
         ))),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserBindingAmbiguous,
@@ -1003,6 +1231,21 @@ async fn loopback_port_is_owned_with_retry(
         || loopback_ports_for_exact_pid(pid),
     )
     .await
+}
+
+fn legacy_setup_endpoint_is_stable(
+    observation: &mut Option<(String, std::time::Instant)>,
+    ws_url: &str,
+    now: std::time::Instant,
+    preference_window: Duration,
+) -> bool {
+    if let Some((observed_url, observed_at)) = observation.as_ref() {
+        if observed_url == ws_url {
+            return now.saturating_duration_since(*observed_at) >= preference_window;
+        }
+    }
+    *observation = Some((ws_url.to_owned(), now));
+    false
 }
 
 async fn retry_port_ownership<F, Fut>(
@@ -1147,6 +1390,34 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let chromium = is_chromium(&name);
         let gecko = is_firefox(&name);
         let product_kind = browser_product(&name);
+        let command_line = if chromium {
+            browser_command_line(pid_u32).await.ok()
+        } else {
+            None
+        };
+        let helper = command_line.as_deref().is_some_and(|line| {
+            parse_windows_command_line(line)
+                .iter()
+                .any(|arg| arg.starts_with("--type=") && arg.len() > "--type=".len())
+        });
+        let process_role = if helper {
+            BrowserProcessRole::Helper
+        } else if product_kind == BrowserProduct::Electron {
+            BrowserProcessRole::EmbeddedApplication
+        } else if matches!(
+            product_kind,
+            BrowserProduct::GoogleChrome
+                | BrowserProduct::Chromium
+                | BrowserProduct::MicrosoftEdge
+                | BrowserProduct::Brave
+                | BrowserProduct::Vivaldi
+                | BrowserProduct::Opera
+                | BrowserProduct::Arc
+        ) {
+            BrowserProcessRole::StandaloneConsumer
+        } else {
+            BrowserProcessRole::Unknown
+        };
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {
@@ -1158,7 +1429,23 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             },
             product_kind,
             product: Some(name),
-            channel: None,
+            channel: if process_role == BrowserProcessRole::StandaloneConsumer {
+                command_line.as_deref().map(|line| {
+                    let lower = line.to_ascii_lowercase();
+                    if lower.contains("chrome sxs") || lower.contains("canary") {
+                        "canary".to_owned()
+                    } else if lower.contains(" beta") || lower.contains("\\beta\\") {
+                        "beta".to_owned()
+                    } else if lower.contains(" dev") || lower.contains("\\dev\\") {
+                        "dev".to_owned()
+                    } else {
+                        "stable".to_owned()
+                    }
+                })
+            } else {
+                None
+            },
+            process_role,
             supports_cdp: chromium,
         })
     }
@@ -1246,6 +1533,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             pid,
             browser_endpoints_for_pid(pid_u32).await?,
             "listener owned by the exact approved browser pid or its classified embedded webview tree",
+            EndpointTransport::LegacyJsonVersion,
         )
     }
 
@@ -1264,6 +1552,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             pid,
             spawned_browser_endpoints_for_pid(pid_u32, expected_ws_url).await?,
             "exact private-profile endpoint owned by the driver-spawned browser tree",
+            EndpointTransport::SpawnedExact,
         )
     }
 
@@ -1277,10 +1566,15 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint(pid_u32, classification.product_kind).await? {
+            return Ok(Some(endpoint));
+        }
         select_unique_owned_endpoint(
             pid,
             exact_browser_endpoints_for_pid(pid_u32).await?,
             "Windows exact browser-pid listener plus /json/version",
+            EndpointTransport::LegacyJsonVersion,
         )
     }
 
@@ -1301,6 +1595,16 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 "the approved existing-profile endpoint is not loopback-only",
             ));
         };
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint(pid_u32, classification.product_kind).await? {
+            if endpoint.ws_url != expected_ws_url {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the browser's exact DevTools endpoint changed after approval",
+                ));
+            }
+            return Ok(Some(endpoint));
+        }
         // Setup may approve the exact PID-owned port before Chromium publishes
         // its final browser WebSocket id. Reprove that stable port ownership
         // here; the connection layer still uses the approved WebSocket path.
@@ -1310,6 +1614,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: expected_ws_url.to_owned(),
             http_port: Some(port),
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -1362,7 +1667,19 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let injected_global_input = handle.injected_global_input;
 
         let deadline = std::time::Instant::now() + Duration::from_secs(6);
+        // Chrome and Edge can expose /json/version a few milliseconds before
+        // their profile-scoped DevToolsActivePort file becomes visible on
+        // Windows. Prefer the stronger file + exact-pid listener proof during
+        // that bounded publication window. Accepting the HTTP result
+        // immediately can mint a grant for a transient browser WebSocket id
+        // that the just-published file then (correctly) disproves.
+        let mut legacy_endpoint_observation: Option<(String, std::time::Instant)> = None;
         let endpoint_result = loop {
+            match active_port_endpoint(pid_u32, request.browser).await {
+                Ok(Some(endpoint)) => break Ok(endpoint),
+                Ok(None) => {}
+                Err(error) => break Err(error),
+            }
             let ports = match loopback_ports_for_exact_pid(pid_u32).await {
                 Ok(ports) => ports,
                 Err(error) => break Err(error),
@@ -1401,9 +1718,29 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             }
             match endpoints.as_slice() {
                 [(port, ws_url, detail)] => {
+                    let now = std::time::Instant::now();
+                    if !legacy_setup_endpoint_is_stable(
+                        &mut legacy_endpoint_observation,
+                        ws_url,
+                        now,
+                        Duration::from_secs(1),
+                    ) {
+                        if now >= deadline {
+                            break Err(refusal(
+                                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                                format!(
+                                    "{} did not keep one exact browser endpoint stable after the approved setup action",
+                                    descriptor.product_name
+                                ),
+                            ));
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
                     break Ok(OwnedEndpoint {
                         ws_url: ws_url.clone(),
                         http_port: Some(*port),
+                        transport: EndpointTransport::LegacyJsonVersion,
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
@@ -1625,6 +1962,11 @@ mod tests {
             |path, directory| !(directory && path.ends_with(r"Google\Chrome")),
         ));
         assert!(!trusted_windows_installation_with_probe(
+            &executable,
+            root,
+            |path, directory| !(directory && path == root),
+        ));
+        assert!(!trusted_windows_installation_with_probe(
             &std::path::PathBuf::from(r"D:\UserControlled\chrome.exe"),
             root,
             |_, _| true,
@@ -1697,6 +2039,10 @@ mod tests {
             assert!(
                 diagnostics.iter().any(|(_, reason)| reason.is_some()),
                 "a refused installation must identify an explicitly granted write right: {diagnostics:?}"
+            );
+            assert!(
+                std::env::var_os("CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER").is_none(),
+                "the standalone-browser runner must provide a vendor-signed browser tree protected from its current token: {diagnostics:?}"
             );
             eprintln!(
                 "installed browser correctly refused for this write-capable runner token: {diagnostics:?}"
@@ -1774,6 +2120,7 @@ mod tests {
             "ws://127.0.0.1:9222/devtools/browser/id".to_owned(),
             43,
             "verified process tree",
+            EndpointTransport::EmbeddedDescendant,
         );
 
         assert_eq!(endpoint.ownership.owner_pid, 42);
@@ -1788,11 +2135,14 @@ mod tests {
 
     #[test]
     fn owned_endpoint_selection_requires_exactly_one_lifetime_matched_listener() {
-        assert!(
-            select_unique_owned_endpoint(42, Vec::new(), "verified process tree")
-                .expect("empty discovery is not an error")
-                .is_none()
-        );
+        assert!(select_unique_owned_endpoint(
+            42,
+            Vec::new(),
+            "verified process tree",
+            EndpointTransport::LegacyJsonVersion,
+        )
+        .expect("empty discovery is not an error")
+        .is_none());
 
         let selected = select_unique_owned_endpoint(
             42,
@@ -1802,6 +2152,7 @@ mod tests {
                 43,
             )],
             "verified process tree",
+            EndpointTransport::LegacyJsonVersion,
         )
         .expect("one lifetime-matched listener")
         .expect("selected endpoint");
@@ -1823,6 +2174,7 @@ mod tests {
                 ),
             ],
             "verified process tree",
+            EndpointTransport::LegacyJsonVersion,
         )
         .expect_err("multiple lifetime-matched listeners must be refused");
         assert_eq!(ambiguous.code, BrowserRefusalCode::BrowserBindingAmbiguous);
@@ -1842,6 +2194,10 @@ mod tests {
     #[test]
     fn classifier_covers_embedded_and_standalone_chromium() {
         assert!(is_chromium("CuaTestHarness.Electron.exe"));
+        assert_eq!(
+            browser_product("CuaTestHarness.Electron.exe"),
+            BrowserProduct::Electron
+        );
         assert!(is_chromium("msedge.exe"));
         assert!(!is_chromium("firefox.exe"));
         assert!(!is_chromium("Operator.exe"));
@@ -2026,6 +2382,83 @@ mod tests {
             None
         );
         assert_eq!(literal_loopback_websocket_port("ws://127.0.0.1:9222"), None);
+    }
+
+    #[test]
+    fn windows_command_line_parser_preserves_quoted_profile_paths() {
+        let args = parse_windows_command_line(
+            r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --flag "--user-data-dir=C:\Profiles\Personal Browser""#,
+        );
+        assert_eq!(
+            args,
+            vec![
+                r#"C:\Program Files\Google\Chrome\Application\chrome.exe"#,
+                "--flag",
+                r#"--user-data-dir=C:\Profiles\Personal Browser"#,
+            ]
+        );
+        assert_eq!(
+            user_data_dir_from_command_line(
+                r#"chrome.exe "--user-data-dir=C:\Profiles\Personal Browser""#,
+                None,
+            )
+            .expect("one absolute custom profile"),
+            Some(PathBuf::from(r#"C:\Profiles\Personal Browser"#))
+        );
+    }
+
+    #[test]
+    fn active_port_parser_rejects_non_browser_and_ambiguous_paths() {
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/exact-id\n"),
+            Some((9222, "/devtools/browser/exact-id"))
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/page/id\n"),
+            None
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/id\nextra\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn legacy_setup_endpoint_must_remain_exact_during_active_port_preference_window() {
+        let start = std::time::Instant::now();
+        let window = Duration::from_secs(1);
+        let mut observation = None;
+
+        assert!(!legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/first",
+            start,
+            window,
+        ));
+        assert!(!legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/first",
+            start + Duration::from_millis(999),
+            window,
+        ));
+        assert!(legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/first",
+            start + window,
+            window,
+        ));
+        assert!(!legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/second",
+            start + window,
+            window,
+        ));
+        assert!(legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/second",
+            start + window + window,
+            window,
+        ));
     }
 
     #[tokio::test]

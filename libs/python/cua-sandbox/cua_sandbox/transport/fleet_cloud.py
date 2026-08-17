@@ -56,11 +56,28 @@ _DNS_LABEL_MAX_LENGTH = 63
 _CLAIM_HASH_LENGTH = 16
 
 
-class PoolAccessDeniedError(PermissionError):
-    """Fleet refused a pool or template operation for this credential."""
+# Newer Fleet SDKs raise SdkError.PoolAccessDenied from the Rust core for 403s
+# on pool-namespace writes, so every language binding shares one message. Use
+# that type when the installed cua-fleet provides it; otherwise map the plain
+# 403 Status errors older SDKs raise into an equivalent local error.
+_UPSTREAM_POOL_ACCESS_DENIED = getattr(SdkError, "PoolAccessDenied", None)
+
+if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+    PoolAccessDeniedError = _UPSTREAM_POOL_ACCESS_DENIED
+else:
+
+    class PoolAccessDeniedError(PermissionError):  # type: ignore[no-redef]
+        """Fleet refused a pool or template operation for this credential."""
 
 
-def _pool_access_denied(namespace: str, error: SdkError.Status) -> PoolAccessDeniedError:
+def _pool_access_denied(namespace: str, error: SdkError.Status) -> Exception:
+    if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+        return _UPSTREAM_POOL_ACCESS_DENIED(
+            operation=error.operation,
+            namespace=namespace,
+            status=error.status,
+            body=error.body,
+        )
     return PoolAccessDeniedError(
         f"Fleet denied {error.operation!r} on pool namespace {namespace!r} "
         f"(HTTP {error.status}: {error.body}). Pool names are globally unique "

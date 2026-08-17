@@ -45,7 +45,7 @@
         "session_id": { "$ref": "#/$defs/opaqueId" },
         "action_id": { "$ref": "#/$defs/opaqueId" },
         "sequence": { "type": "integer", "minimum": 1 },
-        "platform": { "const": "macos" },
+        "platform": { "enum": ["macos", "windows", "linux"] },
         "process_model": { "const": "in_daemon" },
         "capability": { "type": "string", "minLength": 1, "maxLength": 128 },
         "caller_category": { "const": "cua_runtime" },

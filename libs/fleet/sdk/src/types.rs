@@ -287,12 +287,27 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
     pub headers: Vec<HttpHeader>,
     pub body: Option<Vec<u8>>,
+    /// Per-request timeout. Defaults to absent so callers written against the
+    /// pre-timeout record shape keep constructing requests unchanged; absent
+    /// falls back to the native client's 30-second default.
+    #[serde(default)]
+    #[uniffi(default = None)]
     pub timeout_secs: Option<u64>,
 }
 

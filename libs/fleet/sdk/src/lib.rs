@@ -22,8 +22,9 @@ pub use types::{
     CreatePoolRequestBuilder, CreateTemplateRequest, CreateTemplateRequestBuilder,
     CreateUserApiKeyRequest, CreateUserApiKeyRequestBuilder, CyclopsConfiguration,
     CyclopsCredentials, CyclopsTokenProviderConfiguration,
-    CyclopsTokenProviderConfigurationBuilder, HttpHeader, HttpRequest, HttpResponse, Namespace,
-    NewUserApiKey, Pool, ResourceMetadata, Sandbox, Template, TemplateBuilder, UserApiKey,
+    CyclopsTokenProviderConfigurationBuilder, HttpHeader, HttpRequest, HttpRequestBuilder,
+    HttpResponse, Namespace, NewUserApiKey, Pool, ResourceMetadata, Sandbox, Template,
+    TemplateBuilder, UserApiKey,
 };
 
 uniffi::setup_scaffolding!("fleet_sdk");

@@ -602,6 +602,20 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 38803:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new() != 25892:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body() != 9054:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build() != 14573:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers() != 19982:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method() != 4078:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs() != 40941:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url() != 12282:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new() != 19815:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version() != 65471:
@@ -967,6 +981,16 @@ _UniffiLib.uniffi_cyclops_sdk_fn_free_httpclient.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_free_httpclient.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_httprequestbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_httprequestbuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_free_httprequestbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_free_httprequestbuilder.restype = None
 _UniffiLib.uniffi_cyclops_sdk_fn_clone_templatebuilder.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -1343,6 +1367,45 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_httpclient_execute.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_httpclient_execute.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_body.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_body.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_method.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_method.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_url.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_url.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_constructor_templatebuilder_new.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1562,6 +1625,27 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationb
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_httpclient_execute.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_httpclient_execute.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new.restype = ctypes.c_uint16
@@ -2608,12 +2692,15 @@ class _UniffiFfiConverterOptionalUInt64(_UniffiConverterRustBuffer):
 
 @dataclass
 class HttpRequest:
-    def __init__(self, *, method:str, url:str, headers:typing.List[HttpHeader], body:typing.Optional[bytes], timeout_secs:typing.Optional[int]):
+    def __init__(self, *, method:str, url:str, headers:typing.List[HttpHeader], body:typing.Optional[bytes], timeout_secs:typing.Optional[int] = _DEFAULT):
         self.method = method
         self.url = url
         self.headers = headers
         self.body = body
-        self.timeout_secs = timeout_secs
+        if timeout_secs is _DEFAULT:
+            self.timeout_secs = None
+        else:
+            self.timeout_secs = timeout_secs
 
 
 
@@ -5193,6 +5280,171 @@ class _UniffiFfiConverterTypeHttpClient:
         buf.write_u64(cls.lower(value))
 
 
+class HttpRequestBuilderProtocol(typing.Protocol):
+
+    def body(self, value: bytes) -> HttpRequestBuilder:
+        raise NotImplementedError
+    def build(self, ) -> HttpRequest:
+        raise NotImplementedError
+    def headers(self, value: typing.List[HttpHeader]) -> HttpRequestBuilder:
+        raise NotImplementedError
+    def method(self, value: str) -> HttpRequestBuilder:
+        raise NotImplementedError
+    def timeout_secs(self, value: int) -> HttpRequestBuilder:
+        raise NotImplementedError
+    def url(self, value: str) -> HttpRequestBuilder:
+        raise NotImplementedError
+
+class HttpRequestBuilder(HttpRequestBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHttpRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_free_httprequestbuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_clone_httprequestbuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def body(self, value: bytes) -> HttpRequestBuilder:
+
+        _UniffiFfiConverterBytes.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBytes.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHttpRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_body,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def build(self, ) -> HttpRequest:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHttpRequest.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def headers(self, value: typing.List[HttpHeader]) -> HttpRequestBuilder:
+
+        _UniffiFfiConverterSequenceTypeHttpHeader.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceTypeHttpHeader.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHttpRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def method(self, value: str) -> HttpRequestBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHttpRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_method,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def timeout_secs(self, value: int) -> HttpRequestBuilder:
+
+        _UniffiFfiConverterUInt64.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt64.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHttpRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def url(self, value: str) -> HttpRequestBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHttpRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_url,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeHttpRequestBuilder:
+    @staticmethod
+    def lift(value: int) -> HttpRequestBuilder:
+        return HttpRequestBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: HttpRequestBuilder):
+        if not isinstance(value, HttpRequestBuilder):
+            raise TypeError("Expected HttpRequestBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: HttpRequestBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> HttpRequestBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: HttpRequestBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
 class TemplateBuilderProtocol(typing.Protocol):
 
     def api_version(self, value: str) -> TemplateBuilder:
@@ -5394,6 +5646,8 @@ __all__ = [
     "CyclopsTokenProviderConfigurationBuilderProtocol",
     "HttpClientImpl",
     "HttpClient",
+    "HttpRequestBuilder",
+    "HttpRequestBuilderProtocol",
     "TemplateBuilder",
     "TemplateBuilderProtocol",
 ]

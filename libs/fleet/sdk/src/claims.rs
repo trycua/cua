@@ -2,7 +2,7 @@ use crate::{
     Claim, CreateClaimRequest, CyclopsClient, HttpHeader, HttpRequest, HttpResponse, Pool,
     ResourceMetadata, Sandbox, SdkError, Template, routes,
 };
-use cyclops_sdk_schema::ClaimSpec;
+use cyclops_sdk_schema::{ClaimSpec, DEFAULT_CLAIM_BIND_DEADLINE_SECONDS};
 #[cfg(not(target_arch = "wasm32"))]
 use futures_timer::Delay;
 #[cfg(target_arch = "wasm32")]
@@ -40,12 +40,15 @@ impl CyclopsClient {
         // a naming convention. A hand-built ref that names a nonexistent
         // template makes the bind queue lookup miss forever and the claim
         // times out with no useful error (the hermes-cua-pool incident).
-        let spec = request.spec.unwrap_or_else(|| ClaimSpec {
+        let mut spec = request.spec.unwrap_or_else(|| ClaimSpec {
             sandbox_template_ref: pool.spec.sandbox_template_ref.clone(),
             warmpool: None,
-            bind_deadline: None,
+            bind_deadline: Some(DEFAULT_CLAIM_BIND_DEADLINE_SECONDS),
             lifecycle: None,
         });
+        if spec.bind_deadline.is_none() {
+            spec.bind_deadline = Some(DEFAULT_CLAIM_BIND_DEADLINE_SECONDS);
+        }
         if spec.sandbox_template_ref.name.is_empty() {
             return Err(SdkError::Configuration {
                 reason: "sandbox template name must not be empty".into(),

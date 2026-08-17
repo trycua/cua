@@ -234,7 +234,7 @@ pool = await client.create_pool(CreatePoolRequest(namespace="default", spec=pool
 claim_spec = ClaimSpec(
     sandbox_template_ref=SandboxTemplateRef(name=pool.metadata.name),
     warmpool=None,
-    bind_deadline=None,
+    bind_deadline=None,  # SDK defaults omitted deadlines to 900 seconds
     lifecycle=None,
 )
 claim = await client.create_claim(CreateClaimRequest(pool=pool, spec=claim_spec))

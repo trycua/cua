@@ -6,6 +6,8 @@ use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_CLAIM_BIND_DEADLINE_SECONDS: u32 = 900;
+
 fn default_warmpool() -> Option<String> {
     Some("default".into())
 }
@@ -174,7 +176,7 @@ pub struct ClaimSpec {
         default,
         schema_with = "integer_schema",
         range(min = 0),
-        description = "Seconds the claim stays Pending waiting for a Sandbox to\nbind before it is marked Failed (default 300, set by the\noperator's OSGYM_CLAIM_BIND_DEADLINE). A Pending claim is\nthe autoscaler's demand signal, so the claim is kept\nPending across a cold VM boot + KEDA scale-up rather than\nfailing fast. Raise it for pools with slow cold starts.\n"
+        description = "Seconds the claim stays Pending waiting for a Sandbox to\nbind before it is marked Failed (default 900, set by the\noperator's OSGYM_CLAIM_BIND_DEADLINE). A Pending claim is\nthe autoscaler's demand signal, so the claim is kept\nPending across a cold VM boot + KEDA scale-up rather than\nfailing fast. Override it for pools with different cold-start\nrequirements.\n"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bind_deadline: Option<u32>,

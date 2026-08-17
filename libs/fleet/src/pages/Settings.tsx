@@ -2,9 +2,9 @@
 // policies for backend automation.
 
 import { useEffect, useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import Alert from "@cloudscape-design/components/alert"
 import Box from "@cloudscape-design/components/box"
-import Button from "@cloudscape-design/components/button"
 import Container from "@cloudscape-design/components/container"
 import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard"
 import ExpandableSection from "@cloudscape-design/components/expandable-section"
@@ -20,7 +20,13 @@ import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
 import Toggle from "@cloudscape-design/components/toggle"
 import { userInfo } from "../auth/keycloak"
+import { errorMessage } from "../error-message"
+import { CuaButton } from "../components/CuaButton"
 import { useFeatureFlags } from "../components/FeatureFlagContext"
+import { useFlash } from "../components/FlashContext"
+import { PageEmpty, PageError } from "../components/PageState"
+import { PageShell } from "../components/PageShell"
+import { localVisualPreviewPath } from "../local-visual-preview"
 import {
   type GitHubTrustPolicy,
   githubTrustPoliciesApi,
@@ -29,6 +35,8 @@ import {
 import { BillingSettings } from "./Billing"
 
 export function Settings() {
+  const navigate = useNavigate()
+  const flash = useFlash()
   const { sub, name } = userInfo()
   const { billing } = useFeatureFlags()
   const [policies, setPolicies] = useState<GitHubTrustPolicy[]>([])
@@ -45,7 +53,7 @@ export function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<GitHubTrustPolicy | null>(null)
 
   const allNamespaceOptions = useMemo(() => {
@@ -76,9 +84,9 @@ export function Settings() {
           value: ns.name,
         })),
       )
-      setError(null)
+      setLoadError(null)
     } catch (e) {
-      setError(String(e))
+      setLoadError(errorMessage(e))
     } finally {
       setLoading(false)
     }
@@ -116,10 +124,21 @@ export function Settings() {
       } else {
         await githubTrustPoliciesApi.create(payload)
       }
+      flash.push({
+        type: "success",
+        header: editingId ? "Trust policy saved" : "Trust policy created",
+        content: "The change is stored remotely and applies immediately.",
+      })
       resetForm()
       await refresh()
     } catch (e) {
-      setError(String(e))
+      flash.push({
+        type: "error",
+        header: editingId
+          ? "Failed to save trust policy"
+          : "Failed to create trust policy",
+        content: errorMessage(e),
+      })
     } finally {
       setSaving(false)
     }
@@ -141,9 +160,18 @@ export function Settings() {
       await githubTrustPoliciesApi.update(policy.id, {
         enabled: !policy.enabled,
       })
+      flash.push({
+        type: "success",
+        header: policy.enabled ? "Trust policy disabled" : "Trust policy enabled",
+        content: "The change is stored remotely and applies immediately.",
+      })
       await refresh()
     } catch (e) {
-      setError(String(e))
+      flash.push({
+        type: "error",
+        header: "Failed to update trust policy",
+        content: errorMessage(e),
+      })
     } finally {
       setBusyId(null)
     }
@@ -154,11 +182,20 @@ export function Settings() {
     setBusyId(confirmDelete.id)
     try {
       await githubTrustPoliciesApi.remove(confirmDelete.id)
+      flash.push({
+        type: "success",
+        header: "Trust policy deleted",
+        content: "GitHub workflows using it can no longer authenticate.",
+      })
       setConfirmDelete(null)
       if (editingId === confirmDelete.id) resetForm()
       await refresh()
     } catch (e) {
-      setError(String(e))
+      flash.push({
+        type: "error",
+        header: "Failed to delete trust policy",
+        content: errorMessage(e),
+      })
     } finally {
       setBusyId(null)
     }
@@ -205,15 +242,23 @@ steps:
         --name "$sandbox"
       cua sb exec "$sandbox" sh -lc 'uname -a; id; pwd'`
   return (
-    <SpaceBetween size="l">
-      {error && (
-        <Alert type="error" dismissible onDismiss={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-
-      <Container header={<Header variant="h2">Account</Header>}>
-        <SpaceBetween size="m">
+    <PageShell
+      eyebrow="Account"
+      title="Settings"
+      description="Manage your identity, credentials, automation access, and payment method."
+    >
+      <SpaceBetween size="l">
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description="Identity details from your current Cua session."
+            >
+              Account
+            </Header>
+          }
+        >
+          <SpaceBetween size="m">
           <FormField label="Username">
             {name ? (
               <CopyToClipboard
@@ -242,17 +287,49 @@ steps:
               <Box color="text-status-inactive">Unknown</Box>
             )}
           </FormField>
-        </SpaceBetween>
-      </Container>
+          </SpaceBetween>
+        </Container>
 
-      {billing && <BillingSettings />}
+      <Container
+        header={
+          <Header
+            variant="h2"
+            description="API keys are managed remotely and changes take effect immediately."
+            actions={
+              <CuaButton
+                onClick={() => navigate(localVisualPreviewPath("/user-keys"))}
+              >
+                Manage API keys
+              </CuaButton>
+            }
+          >
+            API keys
+          </Header>
+        }
+      >
+        <Box color="text-body-secondary">
+          Create scoped credentials for local tools, CI workflows, and other
+          automation that calls Cua on your behalf.
+        </Box>
+      </Container>
 
       <ExpandableSection
         variant="container"
+        defaultExpanded={false}
         headerText="GitHub Actions OIDC"
-        headerDescription="Trust GitHub repositories to call Fleets directly with GitHub Actions OIDC tokens."
+        headerDescription={loadError
+          ? "GitHub Actions settings are unavailable. Expand to retry."
+          : "Trust GitHub repositories to call Fleets with short-lived tokens. Policies are stored remotely and apply immediately."}
       >
-        <SpaceBetween size="l">
+        {loadError ? (
+          <PageError
+            title="GitHub Actions settings are unavailable"
+            action={<CuaButton onClick={refresh}>Retry</CuaButton>}
+          >
+            {loadError}
+          </PageError>
+        ) : (
+          <SpaceBetween size="l">
           <Form
             header={
               <Header
@@ -264,15 +341,15 @@ steps:
             }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                {editingId && <Button onClick={resetForm}>Cancel</Button>}
-                <Button
-                  variant="primary"
+                {editingId && <CuaButton onClick={resetForm}>Cancel</CuaButton>}
+                <CuaButton
+                  tone="primary"
                   loading={saving}
                   disabled={!policyName || !repository}
                   onClick={submit}
                 >
                   {editingId ? "Save policy" : "Create policy"}
-                </Button>
+                </CuaButton>
               </SpaceBetween>
             }
           >
@@ -320,7 +397,9 @@ steps:
           </Form>
 
           <Table
+            variant="borderless"
             loading={loading}
+            loadingText="Loading GitHub trust policies"
             items={policies}
             columnDefinitions={[
               { id: "name", header: "Name", cell: policy => policy.name },
@@ -349,24 +428,34 @@ steps:
                 header: "",
                 cell: policy => (
                   <SpaceBetween direction="horizontal" size="xs">
-                    <Button onClick={() => startEdit(policy)}>Edit</Button>
-                    <Button
+                    <CuaButton
+                      disabled={busyId !== null}
+                      onClick={() => startEdit(policy)}
+                    >
+                      Edit
+                    </CuaButton>
+                    <CuaButton
                       loading={busyId === policy.id}
+                      disabled={busyId !== null}
                       onClick={() => togglePolicy(policy)}
                     >
                       {policy.enabled ? "Disable" : "Enable"}
-                    </Button>
-                    <Button onClick={() => setConfirmDelete(policy)}>
+                    </CuaButton>
+                    <CuaButton
+                      tone="danger"
+                      disabled={busyId !== null}
+                      onClick={() => setConfirmDelete(policy)}
+                    >
                       Delete
-                    </Button>
+                    </CuaButton>
                   </SpaceBetween>
                 ),
               },
             ]}
             empty={
-              <Box textAlign="center">
-                No GitHub trust policies yet.
-              </Box>
+              <PageEmpty title="No GitHub trust policies">
+                Create a policy when a repository needs short-lived access to Fleets.
+              </PageEmpty>
             }
             header={<Header variant="h3">Configured policies</Header>}
           />
@@ -416,8 +505,11 @@ steps:
               </Alert>
             </SpaceBetween>
           </Container>
-        </SpaceBetween>
+          </SpaceBetween>
+        )}
       </ExpandableSection>
+
+      {billing && <BillingSettings />}
 
       {confirmDelete && (
         <Modal
@@ -427,14 +519,14 @@ steps:
           footer={
             <Box float="right">
               <SpaceBetween direction="horizontal" size="xs">
-                <Button onClick={() => setConfirmDelete(null)}>Cancel</Button>
-                <Button
-                  variant="primary"
+                <CuaButton onClick={() => setConfirmDelete(null)}>Cancel</CuaButton>
+                <CuaButton
+                  tone="danger"
                   loading={busyId === confirmDelete.id}
                   onClick={removePolicy}
                 >
                   Delete
-                </Button>
+                </CuaButton>
               </SpaceBetween>
             </Box>
           }
@@ -444,6 +536,7 @@ steps:
           this policy will lose access immediately.
         </Modal>
       )}
-    </SpaceBetween>
+      </SpaceBetween>
+    </PageShell>
   )
 }

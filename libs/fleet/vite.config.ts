@@ -25,7 +25,7 @@ export default defineConfig({
     proxy: {
       // Upstream cyclops-ctrl is retired — every /api route is served by
       // the cyclops-cs backend behind the deployed ingress.
-      "/api": {
+      "^/api(?:/|$)": {
         target: ORCH_API,
         changeOrigin: true,
         secure: true,

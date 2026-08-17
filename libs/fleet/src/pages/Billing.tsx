@@ -3,12 +3,12 @@
 
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
 import { useEffect, useState } from "react";
+import { CuaButton } from "../components/CuaButton";
 import { billingApi, type BillingSummary } from "../sdk/billing";
 
 function cardBrand(brand: string) {
@@ -61,8 +61,8 @@ export function BillingSettings() {
 				}
 				footer={
 					summary && (
-						<Button
-							variant="primary"
+						<CuaButton
+							tone="primary"
 							loading={redirecting}
 							onClick={() =>
 								redirect(summary.payment_method_present ? "portal" : "setup")
@@ -71,7 +71,7 @@ export function BillingSettings() {
 							{summary.payment_method_present
 								? "Manage payment method"
 								: "Add payment method"}
-						</Button>
+						</CuaButton>
 					)
 				}
 			>

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { fetchFeatureFlags, type FeatureFlags } from "../sdk/featureFlags"
+import { isLocalVisualPreview } from "../local-visual-preview"
 
 const DEFAULT_FLAGS: FeatureFlags = { admin: false, billing: false, chat: false }
 
@@ -17,16 +18,20 @@ const FeatureFlagContext = createContext<FeatureFlagContextValue>({
  * context. All children can call useFeatureFlags() to read flags.
  */
 export function FeatureFlagProvider({ children }: { children: ReactNode }) {
+  const visualPreview = isLocalVisualPreview()
   const [value, setValue] = useState<FeatureFlagContextValue>({
-    ...DEFAULT_FLAGS,
-    resolved: false,
+    ...(visualPreview
+      ? { ...DEFAULT_FLAGS, billing: true, chat: true }
+      : DEFAULT_FLAGS),
+    resolved: visualPreview,
   })
 
   useEffect(() => {
+    if (visualPreview) return
     fetchFeatureFlags()
       .then(flags => setValue({ ...flags, resolved: true }))
       .catch(() => setValue({ ...DEFAULT_FLAGS, resolved: true }))
-  }, [])
+  }, [visualPreview])
 
   return (
     <FeatureFlagContext.Provider value={value}>

@@ -6,9 +6,9 @@
 // returned once on creation and cannot be retrieved later.
 
 import { useEffect, useState } from "react"
+import designTokens from "@cua/design/tokens.json"
 import Alert from "@cloudscape-design/components/alert"
 import Box from "@cloudscape-design/components/box"
-import Button from "@cloudscape-design/components/button"
 import Container from "@cloudscape-design/components/container"
 import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard"
 import Form from "@cloudscape-design/components/form"
@@ -29,11 +29,17 @@ import {
   type UserApiKey,
 } from "../sdk/userKeys"
 import { listNamespaces } from "../sdk/pools"
+import { errorMessage } from "../error-message"
+import { CuaButton } from "../components/CuaButton"
+import { useFlash } from "../components/FlashContext"
+import { PageEmpty, PageError } from "../components/PageState"
+import { PageShell } from "../components/PageShell"
 
 export function UserApiKeys() {
+  const flash = useFlash()
   const [keys, setKeys] = useState<UserApiKey[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [name, setName] = useState("")
   const [selectedScope, setSelectedScope] = useState<
     MultiselectProps.Option[]
@@ -42,6 +48,21 @@ export function UserApiKeys() {
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<NewUserApiKey | null>(null)
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null)
+  const [revokingId, setRevokingId] = useState<string | null>(null)
+  const [compactTable, setCompactTable] = useState(
+    () => window.matchMedia(
+      `(max-width: ${designTokens.layout.breakpoint.mobile - 1}px)`,
+    ).matches,
+  )
+
+  useEffect(() => {
+    const query = window.matchMedia(
+      `(max-width: ${designTokens.layout.breakpoint.mobile - 1}px)`,
+    )
+    const update = () => setCompactTable(query.matches)
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [])
 
   const refresh = async () => {
     setLoading(true)
@@ -57,14 +78,15 @@ export function UserApiKeys() {
           value: ns.name,
         })),
       )
-      setError(null)
+      setLoadError(null)
     } catch (e) {
-      setError(String(e))
+      setLoadError(errorMessage(e))
     } finally {
       setLoading(false)
     }
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time page load
   useEffect(() => {
     refresh()
   }, [])
@@ -82,45 +104,83 @@ export function UserApiKeys() {
       setSelectedScope([])
       await refresh()
     } catch (e) {
-      setError(String(e))
+      flash.push({
+        type: "error",
+        header: "Failed to create API key",
+        content: errorMessage(e),
+      })
     } finally {
       setCreating(false)
     }
   }
 
   const remove = async (id: string) => {
+    setRevokingId(id)
     try {
       await deleteUserKey(id)
       setConfirmRevoke(null)
+      flash.push({
+        type: "success",
+        header: "API key revoked",
+        content: "Systems using this key can no longer authenticate.",
+      })
       await refresh()
     } catch (e) {
-      setError(String(e))
+      flash.push({
+        type: "error",
+        header: "Failed to revoke API key",
+        content: errorMessage(e),
+      })
+    } finally {
+      setRevokingId(null)
     }
   }
 
   return (
-    <SpaceBetween size="l">
-      {error && (
-        <Alert type="error" dismissible onDismiss={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-
-      <Container header={<Header variant="h2">Create a new API key</Header>}>
-        <Form
-          actions={
-            <Button
-              variant="primary"
-              loading={creating}
-              disabled={!name}
-              onClick={create}
+    <PageShell
+      eyebrow="Account"
+      title="User API keys"
+      counter={loading || loadError ? undefined : `(${keys.length})`}
+      description="Create credentials for tools and automation that call Cua on your behalf."
+      secondaryActions={
+        <CuaButton
+          tone="icon"
+          ariaLabel="Refresh API keys"
+          iconName="refresh"
+          disabled={loading}
+          onClick={refresh}
+        />
+      }
+    >
+      <SpaceBetween size="l">
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description="The key is saved to your Cua account as soon as it is created. Its secret is shown only once."
             >
-              Create key
-            </Button>
+              Create API key
+            </Header>
           }
         >
-          <SpaceBetween size="m">
-            <FormField label="Name" description="A label to identify this key">
+          <Form
+            actions={
+              <CuaButton
+                tone="primary"
+                loading={creating}
+                disabled={!name}
+                onClick={create}
+              >
+                Create key
+              </CuaButton>
+            }
+          >
+            <SpaceBetween size="m">
+            <FormField
+              controlId="api-key-name"
+              label="Name"
+              description="A label to identify this key"
+            >
               <Input value={name} onChange={e => setName(e.detail.value)} />
             </FormField>
             <FormField
@@ -139,15 +199,40 @@ export function UserApiKeys() {
                 empty="No namespaces found"
               />
             </FormField>
-          </SpaceBetween>
-        </Form>
-      </Container>
+            </SpaceBetween>
+          </Form>
+        </Container>
 
-      <Table
-        loading={loading}
-        items={keys}
-        columnDefinitions={[
-          { id: "name", header: "Name", cell: r => r.name },
+      {loadError ? (
+        <Container>
+          <PageError
+            title="API keys are unavailable"
+            action={<CuaButton onClick={refresh}>Retry</CuaButton>}
+          >
+            {loadError}
+          </PageError>
+        </Container>
+      ) : (
+        <section className="cua-page-table">
+          <Table
+            variant="borderless"
+            loading={loading}
+            loadingText="Loading API keys"
+            items={keys}
+            visibleColumns={compactTable
+              ? ["name", "scope", "actions"]
+              : ["name", "client_id", "scope", "actions"]}
+            columnDefinitions={[
+          {
+            id: "name",
+            header: "Name",
+            cell: r => (
+              <SpaceBetween size="xxs">
+                <span>{r.name}</span>
+                {compactTable ? <code>{r.clientId}</code> : null}
+              </SpaceBetween>
+            ),
+          },
           { id: "client_id", header: "Client ID", cell: r => <code>{r.clientId}</code> },
           {
             id: "scope",
@@ -161,13 +246,43 @@ export function UserApiKeys() {
             id: "actions",
             header: "",
             cell: r => (
-              <Button onClick={() => setConfirmRevoke(r.id)}>Revoke</Button>
+              <CuaButton
+                tone="danger"
+                loading={revokingId === r.id}
+                disabled={revokingId !== null}
+                onClick={() => setConfirmRevoke(r.id)}
+              >
+                Revoke
+              </CuaButton>
             ),
           },
-        ]}
-        empty={<Box textAlign="center">No API keys yet.</Box>}
-        header={<Header variant="h2">Your API keys</Header>}
-      />
+            ]}
+            empty={
+          <PageEmpty
+            title="No API keys"
+            action={
+              <CuaButton
+                tone="primary"
+                onClick={() => document.getElementById("api-key-name")?.focus()}
+              >
+                Create API key
+              </CuaButton>
+            }
+          >
+            Create a key when a tool or workflow needs to access Cua.
+          </PageEmpty>
+            }
+            header={
+          <Header
+            variant="h2"
+            description="Revocations are saved remotely and take effect immediately."
+          >
+            API keys
+          </Header>
+            }
+          />
+        </section>
+      )}
 
       {/* Key-created modal -- shows credentials once */}
       {created && (
@@ -177,9 +292,9 @@ export function UserApiKeys() {
           onDismiss={() => setCreated(null)}
           footer={
             <Box float="right">
-              <Button variant="primary" onClick={() => setCreated(null)}>
+              <CuaButton tone="primary" onClick={() => setCreated(null)}>
                 I have copied the credentials
-              </Button>
+              </CuaButton>
             </Box>
           }
         >
@@ -225,13 +340,14 @@ export function UserApiKeys() {
           footer={
             <Box float="right">
               <SpaceBetween direction="horizontal" size="xs">
-                <Button onClick={() => setConfirmRevoke(null)}>Cancel</Button>
-                <Button
-                  variant="primary"
+                <CuaButton onClick={() => setConfirmRevoke(null)}>Cancel</CuaButton>
+                <CuaButton
+                  tone="danger"
+                  loading={revokingId === confirmRevoke}
                   onClick={() => remove(confirmRevoke)}
                 >
                   Revoke
-                </Button>
+                </CuaButton>
               </SpaceBetween>
             </Box>
           }
@@ -240,6 +356,7 @@ export function UserApiKeys() {
           access immediately.
         </Modal>
       )}
-    </SpaceBetween>
+      </SpaceBetween>
+    </PageShell>
   )
 }

@@ -17,9 +17,12 @@ test.describe("SDK builders", () => {
 
   test("builds client, claim, and user-key records", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const { buildClientConfiguration } = await import("/src/sdk/client.ts")
+      const { buildClientConfiguration, ensureSdkInitialized } = await import(
+        "/src/sdk/client.ts"
+      )
       const { buildClaimRequest } = await import("/src/sdk/claims.ts")
       const { buildUserApiKeyRequest } = await import("/src/sdk/userKeys.ts")
+      await ensureSdkInitialized()
       const pool = {
         apiVersion: "osgym.cua.ai/v1alpha1",
         kind: "OSGymSandboxWarmPool",
@@ -62,8 +65,10 @@ test.describe("SDK builders", () => {
 
   test("builds nested pool and template requests", async ({ page }) => {
     const result = await page.evaluate(async () => {
+      const { ensureSdkInitialized } = await import("/src/sdk/client.ts")
       const { buildPoolRequest, buildTemplateRequest } = await import("/src/sdk/pools.ts")
       const { Firmware, ServiceProtocol } = await import("/src/sdk/generated.ts")
+      await ensureSdkInitialized()
       const values = {
         cpu: 4,
         ram: "8Gi",
@@ -121,6 +126,7 @@ test.describe("SDK builders", () => {
 
   test("rebuilds template services without mutation", async ({ page }) => {
     const result = await page.evaluate(async () => {
+      const { ensureSdkInitialized } = await import("/src/sdk/client.ts")
       const { rebuildTemplateWithServices } = await import("/src/sdk/pools.ts")
       const {
         Firmware,
@@ -130,6 +136,7 @@ test.describe("SDK builders", () => {
         RuntimeKind,
         SandboxServiceBuilder,
       } = await import("/src/sdk/generated.ts")
+      await ensureSdkInitialized()
       const originalService = new SandboxServiceBuilder()
         .name("old")
         .targetPort(8080)

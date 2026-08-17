@@ -8,6 +8,10 @@ import {
 
 const sdkInitialization = uniffiInitAsync()
 
+export async function ensureSdkInitialized(): Promise<void> {
+  await sdkInitialization
+}
+
 function baseUrl(): string {
   return window.location.origin
 }
@@ -25,7 +29,7 @@ export function buildClientConfiguration(): CyclopsTokenProviderConfiguration {
 export async function withClient<T>(
   operation: (client: CyclopsClient) => Promise<T>,
 ): Promise<T> {
-  await sdkInitialization
+  await ensureSdkInitialized()
   const token = await getToken()
   if (!token) throw new Error("Authentication token is unavailable")
 

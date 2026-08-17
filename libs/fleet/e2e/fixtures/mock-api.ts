@@ -59,10 +59,14 @@ export interface MockFeatureFlags {
 
 export interface MockAuthOptions {
   holdConfig?: boolean
+  holdAuth?: boolean
+  initRejects?: boolean
+  refreshFails?: boolean
 }
 
 export interface MockAuthControl {
   releaseConfig(): void
+  releaseAuth(): Promise<void>
 }
 
 export async function mockAuth(
@@ -72,6 +76,9 @@ export async function mockAuth(
 ): Promise<MockAuthControl> {
   const config = deferred()
   if (!options.holdConfig) config.resolve()
+  const holdAuth = options.holdAuth ?? false
+  const initRejects = options.initRejects ?? false
+  const refreshFails = options.refreshFails ?? false
   // Intercept the Vite pre-bundled keycloak-js module. Vite serves
   // node_modules deps from /.vite/deps/ or /node_modules/.vite/deps/.
   // Replace the entire module with a stub Keycloak class.
@@ -79,6 +86,18 @@ export async function mockAuth(
     route.fulfill({
       contentType: "application/javascript",
       body: `
+        const authReady = new Promise(resolve => {
+          window.__MOCK_KEYCLOAK__ = {
+            initOptions: null,
+            loginOptions: null,
+            logoutOptions: null,
+            updateTokenMinValidity: [],
+            clearTokenCalls: 0,
+            releaseAuth: resolve,
+          };
+        });
+        ${holdAuth ? "" : "window.__MOCK_KEYCLOAK__.releaseAuth();"}
+
         class Keycloak {
           constructor() {
             this.token = "${FAKE_TOKEN}";
@@ -96,10 +115,26 @@ export async function mockAuth(
             this.resourceAccess = {};
             this.subject = "test-user-id";
           }
-          async init() { this.authenticated = true; return true; }
-          async updateToken() { return true; }
-          login() {}
-          logout() { window.location.href = "/"; }
+          async init(options) {
+            window.__MOCK_KEYCLOAK__.initOptions = options;
+            await authReady;
+            ${initRejects ? 'throw new Error("rejected callback");' : ""}
+            this.authenticated = true;
+            return true;
+          }
+          async updateToken(minValidity) {
+            window.__MOCK_KEYCLOAK__.updateTokenMinValidity.push(minValidity);
+            ${refreshFails ? 'throw new Error("refresh failed");' : ""}
+            return true;
+          }
+          login(options) {
+            window.__MOCK_KEYCLOAK__.loginOptions = options;
+            return Promise.resolve();
+          }
+          logout(options) {
+            window.__MOCK_KEYCLOAK__.logoutOptions = options;
+            return Promise.resolve();
+          }
           register() {}
           accountManagement() {}
           createLoginUrl() { return "/"; }
@@ -107,7 +142,10 @@ export async function mockAuth(
           createRegisterUrl() { return "/"; }
           createAccountUrl() { return "/"; }
           isTokenExpired() { return false; }
-          clearToken() {}
+          clearToken() {
+            window.__MOCK_KEYCLOAK__.clearTokenCalls += 1;
+            this.authenticated = false;
+          }
           hasRealmRole() { return false; }
           hasResourceRole() { return false; }
           loadUserProfile() { return Promise.resolve({ username: "testuser" }); }
@@ -137,7 +175,16 @@ export async function mockAuth(
     route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
   )
 
-  return { releaseConfig: config.resolve }
+  return {
+    releaseConfig: config.resolve,
+    releaseAuth: () =>
+      page.evaluate(() => {
+        const control = (window as unknown as {
+          __MOCK_KEYCLOAK__: { releaseAuth(): void }
+        }).__MOCK_KEYCLOAK__
+        control.releaseAuth()
+      }),
+  }
 }
 
 // ---------------------------------------------------------------------------

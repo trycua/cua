@@ -1,6 +1,103 @@
 import { expect, test } from "@playwright/test"
 
 import { mockAuth, mockChatApi } from "./fixtures/mock-api"
+import { expectSharedPageShell } from "./fixtures/shell-geometry"
+
+test.describe("shared Chat page shell", () => {
+  for (const viewport of [
+    { name: "desktop", width: 1440, height: 900 },
+    { name: "mobile", width: 390, height: 844 },
+  ]) {
+    test(`keeps the shared shell and composer in view on ${viewport.name}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport)
+      await mockAuth(page, { admin: false, chat: true })
+      await mockChatApi(page)
+      await page.goto("/agent")
+
+      await expectSharedPageShell(page)
+      await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible()
+      await expect(
+        page.getByText("Run fleet and browser tasks with the Cua agent."),
+      ).toHaveCount(viewport.width > 700 ? 1 : 0)
+      await expect(page.locator(".agent-chat-composer")).toBeInViewport()
+      const composerBox = await page.locator(".agent-chat-composer").boundingBox()
+      expect(composerBox).not.toBeNull()
+      expect(
+        viewport.height - ((composerBox?.y ?? 0) + (composerBox?.height ?? 0)),
+      ).toBeLessThan(40)
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollHeight - window.innerHeight,
+        ),
+      ).toBeLessThan(4)
+
+      if (viewport.width > 700) {
+        await expect(page.locator(".agent-chat-timestamp").first()).toHaveCSS(
+          "color",
+          "rgba(164, 173, 187, 0.82)",
+        )
+        const geometry = await page.locator(".cua-pagehead").evaluate(
+          async element => {
+            const samples: string[] = []
+            for (let frame = 0; frame < 30; frame += 1) {
+              await new Promise<void>(resolve =>
+                requestAnimationFrame(() => resolve()),
+              )
+              const box = element.getBoundingClientRect()
+              samples.push(`${box.x}:${box.y}:${box.width}:${box.height}`)
+            }
+            return samples
+          },
+        )
+        expect(new Set(geometry).size).toBe(1)
+      }
+    })
+  }
+})
+
+test("renders and exercises Chat through the standalone visual preview", async ({
+  page,
+}) => {
+  await page.goto("/agent?cua-visual-preview")
+
+  await expect(page).toHaveTitle("Chat · Cua")
+  await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "Chat" })).toBeVisible()
+  await page
+    .getByRole("button", { name: "Inspect the browser fleet" })
+    .click()
+  await expect(
+    page.getByText("Check the browser fleet and summarize its availability."),
+  ).toBeVisible()
+  await expect(page.getByText("Command completed")).toBeVisible()
+  await expect(
+    page.getByText("The browser fleet is healthy:", { exact: false }),
+  ).toBeVisible()
+
+  const prompt = page.getByPlaceholder("Ask a question")
+  await prompt.fill("Show me the preview response")
+  await page.getByRole("button", { name: "Send message" }).click()
+  await expect(
+    page.getByText("Preview mode is connected.", { exact: false }),
+  ).toBeVisible()
+  await expect(prompt).toBeEnabled()
+})
+
+test("offers a useful first-run Chat state in the standalone preview", async ({
+  page,
+}) => {
+  await page.goto("/agent?cua-visual-preview&cua-preview-state=empty")
+
+  await expect(
+    page.getByRole("heading", { name: "Start a conversation" }),
+  ).toBeVisible()
+  await expect(
+    page.getByText("Ask a question below to create your first conversation."),
+  ).toBeVisible()
+  await expect(page.getByPlaceholder("Ask a question")).toBeEnabled()
+})
 
 test("shows chat history, transcript region, prompt shell, and authenticated history time", async ({ page }) => {
   await mockAuth(page, { admin: false, chat: true })
@@ -74,6 +171,7 @@ test("loads a selected conversation with message skeletons and accessible author
 
   await expect(page.getByText("Open the example site.")).toBeVisible()
   await expect(page.getByText("The example site is ready.")).toBeVisible()
+  await expect(page.getByLabel("Your avatar")).toHaveText("Y")
   await expect(page.getByLabel(/^You at /)).toBeVisible()
   await expect(page.getByLabel(/^Assistant at /)).toBeVisible()
 })
@@ -127,6 +225,10 @@ test("renders and sanitizes Markdown in user and assistant messages", async ({ p
   const assistantBubble = page.getByLabel(/^Assistant at /)
   await expect(userBubble.getByRole("table")).toBeVisible()
   await expect(userBubble.getByRole("link", { name: "Safe link" })).toHaveAttribute("href", "https://example.com")
+  await expect(userBubble.getByRole("link", { name: "Safe link" })).toHaveCSS(
+    "color",
+    "rgb(159, 215, 255)",
+  )
   await expect(userBubble.getByText("Unsafe link")).not.toHaveAttribute("href", /.+/)
   await expect(assistantBubble.getByRole("table")).toBeVisible()
   await expect(assistantBubble.locator("pre code")).toContainText("const ready = true")
@@ -165,14 +267,16 @@ test("manages mobile history modal focus, keyboard, inert background, and close 
   await trigger.focus()
   await trigger.press("Enter")
   const dialog = page.getByRole("dialog", { name: "Conversations" })
+  const drawer = dialog.locator(".agent-chat-mobile-drawer")
   const closeButton = dialog.getByRole("button", { name: "Close conversations" })
   await expect(dialog).toBeVisible()
+  await expect(drawer).toHaveCSS("background-color", "rgb(24, 24, 24)")
   await expect(closeButton).toBeFocused()
   await expect(dialog.getByRole("heading", { name: "Conversations", exact: true })).toHaveCount(1)
   await expect(page.locator("#root")).toHaveAttribute("inert", "")
-  const poolsNavigation = page.getByRole("link", { name: "Pools", exact: true }).first()
-  await poolsNavigation.focus()
-  await expect(poolsNavigation).not.toBeFocused()
+  const cuaIdentity = page.getByRole("link", { name: "Cua", exact: true }).first()
+  await cuaIdentity.focus()
+  await expect(cuaIdentity).not.toBeFocused()
   await expect(closeButton).toBeFocused()
 
   const lastFocusable = dialog.locator('button:not([disabled])').last()

@@ -1,5 +1,5 @@
 import StatusIndicator, {
-  StatusIndicatorProps,
+  type StatusIndicatorProps,
 } from "@cloudscape-design/components/status-indicator"
 import type { PoolStatus } from "../sdk/status"
 
@@ -10,10 +10,20 @@ const POOL_STATUS_TYPE: Record<PoolStatus["kind"], StatusIndicatorProps.Type> = 
   unknown: "pending",
 }
 
-export function PoolStatusPill({ status }: { status: PoolStatus }) {
+export function PoolStatusPill({
+  status,
+  compact = false,
+}: {
+  status: PoolStatus
+  compact?: boolean
+}) {
   return (
-    <StatusIndicator type={POOL_STATUS_TYPE[status.kind]}>
-      {status.label}
-    </StatusIndicator>
+    <span title={compact ? status.label : undefined}>
+      <StatusIndicator type={POOL_STATUS_TYPE[status.kind]}>
+        <span className={compact ? "cua-visually-hidden" : undefined}>
+          {status.label}
+        </span>
+      </StatusIndicator>
+    </span>
   )
 }

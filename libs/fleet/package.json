@@ -14,11 +14,14 @@
     "lint:fix": "biome check --write",
     "test:e2e": "npm run sdk:browser && playwright test",
     "test:e2e:ui": "npm run sdk:browser && playwright test --ui",
+    "test:auth-contract": "tsx --test tests/auth-redirects.test.ts",
+    "test:design-boundary": "node --test tests/design-package-boundary.test.mjs",
     "test:favicon": "node --test tests/favicon.test.mjs",
     "test:sdk-models": "rm -rf target/sdk-model-tests && tsc e2e/sdk-models.unit.ts src/sdk/status.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --outDir target/sdk-model-tests --skipLibCheck && node target/sdk-model-tests/e2e/sdk-models.unit.js",
-    "test:agent": "node --test --experimental-strip-types agent.test.ts"
+    "test:agent": "tsx --test agent.test.ts"
   },
   "dependencies": {
+    "@cua/design": "file:../packages/cua-design",
     "@cloudscape-design/collection-hooks": "^1.0.93",
     "@cloudscape-design/components": "^3.0.825",
     "@cloudscape-design/global-styles": "^1.0.36",
@@ -41,6 +44,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "4.22.3",
     "typescript": "^5.7.2",
     "vite": "^5.4.11",
     "@types/node": "^22.19.17"

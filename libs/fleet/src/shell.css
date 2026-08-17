@@ -1,0 +1,306 @@
+html,
+body,
+#root,
+.cua-shell {
+  min-height: 100%;
+  background: var(--cua-dashboard-background, #000000);
+}
+
+.cua-shell {
+  color: var(--cua-dashboard-text);
+  font-family: var(--cua-dashboard-font-body);
+}
+
+.cua-shell__topnav,
+.cua-pagehead {
+  position: relative;
+  isolation: isolate;
+}
+
+.cua-shell__topnav {
+  z-index: 1000;
+  overflow: visible;
+  background: var(--cua-dashboard-background);
+}
+
+.cua-shell__topnav::before {
+  content: "";
+  position: absolute;
+  z-index: -2;
+  inset: 0;
+  pointer-events: none;
+  background: var(--cua-dashboard-band);
+  mask-image: linear-gradient(180deg, #000000 0%, #000000 48%, transparent 100%);
+}
+
+.cua-shell__topnav::after,
+.cua-pagehead::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--cua-dashboard-band-grain-image);
+  background-size: var(--cua-dashboard-band-grain-size);
+  opacity: var(--cua-dashboard-band-grain-opacity);
+}
+
+.cua-pagehead::after {
+  inset-block: -24px;
+  inset-inline: calc(-1 * var(--cua-pagehead-bleed));
+}
+
+.cua-shell__topnav > * {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
+.cua-shell__nav {
+  font-size: 14px;
+}
+
+.cua-pagehead {
+  box-sizing: border-box;
+  min-height: 96px;
+  padding: 18px 0 14px;
+  --cua-pagehead-bleed: var(--cua-layout-application-inline);
+}
+
+.cua-pagehead__eyebrow {
+  margin: 0 0 10px;
+  color: var(--cua-color-text-muted);
+  font-family: var(--cua-dashboard-font-mono);
+  font-size: var(--cua-dashboard-eyebrow-size);
+  font-weight: 500;
+  letter-spacing: var(--cua-dashboard-eyebrow-tracking);
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.cua-pagehead__title {
+  margin: 0;
+  color: var(--cua-dashboard-text);
+  font-family: var(--cua-dashboard-font-body);
+  font-size: var(--cua-font-size-page-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.cua-pagehead__actions,
+.cua-pagebody {
+  min-width: 0;
+}
+
+.cua-pagehead__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.cua-selection-actions {
+  display: flex;
+  min-height: 48px;
+  padding: 8px 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--cua-color-text-body);
+}
+
+.cua-page-table {
+  min-width: 0;
+  overflow-x: auto;
+  border-radius: var(--cua-radius-control);
+}
+
+.cua-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.cua-pool-name {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#cua-dashboard-root .cua-dashboard-button button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--cua-control-height-compact);
+  padding: var(--cua-action-padding-block) var(--cua-action-padding-inline);
+  border-radius: var(--cua-radius-control);
+  font-family: var(--cua-dashboard-font-body);
+  font-size: var(--cua-action-font-size);
+  font-weight: var(--cua-action-font-weight);
+  letter-spacing: var(--cua-action-letter-spacing);
+  line-height: var(--cua-action-line-height);
+}
+
+#cua-dashboard-root .cua-dashboard-button--primary button:not(:disabled),
+#cua-dashboard-root .cua-dashboard-button--primary button:not(:disabled):hover,
+#cua-dashboard-root .cua-dashboard-button--primary button:not(:disabled):active {
+  border-color: transparent;
+  background: var(--cua-action-primary-background);
+  box-shadow: none;
+  color: var(--cua-action-primary-foreground);
+}
+
+#cua-dashboard-root .cua-dashboard-button--primary button:not(:disabled):hover {
+  filter: var(--cua-action-primary-hover-filter);
+}
+
+#cua-dashboard-root .cua-dashboard-button--secondary button:not(:disabled),
+#cua-dashboard-root .cua-dashboard-button--secondary button:not(:disabled):hover,
+#cua-dashboard-root .cua-dashboard-button--secondary button:not(:disabled):active,
+#cua-dashboard-root .cua-dashboard-button--icon button:not(:disabled),
+#cua-dashboard-root .cua-dashboard-button--icon button:not(:disabled):hover,
+#cua-dashboard-root .cua-dashboard-button--icon button:not(:disabled):active {
+  border-color: var(--cua-action-secondary-application-border);
+  background: var(--cua-action-secondary-application-background);
+  color: var(--cua-action-secondary-application-foreground);
+}
+
+#cua-dashboard-root .cua-dashboard-button--secondary button:not(:disabled):hover,
+#cua-dashboard-root .cua-dashboard-button--icon button:not(:disabled):hover {
+  border-color: var(--cua-action-secondary-application-hover-border);
+  background: var(--cua-action-secondary-application-background);
+  color: var(--cua-action-secondary-application-hover-foreground);
+}
+
+#cua-dashboard-root .cua-dashboard-button--icon button {
+  width: 40px;
+  padding-inline: 0;
+}
+
+#cua-dashboard-root .cua-dashboard-button--danger button:not(:disabled),
+#cua-dashboard-root .cua-dashboard-button--danger button:not(:disabled):hover,
+#cua-dashboard-root .cua-dashboard-button--danger button:not(:disabled):active {
+  border-color: var(--cua-action-danger-application-border);
+  background: var(--cua-action-danger-application-background);
+  color: var(--cua-action-danger-application-foreground);
+}
+
+#cua-dashboard-root .cua-dashboard-button--danger button:not(:disabled):hover,
+#cua-dashboard-root .cua-dashboard-button--danger button:not(:disabled):active {
+  border-color: var(--cua-action-danger-application-hover-border);
+  background: var(--cua-action-danger-application-hover-background);
+}
+
+#cua-dashboard-root
+  .cua-dashboard-button.cua-dashboard-button--secondary
+  button:disabled,
+#cua-dashboard-root
+  .cua-dashboard-button.cua-dashboard-button--secondary
+  button[aria-disabled="true"],
+#cua-dashboard-root
+  .cua-dashboard-button.cua-dashboard-button--icon
+  button:disabled,
+#cua-dashboard-root
+  .cua-dashboard-button.cua-dashboard-button--icon
+  button[aria-disabled="true"] {
+  border-color: var(--cua-action-secondary-application-border);
+  background: var(--cua-action-secondary-application-background);
+  color: var(--cua-action-secondary-application-foreground);
+  opacity: 0.55;
+}
+
+/* Cloudscape paints its focus ring on a button::before layer with geometry
+   that does not follow Cua's control radius. Keep its focus behavior, but
+   replace that paint layer with the shared Cua focus tokens. */
+body#cua-dashboard-root[data-awsui-focus-visible="true"]
+  .cua-dashboard-button
+  button:focus::before {
+  content: none;
+}
+
+#cua-dashboard-root .cua-dashboard-button button:focus-visible,
+body#cua-dashboard-root[data-awsui-focus-visible="true"]
+  .cua-dashboard-button
+  button:focus-visible {
+  outline: var(--cua-focus-width) solid var(--cua-focus-color);
+  outline-offset: var(--cua-focus-offset);
+}
+
+#cua-dashboard-root [aria-label="Open navigation"],
+#cua-dashboard-root [aria-label="Close navigation"] {
+  /* Cloudscape's scoped trigger selector contains an ID specificity hack. */
+  width: 40px !important;
+  height: 40px !important;
+  border: 1px solid var(--cua-action-secondary-application-border) !important;
+  border-radius: var(--cua-radius-control) !important;
+  background: var(--cua-action-secondary-application-background) !important;
+  color: var(--cua-action-secondary-application-foreground) !important;
+}
+
+#cua-dashboard-root [aria-label="Open navigation"]:hover,
+#cua-dashboard-root [aria-label="Close navigation"]:hover {
+  border-color: var(--cua-action-secondary-application-hover-border) !important;
+  color: var(--cua-action-secondary-application-hover-foreground) !important;
+}
+
+.cua-pagehead h1 {
+  /* Cloudscape renders the counter beside the full-contrast inner title. */
+  color: var(--cua-color-text-muted);
+}
+
+@media (max-width: 1023px) {
+  #root .cua-shell main > div:has(> nav[aria-label="Main navigation"]) {
+    inset-block-start: 0;
+    block-size: 100dvh;
+  }
+}
+
+@media (max-width: 687px) {
+  .cua-pagehead {
+    min-height: 96px;
+    padding-top: 16px;
+  }
+
+  .cua-pagehead__title {
+    font-size: var(--cua-font-size-page-title-compact);
+  }
+
+  .cua-pagehead {
+    --cua-pagehead-bleed: var(--cua-layout-application-inline-compact);
+  }
+
+  .cua-pagehead__actions {
+    flex-wrap: nowrap;
+  }
+
+  #cua-dashboard-root
+    .cua-pagehead__actions
+    .cua-dashboard-button:not(.cua-dashboard-button--icon)
+    button {
+    padding-inline: var(--cua-action-padding-inline-compact);
+  }
+}
+
+@media (max-width: 374px) {
+  .cua-pagehead {
+    --cua-pagehead-bleed: var(--cua-layout-application-inline-tight);
+  }
+}
+
+@media (forced-colors: active) {
+  .cua-shell__topnav::before,
+  .cua-shell__topnav::after,
+  .cua-pagehead::after {
+    display: none;
+  }
+}

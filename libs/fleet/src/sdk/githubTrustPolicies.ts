@@ -1,4 +1,5 @@
 import { getToken } from "../auth/keycloak"
+import { isLocalVisualPreview } from "../local-visual-preview"
 
 export interface Namespace {
   name: string
@@ -32,6 +33,18 @@ export interface GitHubTrustPolicyInput {
   enabled: boolean
 }
 
+let localVisualPreviewPolicies: GitHubTrustPolicy[] = [
+  {
+    id: "preview-policy-1",
+    name: "Cloud CI",
+    repository: "trycua/cloud",
+    allowed_namespaces: ["preview"],
+    enabled: true,
+    created_at: "2026-08-16T20:20:00.000Z",
+    updated_at: "2026-08-16T20:20:00.000Z",
+  },
+]
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getToken()
   const response = await fetch(path, {
@@ -51,23 +64,72 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const githubTrustPoliciesApi = {
-  list: () => request<GitHubTrustPolicyListResponse>("/api/github-trust-policies"),
-  create: (input: GitHubTrustPolicyInput) =>
-    request<GitHubTrustPolicy>("/api/github-trust-policies", {
+  list: async () => {
+    if (isLocalVisualPreview()) {
+      return {
+        policies: [...localVisualPreviewPolicies],
+        oidc: {
+          issuer: "https://token.actions.githubusercontent.com",
+          audience: "fleets",
+        },
+      }
+    }
+    return request<GitHubTrustPolicyListResponse>("/api/github-trust-policies")
+  },
+  create: async (input: GitHubTrustPolicyInput) => {
+    if (isLocalVisualPreview()) {
+      const now = new Date().toISOString()
+      const policy: GitHubTrustPolicy = {
+        id: `preview-policy-${localVisualPreviewPolicies.length + 1}`,
+        ...input,
+        created_at: now,
+        updated_at: now,
+      }
+      localVisualPreviewPolicies = [...localVisualPreviewPolicies, policy]
+      return policy
+    }
+    return request<GitHubTrustPolicy>("/api/github-trust-policies", {
       method: "POST",
       body: JSON.stringify(input),
-    }),
-  update: (id: string, input: Partial<GitHubTrustPolicyInput>) =>
-    request<GitHubTrustPolicy>(`/api/github-trust-policies/${encodeURIComponent(id)}`, {
+    })
+  },
+  update: async (id: string, input: Partial<GitHubTrustPolicyInput>) => {
+    if (isLocalVisualPreview()) {
+      const current = localVisualPreviewPolicies.find(policy => policy.id === id)
+      if (!current) throw new Error("Preview trust policy not found")
+      const policy = { ...current, ...input, updated_at: new Date().toISOString() }
+      localVisualPreviewPolicies = localVisualPreviewPolicies.map(item =>
+        item.id === id ? policy : item,
+      )
+      return policy
+    }
+    return request<GitHubTrustPolicy>(`/api/github-trust-policies/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(input),
-    }),
-  remove: (id: string) =>
-    request<void>(`/api/github-trust-policies/${encodeURIComponent(id)}`, {
+    })
+  },
+  remove: async (id: string) => {
+    if (isLocalVisualPreview()) {
+      localVisualPreviewPolicies = localVisualPreviewPolicies.filter(
+        policy => policy.id !== id,
+      )
+      return
+    }
+    return request<void>(`/api/github-trust-policies/${encodeURIComponent(id)}`, {
       method: "DELETE",
-    }),
+    })
+  },
 }
 
 export const namespacesApi = {
-  list: () => request<Namespace[]>("/api/namespaces"),
+  list: () => isLocalVisualPreview()
+    ? Promise.resolve([
+        {
+          name: "preview",
+          status: "Active",
+          createdAt: "2026-08-16T20:20:00.000Z",
+          labels: null,
+        },
+      ])
+    : request<Namespace[]>("/api/namespaces"),
 }

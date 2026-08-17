@@ -1,19 +1,21 @@
-import { useMemo, useState } from "react"
-import { useLocation, useNavigate } from "react-router-dom"
+import { useMemo, useRef, useState } from "react"
+import { useBeforeUnload, useLocation, useNavigate } from "react-router-dom"
 import Box from "@cloudscape-design/components/box"
-import Button from "@cloudscape-design/components/button"
 import ColumnLayout from "@cloudscape-design/components/column-layout"
 import Container from "@cloudscape-design/components/container"
 import Form from "@cloudscape-design/components/form"
 import FormField from "@cloudscape-design/components/form-field"
 import Header from "@cloudscape-design/components/header"
-import Input from "@cloudscape-design/components/input"
+import Input, { type InputProps } from "@cloudscape-design/components/input"
+import Modal from "@cloudscape-design/components/modal"
 import Select from "@cloudscape-design/components/select"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Toggle from "@cloudscape-design/components/toggle"
 import { useFlash } from "../components/FlashContext"
 import { createPool } from "../sdk/pools"
 import type { PoolTemplateConfig } from "../sdk/models"
+import { CuaButton } from "../components/CuaButton"
+import { PageShell } from "../components/PageShell"
 
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -106,16 +108,26 @@ export function PoolNew() {
   const [initialPoolSize, setInitialPoolSize] = useState(String(seed.autoscaling?.initialPoolSize ?? 0))
   const [maxPoolSize, setMaxPoolSize] = useState(String(seed.autoscaling?.maxPoolSize ?? 20))
   const [submitting, setSubmitting] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [submitAttempted, setSubmitAttempted] = useState(false)
+  const [discardOpen, setDiscardOpen] = useState(false)
+  const nameRef = useRef<InputProps.Ref>(null)
+
+  useBeforeUnload(event => {
+    if (!dirty || submitting) return
+    event.preventDefault()
+  })
 
   const nameError = useMemo(() => {
-    if (!name) return undefined
+    if (!name) return submitAttempted ? "Name is required." : undefined
     if (!NAME_PATTERN.test(name)) {
       return "Lowercase letters, digits, and dashes only; no leading/trailing dash."
     }
     return undefined
-  }, [name])
+  }, [name, submitAttempted])
 
   const addService = () => {
+    setDirty(true)
     setServices(prev => [...prev, { id: genId(), name: "", targetPort: "", protocol: "TCP" }])
   }
 
@@ -124,6 +136,7 @@ export function PoolNew() {
   }
 
   const removeService = (id: string) => {
+    setDirty(true)
     setServices(prev => prev.filter(s => s.id !== id))
   }
 
@@ -165,11 +178,16 @@ export function PoolNew() {
   }
 
   const create = async () => {
-    if (!name || nameError) return
+    setSubmitAttempted(true)
+    if (!name || nameError) {
+      nameRef.current?.focus()
+      return
+    }
     setSubmitting(true)
     try {
       await createPool(name, buildValues())
       flash.push({ type: "success", header: `Created pool ${name}` })
+      setDirty(false)
       // Pool name = namespace name (1:1 mapping).
       navigate(`/pools/${name}/${name}`)
     } catch (e) {
@@ -183,38 +201,30 @@ export function PoolNew() {
     }
   }
 
-  const submitDisabled = !name || !!nameError || submitting
+  const cancel = () => {
+    if (dirty) setDiscardOpen(true)
+    else navigate("/pools")
+  }
 
   return (
-    <Container
-      header={
-        <Header
-          variant="h1"
-          description={
-            source
-              ? `Duplicating "${source.name}". Edit and save as a new pool.`
-              : "Create a new pool."
-          }
-        >
-          {source ? "Duplicate pool" : "New pool"}
-        </Header>
+    <PageShell
+      eyebrow="Fleet / Pool"
+      title={source ? "Duplicate pool" : "New pool"}
+      description={
+        source
+          ? `Duplicating "${source.name}". Edit and save as a new pool.`
+          : "Create a new pool."
+      }
+      secondaryActions={<CuaButton onClick={cancel}>Cancel</CuaButton>}
+      primaryAction={
+        <CuaButton tone="primary" loading={submitting} onClick={create}>
+          Create
+        </CuaButton>
       }
     >
-      <Form
-        actions={
-          <SpaceBetween direction="horizontal" size="xs">
-            <Button onClick={() => navigate("/pools")}>Cancel</Button>
-            <Button
-              variant="primary"
-              loading={submitting}
-              disabled={submitDisabled}
-              onClick={create}
-            >
-              Create
-            </Button>
-          </SpaceBetween>
-        }
-      >
+      <Container header={<Header variant="h2">Configuration</Header>}>
+      <div onChangeCapture={() => setDirty(true)}>
+      <Form>
         <SpaceBetween size="l">
           <FormField
             label="Name"
@@ -226,6 +236,7 @@ export function PoolNew() {
             errorText={nameError}
           >
             <Input
+              ref={nameRef}
               value={name}
               onChange={({ detail }) => setName(detail.value)}
               placeholder="my-pool"
@@ -373,19 +384,51 @@ export function PoolNew() {
                     onChange={({ detail }) => updateService(svc.id, "protocol", detail.selectedOption.value ?? "TCP")}
                     options={PROTOCOL_OPTIONS}
                   />
-                  <Button iconName="remove" variant="icon" onClick={() => removeService(svc.id)} />
+                  <CuaButton
+                    tone="icon"
+                    ariaLabel={`Remove service ${svc.name || "row"}`}
+                    iconName="remove"
+                    onClick={() => removeService(svc.id)}
+                  />
                 </ColumnLayout>
               ))}
               {services.length === 0 && (
                 <Box color="text-status-inactive">No services defined.</Box>
               )}
-              <Button iconName="add-plus" onClick={addService}>
+              <CuaButton iconName="add-plus" onClick={addService}>
                 Add service
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           </FormField>
         </SpaceBetween>
       </Form>
-    </Container>
+      </div>
+      </Container>
+      <Modal
+        visible={discardOpen}
+        onDismiss={() => setDiscardOpen(false)}
+        header="Discard changes?"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <CuaButton onClick={() => setDiscardOpen(false)}>
+                Keep editing
+              </CuaButton>
+              <CuaButton
+                tone="danger"
+                onClick={() => {
+                  setDirty(false)
+                  navigate("/pools")
+                }}
+              >
+                Discard
+              </CuaButton>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        Your unsaved pool configuration will be lost.
+      </Modal>
+    </PageShell>
   )
 }

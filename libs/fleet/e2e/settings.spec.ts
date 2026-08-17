@@ -4,6 +4,35 @@ import {
   mockNamespacesApi,
   mockGitHubTrustPoliciesApi,
 } from "./fixtures/mock-api"
+import { expectSharedPageShell } from "./fixtures/shell-geometry"
+
+for (const viewport of [
+  { name: "desktop", width: 1440, height: 900 },
+  { name: "mobile", width: 375, height: 900 },
+]) {
+  test(`Settings uses the shared shell on ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize(viewport)
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockGitHubTrustPoliciesApi(page)
+    await page.route("**/api/billing/summary", route =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ payment_method_present: false, card: null }),
+      }),
+    )
+
+    await page.goto("/settings")
+
+    await expectSharedPageShell(page)
+    await expect(page.getByLabel("Display name")).toBeHidden()
+    expect(
+      await page.locator("html").evaluate(
+        element => element.scrollWidth - element.clientWidth,
+      ),
+    ).toBeLessThanOrEqual(1)
+  })
+}
 
 test.describe("Settings GitHub trust policies", () => {
   test.beforeEach(async ({ page }) => {
@@ -85,7 +114,7 @@ test.describe("Settings GitHub trust policies", () => {
     ).toHaveLength(1)
   })
 
-  test("shows GitHub WIF below payment method in a collapsed section", async ({
+  test("orders account, API keys, GitHub OIDC, and payment method", async ({
     page,
   }) => {
     await page.route("**/api/config", route =>
@@ -107,29 +136,61 @@ test.describe("Settings GitHub trust policies", () => {
       name: "Payment method",
       exact: true,
     })
+    const accountHeading = page.getByRole("heading", {
+      name: "Account",
+      exact: true,
+    })
+    const apiKeysHeading = page.getByRole("heading", {
+      name: "API keys",
+      exact: true,
+    })
     const githubToggle = page.getByRole("button", {
       name: "GitHub Actions OIDC",
     })
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible()
+    await expect(accountHeading).toBeVisible()
+    await expect(apiKeysHeading).toBeVisible()
     await expect(paymentHeading).toBeVisible()
     await expect(githubToggle).toBeVisible()
-    const paymentBeforeGitHub = await page.evaluate(() => {
-      const payment = [...document.querySelectorAll("h1, h2, h3, h4")].find(
-        element => element.textContent?.trim() === "Payment method",
-      )
-      const github = [...document.querySelectorAll("button, [role=\"button\"]")].find(element =>
-        element.textContent?.trim().startsWith("GitHub Actions OIDC"),
-      )
-      return Boolean(
-        payment &&
-          github &&
-          payment.compareDocumentPosition(github) & Node.DOCUMENT_POSITION_FOLLOWING,
-      )
+    const sectionOrder = await page.evaluate(() => {
+      const elements = [...document.querySelectorAll("h1, h2, h3, h4, button")]
+      const indexOf = (label: string) =>
+        elements.findIndex(element => element.textContent?.trim().startsWith(label))
+      return [
+        indexOf("Account"),
+        indexOf("API keys"),
+        indexOf("GitHub Actions OIDC"),
+        indexOf("Payment method"),
+      ]
     })
-    expect(paymentBeforeGitHub).toBe(true)
+    expect(sectionOrder.every(index => index >= 0)).toBe(true)
+    expect(sectionOrder).toEqual([...sectionOrder].sort((a, b) => a - b))
+    await page.getByRole("button", { name: "Manage API keys" }).click()
+    await expect(page).toHaveURL(/\/user-keys$/)
+    await page.goto("/settings")
     await expect(page.getByLabel("Display name")).toBeHidden()
 
     await githubToggle.click()
     await expect(page.getByLabel("Display name")).toBeVisible()
+  })
+
+  test("keeps account and API keys usable when GitHub settings fail", async ({ page }) => {
+    await page.unroute("**/api/github-trust-policies")
+    await page.route("**/api/github-trust-policies", route =>
+      route.fulfill({ status: 503, body: "temporarily unavailable" }),
+    )
+
+    await page.goto("/settings")
+    await expect(page.getByRole("heading", { name: "Account" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Manage API keys" })).toBeVisible()
+    await expect(
+      page.getByText("GitHub Actions settings are unavailable. Expand to retry."),
+    ).toBeVisible()
+    await page.getByRole("button", { name: "GitHub Actions OIDC" }).click()
+    await expect(
+      page.getByRole("heading", { name: "GitHub Actions settings are unavailable" }),
+    ).toBeVisible()
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible()
   })
 
   test("can create, edit, disable, and delete a trust policy", async ({ page }) => {
@@ -153,7 +214,10 @@ test.describe("Settings GitHub trust policies", () => {
     await expect(page.getByText("No").first()).toBeVisible()
 
     await page.getByRole("button", { name: "Delete" }).nth(1).click()
-    await page.getByRole("button", { name: "Delete" }).last().click()
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Delete" })
+      .click()
     await expect(page.getByText("preview-ci-updated")).toHaveCount(0)
   })
 })

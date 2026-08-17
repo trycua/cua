@@ -5,16 +5,19 @@
 
 import { useEffect, useState } from "react"
 import { initKc } from "./keycloak"
+import { isLocalVisualPreview } from "../local-visual-preview"
 
 interface Props {
   children: React.ReactNode
 }
 
 export function AuthProvider({ children }: Props) {
-  const [ready, setReady] = useState(false)
+  const visualPreview = isLocalVisualPreview()
+  const [ready, setReady] = useState(visualPreview)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (visualPreview) return
     initKc()
       .then(authed => {
         if (!authed) {
@@ -24,7 +27,7 @@ export function AuthProvider({ children }: Props) {
         setReady(true)
       })
       .catch(e => setError(String(e)))
-  }, [])
+  }, [visualPreview])
 
   if (error) {
     return (

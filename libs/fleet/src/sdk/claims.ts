@@ -7,6 +7,7 @@ import {
 } from "./generated"
 import { withClient } from "./client"
 import type { Claim } from "./models"
+import { isLocalVisualPreview } from "../local-visual-preview"
 
 export function buildClaimRequest(pool: Pool): CreateClaimRequest {
   return new CreateClaimRequestBuilder().pool(pool).build()
@@ -38,6 +39,7 @@ async function findClaim(
 }
 
 export async function listClaims(namespace: string): Promise<Claim[]> {
+  if (isLocalVisualPreview()) return []
   return withClient(async client =>
     (await client.listClaims(namespace)).map(claimModel),
   )

@@ -90,7 +90,11 @@ class FleetTransport(Transport):
             service_name or self._service_name,
             path,
             HttpRequest(
-                method=method, url=f"https://service.invalid{path}", headers=headers, body=body
+                method=method,
+                url=f"https://service.invalid{path}",
+                headers=headers,
+                body=body,
+                timeout_secs=30,
             ),
         )
         request = httpx.Request(method, f"https://service.invalid{path}")

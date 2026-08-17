@@ -34,6 +34,7 @@ async def test_service_request_forwards_command_json():
     _, service, path, request = sdk.calls[0]
     assert (service, path, request.method) == ("api", "/cmd", "POST")
     assert json.loads(request.body) == {"command": "shell.run", "params": {"timeout": 15}}
+    assert request.timeout_secs == 30
 
 
 @pytest.mark.asyncio

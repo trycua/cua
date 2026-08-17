@@ -9,7 +9,7 @@ on:
       version:
         description: "Canonical cua-fleet version to publish"
         required: true
-        default: "0.1.11"
+        default: "0.1.12"
   workflow_call:
     inputs:
       version:
@@ -49,8 +49,8 @@ jobs:
             exit 1
           fi
 
-          if [[ "$VERSION" != "0.1.11" ]]; then
-            echo "::error::This workflow promotes the hash-pinned cua-fleet 0.1.11 wheel set, not $VERSION."
+          if [[ "$VERSION" != "0.1.12" ]]; then
+            echo "::error::This workflow promotes the hash-pinned cua-fleet 0.1.12 wheel set, not $VERSION."
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -65,32 +65,32 @@ jobs:
         include:
           - platform: linux-x86_64
             runner: ubuntu-22.04
-            wheel: cua_fleet-0.1.11-py3-none-manylinux_2_34_x86_64.whl
-            sha256: 0539a40aac915368362dd2f3e90d4b6d233e7bece77d13a5733d8cecb7298731
+            wheel: cua_fleet-0.1.12-py3-none-manylinux_2_34_x86_64.whl
+            sha256: d8ef6a0c8ac6e6f8dda937e3aebeef7f5b4fa9e3f29edc55a602a1c874f3f96a
             native_library: libcyclops_sdk.so
             audit: auditwheel
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
-            wheel: cua_fleet-0.1.11-py3-none-manylinux_2_34_aarch64.whl
-            sha256: c76052d9cb1710936a59709fd5a2894fe9fb43fe89e2a0313ad0b88faf4c2b1e
+            wheel: cua_fleet-0.1.12-py3-none-manylinux_2_34_aarch64.whl
+            sha256: 0a39e52cbec94a2bc71f45282dd34c896fd154bc7f7a137fc6ceff82edfc0973
             native_library: libcyclops_sdk.so
             audit: auditwheel
           - platform: macos-x86_64
             runner: macos-15-intel
-            wheel: cua_fleet-0.1.11-py3-none-macosx_10_12_x86_64.whl
-            sha256: 5884a26388b44e9cf59314d20b9aae34f278c48b108d927ebaf802b8d5b7d7f6
+            wheel: cua_fleet-0.1.12-py3-none-macosx_10_12_x86_64.whl
+            sha256: d5114ba97ef208e257bef261f6d3585b265f1f2c32cb627bcc9f44d753e60b75
             native_library: libcyclops_sdk.dylib
             audit: delocate
           - platform: macos-arm64
             runner: macos-14
-            wheel: cua_fleet-0.1.11-py3-none-macosx_11_0_arm64.whl
-            sha256: 1f6d1532f76166fe30001c68765c4f3fcb94e9b713751f7a009d3780f523aa9c
+            wheel: cua_fleet-0.1.12-py3-none-macosx_11_0_arm64.whl
+            sha256: 82762fae4943b20aae05b39362f5bd0c179f84c16dac1e948debb3d58db5adc2
             native_library: libcyclops_sdk.dylib
             audit: delocate
           - platform: windows-x86_64
             runner: windows-latest
-            wheel: cua_fleet-0.1.11-py3-none-win_amd64.whl
-            sha256: da8e1c40abcd3fee5cdab48801d4bd43a277ecddb7afebcba3d9885d9ec5d431
+            wheel: cua_fleet-0.1.12-py3-none-win_amd64.whl
+            sha256: c280d7ceadedc1d5c4c59869940c3390aac321f12ac9c9ee52250f212b6aac75
             native_library: cyclops_sdk.dll
             audit: none
     steps:
@@ -246,11 +246,11 @@ jobs:
 
           version, dist_directory = sys.argv[1:]
           expected = {
-              f"cua_fleet-{version}-py3-none-manylinux_2_34_x86_64.whl": "0539a40aac915368362dd2f3e90d4b6d233e7bece77d13a5733d8cecb7298731",
-              f"cua_fleet-{version}-py3-none-manylinux_2_34_aarch64.whl": "c76052d9cb1710936a59709fd5a2894fe9fb43fe89e2a0313ad0b88faf4c2b1e",
-              f"cua_fleet-{version}-py3-none-macosx_10_12_x86_64.whl": "5884a26388b44e9cf59314d20b9aae34f278c48b108d927ebaf802b8d5b7d7f6",
-              f"cua_fleet-{version}-py3-none-macosx_11_0_arm64.whl": "1f6d1532f76166fe30001c68765c4f3fcb94e9b713751f7a009d3780f523aa9c",
-              f"cua_fleet-{version}-py3-none-win_amd64.whl": "da8e1c40abcd3fee5cdab48801d4bd43a277ecddb7afebcba3d9885d9ec5d431",
+              f"cua_fleet-{version}-py3-none-manylinux_2_34_x86_64.whl": "d8ef6a0c8ac6e6f8dda937e3aebeef7f5b4fa9e3f29edc55a602a1c874f3f96a",
+              f"cua_fleet-{version}-py3-none-manylinux_2_34_aarch64.whl": "0a39e52cbec94a2bc71f45282dd34c896fd154bc7f7a137fc6ceff82edfc0973",
+              f"cua_fleet-{version}-py3-none-macosx_10_12_x86_64.whl": "d5114ba97ef208e257bef261f6d3585b265f1f2c32cb627bcc9f44d753e60b75",
+              f"cua_fleet-{version}-py3-none-macosx_11_0_arm64.whl": "82762fae4943b20aae05b39362f5bd0c179f84c16dac1e948debb3d58db5adc2",
+              f"cua_fleet-{version}-py3-none-win_amd64.whl": "c280d7ceadedc1d5c4c59869940c3390aac321f12ac9c9ee52250f212b6aac75",
           }
           wheels = {wheel.name: wheel for wheel in Path(dist_directory).glob("*.whl")}
           assert set(wheels) == set(expected), (set(wheels), set(expected))

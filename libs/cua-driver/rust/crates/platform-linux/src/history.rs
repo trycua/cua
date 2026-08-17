@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn current_process_identity_is_resolvable_without_titles_or_paths() {
         let identity = LinuxApplicationIdentityProvider
-            .resolve(i64::from(std::process::id()))
+            .resolve(i64::from(std::process::id()), None)
             .expect("current process identity");
         assert!(identity.bundle_id.is_some() || identity.display_name.is_some());
     }

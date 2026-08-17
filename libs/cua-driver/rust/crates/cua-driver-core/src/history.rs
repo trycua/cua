@@ -2737,7 +2737,10 @@ mod tests {
         manager.finish_action(pending, None, false);
         manager.flush().unwrap();
 
-        assert_eq!(provider.targets.lock().unwrap().as_slice(), &[(42, Some(9001)), (42, Some(9001))]);
+        assert_eq!(
+            provider.targets.lock().unwrap().as_slice(),
+            &[(42, Some(9001)), (42, Some(9001))]
+        );
         let events = manager
             .query(
                 HistoryQuery {

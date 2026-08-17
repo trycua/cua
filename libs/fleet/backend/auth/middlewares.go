@@ -212,7 +212,12 @@ func computeFlagsData(ctx context.Context) map[string]interface{} {
 		if name == "" {
 			continue
 		}
-		flags[name] = loadStringList(ctx, ffClient, key)
+		items, err := loadStringList(ctx, ffClient, key)
+		if err != nil {
+			slog.Warn("auth: flag load failed; flags will be empty", "flag", key, "err", err)
+			return map[string]interface{}{}
+		}
+		flags[name] = items
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -240,30 +245,27 @@ func opaNameFromFlagKey(key string) string {
 }
 
 // loadStringList resolves a JSON-array flag to []interface{} for OPA's
-// input.flags document. The value is StringValue with default "[]"; a
-// malformed payload yields an empty list and a warn log so OPA still
-// evaluates.
+// input.flags document. Evaluation and decoding failures are returned so
+// computeFlagsData can discard the entire authorization flag set.
 //
 // A 3s per-call deadline keeps an unreachable Parameter Store from
 // stalling pod startup; the from-env fallback kicks in on timeout.
-func loadStringList(ctx context.Context, client *openfeature.Client, flagKey string) []interface{} {
+func loadStringList(ctx context.Context, client *openfeature.Client, flagKey string) ([]interface{}, error) {
 	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	raw, err := client.StringValue(callCtx, flagKey, "[]", openfeature.EvaluationContext{})
 	if err != nil {
-		slog.Warn("auth: flag eval failed; using empty list", "flag", flagKey, "err", err)
-		return []interface{}{}
+		return nil, fmt.Errorf("evaluate %s as string list: %w", flagKey, err)
 	}
 	var items []string
 	if err := json.Unmarshal([]byte(raw), &items); err != nil {
-		slog.Warn("auth: flag value is not a JSON string array; using empty list", "flag", flagKey, "err", err)
-		return []interface{}{}
+		return nil, fmt.Errorf("decode %s as JSON string array: %w", flagKey, err)
 	}
 	out := make([]interface{}, len(items))
 	for i, v := range items {
 		out[i] = v
 	}
-	return out
+	return out, nil
 }
 
 // LoadOpa prepares the embedded Rego policy and all derived queries.

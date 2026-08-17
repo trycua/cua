@@ -148,7 +148,17 @@ function Register-CuaDriverAutostart {
 }
 
 function Stop-CuaDriverLocalDaemons {
-    & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # A missing or already-stopped task is expected during a first local
+        # install. Windows PowerShell can surface native stderr as a terminating
+        # error under the installer's ErrorActionPreference=Stop even though it
+        # is redirected, so keep this best-effort operation non-terminating.
+        & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
     Get-Process -Name "cua-driver-local","cua-driver-uia-local" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }

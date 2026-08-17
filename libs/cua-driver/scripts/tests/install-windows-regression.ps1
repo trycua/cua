@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$InstallerPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "install.ps1")
+    [string]$InstallerPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "install.ps1"),
+    [string]$LocalInstallerPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "install-local.ps1")
 )
 
 Set-StrictMode -Version Latest
@@ -42,17 +43,37 @@ if ($parseErrors.Count -ne 0) {
 Import-InstallerFunction -Ast $ast -Name "Get-AncestorProcessIds"
 Import-InstallerFunction -Ast $ast -Name "Remove-LegacyInstall"
 
+$localTokens = $null
+$localParseErrors = $null
+$localAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $LocalInstallerPath,
+    [ref]$localTokens,
+    [ref]$localParseErrors)
+if ($localParseErrors.Count -ne 0) {
+    throw "install-local.ps1 parse errors: $($localParseErrors -join '; ')"
+}
+Import-InstallerFunction -Ast $localAst -Name "Stop-CuaDriverLocalDaemons"
+
 $script:Steps = @()
 $script:TaskkillCalls = @()
 $script:ScheduledTaskCalls = @()
 $script:StoppedProcessIds = @()
 $script:Processes = @()
 $script:ParentByPid = @{}
+$script:SchtasksMissingTask = $false
 
 function Write-Step { param($Message); $script:Steps += [string]$Message }
 function Start-Sleep { [CmdletBinding()] param([int]$Milliseconds, [int]$Seconds) }
 function taskkill.exe { $script:TaskkillCalls += ,@($args); $global:LASTEXITCODE = 0 }
-function schtasks.exe { $script:ScheduledTaskCalls += ,@($args); $global:LASTEXITCODE = 0 }
+function schtasks.exe {
+    $script:ScheduledTaskCalls += ,@($args)
+    if ($script:SchtasksMissingTask) {
+        $global:LASTEXITCODE = 1
+        Write-Error "ERROR: The system cannot find the file specified."
+        return
+    }
+    $global:LASTEXITCODE = 0
+}
 function Get-CimInstance {
     [CmdletBinding()]
     param([string]$ClassName, [string]$Filter)
@@ -72,6 +93,30 @@ function Stop-Process {
     [CmdletBinding()]
     param([int]$Id, [switch]$Force)
     $script:StoppedProcessIds += $Id
+}
+
+# Windows PowerShell 5.1 can promote a native program's stderr to a
+# terminating error when the caller uses ErrorActionPreference=Stop. A missing
+# local autostart task is normal on first install and must not prevent the
+# process cleanup fallback or change the caller's preference.
+$script:SchtasksMissingTask = $true
+$script:Processes = @(
+    [pscustomobject]@{ Id = 4400; ProcessName = "cua-driver-local" }
+)
+$savedErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Stop"
+    Stop-CuaDriverLocalDaemons
+    Assert-True ($ErrorActionPreference -eq "Stop") `
+        "local daemon cleanup did not restore ErrorActionPreference"
+    Assert-True ($script:StoppedProcessIds -contains 4400) `
+        "missing local autostart task prevented process cleanup"
+}
+finally {
+    $script:SchtasksMissingTask = $false
+    $script:Processes = @()
+    $script:StoppedProcessIds = @()
+    $ErrorActionPreference = $savedErrorActionPreference
 }
 
 $savedInstallDir = $env:CUA_DRIVER_RS_INSTALL_DIR

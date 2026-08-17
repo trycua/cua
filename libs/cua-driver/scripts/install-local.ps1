@@ -148,7 +148,18 @@ function Register-CuaDriverAutostart {
 }
 
 function Stop-CuaDriverLocalDaemons {
-    & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    # A missing task is the normal state for -NoAutoStart and for a first
+    # install. Windows PowerShell 5.1 promotes schtasks.exe stderr to an
+    # ErrorRecord, so temporarily relax the script-wide Stop preference for
+    # this deliberately best-effort cleanup.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
     Get-Process -Name "cua-driver-local","cua-driver-uia-local" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }

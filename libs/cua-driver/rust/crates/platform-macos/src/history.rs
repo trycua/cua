@@ -178,7 +178,7 @@ fn map_keychain_error(error: security_framework::base::Error) -> HistoryError {
 pub struct MacosApplicationIdentityProvider;
 
 impl ApplicationIdentityProvider for MacosApplicationIdentityProvider {
-    fn resolve(&self, pid: i64) -> Option<ApplicationIdentity> {
+    fn resolve(&self, pid: i64, _window_id: Option<u64>) -> Option<ApplicationIdentity> {
         let pid = i32::try_from(pid).ok()?;
         crate::apps::list_running_apps()
             .into_iter()

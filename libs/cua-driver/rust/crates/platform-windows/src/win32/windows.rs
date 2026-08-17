@@ -604,3 +604,55 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
         minimized: false,
     })
 }
+
+/// Resolve the real packaged-app process hosted by a specific
+/// `ApplicationFrameWindow`.
+///
+/// An ApplicationFrameHost pid is shared by unrelated apps, so callers must
+/// provide the frame HWND as well as the host pid. The hosted CoreWindow child
+/// retains ownership by the packaged app process and supplies the identity we
+/// need for attribution.
+pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
+    let frame = HWND(frame_hwnd as *mut _);
+    if unsafe { IsWindow(frame) }.0 == 0 || window_class_name(frame) != "ApplicationFrameWindow" {
+        return None;
+    }
+
+    let mut owner_pid = 0;
+    unsafe { GetWindowThreadProcessId(frame, Some(&mut owner_pid)) };
+    if owner_pid != host_pid {
+        return None;
+    }
+
+    struct ChildScan {
+        host_pid: u32,
+        app_pid: Option<u32>,
+    }
+
+    unsafe extern "system" fn child_cb(child: HWND, lparam: LPARAM) -> BOOL {
+        let scan = &mut *(lparam.0 as *mut ChildScan);
+        let mut child_pid = 0;
+        GetWindowThreadProcessId(child, Some(&mut child_pid));
+        if child_pid != 0
+            && child_pid != scan.host_pid
+            && window_class_name(child) == "Windows.UI.Core.CoreWindow"
+        {
+            scan.app_pid = Some(child_pid);
+            return windows::Win32::Foundation::FALSE;
+        }
+        TRUE
+    }
+
+    let mut scan = ChildScan {
+        host_pid,
+        app_pid: None,
+    };
+    unsafe {
+        let _ = EnumChildWindows(
+            frame,
+            Some(child_cb),
+            LPARAM(&mut scan as *mut ChildScan as isize),
+        );
+    }
+    scan.app_pid
+}

@@ -165,7 +165,7 @@ fn application_identity_from_stable_sources(
 }
 
 impl ApplicationIdentityProvider for LinuxApplicationIdentityProvider {
-    fn resolve(&self, pid: i64) -> Option<ApplicationIdentity> {
+    fn resolve(&self, pid: i64, _window_id: Option<u64>) -> Option<ApplicationIdentity> {
         let pid = u32::try_from(pid).ok()?;
         let process = crate::proc_fs::list_processes()
             .into_iter()
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn current_process_identity_is_resolvable_without_titles_or_paths() {
         let identity = LinuxApplicationIdentityProvider
-            .resolve(i64::from(std::process::id()))
+            .resolve(i64::from(std::process::id()), None)
             .expect("current process identity");
         assert!(identity.bundle_id.is_some() || identity.display_name.is_some());
     }

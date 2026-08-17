@@ -70,7 +70,7 @@ impl BlockingApps {
     }
 }
 impl ApplicationIdentityProvider for BlockingApps {
-    fn resolve(&self, _: i64) -> Option<ApplicationIdentity> {
+    fn resolve(&self, _: i64, _: Option<u64>) -> Option<ApplicationIdentity> {
         let mut s = self.state.lock().unwrap();
         s.0 = true;
         self.changed.notify_all();

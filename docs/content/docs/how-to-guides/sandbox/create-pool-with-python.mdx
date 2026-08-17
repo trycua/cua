@@ -173,8 +173,9 @@ If the name you pick already belongs to another account, the SDK raises
 ```text
 PoolAccessDeniedError: Fleet denied 'create pool' on pool namespace
 'my-team-windows-pool' (HTTP 403: k8s request is not allowed). Pool names
-are globally unique across accounts: if your account did not create this
-pool, the name is already taken — choose a different pool name. ...
+are globally unique across accounts, so this name may already be taken —
+try a new pool name. If that does not work, contact support on Discord:
+https://discord.gg/mVnXXpdE85
 ```
 
 Retrying does not help, and neither does claiming with fresh claim names: the

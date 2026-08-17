@@ -41,6 +41,7 @@ from fleet_sdk import (
     PreservedJson,
     SandboxServiceBuilder,
     SandboxTemplateRefBuilder,
+    SdkError,
     ServiceProtocol,
     VmTemplateBuilder,
     WarmPoolAutoscaling,
@@ -53,6 +54,21 @@ logger = logging.getLogger(__name__)
 
 _DNS_LABEL_MAX_LENGTH = 63
 _CLAIM_HASH_LENGTH = 16
+
+
+class PoolAccessDeniedError(PermissionError):
+    """Fleet refused a pool or template operation for this credential."""
+
+
+def _pool_access_denied(namespace: str, error: SdkError.Status) -> PoolAccessDeniedError:
+    return PoolAccessDeniedError(
+        f"Fleet denied {error.operation!r} on pool namespace {namespace!r} "
+        f"(HTTP {error.status}: {error.body}). Pool names are globally unique "
+        "across accounts: if your account did not create this pool, the name "
+        "is already taken — choose a different pool name. If the pool is "
+        "yours, your account may not be allowed to perform this operation "
+        "(custom pool sizing and template updates can be restricted)."
+    )
 
 
 def _claim_name(pool_name: str) -> str:
@@ -449,10 +465,15 @@ class FleetCloudTransport(FleetTransport):
                             self._pool = await self._sdk.wait_pool(self._pool)
                     else:
                         self._validate_image(self._image)
-                        self._pool = await self._sdk.reconcile_pool(self._pool_request())
-                        self._template = await self._sdk.reconcile_template(
-                            self._template_request()
-                        )
+                        try:
+                            self._pool = await self._sdk.reconcile_pool(self._pool_request())
+                            self._template = await self._sdk.reconcile_template(
+                                self._template_request()
+                            )
+                        except SdkError.Status as error:
+                            if error.status == 403:
+                                raise _pool_access_denied(self._pool_name, error) from error
+                            raise
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
                     if self._image is None and not self._create_claim:

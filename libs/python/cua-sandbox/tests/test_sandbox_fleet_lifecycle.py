@@ -47,49 +47,29 @@ async def test_create_with_pool_name_uses_read_only_pool_lookup(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_create_without_pool_applies_image_then_claims(monkeypatch):
-    pool = FakePool("derived-pool")
-    applied: list[dict] = []
+async def test_create_with_fleet_image_requires_explicit_pool(monkeypatch):
+    apply_pool = AsyncMock()
+    monkeypatch.setattr(Pool, "apply", apply_pool)
 
-    async def apply_pool(cls, image, **kwargs):
-        applied.append({"image": image, **kwargs})
-        return pool
+    with pytest.raises(ValueError, match="Pool.apply"):
+        await Sandbox.create(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="job-123",
+        )
 
-    monkeypatch.setattr(Pool, "apply", classmethod(apply_pool), raising=False)
-    image = Image.from_registry("registry.example/workspace:latest")
-
-    sandbox = await Sandbox.create(
-        image,
-        name="job-123",
-        replicas=1,
-        cpu=4,
-        memory_mb=4096,
-        service="mcp",
-    )
-
-    assert applied == [
-        {
-            "image": image,
-            "replicas": 1,
-            "cpu": 4,
-            "memory_mb": 4096,
-            "services": {"server": 8000},
-        }
-    ]
-    assert pool.claims[0]["name"] == "job-123"
-    assert sandbox.pool_name == "derived-pool"
+    apply_pool.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_image_create_persists_generated_claim_pool_mapping(monkeypatch, tmp_path):
+async def test_pool_create_persists_generated_claim_pool_mapping(monkeypatch, tmp_path):
     from cua_sandbox import sandbox_state
 
     class ClaimedSandbox:
         name = "bound-sandbox-1"
         claim_name = "generated-claim-1"
-        pool_name = "derived-pool"
+        pool_name = "workspace"
 
-    pool = FakePool("derived-pool")
+    pool = FakePool("workspace")
 
     async def claim(**kwargs):
         pool.claims.append(kwargs)
@@ -97,16 +77,16 @@ async def test_image_create_persists_generated_claim_pool_mapping(monkeypatch, t
 
     pool.claim = claim
     monkeypatch.setattr(sandbox_state, "SANDBOX_STATE_DIR", tmp_path)
-    monkeypatch.setattr(Pool, "apply", AsyncMock(return_value=pool))
+    monkeypatch.setattr(Pool, "get", AsyncMock(return_value=pool))
 
-    sandbox = await Sandbox.create(Image.from_registry("registry.example/workspace:latest"))
+    sandbox = await Sandbox.create(pool="workspace")
 
     assert sandbox.name == "bound-sandbox-1"
     assert sandbox.claim_name == "generated-claim-1"
-    assert sandbox_state.load("generated-claim-1")["pool_name"] == "derived-pool"
+    assert sandbox_state.load("generated-claim-1")["pool_name"] == "workspace"
 
 
-@pytest.mark.parametrize("source", ["existing-pool", "image"])
+@pytest.mark.parametrize("source", ["existing-pool", "pool-object"])
 @pytest.mark.asyncio
 async def test_keep_alive_failure_releases_claim_without_persisting_state(
     monkeypatch, tmp_path, source
@@ -128,12 +108,7 @@ async def test_keep_alive_failure_releases_claim_without_persisting_state(
         monkeypatch.setattr(Pool, "get", AsyncMock(return_value=pool))
         create = Sandbox.create(pool="workspace", name="job-123", keep_alive_minutes=30)
     else:
-        monkeypatch.setattr(Pool, "apply", AsyncMock(return_value=pool))
-        create = Sandbox.create(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="job-123",
-            keep_alive_minutes=30,
-        )
+        create = Sandbox.create(pool=pool, name="job-123", keep_alive_minutes=30)
 
     with pytest.raises(RuntimeError, match="renew failed"):
         await create
@@ -179,14 +154,9 @@ async def test_keep_alive_failure_preserves_error_when_claim_close_fails(monkeyp
     )
     pool = FakePool("workspace")
     pool.claim = AsyncMock(return_value=claimed)
-    monkeypatch.setattr(Pool, "apply", AsyncMock(return_value=pool))
 
     with pytest.raises(RuntimeError, match="renew failed") as error:
-        await Sandbox.create(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="job-123",
-            keep_alive_minutes=30,
-        )
+        await Sandbox.create(pool=pool, name="job-123", keep_alive_minutes=30)
 
     assert isinstance(error.value.__cause__, RuntimeError)
     assert str(error.value.__cause__) == "close failed"
@@ -356,7 +326,7 @@ async def test_ephemeral_image_uses_name_for_owned_pool_and_claim(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ephemeral_image_keep_pool_reuses_deterministic_pool(monkeypatch):
+async def test_ephemeral_image_keep_pool_reuses_named_pool(monkeypatch):
     claimed = SimpleNamespace(close=AsyncMock())
     pool = FakePool("shared-pool")
     pool.claim = AsyncMock(return_value=claimed)
@@ -364,12 +334,46 @@ async def test_ephemeral_image_keep_pool_reuses_deterministic_pool(monkeypatch):
     monkeypatch.setattr(Pool, "apply", apply_pool)
     image = Image.from_registry("registry.example/workspace:latest")
 
-    async with Sandbox.ephemeral(image, keep_pool=True):
+    async with Sandbox.ephemeral(image, name="shared-pool", keep_pool=True):
         pass
 
-    assert "name" not in apply_pool.await_args.kwargs
+    assert apply_pool.await_args.kwargs["name"] == "shared-pool"
     claimed.close.assert_awaited_once()
     assert pool.deletes == 0
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_image_keep_pool_requires_name(monkeypatch):
+    apply_pool = AsyncMock()
+    monkeypatch.setattr(Pool, "apply", apply_pool)
+
+    with pytest.raises(ValueError, match="keep_pool requires name="):
+        async with Sandbox.ephemeral(
+            Image.from_registry("registry.example/workspace:latest"),
+            keep_pool=True,
+        ):
+            pass
+
+    apply_pool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_image_without_name_applies_random_disposable_pool(monkeypatch):
+    claimed = SimpleNamespace(close=AsyncMock())
+    pool = FakePool("owned-pool")
+    pool.claim = AsyncMock(return_value=claimed)
+    apply_pool = AsyncMock(return_value=pool)
+    monkeypatch.setattr(Pool, "apply", apply_pool)
+
+    async with Sandbox.ephemeral(Image.from_registry("registry.example/workspace:latest")):
+        pass
+
+    pool_name = apply_pool.await_args.kwargs["name"]
+    assert pool_name.startswith("cua-eph-")
+    assert len(pool_name) == len("cua-eph-") + 12
+    pool.claim.assert_awaited_once_with(name=None, spec=None, service="server", time_to_start=None)
+    claimed.close.assert_awaited_once()
+    assert pool.deletes == 1
 
 
 @pytest.mark.asyncio

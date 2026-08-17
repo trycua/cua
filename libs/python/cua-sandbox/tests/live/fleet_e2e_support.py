@@ -98,6 +98,13 @@ def is_not_found_error(error: BaseException) -> bool:
     return isinstance(error, SdkError.Status) and error.status == 404
 
 
+def is_pool_missing_error(error: BaseException) -> bool:
+    # Fleet evaluates RBAC before existence, so reading a pool in a namespace
+    # that has not been created yet returns 403 rather than 404. Mirror the
+    # SDK's reconcile semantics, which create the pool on either status.
+    return isinstance(error, SdkError.Status) and error.status in (403, 404)
+
+
 async def wait_claims_absent(
     client: CyclopsClient,
     name: str,

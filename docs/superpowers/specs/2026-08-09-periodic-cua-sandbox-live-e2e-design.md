@@ -203,7 +203,12 @@ cold-starts capacity through autoscaler demand.
 Each run observes the pool first with `Pool.get`, recording
 `pool_pre_existed` and the replica counts, then reconciles the pinned
 configuration with `Pool.apply` using the same certified image digest,
-`cpu=4`, and `memory_mb=4096`. Reconciliation is idempotent: it bootstraps a
+`cpu=4`, and `memory_mb=4096`. Fleet evaluates authorization before
+existence, so reading a pool in a namespace that has not been created yet
+returns 403 rather than 404; the observe step treats both statuses as
+not-pre-existed (`is_pool_missing_error`), mirroring the SDK's reconcile
+semantics, and a genuine access denial still fails the run at `Pool.apply`
+with the canonical `PoolAccessDenied` guidance. Reconciliation is idempotent: it bootstraps a
 missing pool, heals drift, and never deletes. The claim uses
 `Sandbox.ephemeral(pool=..., name=...)` with the claim name fixed to the
 namespace, so an interrupted run's claim is adopted and released by the next

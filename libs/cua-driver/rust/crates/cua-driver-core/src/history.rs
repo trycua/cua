@@ -362,7 +362,7 @@ pub struct ApplicationIdentity {
 }
 
 pub trait ApplicationIdentityProvider: Send + Sync {
-    fn resolve(&self, pid: i64) -> Option<ApplicationIdentity>;
+    fn resolve(&self, pid: i64, window_id: Option<u64>) -> Option<ApplicationIdentity>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,12 +516,14 @@ pub struct PendingHistoryAction {
     session_id: Option<String>,
     capability: String,
     application_pid: Option<i64>,
+    application_window_id: Option<u64>,
 }
 
 enum WriterMessage {
     Event {
         event: HistoryEvent,
         application_pid: Option<i64>,
+        application_window_id: Option<u64>,
     },
     Flush(mpsc::Sender<Result<(), HistoryError>>),
     ReadSnapshot {
@@ -889,11 +891,13 @@ impl HistoryManager {
             .get("pid")
             .and_then(Value::as_i64)
             .filter(|pid| *pid > 0);
+        let application_window_id = args.get("window_id").and_then(Value::as_u64);
         let pending = PendingHistoryAction {
             action_id,
             session_id,
             capability,
             application_pid,
+            application_window_id,
         };
         self.try_send_with_application_pid(
             self.event(
@@ -905,6 +909,7 @@ impl HistoryManager {
                 HistoryPayload::ActionStarted,
             ),
             pending.application_pid,
+            pending.application_window_id,
         );
         Some(pending)
     }
@@ -961,6 +966,7 @@ impl HistoryManager {
                 payload,
             ),
             pending.application_pid,
+            pending.application_window_id,
         );
     }
 
@@ -1096,6 +1102,7 @@ impl HistoryManager {
         tx.send(WriterMessage::Event {
             event,
             application_pid: None,
+            application_window_id: None,
         })
         .map_err(|_| HistoryError::new(HistoryHealthCategory::WriterStopped))
     }
@@ -1117,10 +1124,15 @@ impl HistoryManager {
     }
 
     fn try_send(&self, event: HistoryEvent) {
-        self.try_send_with_application_pid(event, None);
+        self.try_send_with_application_pid(event, None, None);
     }
 
-    fn try_send_with_application_pid(&self, mut event: HistoryEvent, application_pid: Option<i64>) {
+    fn try_send_with_application_pid(
+        &self,
+        mut event: HistoryEvent,
+        application_pid: Option<i64>,
+        application_window_id: Option<u64>,
+    ) {
         if validate_event(&event).is_err() {
             self.record_drop();
             return;
@@ -1153,6 +1165,7 @@ impl HistoryManager {
                 .try_send(WriterMessage::Event {
                     event: health,
                     application_pid: None,
+                    application_window_id: None,
                 })
                 .is_err()
             {
@@ -1165,6 +1178,7 @@ impl HistoryManager {
             tx.try_send(WriterMessage::Event {
                 event,
                 application_pid,
+                application_window_id,
             }),
             Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_))
         ) {
@@ -1414,6 +1428,7 @@ fn writer_loop(
             WriterMessage::Event {
                 mut event,
                 application_pid,
+                application_window_id,
             } => {
                 if terminal_error.is_none() {
                     let maintenance_due = retention_days == 0
@@ -1434,7 +1449,7 @@ fn writer_loop(
                     if let Some(pid) = application_pid {
                         event.data.application = app_provider
                             .as_ref()
-                            .and_then(|provider| provider.resolve(pid))
+                            .and_then(|provider| provider.resolve(pid, application_window_id))
                             .and_then(sanitize_application_identity);
                     }
                     if let Err(error) = store.append(&event) {
@@ -2386,6 +2401,21 @@ mod tests {
     use std::collections::HashMap;
 
     #[derive(Default)]
+    struct RecordingApplicationProvider {
+        targets: Mutex<Vec<(i64, Option<u64>)>>,
+    }
+
+    impl ApplicationIdentityProvider for RecordingApplicationProvider {
+        fn resolve(&self, pid: i64, window_id: Option<u64>) -> Option<ApplicationIdentity> {
+            self.targets.lock().unwrap().push((pid, window_id));
+            Some(ApplicationIdentity {
+                bundle_id: Some("test.app".to_owned()),
+                display_name: Some("Test App".to_owned()),
+            })
+        }
+    }
+
+    #[derive(Default)]
     struct MemoryKeyProvider {
         keys: Mutex<HashMap<String, Vec<u8>>>,
         load_threads: Mutex<Vec<Option<String>>>,
@@ -2685,6 +2715,45 @@ mod tests {
         assert!(filtered
             .iter()
             .all(|event| event.data.session_id.as_deref() == Some(opaque.as_str())));
+    }
+
+    #[test]
+    fn action_attribution_receives_pid_and_window_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let provider = Arc::new(RecordingApplicationProvider::default());
+        let manager = HistoryManager::new(
+            config(temp.path()),
+            Arc::new(MemoryKeyProvider::default()),
+            Some(provider.clone()),
+        );
+        manager.enable().unwrap();
+        let pending = manager
+            .begin_action(
+                "click",
+                &serde_json::json!({"pid": 42, "window_id": 9001}),
+                None,
+            )
+            .unwrap();
+        manager.finish_action(pending, None, false);
+        manager.flush().unwrap();
+
+        assert_eq!(provider.targets.lock().unwrap().as_slice(), &[(42, Some(9001)), (42, Some(9001))]);
+        let events = manager
+            .query(
+                HistoryQuery {
+                    limit: Some(MAX_QUERY_LIMIT),
+                    ..Default::default()
+                },
+                HistoryAccessOperation::LocalCli,
+            )
+            .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| event.data.application.as_ref())
+                .count(),
+            2
+        );
     }
 
     #[test]

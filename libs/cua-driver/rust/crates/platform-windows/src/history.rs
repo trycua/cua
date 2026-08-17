@@ -137,17 +137,26 @@ fn map_keyring_error(error: KeyringError) -> HistoryError {
 pub struct WindowsApplicationIdentityProvider;
 
 impl ApplicationIdentityProvider for WindowsApplicationIdentityProvider {
-    fn resolve(&self, pid: i64) -> Option<ApplicationIdentity> {
-        let pid = u32::try_from(pid).ok()?;
-        let name = crate::win32::list_processes()
-            .into_iter()
-            .find(|process| process.pid == pid)?
-            .name;
-        (!name.trim().is_empty()).then(|| ApplicationIdentity {
+    fn resolve(&self, pid: i64, window_id: Option<u64>) -> Option<ApplicationIdentity> {
+        let mut pid = u32::try_from(pid).ok()?;
+        let owner_name = process_name(pid)?;
+        if owner_name.eq_ignore_ascii_case("ApplicationFrameHost.exe") {
+            pid = crate::win32::resolve_uwp_app_pid(pid, window_id?)?;
+        }
+        let name = process_name(pid)?;
+        Some(ApplicationIdentity {
             bundle_id: Some(name.clone()),
             display_name: Some(name),
         })
     }
+}
+
+fn process_name(pid: u32) -> Option<String> {
+    let name = crate::win32::list_processes()
+        .into_iter()
+        .find(|process| process.pid == pid)?
+        .name;
+    (!name.trim().is_empty()).then_some(name)
 }
 
 pub fn application_identity_provider() -> Arc<dyn ApplicationIdentityProvider> {

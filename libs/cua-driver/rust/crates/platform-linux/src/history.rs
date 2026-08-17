@@ -165,7 +165,7 @@ fn application_identity_from_stable_sources(
 }
 
 impl ApplicationIdentityProvider for LinuxApplicationIdentityProvider {
-    fn resolve(&self, pid: i64) -> Option<ApplicationIdentity> {
+    fn resolve(&self, pid: i64, _window_id: Option<u64>) -> Option<ApplicationIdentity> {
         let pid = u32::try_from(pid).ok()?;
         let process = crate::proc_fs::list_processes()
             .into_iter()

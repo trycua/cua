@@ -94,7 +94,7 @@ def claim_response(bound=False):
 
 def expected_lifecycle():
     pool_body = json.dumps(pool_response(), separators=(',', ':')).encode()
-    claim_body = b'{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":null}'
+    claim_body = b'{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"},"bindDeadline":900},"status":null}'
     claim_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default'
     pool_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools/default'
     template_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default'

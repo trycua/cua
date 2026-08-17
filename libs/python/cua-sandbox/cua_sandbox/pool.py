@@ -9,7 +9,9 @@ from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.fleet import FleetTransport
 from cua_sandbox.transport.fleet_cloud import (
+    _NATIVE_POOL_ACCESS_DENIED,
     FleetCloudTransport,
+    _canonicalize_pool_access_denied,
     _FleetClient,
     _pool_access_denied,
 )
@@ -76,6 +78,8 @@ class Template:
         try:
             try:
                 return cls(await client.reconcile_template(request))
+            except _NATIVE_POOL_ACCESS_DENIED as error:
+                raise _canonicalize_pool_access_denied(error)
             except SdkError.Status as error:
                 if error.status == 403:
                     raise _pool_access_denied(request.namespace, error) from error
@@ -223,6 +227,8 @@ class Pool:
         try:
             try:
                 return cls(await client.reconcile_pool(request))
+            except _NATIVE_POOL_ACCESS_DENIED as error:
+                raise _canonicalize_pool_access_denied(error)
             except SdkError.Status as error:
                 if error.status == 403:
                     raise _pool_access_denied(request.namespace, error) from error

@@ -986,6 +986,33 @@ async def test_pool_apply_maps_forbidden_template_reconcile_and_still_rolls_back
 
 
 @pytest.mark.asyncio
+async def test_pool_apply_canonicalizes_native_pool_access_denied(monkeypatch):
+    upstream = getattr(SdkError, "PoolAccessDenied", None)
+    if upstream is None:
+        pytest.skip("installed cua-fleet predates SdkError.PoolAccessDenied")
+
+    native = upstream(
+        operation="create pool",
+        namespace="workspace",
+        status=403,
+        body="k8s request is not allowed",
+    )
+    clients = [FakeFleetClient(reconcile_error=native)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
+
+    assert error.value is native
+    assert "Fleet denied create pool on pool namespace 'workspace'" in str(error.value)
+    assert "https://discord.gg/mVnXXpdE85" in str(error.value)
+
+
+@pytest.mark.asyncio
 async def test_pool_apply_rollback_failure_does_not_mask_template_error(monkeypatch):
     class DeleteDeniedClient(FakeFleetClient):
         async def delete_pool(self, pool: object) -> None:

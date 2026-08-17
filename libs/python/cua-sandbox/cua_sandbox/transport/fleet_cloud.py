@@ -74,20 +74,45 @@ else:
         """Fleet refused a pool or template operation for this credential."""
 
 
-def _pool_access_denied(namespace: str, error: SdkError.Status) -> Exception:
-    if _UPSTREAM_POOL_ACCESS_DENIED is not None:
-        return _UPSTREAM_POOL_ACCESS_DENIED(
-            operation=error.operation,
-            namespace=namespace,
-            status=error.status,
-            body=error.body,
-        )
-    return PoolAccessDeniedError(
-        f"Fleet denied {error.operation} on pool namespace '{namespace}' "
-        f"(HTTP {error.status}: {error.body}). Pool names are globally unique "
+# Catch tuple for pool-access denials raised natively by newer Fleet SDKs;
+# empty when the installed cua-fleet predates the upstream variant.
+_NATIVE_POOL_ACCESS_DENIED = (
+    () if _UPSTREAM_POOL_ACCESS_DENIED is None else (_UPSTREAM_POOL_ACCESS_DENIED,)
+)
+
+
+def _pool_access_denied_message(operation: str, namespace: str, status: int, body: str) -> str:
+    return (
+        f"Fleet denied {operation} on pool namespace '{namespace}' "
+        f"(HTTP {status}: {body}). Pool names are globally unique "
         "across accounts, so this name may already be taken — try a new pool "
         "name. If that does not work, contact support on Discord: "
         "https://discord.gg/mVnXXpdE85"
+    )
+
+
+def _canonicalize_pool_access_denied(error: Exception) -> Exception:
+    # The uniffi-generated exception renders as a field dump
+    # (operation=..., namespace=..., ...); restore the Rust Display message so
+    # both raise paths read identically.
+    error.args = (
+        _pool_access_denied_message(error.operation, error.namespace, error.status, error.body),
+    )
+    return error
+
+
+def _pool_access_denied(namespace: str, error: SdkError.Status) -> Exception:
+    if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+        return _canonicalize_pool_access_denied(
+            _UPSTREAM_POOL_ACCESS_DENIED(
+                operation=error.operation,
+                namespace=namespace,
+                status=error.status,
+                body=error.body,
+            )
+        )
+    return PoolAccessDeniedError(
+        _pool_access_denied_message(error.operation, namespace, error.status, error.body)
     )
 
 
@@ -492,6 +517,8 @@ class FleetCloudTransport(FleetTransport):
                             self._template = await self._sdk.reconcile_template(
                                 self._template_request()
                             )
+                        except _NATIVE_POOL_ACCESS_DENIED as error:
+                            raise _canonicalize_pool_access_denied(error)
                         except SdkError.Status as error:
                             if error.status == 403:
                                 raise _pool_access_denied(self._pool_name, error) from error

@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastmcp import FastMCP
 from fastmcp.utilities.types import Image
 
-from .backend_policy import VNC_REMOTE_MCP_TOOLS, is_vnc_backend
+from computer_server.backend_policy import VNC_REMOTE_MCP_TOOLS, is_vnc_backend
 
 logger = logging.getLogger(__name__)
 

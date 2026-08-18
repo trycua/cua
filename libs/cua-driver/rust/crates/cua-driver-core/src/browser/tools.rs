@@ -17,12 +17,15 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::platform::{
+    BrowserVisualActionKind, PrepareLaunchPosture, PrepareProfile, PrepareRequest, PrepareStrategy,
+};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
 use super::store::BrowserActionKind;
 use super::types::BindingQuality;
+use super::verification::browser_verification_value;
 
 /// Register the complete browser surface against one shared engine. Platform
 /// crates call this from their `register_all` after constructing the
@@ -250,10 +253,11 @@ impl GetBrowserStateTool {
                 dom_refs_v1 compatibility format returns composed DOM refs. \
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
-                semantic outline, typed action refs, content refs, scoped reads, and \
-                opaque continuation. Never performs setup — a missing \
-                endpoint is a structured browser_requires_setup refusal pointing at \
-                browser_prepare."
+                semantic outline, typed action refs, content refs, scoped reads, an \
+                opaque continuation, and an advisory verification handoff when page \
+                text looks like CAPTCHA or bot verification. Never performs setup — \
+                a missing endpoint is a structured browser_requires_setup refusal \
+                pointing at browser_prepare."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -396,6 +400,24 @@ impl Tool for GetBrowserStateTool {
                             .iter()
                             .map(semantic_ref_value)
                             .collect::<Vec<_>>();
+                        let verification_texts = std::iter::once(outcome.outline.as_str()).chain(
+                            outcome
+                                .refs
+                                .iter()
+                                .chain(outcome.content_refs.iter())
+                                .flat_map(|listed| {
+                                    [
+                                        listed.node.role.as_str(),
+                                        listed.node.name.as_deref().unwrap_or_default(),
+                                        listed.node.value.as_deref().unwrap_or_default(),
+                                    ]
+                                }),
+                        );
+                        let verification = browser_verification_value(
+                            &outcome.url,
+                            &outcome.title,
+                            verification_texts,
+                        );
                         ToolResult::text(format!(
                             "semantic snapshot p{} of {}: {} action ref(s), {} content ref(s)",
                             outcome.snapshot_id,
@@ -434,6 +456,7 @@ impl Tool for GetBrowserStateTool {
                             "outline": outcome.outline,
                             "refs": refs,
                             "content_refs": content_refs,
+                            "verification": verification,
                             "oopif": {
                                 "status": outcome.oopif.as_str(),
                                 "frames": outcome.oopif.frames(),
@@ -472,6 +495,14 @@ impl Tool for GetBrowserStateTool {
                             })
                         })
                         .collect();
+                    let verification_texts = outcome.refs.iter().flat_map(|(_, entry)| {
+                        [
+                            entry.node_name.as_str(),
+                            entry.label.as_deref().unwrap_or_default(),
+                        ]
+                    });
+                    let verification =
+                        browser_verification_value(&outcome.url, "", verification_texts);
                     ToolResult::text(format!(
                         "snapshot p{} of {}: {} interactive element(s)",
                         outcome.snapshot_id,
@@ -487,6 +518,7 @@ impl Tool for GetBrowserStateTool {
                         "url": outcome.url,
                         "refs": ref_list,
                         "truncated": outcome.truncated,
+                        "verification": verification,
                         "oopif": {
                             "status": outcome.oopif.as_str(),
                             "frames": outcome.oopif.frames(),
@@ -601,16 +633,26 @@ impl BrowserPrepareTool {
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
                 endpoint, and close the temporary tab. Every visible effect is reported; \
-                ambiguity is refused."
+                ambiguity is refused. launch_posture=stealth is valid only for a standalone \
+                pid-free driver-owned isolated launch. It uses a driver-selected nonzero \
+                DevTools port instead of Chromium's port=0 launch path, but it does not inject \
+                page scripts, override browser identity, attach to an existing profile, or \
+                promise bot-detector bypass."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true." },
+                    "pid": { "type": "integer", "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true. Omit pid for launch_posture=stealth." },
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
                     "allow_launch": {
                         "type": "boolean",
                         "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false)."
+                    },
+                    "launch_posture": {
+                        "type": "string",
+                        "enum": ["standard", "stealth"],
+                        "default": "standard",
+                        "description": "Standalone driver-owned isolated launch posture. 'stealth' is accepted only when pid is omitted and allow_launch=true plus an isolated profile are supplied. It uses a driver-selected nonzero DevTools port instead of Chromium's port=0 launch path, does not apply page scripts or identity overrides, and does not promise detector bypass."
                     },
                     "profile": {
                         "type": "object",
@@ -690,6 +732,15 @@ impl Tool for BrowserPrepareTool {
             },
         };
         let allow_launch = args.opt_bool("allow_launch").unwrap_or(false);
+        let launch_posture = match args.get("launch_posture") {
+            None | Some(Value::Null) => PrepareLaunchPosture::Standard,
+            Some(value) => match serde_json::from_value::<PrepareLaunchPosture>(value.clone()) {
+                Ok(posture) => posture,
+                Err(error) => {
+                    return ToolResult::error(format!("invalid browser launch posture: {error}"))
+                }
+            },
+        };
         let pid = match args.get("pid") {
             None => None,
             Some(_) => match args.require_i64("pid") {
@@ -712,6 +763,7 @@ impl Tool for BrowserPrepareTool {
             strategy,
             profile,
             allow_launch,
+            launch_posture,
         };
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
@@ -733,6 +785,8 @@ impl Tool for BrowserPrepareTool {
                     // The ws_url itself stays internal; expose only proof metadata.
                     "endpoint_ownership": outcome.endpoint.map(|e| e.ownership),
                     "prepared_pid": outcome.prepared_pid,
+                    "launch_posture": outcome.launch_posture,
+                    "launch_posture_notes": outcome.launch_posture_notes,
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
                 }))
@@ -2634,6 +2688,10 @@ mod tests {
         assert!(!prepare_properties.contains_key("consent"));
         assert!(!prepare_properties.contains_key("allow_restart"));
         assert!(!prepare_properties.contains_key("approval_token"));
+        assert_eq!(
+            prepare_properties["launch_posture"]["enum"],
+            json!(["standard", "stealth"])
+        );
 
         let dialog = BrowserDialogTool::new(e.clone());
         assert_eq!(
@@ -2877,6 +2935,93 @@ mod tests {
             structured(&result)["refusal"]["code"],
             "browser_route_unavailable"
         );
+    }
+
+    #[tokio::test]
+    async fn stealth_launch_requires_standalone_isolated_profile() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "launch_posture": "stealth",
+                "session": "stealth-non-standalone"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        assert!(structured(&result)["refusal"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("standalone-only"));
+    }
+
+    #[tokio::test]
+    async fn stealth_launch_refuses_pid_even_with_isolated_profile() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "allow_launch": true,
+                "launch_posture": "stealth",
+                "profile": { "mode": "isolated_new" },
+                "session": "stealth-with-pid"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        let message = structured(&result)["refusal"]["message"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(message.contains("standalone-only"));
+        assert!(message.contains("omit pid"));
+    }
+
+    #[tokio::test]
+    async fn stealth_launch_cannot_attach_existing_profile() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "launch_posture": "stealth",
+                "session": "stealth-existing-profile"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        assert!(structured(&result)["refusal"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("standalone-only"));
+    }
+
+    #[tokio::test]
+    async fn stealth_isolated_launch_passes_the_posture_gate_without_pid() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "allow_launch": true,
+                "launch_posture": "stealth",
+                "profile": { "mode": "isolated_new" },
+                "session": "pid-free-stealth-isolated-run"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        assert!(!structured(&result)["refusal"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("standalone-only"));
     }
 
     #[tokio::test]

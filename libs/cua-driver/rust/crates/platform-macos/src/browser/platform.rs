@@ -1140,6 +1140,8 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 prepared_pid: Some(endpoint.ownership.owner_pid),
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+                launch_posture: None,
+                launch_posture_notes: Vec::new(),
                 side_effects: Default::default(),
                 attachment: None,
             });

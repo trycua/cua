@@ -136,6 +136,23 @@ or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 
+For a standalone run where the caller wants a less automation-shaped Chromium
+launch, request the isolated `stealth` launch posture:
+
+```bash
+cua-driver browser_prepare \
+  '{"session":"browser-run-1","allow_launch":true,
+    "launch_posture":"stealth",
+    "profile":{"mode":"isolated_new"}}'
+```
+
+This mode is still a separate driver-owned profile. It does not attach to the
+user's existing profile, accept a `pid`, inject page scripts, override browser
+identity, or promise that a site will accept the session. It uses a real
+installed, non-headless Chromium-family browser with a driver-selected nonzero
+DevTools port instead of Chromium's port=0 launch path. Treat any CAPTCHA or
+bot-detector result as site policy, not as a Cua guarantee.
+
 ### Existing profile
 
 Attaching to an authenticated profile requires explicit trusted launch or host
@@ -260,6 +277,13 @@ the driver cannot return valid viewport metrics and a valid bounded PNG.
 viewport state. Read the compact `outline` for page content, use `refs` only
 for actions declared in each entry's `actions` array, and use `content_refs`
 only to scope later reads. A content ref is not an action capability.
+
+Snapshots include an advisory `verification` object. When
+`verification.required` is `true`, the page looks like a CAPTCHA or
+bot-verification challenge. Do not try to solve or bypass it with browser
+automation. Pause the task, ask a human to complete the visible challenge, and
+then call `get_browser_state` again. Provider guesses such as reCAPTCHA,
+hCaptcha, Turnstile, or generic verification are heuristic evidence only.
 
 The snapshot ranks active dialogs and visible controls before near-viewport
 and offscreen content. It excludes CSS-hidden retained state before applying

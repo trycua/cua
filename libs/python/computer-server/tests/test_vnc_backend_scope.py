@@ -1,9 +1,10 @@
 """Fail-closed transport coverage for the remote VNC backend."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from fastmcp.exceptions import NotFoundError
 
 from computer_server.backend_policy import (
     VNC_REMOTE_COMMANDS,
@@ -47,7 +48,7 @@ async def test_vnc_mcp_registry_contains_only_remote_target_tools(vnc_backend, t
     assert names == VNC_REMOTE_MCP_TOOLS
 
     marker = tmp_path / "must-not-exist"
-    with pytest.raises(Exception, match="computer_file_write"):
+    with pytest.raises(NotFoundError, match="computer_file_write"):
         await server.call_tool(
             "computer_file_write",
             {"path": str(marker), "content": "host mutation"},
@@ -112,6 +113,7 @@ def test_vnc_http_and_websocket_commands_refuse_before_host_mutation(
     monkeypatch.setattr(main, "COMMAND_ALIASES", {})
 
     with TestClient(main.app) as client:
+        advertised = client.get("/commands").json()
         response = client.post(
             "/cmd",
             json={"command": "write_text", "params": {"path": str(marker), "content": "x"}},
@@ -127,6 +129,8 @@ def test_vnc_http_and_websocket_commands_refuse_before_host_mutation(
             )
             result = websocket.receive_json()
 
+    assert set(advertised["commands"]) == {"screenshot"}
+    assert advertised["aliases"] == {}
     assert result["success"] is False
     assert "Unknown command" in result["error"]
     assert not marker.exists()
@@ -153,6 +157,20 @@ def test_vnc_pty_and_browser_http_surfaces_are_refused(vnc_backend, monkeypatch)
     assert browser_response.json()["code"] == VNC_UNSUPPORTED_CODE
     create_pty.assert_not_awaited()
     browser_command.assert_not_awaited()
+
+
+def test_vnc_pty_websocket_is_refused_before_subscription(vnc_backend, monkeypatch):
+    from computer_server import main
+
+    subscribe = Mock()
+    monkeypatch.setattr(main.pty_manager, "subscribe", subscribe)
+
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/pty/123/ws") as websocket:
+            result = websocket.receive_json()
+
+    assert result["code"] == VNC_UNSUPPORTED_CODE
+    subscribe.assert_not_called()
 
 
 @pytest.mark.asyncio

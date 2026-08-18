@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastmcp import FastMCP
 from fastmcp.utilities.types import Image
 
+from .backend_policy import VNC_REMOTE_MCP_TOOLS, is_vnc_backend
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,19 +119,45 @@ def create_mcp_server() -> FastMCP:
     """
     mcp = FastMCP(
         name="cua-computer-server",
-        instructions="""You are connected to a computer control server that provides low-level
+        instructions=(
+            """You are connected to a remote VNC computer control server. It provides only
+        screen, pointer, scroll, and keyboard operations that act on the VNC target.
+
+        Always take a screenshot first to see the current state before performing actions.
+        After performing actions, take another screenshot to verify the result."""
+            if is_vnc_backend()
+            else """You are connected to a computer control server that provides low-level
         primitives for interacting with a desktop computer. You can take screenshots, click,
         type text, press keys, scroll, manage windows, read/write files, and run commands.
 
         Always take a screenshot first to see the current state before performing actions.
-        After performing actions, take another screenshot to verify the result.""",
+        After performing actions, take another screenshot to verify the result."""
+        ),
     )
+
+    original_tool = mcp.tool
+
+    def register_tool(function=None, **kwargs):
+        """Register only tools proven to address the remote target in VNC mode."""
+
+        def register(candidate):
+            if not is_vnc_backend() or candidate.__name__ in VNC_REMOTE_MCP_TOOLS:
+                return original_tool(candidate, **kwargs)
+            return candidate
+
+        if function is None:
+            return register
+        return register(function)
+
+    # Keep every decorator below on the same fail-closed registration path,
+    # including future tools added to this function.
+    mcp.tool = register_tool
 
     # ============================================================
     # SCREEN & MOUSE ACTIONS
     # ============================================================
 
-    @mcp.tool
+    @register_tool
     async def computer_screenshot() -> Image:
         """
         Capture a screenshot of the current screen.

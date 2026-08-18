@@ -26,6 +26,11 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from .backend_policy import (
+    exposed_command_registry,
+    is_vnc_backend,
+    vnc_unsupported_result,
+)
 from .browser import get_browser_manager
 from .handlers.factory import OS_TYPE, HandlerFactory
 
@@ -192,6 +197,54 @@ class UnavailableWithoutContainerMiddleware:
 
 
 app.add_middleware(UnavailableWithoutContainerMiddleware)
+
+
+class VNCBackendScopeGuard:
+    """Refuse host-only HTTP and WebSocket surfaces in remote VNC mode."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        host_scoped = path == "/playwright_exec" or path == "/pty" or path.startswith("/pty/")
+        if not is_vnc_backend() or not host_scoped:
+            await self.app(scope, receive, send)
+            return
+
+        if scope.get("type") == "websocket":
+            event = await receive()
+            if event.get("type") != "websocket.connect":
+                return
+            await send({"type": "websocket.accept"})
+            await send(
+                {
+                    "type": "websocket.send",
+                    "text": json.dumps(vnc_unsupported_result()),
+                }
+            )
+            await send({"type": "websocket.close", "code": 1008})
+            return
+
+        if scope.get("type") == "http":
+            body = json.dumps(vnc_unsupported_result()).encode()
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 409,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode()),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(VNCBackendScopeGuard)
 
 # CORS configuration
 origins = ["*"]
@@ -416,6 +469,12 @@ if hasattr(automation_handler, "get_capture_scope_state"):
     handlers["get_capture_scope_state"] = automation_handler.get_capture_scope_state
 if hasattr(automation_handler, "escalate_capture_scope"):
     handlers["escalate_capture_scope"] = automation_handler.escalate_capture_scope
+
+handlers = exposed_command_registry(handlers)
+if is_vnc_backend():
+    COMMAND_ALIASES = {
+        alias: canonical for alias, canonical in COMMAND_ALIASES.items() if canonical in handlers
+    }
 
 
 class AuthenticationManager:
@@ -829,6 +888,27 @@ async def _require_auth(
         raise HTTPException(status_code=401, detail="Authentication failed")
 
 
+class DirectComputerInterface:
+    """BrowserTool-compatible interface without host leakage in VNC mode."""
+
+    def __init__(self, automation_handler, browser_manager):
+        self._auto = automation_handler
+        self._browser = None if is_vnc_backend() else browser_manager
+
+    @property
+    def interface(self):
+        """Return the target-scoped automation handler."""
+
+        return self._auto
+
+    async def playwright_exec(self, command: str, params: dict) -> dict:
+        """Execute a browser command only when it addresses the local backend."""
+
+        if self._browser is None:
+            return vnc_unsupported_result()
+        return await self._browser.execute_command(command, params)
+
+
 # ---------------------------------------------------------------------------
 # PTY endpoints
 # ---------------------------------------------------------------------------
@@ -1141,31 +1221,10 @@ async def agent_response_endpoint(
     # and delegates to our existing automation/file/accessibility handlers.
     from cua_agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
 
-    class DirectComputerInterface:
-        """Interface wrapper providing BrowserTool compatibility.
-
-        Matches the same interface shape as Computer.interface so BrowserTool
-        works identically with both Computer (cloud) and DirectComputer (local).
-        """
-
-        def __init__(self, automation_handler, browser_manager):
-            self._auto = automation_handler
-            self._browser = browser_manager
-
-        @property
-        def interface(self):
-            """Return automation handler for hotkey, move_cursor, etc."""
-            return self._auto
-
-        async def playwright_exec(self, command: str, params: dict) -> dict:
-            """Execute browser command via browser_manager."""
-            return await self._browser.execute_command(command, params)
-
     class DirectComputer(AsyncComputerHandler):
         def __init__(self):
             # use module-scope handler singletons created by HandlerFactory
             self._auto = automation_handler
-            self._file = file_handler
             self._access = accessibility_handler
             # Create interface for BrowserTool compatibility
             self._interface = DirectComputerInterface(automation_handler, get_browser_manager())

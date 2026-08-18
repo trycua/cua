@@ -3,9 +3,6 @@
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from fastapi.testclient import TestClient
-from fastmcp.exceptions import NotFoundError
-
 from computer_server.backend_policy import (
     VNC_REMOTE_COMMANDS,
     VNC_REMOTE_MCP_TOOLS,
@@ -13,20 +10,24 @@ from computer_server.backend_policy import (
     VNCUnavailableHandler,
     exposed_command_registry,
 )
-from computer_server.handlers.factory import HandlerFactory
 from computer_server.mcp_server import create_mcp_server
+from fastapi.testclient import TestClient
+from fastmcp.exceptions import NotFoundError
 
 
 @pytest.fixture
 def vnc_backend(monkeypatch):
     monkeypatch.setenv("CUA_BACKEND", "vnc")
     monkeypatch.setenv("CUA_VNC_HOST", "127.0.0.1")
+    monkeypatch.setenv("PYNPUT_BACKEND", "dummy")
 
 
 @pytest.mark.asyncio
 async def test_vnc_factory_never_constructs_host_file_desktop_or_window_handlers(
     vnc_backend, tmp_path
 ):
+    from computer_server.handlers.factory import HandlerFactory
+
     handlers = HandlerFactory.create_handlers()
 
     assert all(isinstance(handler, VNCUnavailableHandler) for handler in handlers[3:])

@@ -362,6 +362,27 @@ fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
     runtime.block_on(proxy::run_direct(driver))
 }
 
+fn history_admission_requested(explicit: bool, persisted: bool) -> bool {
+    explicit || persisted
+}
+
+#[cfg(test)]
+mod history_admission_tests {
+    use super::history_admission_requested;
+
+    #[test]
+    fn persisted_preview_admission_survives_a_relaunch_without_the_cli_flag() {
+        assert!(history_admission_requested(false, true));
+    }
+
+    #[test]
+    fn admission_requires_an_explicit_or_persisted_request() {
+        assert!(!history_admission_requested(false, false));
+        assert!(history_admission_requested(true, false));
+        assert!(history_admission_requested(true, true));
+    }
+}
+
 fn mcp_uses_direct_runtime(socket: Option<&str>, direct: bool) -> anyhow::Result<bool> {
     mcp_uses_direct_runtime_for(
         cua_driver_core::embedded_mode(),
@@ -533,7 +554,10 @@ fn main() {
                 std::process::exit(64);
             }
             responsibility::reexec_disclaimed_if_needed();
-            if let Err(error) = history_runtime::configure_admission(experimental_history) {
+            if let Err(error) = history_runtime::configure_admission(history_admission_requested(
+                experimental_history,
+                history_runtime::preview_admitted_preference(),
+            )) {
                 eprintln!("cua-driver: Computer History admission error: {error}");
                 std::process::exit(1);
             }
@@ -929,9 +953,10 @@ fn main() -> anyhow::Result<()> {
                 &grants,
             )?;
             responsibility::reexec_disclaimed_if_needed();
-            history_runtime::configure_admission(
-                experimental_history || history_runtime::preview_admitted_preference(),
-            )?;
+            history_runtime::configure_admission(history_admission_requested(
+                experimental_history,
+                history_runtime::preview_admitted_preference(),
+            ))?;
             history_runtime::configure_daemon_launch_state(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,

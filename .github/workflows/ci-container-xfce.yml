@@ -51,8 +51,9 @@ jobs:
             -e EXPECTED_ARCH \
             cua-xfce:ci \
             bash -lc '
+              set -e
               test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
-              /opt/venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('computer_server')"
+              test -d /opt/venv/lib/python3.13/site-packages/computer_server
               /opt/venv/bin/cua-driver --version
             '
 
@@ -63,7 +64,7 @@ jobs:
             -p 127.0.0.1::8000 \
             -p 127.0.0.1::6901 \
             cua-xfce:ci
-          trap 'docker logs cua-xfce-ci; docker stop cua-xfce-ci >/dev/null 2>&1 || true' EXIT
+          trap 'docker logs cua-xfce-ci; docker exec cua-xfce-ci sh -c "cat /var/log/supervisor/*.log /var/log/supervisor/*.error.log 2>/dev/null" || true; docker stop cua-xfce-ci >/dev/null 2>&1 || true' EXIT
 
           API_PORT=$(docker port cua-xfce-ci 8000/tcp | sed 's/.*://')
           VNC_PORT=$(docker port cua-xfce-ci 6901/tcp | sed 's/.*://')

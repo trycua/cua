@@ -15,7 +15,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+    IUIAutomationElementArray, IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On,
     TreeScope_Children, TreeScope_Subtree, UIA_AutomationIdPropertyId,
     UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
@@ -96,6 +96,46 @@ pub struct UiaNode {
 pub struct UiaTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<UiaNode>,
+    /// True when the unprojected native walk visited every node exposed by
+    /// the selected root without a bound or enumeration failure skipping a
+    /// node/subtree. A `query` only projects the response and does not change
+    /// this underlying snapshot property.
+    pub elements_complete: bool,
+}
+
+#[derive(Debug)]
+struct WalkState {
+    visited: usize,
+    max_elements: usize,
+    max_depth: usize,
+    complete: bool,
+}
+
+impl WalkState {
+    fn new(max_elements: usize, max_depth: usize) -> Self {
+        Self {
+            visited: 0,
+            max_elements,
+            max_depth,
+            complete: true,
+        }
+    }
+
+    /// Admit one node to the walk. Reaching a bound exactly is not itself
+    /// truncation; completeness changes only when a node beyond that bound is
+    /// actually encountered and skipped.
+    fn enter(&mut self, depth: usize) -> bool {
+        if depth > self.max_depth || self.visited >= self.max_elements {
+            self.complete = false;
+            return false;
+        }
+        self.visited += 1;
+        true
+    }
+
+    fn mark_incomplete(&mut self) {
+        self.complete = false;
+    }
 }
 
 /// Walk the UIA tree for the window with the given HWND.
@@ -257,6 +297,7 @@ unsafe fn walk_tree_unsafe(
                 return UiaTreeResult {
                     tree_markdown: format!("UIA init failed: {e}"),
                     nodes: Vec::new(),
+                    elements_complete: false,
                 }
             }
         };
@@ -268,6 +309,7 @@ unsafe fn walk_tree_unsafe(
             return UiaTreeResult {
                 tree_markdown: format!("CreateCacheRequest failed: {e}"),
                 nodes: Vec::new(),
+                elements_complete: false,
             }
         }
     };
@@ -352,6 +394,7 @@ unsafe fn walk_tree_unsafe(
             return UiaTreeResult {
                 tree_markdown: format!("ElementFromHandle failed: {e}"),
                 nodes: Vec::new(),
+                elements_complete: false,
             }
         }
     };
@@ -376,6 +419,7 @@ unsafe fn walk_tree_unsafe(
                                 "BuildUpdatedCache failed after {attempt} attempts: {e}"
                             ),
                             nodes: Vec::new(),
+                            elements_complete: false,
                         };
                     }
                     std::thread::sleep(std::time::Duration::from_millis(40));
@@ -387,7 +431,7 @@ unsafe fn walk_tree_unsafe(
     let mut nodes: Vec<UiaNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new();
     let mut counter = 0usize;
-    let mut total = 0usize;
+    let mut walk_state = WalkState::new(max_elements, max_depth);
 
     walk_cached_bounded(
         &root_elem,
@@ -397,10 +441,9 @@ unsafe fn walk_tree_unsafe(
         &mut nodes,
         &mut lines,
         &mut counter,
-        &mut total,
-        max_elements,
-        max_depth,
+        &mut walk_state,
     );
+    let mut elements_complete = walk_state.complete;
 
     // Fallback for CoreWindow-class apps (Calculator, Settings, older UWPs).
     // `ElementFromHandle(hwnd)` on a `Windows.UI.Core.CoreWindow` HWND returns
@@ -419,6 +462,10 @@ unsafe fn walk_tree_unsafe(
     // erasing it AND leaving the consumed `MAX_TOTAL_ELEMENTS` budget intact
     // for the fallback (which would then truncate large trees prematurely).
     if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
+        // An HWND walk with no actionable rows cannot prove that the target
+        // exposes no matching controls. The CoreWindow fallback below may
+        // replace this with a complete process-root snapshot.
+        elements_complete = false;
         // Skip the desktop-root walk-by-pid fallback for VCL / SAL
         // targets (LibreOffice, OpenOffice). The fallback does its own
         // `BuildUpdatedCache(TreeScope.Subtree)` per matched top-level
@@ -450,7 +497,7 @@ unsafe fn walk_tree_unsafe(
                 let mut fallback_nodes: Vec<UiaNode> = Vec::new();
                 let mut fallback_lines: Vec<(usize, String)> = Vec::new();
                 let mut fallback_counter = 0usize;
-                let mut fallback_total = 0usize;
+                let mut fallback_walk_state = WalkState::new(max_elements, max_depth);
 
                 tracing::debug!(
                     target: "uia",
@@ -464,17 +511,13 @@ unsafe fn walk_tree_unsafe(
                     &mut fallback_nodes,
                     &mut fallback_lines,
                     &mut fallback_counter,
-                    &mut fallback_total,
-                    max_elements,
-                    max_depth,
+                    &mut fallback_walk_state,
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
                     nodes = fallback_nodes;
                     lines = fallback_lines;
-                    // counter/total aren't read after this point — they're
-                    // only used by walk_cached's &mut params for element
-                    // indexing inside that call.
+                    elements_complete = fallback_walk_state.complete;
                 }
             }
         } else {
@@ -503,6 +546,7 @@ unsafe fn walk_tree_unsafe(
             return UiaTreeResult {
                 tree_markdown: stub,
                 nodes: Vec::new(),
+                elements_complete: false,
             };
         }
     }
@@ -517,6 +561,7 @@ unsafe fn walk_tree_unsafe(
     UiaTreeResult {
         tree_markdown,
         nodes,
+        elements_complete,
     }
 }
 
@@ -550,14 +595,13 @@ unsafe fn walk_root_by_pid(
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    total: &mut usize,
-    max_elements: usize,
-    max_depth: usize,
+    walk_state: &mut WalkState,
 ) {
     let root = match automation.GetRootElement() {
         Ok(r) => r,
         Err(e) => {
             tracing::debug!(target: "uia", "GetRootElement failed: {e}");
+            walk_state.mark_incomplete();
             return;
         }
     };
@@ -565,6 +609,7 @@ unsafe fn walk_root_by_pid(
         Ok(c) => c,
         Err(e) => {
             tracing::debug!(target: "uia", "CreateTrueCondition failed: {e}");
+            walk_state.mark_incomplete();
             return;
         }
     };
@@ -572,14 +617,26 @@ unsafe fn walk_root_by_pid(
         Ok(a) => a,
         Err(e) => {
             tracing::debug!(target: "uia", "root.FindAll(Children) failed: {e}");
+            walk_state.mark_incomplete();
             return;
         }
     };
-    let count = kids.Length().unwrap_or(0);
+    let count = match kids.Length() {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::debug!(target: "uia", "root child count failed: {e}");
+            walk_state.mark_incomplete();
+            return;
+        }
+    };
     for i in 0..count {
         let elem = match kids.GetElement(i) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(target: "uia", "root child {i} fetch failed: {e}");
+                walk_state.mark_incomplete();
+                continue;
+            }
         };
         // Read ProcessId without a cache — root.FindAll didn't use one.
         // VARIANT for VT_I4 (UIA's ProcessId type) puts the int at
@@ -591,11 +648,16 @@ unsafe fn walk_root_by_pid(
                 if raw.Anonymous.Anonymous.vt != 3
                 /* VT_I4 */
                 {
+                    walk_state.mark_incomplete();
                     continue;
                 }
                 raw.Anonymous.Anonymous.Anonymous.lVal as u32
             }
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(target: "uia", "root child {i} ProcessId read failed: {e}");
+                walk_state.mark_incomplete();
+                continue;
+            }
         };
         if pid != target_pid {
             continue;
@@ -607,21 +669,11 @@ unsafe fn walk_root_by_pid(
             Ok(e) => e,
             Err(e) => {
                 tracing::debug!(target: "uia", "BuildUpdatedCache on pid={target_pid} match failed: {e}");
+                walk_state.mark_incomplete();
                 continue;
             }
         };
-        walk_cached_bounded(
-            &cached,
-            0,
-            None,
-            false,
-            nodes,
-            lines,
-            counter,
-            total,
-            max_elements,
-            max_depth,
-        );
+        walk_cached_bounded(&cached, 0, None, false, nodes, lines, counter, walk_state);
     }
 }
 
@@ -634,6 +686,12 @@ unsafe fn walk_cached(
     counter: &mut usize,
     total: &mut usize,
 ) {
+    let mut walk_state = WalkState {
+        visited: *total,
+        max_elements: MAX_TOTAL_ELEMENTS,
+        max_depth: MAX_DEPTH,
+        complete: true,
+    };
     walk_cached_bounded(
         element,
         depth,
@@ -642,10 +700,9 @@ unsafe fn walk_cached(
         nodes,
         lines,
         counter,
-        total,
-        MAX_TOTAL_ELEMENTS,
-        MAX_DEPTH,
+        &mut walk_state,
     );
+    *total = walk_state.visited;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -657,14 +714,11 @@ unsafe fn walk_cached_bounded(
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    total: &mut usize,
-    max_elements: usize,
-    max_depth: usize,
+    walk_state: &mut WalkState,
 ) {
-    if depth > max_depth || *total >= max_elements {
+    if !walk_state.enter(depth) {
         return;
     }
-    *total += 1;
 
     let control_type = read_cached_control_type(element);
     let name = read_cached_bstr_name(element);
@@ -744,24 +798,53 @@ unsafe fn walk_cached_bounded(
     }
 
     // Recurse using cached children (no additional RPC).
-    if let Ok(children) = element.GetCachedChildren() {
-        let len = children.Length().unwrap_or(0);
-        for i in 0..len {
-            if let Ok(child) = children.GetElement(i) {
-                walk_cached_bounded(
-                    &child,
-                    depth + 1,
-                    emitted_parent,
-                    in_web_content || control_type.eq_ignore_ascii_case("Document"),
-                    nodes,
-                    lines,
-                    counter,
-                    total,
-                    max_elements,
-                    max_depth,
-                );
-            }
+    let children = match cached_children(element) {
+        Ok(Some(children)) => children,
+        // UIA returns S_OK with a null array for a cached leaf. windows-rs
+        // normally maps that null interface to E_POINTER, so use the raw
+        // result below to distinguish a complete leaf from a real HRESULT
+        // failure.
+        Ok(None) => return,
+        Err(_) => {
+            walk_state.mark_incomplete();
+            return;
         }
+    };
+    let len = match children.Length() {
+        Ok(len) => len,
+        Err(_) => {
+            walk_state.mark_incomplete();
+            return;
+        }
+    };
+    for i in 0..len {
+        match children.GetElement(i) {
+            Ok(child) => walk_cached_bounded(
+                &child,
+                depth + 1,
+                emitted_parent,
+                in_web_content || control_type.eq_ignore_ascii_case("Document"),
+                nodes,
+                lines,
+                counter,
+                walk_state,
+            ),
+            Err(_) => walk_state.mark_incomplete(),
+        }
+    }
+}
+
+unsafe fn cached_children(
+    element: &IUIAutomationElement,
+) -> windows::core::Result<Option<IUIAutomationElementArray>> {
+    let mut raw = std::ptr::null_mut();
+    let result =
+        (Interface::vtable(element).GetCachedChildren)(Interface::as_raw(element), &mut raw);
+    result.ok()?;
+    if raw.is_null() {
+        Ok(None)
+    } else {
+        Ok(Some(IUIAutomationElementArray::from_raw(raw)))
     }
 }
 
@@ -1054,4 +1137,78 @@ fn filter_tree(markdown: &str, query: &str) -> String {
     let mut r = output.join("\n");
     r.push('\n');
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn walk_synthetic_tree(
+        children: &[Vec<usize>],
+        node: usize,
+        depth: usize,
+        state: &mut WalkState,
+    ) {
+        if !state.enter(depth) {
+            return;
+        }
+        for child in &children[node] {
+            walk_synthetic_tree(children, *child, depth + 1, state);
+        }
+    }
+
+    #[test]
+    fn complete_tree_below_default_bounds_reports_complete() {
+        let mut children = vec![Vec::new(); 55];
+        children[0] = (1..55).collect();
+        let mut state = WalkState::new(DEFAULT_MAX_TOTAL_ELEMENTS, DEFAULT_MAX_DEPTH);
+
+        walk_synthetic_tree(&children, 0, 0, &mut state);
+
+        assert_eq!(state.visited, 55);
+        assert!(state.complete);
+    }
+
+    #[test]
+    fn exact_element_bound_is_complete_but_a_skipped_node_is_not() {
+        let mut children = vec![Vec::new(); 55];
+        children[0] = (1..55).collect();
+
+        let mut exact = WalkState::new(55, DEFAULT_MAX_DEPTH);
+        walk_synthetic_tree(&children, 0, 0, &mut exact);
+        assert_eq!(exact.visited, 55);
+        assert!(exact.complete);
+
+        let mut truncated = WalkState::new(54, DEFAULT_MAX_DEPTH);
+        walk_synthetic_tree(&children, 0, 0, &mut truncated);
+        assert_eq!(truncated.visited, 54);
+        assert!(!truncated.complete);
+    }
+
+    #[test]
+    fn depth_bound_reports_incomplete_only_when_a_descendant_is_skipped() {
+        let children = vec![vec![1], vec![2], Vec::new()];
+
+        let mut exact = WalkState::new(10, 2);
+        walk_synthetic_tree(&children, 0, 0, &mut exact);
+        assert!(exact.complete);
+
+        let mut truncated = WalkState::new(10, 1);
+        walk_synthetic_tree(&children, 0, 0, &mut truncated);
+        assert_eq!(truncated.visited, 2);
+        assert!(!truncated.complete);
+    }
+
+    #[test]
+    fn query_projection_does_not_change_walk_completeness() {
+        let mut state = WalkState::new(2, 1);
+        let children = vec![vec![1], Vec::new()];
+        walk_synthetic_tree(&children, 0, 0, &mut state);
+        assert!(state.complete);
+
+        let projected = filter_tree("- [0] Window\n  - [1] Button \"Start\"\n", "Start");
+
+        assert!(projected.contains("Button \"Start\""));
+        assert!(state.complete);
+    }
 }

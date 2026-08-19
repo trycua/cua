@@ -487,7 +487,28 @@ mod platform {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+mod platform {
+    use super::*;
+
+    pub fn spawn(
+        target_window: isize,
+        target_pid: u32,
+        health: RenderHealth,
+        started_at: Instant,
+        stop: Arc<AtomicBool>,
+    ) -> anyhow::Result<std::thread::JoinHandle<()>> {
+        crate::platform::spawn_indicator(
+            target_window as u32,
+            target_pid as i32,
+            health,
+            started_at,
+            stop,
+        )
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 mod platform {
     use super::*;
     pub fn spawn(

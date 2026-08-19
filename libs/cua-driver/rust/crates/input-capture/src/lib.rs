@@ -1,6 +1,6 @@
 //! Privacy-safe human input observations for cua-driver demonstrations.
 //!
-//! Windows capture is implemented. Other platforms return
+//! Windows and macOS capture are implemented. Other platforms return
 //! [`CaptureError::Unsupported`]. The public [`Demonstration`] guard owns the
 //! indicator and input hooks as one lifecycle so capture cannot outlive its
 //! user-visible notification.
@@ -58,7 +58,11 @@ pub(crate) fn start(
 #[path = "windows.rs"]
 mod platform;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+#[path = "macos.rs"]
+mod platform;
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 mod platform {
     use super::*;
 

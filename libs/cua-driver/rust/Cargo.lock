@@ -1917,6 +1917,9 @@ name = "input-capture"
 version = "0.13.0"
 dependencies = [
  "anyhow",
+ "core-foundation",
+ "objc2",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -1,0 +1,2 @@
+# Pin the API implementation used by cua-sandbox's DockerRuntime.
+cua-computer-server==0.3.42

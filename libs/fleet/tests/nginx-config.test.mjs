@@ -34,6 +34,11 @@ test("backend API nginx route includes GitHub trust policy endpoints", async () 
     /\busage\b/,
     "expected /api/usage to proxy to cyclops-cs-backend",
   )
+  assert.match(
+    backendRoute[1],
+    /\badmin\b/,
+    "expected /api/admin/feature-flags to proxy to cyclops-cs-backend",
+  )
 })
 
 test("oauth2-proxy accepts Fleets GitHub WIF bearer tokens", async () => {

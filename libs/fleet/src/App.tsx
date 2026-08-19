@@ -8,6 +8,7 @@ import {
   useNavigate,
 } from "react-router-dom"
 import AppLayout from "@cloudscape-design/components/app-layout"
+import Badge from "@cloudscape-design/components/badge"
 import Button from "@cloudscape-design/components/button"
 import SideNavigation from "@cloudscape-design/components/side-navigation"
 import TopNavigation from "@cloudscape-design/components/top-navigation"
@@ -24,7 +25,9 @@ import { Settings } from "./pages/Settings"
 import { AgentChat } from "./pages/AgentChat"
 import { Usage } from "./pages/Usage"
 import { PageShell } from "./components/PageShell"
+import { FeatureFlags } from "./pages/FeatureFlags"
 import { FeatureFlagProvider, useFeatureFlags } from "./components/FeatureFlagContext"
+import { AdminRoute } from "./components/AdminRoute"
 import { FlashContext, type FlashMsg } from "./components/FlashContext"
 import { logout, userInfo } from "./auth/keycloak"
 import cuaLockup from "@cua/design/assets/brand/cua-lockup-white.svg"
@@ -109,7 +112,7 @@ function Shell() {
     setNavigationOpen(tabletOrWider)
   }, [tabletOrWider])
   const user = userInfo()
-  const { chat, usage } = useFeatureFlags()
+  const { admin, chat, usage } = useFeatureFlags()
   useEffect(() => {
     const path = location.pathname
     const pageTitle = path === "/usage"
@@ -205,6 +208,16 @@ function Shell() {
                     : []),
                   { type: "link", text: "User API keys", href: "#/user-keys" },
                   { type: "link", text: "Settings", href: "#/settings" },
+                  ...(admin
+                    ? [
+                        {
+                          type: "link" as const,
+                          text: "Feature flags",
+                          href: "#/admin/feature-flags",
+                          info: <Badge color="blue">Admin</Badge>,
+                        },
+                      ]
+                    : []),
                 ]}
               />
             </div>
@@ -261,6 +274,9 @@ export function App() {
             <Route path="/usage" element={<UsageRoute />} />
             <Route path="/agent" element={<ChatRoute />} />
             <Route path="/billing" element={<Navigate to="/settings" replace />} />
+            <Route element={<AdminRoute />}>
+              <Route path="/admin/feature-flags" element={<FeatureFlags />} />
+            </Route>
             <Route
               path="/pools/:namespace/:poolName/claims/:claimName"
               element={<ClaimDetail />}
@@ -271,6 +287,7 @@ export function App() {
               element={<Navigate to="/pools/new" replace />}
             />
             <Route path="/modules/:name" element={<RedirectModule />} />
+            <Route path="*" element={<Navigate to="/pools" replace />} />
             <Route path="/pools/:name" element={<Navigate to="/pools" replace />} />
           </Route>
         </Routes>

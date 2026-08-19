@@ -23,7 +23,10 @@ import (
 
 type ctxKey int
 
-const UserKey ctxKey = 1
+const (
+	UserKey ctxKey = iota + 1
+	freshAdminFlagsKey
+)
 
 var (
 	opaAdminQuery *rego.PreparedEvalQuery
@@ -61,18 +64,19 @@ var surfacePolicySources = map[string]struct {
 	filename string
 	source   string
 }{
-	"authz-base":         {"authz_base.rego", authzBasePolicy},
-	"authz-keys":         {"authz_keys.rego", authzKeysPolicy},
-	"authz-config":       {"authz_config.rego", authzConfigPolicy},
-	"authz-chat":         {"authz_chat.rego", authzChatPolicy},
-	"authz-billing":      {"authz_billing.rego", authzBillingPolicy},
-	"authz-usage":        {"authz_usage.rego", authzUsagePolicy},
-	"authz-namespaces":   {"authz_namespaces.rego", authzNamespacesPolicy},
-	"authz-github-trust": {"authz_github_trust.rego", authzGitHubTrustPolicy},
-	"authz-user-keys":    {"authz_user_keys.rego", authzUserKeysPolicy},
-	"authz-k8s":          {"authz_k8s.rego", authzK8sPolicy},
-	"authz-svc":          {"authz_svc.rego", authzSvcPolicy},
-	"authz-state-query":  {"authz_state_query.rego", authzStateQueryPolicy},
+	"authz-base":          {"authz_base.rego", authzBasePolicy},
+	"authz-keys":          {"authz_keys.rego", authzKeysPolicy},
+	"authz-config":        {"authz_config.rego", authzConfigPolicy},
+	"authz-chat":          {"authz_chat.rego", authzChatPolicy},
+	"authz-billing":       {"authz_billing.rego", authzBillingPolicy},
+	"authz-usage":         {"authz_usage.rego", authzUsagePolicy},
+	"authz-namespaces":    {"authz_namespaces.rego", authzNamespacesPolicy},
+	"authz-github-trust":  {"authz_github_trust.rego", authzGitHubTrustPolicy},
+	"authz-user-keys":     {"authz_user_keys.rego", authzUserKeysPolicy},
+	"authz-k8s":           {"authz_k8s.rego", authzK8sPolicy},
+	"authz-svc":           {"authz_svc.rego", authzSvcPolicy},
+	"authz-state-query":   {"authz_state_query.rego", authzStateQueryPolicy},
+	"authz-feature-flags": {"authz_feature_flags.rego", authzFeatureFlagsPolicy},
 }
 
 //go:embed authz_base.rego
@@ -140,9 +144,10 @@ const (
 const flagsTTL = 1 * time.Minute
 
 var (
-	flagsMu    sync.Mutex
-	flagsValue map[string]interface{}
-	flagsExp   time.Time
+	flagsMu         sync.Mutex
+	flagsValue      map[string]interface{}
+	flagsExp        time.Time
+	flagsGeneration uint64
 
 	// flagsSF collapses concurrent refreshes (e.g. a burst of requests
 	// arriving right after expiry, or at cold start) into a single
@@ -155,7 +160,21 @@ var (
 	// client name to one place.
 	ffClientOnce sync.Once
 	ffClient     *openfeature.Client
+
+	computeFlagsDataFn       = computeFlagsData
+	computeFreshAdminFlagsFn = computeFreshAdminFlags
 )
+
+// InvalidateFeatureFlags clears the resolved auth flag cache so the next
+// authorization request observes a successful feature-flag mutation.
+func InvalidateFeatureFlags() {
+	flagsMu.Lock()
+	flagsValue = nil
+	flagsExp = time.Time{}
+	flagsGeneration++
+	flagsMu.Unlock()
+	flagsSF.Forget("flags")
+}
 
 // flagsData returns the resolved feature-flag map (admin_subs, …), TTL-cached
 // at flagsTTL. On a hit it returns the cached map under the lock; on a miss it
@@ -186,19 +205,65 @@ func flagsData() map[string]interface{} {
 			flagsMu.Unlock()
 			return cached, nil
 		}
+		generation := flagsGeneration
 		flagsMu.Unlock()
 
 		// Resolve with a detached context so a single caller's cancelled
 		// request can't abort the refresh shared by everyone else.
-		result := computeFlagsData(context.Background())
+		result := computeFlagsDataFn(context.Background())
 
 		flagsMu.Lock()
-		flagsValue = result
-		flagsExp = time.Now().Add(flagsTTL)
+		if flagsGeneration == generation {
+			flagsValue = result
+			flagsExp = time.Now().Add(flagsTTL)
+		}
 		flagsMu.Unlock()
 		return result, nil
 	})
 	return v.(map[string]interface{})
+}
+
+func computeFreshAdminFlags(ctx context.Context) map[string]interface{} {
+	ffClientOnce.Do(func() {
+		ffClient = openfeature.NewClient("cyclops-cs-auth")
+	})
+	key := flagPrefix + "admin-subs"
+	admins, err := loadStringList(ctx, ffClient, key)
+	if err != nil {
+		slog.Warn("auth: fresh admin flag load failed; denying admin access", "flag", key, "err", err)
+		admins = []interface{}{}
+	}
+	return map[string]interface{}{
+		"admin_subs": admins,
+	}
+}
+
+func freshAdminFlags(ctx context.Context) map[string]interface{} {
+	if flags, ok := ctx.Value(freshAdminFlagsKey).(map[string]interface{}); ok {
+		return flags
+	}
+	return computeFreshAdminFlagsFn(ctx)
+}
+
+func withFreshAdminFlags(request *http.Request) *http.Request {
+	if _, ok := request.Context().Value(freshAdminFlagsKey).(map[string]interface{}); ok {
+		return request
+	}
+	flags := computeFreshAdminFlagsFn(request.Context())
+	return request.WithContext(context.WithValue(request.Context(), freshAdminFlagsKey, flags))
+}
+
+func authorizationFlags(ctx context.Context) map[string]interface{} {
+	if fresh, ok := ctx.Value(freshAdminFlagsKey).(map[string]interface{}); ok {
+		cached := flagsData()
+		flags := make(map[string]interface{}, len(cached)+1)
+		for key, value := range cached {
+			flags[key] = value
+		}
+		flags["admin_subs"] = fresh["admin_subs"]
+		return flags
+	}
+	return flagsData()
 }
 
 func computeFlagsData(ctx context.Context) map[string]interface{} {
@@ -327,26 +392,33 @@ func LoadOpa() {
 // (data.authz.is_admin). is_admin only reads input.user and input.flags, so
 // no route/method/path is needed.
 func EvalIsAdmin(ctx context.Context, user *User) (bool, error) {
-	return evalUserDecision(ctx, user, opaAdminQuery)
+	return evalUserDecision(ctx, user, opaAdminQuery, flagsData())
+}
+
+// EvalIsAdminFresh bypasses the process-local admin membership cache. If the
+// feature-admin middleware already resolved membership for this request, the
+// handler reuses that result instead of issuing a duplicate provider call.
+func EvalIsAdminFresh(ctx context.Context, user *User) (bool, error) {
+	return evalUserDecision(ctx, user, opaAdminQuery, freshAdminFlags(ctx))
 }
 
 // EvalChatEnabled returns the restricted-mode chat decision: administrators
 // and users listed in input.flags.chat_subs are enabled.
 func EvalChatEnabled(ctx context.Context, user *User) (bool, error) {
-	return evalUserDecision(ctx, user, opaChatQuery)
+	return evalUserDecision(ctx, user, opaChatQuery, flagsData())
 }
 
 func EvalUsageEnabled(ctx context.Context, user *User) (bool, error) {
-	return evalUserDecision(ctx, user, opaUsageQuery)
+	return evalUserDecision(ctx, user, opaUsageQuery, flagsData())
 }
 
-func evalUserDecision(ctx context.Context, user *User, query *rego.PreparedEvalQuery) (bool, error) {
+func evalUserDecision(ctx context.Context, user *User, query *rego.PreparedEvalQuery, flags map[string]interface{}) (bool, error) {
 	if user == nil {
 		return false, nil
 	}
 	input := map[string]interface{}{
 		"user":  buildUserInput(user),
-		"flags": flagsData(),
+		"flags": flags,
 	}
 	res, err := query.Eval(ctx, rego.EvalInput(input))
 	if err != nil {
@@ -547,3 +619,6 @@ func GetUser(ctx context.Context) *User {
 	}
 	return nil
 }
+
+//go:embed authz_feature_flags.rego
+var authzFeatureFlagsPolicy string

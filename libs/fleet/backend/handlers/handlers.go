@@ -15,6 +15,7 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/featureflagadmin"
 	"cyclops-cs-backend/keycloak"
 	"cyclops-cs-backend/usage"
 	"go.opentelemetry.io/otel"
@@ -43,6 +44,8 @@ type Handlers struct {
 
 	usageAccessEvaluator func(context.Context, *auth.User) (bool, error)
 	adminAccessEvaluator func(context.Context, *auth.User) (bool, error)
+
+	FeatureFlags *featureflagadmin.Service
 
 	ChatAccess          config.ChatAccessMode
 	Conversations       chat.ConversationStore
@@ -85,7 +88,7 @@ func (h Handlers) usageEnabled(ctx context.Context, user *auth.User) (bool, erro
 func (h Handlers) isAdmin(ctx context.Context, user *auth.User) (bool, error) {
 	evaluator := h.adminAccessEvaluator
 	if evaluator == nil {
-		evaluator = auth.EvalIsAdmin
+		evaluator = auth.EvalIsAdminFresh
 	}
 	return evaluator(ctx, user)
 }

@@ -92,6 +92,65 @@ definitions:
       name:
         type: string
     type: object
+  featureflagadmin.Flag:
+    properties:
+      deletable:
+        type: boolean
+      description:
+        type: string
+      key:
+        type: string
+      managed_by:
+        type: string
+      modified_at:
+        type: string
+      ownership:
+        $ref: '#/definitions/featureflagadmin.Ownership'
+      path:
+        type: string
+      raw_value:
+        type: string
+      tags:
+        additionalProperties:
+          type: string
+        type: object
+      value: {}
+      value_type:
+        $ref: '#/definitions/featureflags.ValueType'
+      version:
+        type: integer
+    type: object
+  featureflagadmin.Ownership:
+    enum:
+    - terraform
+    - ad_hoc
+    - external
+    type: string
+    x-enum-varnames:
+    - OwnershipTerraform
+    - OwnershipAdHoc
+    - OwnershipExternal
+  featureflags.ValueType:
+    enum:
+    - boolean
+    - number
+    - string
+    - json
+    type: string
+    x-enum-varnames:
+    - ValueBoolean
+    - ValueNumber
+    - ValueString
+    - ValueJSON
+  handlers.AdminAPIError:
+    properties:
+      code:
+        type: string
+      current:
+        $ref: '#/definitions/featureflagadmin.Flag'
+      message:
+        type: string
+    type: object
   handlers.BillingSessionResponse:
     properties:
       url:
@@ -110,6 +169,16 @@ definitions:
         type: boolean
       chat:
         type: boolean
+    type: object
+  handlers.CreateFeatureFlagRequest:
+    properties:
+      description:
+        type: string
+      key:
+        type: string
+      value: {}
+      value_type:
+        $ref: '#/definitions/featureflags.ValueType'
     type: object
   handlers.CreateKeyRequest:
     properties:
@@ -167,6 +236,11 @@ definitions:
       token_url:
         type: string
     type: object
+  handlers.DeleteFeatureFlagRequest:
+    properties:
+      expected_version:
+        type: integer
+    type: object
   handlers.ErrorResponse:
     properties:
       error:
@@ -211,6 +285,14 @@ definitions:
           $ref: '#/definitions/chat.Message'
         type: array
     type: object
+  handlers.UpdateFeatureFlagRequest:
+    properties:
+      expected_version:
+        type: integer
+      value: {}
+      value_type:
+        $ref: '#/definitions/featureflags.ValueType'
+    type: object
   handlers.UserKeyResponse:
     properties:
       client_id:
@@ -254,6 +336,237 @@ info:
   title: Cyclops CS Backend API
   version: "0.1"
 paths:
+  /api/admin/feature-flags:
+    get:
+      description: Lists direct non-SecureString parameters under /feature-flags/cyclops-cs/
+        with typed values, ownership, and SSM versions.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/featureflagadmin.Flag'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+      security:
+      - BearerAuth: []
+      summary: List Cyclops feature flags
+      tags:
+      - admin feature flags
+    post:
+      consumes:
+      - application/json
+      description: Creates a String parameter under /feature-flags/cyclops-cs/ with
+        cyclops-cs-admin ownership and a typed logical value.
+      parameters:
+      - description: Feature flag to create
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateFeatureFlagRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/featureflagadmin.Flag'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+      security:
+      - BearerAuth: []
+      summary: Create an ad hoc Cyclops feature flag
+      tags:
+      - admin feature flags
+  /api/admin/feature-flags/{key}:
+    delete:
+      consumes:
+      - application/json
+      description: Deletes only cyclops-cs-admin-owned flags when expected_version
+        matches. Terraform and external keys are protected.
+      parameters:
+      - description: Flat feature flag key
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Expected SSM version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.DeleteFeatureFlagRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+      security:
+      - BearerAuth: []
+      summary: Delete an ad hoc Cyclops feature flag
+      tags:
+      - admin feature flags
+    put:
+      consumes:
+      - application/json
+      description: Updates the typed value when expected_version matches. Terraform
+        and external ownership protect the key from deletion, not value edits.
+      parameters:
+      - description: Flat feature flag key
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Typed value and expected SSM version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateFeatureFlagRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/featureflagadmin.Flag'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+      security:
+      - BearerAuth: []
+      summary: Update a Cyclops feature flag value
+      tags:
+      - admin feature flags
   /api/billing/portal-session:
     post:
       description: Creates a Stripe-hosted Billing Portal Session for the customer

@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -14,13 +17,129 @@ func resetFlagsCache() {
 	flagsMu.Lock()
 	flagsValue = nil
 	flagsExp = time.Time{}
+	flagsGeneration = 0
 	flagsMu.Unlock()
+	flagsSF.Forget("flags")
+}
+
+func TestInvalidateFeatureFlagsPreventsInFlightRefreshFromPublishingStaleData(t *testing.T) {
+	resetFlagsCache()
+	originalCompute := computeFlagsDataFn
+	t.Cleanup(func() { computeFlagsDataFn = originalCompute })
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls int
+	computeFlagsDataFn = func(context.Context) map[string]interface{} {
+		calls++
+		if calls == 1 {
+			close(started)
+			<-release
+			return map[string]interface{}{"admin_subs": []interface{}{"stale-admin"}}
+		}
+		return map[string]interface{}{"admin_subs": []interface{}{"fresh-admin"}}
+	}
+
+	done := make(chan map[string]interface{}, 1)
+	go func() { done <- flagsData() }()
+	<-started
+	InvalidateFeatureFlags()
+	close(release)
+	if got := <-done; !reflect.DeepEqual(got, map[string]interface{}{"admin_subs": []interface{}{"stale-admin"}}) {
+		t.Fatalf("in-flight caller result = %#v", got)
+	}
+
+	flagsMu.Lock()
+	cached := flagsValue
+	flagsMu.Unlock()
+	if cached != nil {
+		t.Fatalf("stale refresh republished cache = %#v", cached)
+	}
+
+	fresh := flagsData()
+	if !reflect.DeepEqual(fresh, map[string]interface{}{"admin_subs": []interface{}{"fresh-admin"}}) {
+		t.Fatalf("next caller result = %#v, want fresh generation", fresh)
+	}
+	if calls != 2 {
+		t.Fatalf("compute calls = %d, want 2", calls)
+	}
+	if cachedAgain := flagsData(); !reflect.DeepEqual(cachedAgain, fresh) || calls != 2 {
+		t.Fatalf("cached fresh result = %#v calls=%d", cachedAgain, calls)
+	}
 }
 
 // TestExportedEvalsEndToEnd wires the real path: SimpleEnvProvider →
 // flagsData() → input.flags → the prepared OPA query. It guards the
 // glue (flag discovery, env→key mapping, result decoding) that the
 // pure-policy tests in policy_test.go don't touch.
+func TestFeatureFlagAdminMiddlewareBypassesAnotherReplicasStaleAdminCache(t *testing.T) {
+	LoadOpa()
+	resetFlagsCache()
+	originalCompute := computeFlagsDataFn
+	originalFresh := computeFreshAdminFlagsFn
+	t.Cleanup(func() {
+		computeFlagsDataFn = originalCompute
+		computeFreshAdminFlagsFn = originalFresh
+	})
+
+	// Replica B cached membership before replica A removed the administrator.
+	computeFlagsDataFn = func(context.Context) map[string]interface{} {
+		return map[string]interface{}{"admin_subs": []interface{}{"removed-admin"}}
+	}
+	if got := flagsData(); !reflect.DeepEqual(got["admin_subs"], []interface{}{"removed-admin"}) {
+		t.Fatalf("stale replica cache = %#v", got)
+	}
+
+	// The shared provider now reflects replica A's committed mutation. Replica
+	// B's process-local invalidator was never called.
+	var freshCalls int
+	computeFreshAdminFlagsFn = func(context.Context) map[string]interface{} {
+		freshCalls++
+		return map[string]interface{}{"admin_subs": []interface{}{}}
+	}
+
+	policy := surfacePolicies["feature-flags"]
+	handler := PolicyMiddleware(policy.tree(), policy.options...)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("removed administrator reached feature flag handler")
+	}))
+	request := routeRequest(http.MethodGet, "/api/admin/feature-flags", "/api/admin/feature-flags", nil, "")
+	request = request.WithContext(context.WithValue(request.Context(), UserKey, &User{ID: "removed-admin", AZP: "cyclops-cs-spa"}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", response.Code, response.Body.String())
+	}
+	if freshCalls != 1 {
+		t.Fatalf("fresh admin provider calls = %d, want 1", freshCalls)
+	}
+	if got := flagsData(); !reflect.DeepEqual(got["admin_subs"], []interface{}{"removed-admin"}) {
+		t.Fatalf("unrelated TTL cache changed = %#v", got)
+	}
+
+	computeFreshAdminFlagsFn = func(context.Context) map[string]interface{} {
+		freshCalls++
+		return map[string]interface{}{"admin_subs": []interface{}{"current-admin"}}
+	}
+	allowed := PolicyMiddleware(policy.tree(), policy.options...)(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		isAdmin, err := EvalIsAdminFresh(request.Context(), &User{ID: "current-admin", AZP: "cyclops-cs-spa"})
+		if err != nil || !isAdmin {
+			t.Fatalf("handler defense check = %v, %v", isAdmin, err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request = routeRequest(http.MethodGet, "/api/admin/feature-flags", "/api/admin/feature-flags", nil, "")
+	request = request.WithContext(context.WithValue(request.Context(), UserKey, &User{ID: "current-admin", AZP: "cyclops-cs-spa"}))
+	response = httptest.NewRecorder()
+	allowed.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("allowed status = %d; body = %s", response.Code, response.Body.String())
+	}
+	if freshCalls != 2 {
+		t.Fatalf("fresh provider calls after middleware and handler = %d, want 2 total", freshCalls)
+	}
+}
+
 func TestExportedEvalsEndToEnd(t *testing.T) {
 	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-sub"]`)
 	t.Setenv("CYCLOPS_CS_CHAT_SUBS", `["chat-sub"]`)
@@ -128,6 +247,31 @@ func TestComputeFlagsDataLoadsOnlyOPAStringListFlags(t *testing.T) {
 	}
 	if usage := asStrings(got["usage_subs"]); len(usage) != 1 || usage[0] != "usage-sub" {
 		t.Fatalf("usage_subs = %v, want [usage-sub]", usage)
+	}
+}
+
+func TestComputeFlagsDataFailsClosedOnAuthorizationListTypeMismatch(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-sub"]`)
+	t.Setenv("CYCLOPS_CS_CHAT_SUBS", "true")
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+
+	got := computeFlagsData(context.Background())
+	if len(got) != 0 {
+		t.Fatalf("computeFlagsData() = %v, want empty flags after authorization list type mismatch", got)
+	}
+}
+
+func TestComputeFreshAdminFlagsFailsClosedOnTypeMismatch(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", "true")
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+
+	got := computeFreshAdminFlags(context.Background())
+	if admins := asStrings(got["admin_subs"]); len(admins) != 0 {
+		t.Fatalf("admin_subs = %v, want empty allowlist after type mismatch", admins)
 	}
 }
 

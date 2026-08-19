@@ -26,6 +26,7 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/featureflagadmin"
 	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/handlers"
 	"cyclops-cs-backend/metrics"
@@ -38,6 +39,90 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/trycua/cloud/pkg/featureflags"
 )
+
+type auditWiringLock struct{}
+
+func (auditWiringLock) WithLock(ctx context.Context, callback func(context.Context) error) error {
+	return callback(ctx)
+}
+
+func TestFeatureFlagAdminServiceWiresMutationAuditLogger(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	service := newFeatureFlagAdminService(nil, auditWiringLock{})
+	_, err := service.Create(context.Background(), featureflagadmin.Actor{Subject: "admin-1"}, featureflagadmin.CreateInput{Key: "INVALID"})
+	if err == nil {
+		t.Fatal("Create() error = nil, want invalid key rejection")
+	}
+	if !strings.Contains(output.String(), `"event":"feature_flag_admin"`) || !strings.Contains(output.String(), `"reason":"invalid_key"`) {
+		t.Fatalf("production mutation audit missing: %s", output.String())
+	}
+}
+
+func TestUnsupportedFeatureFlagAdminServiceWiresMutationAuditLogger(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	service := newUnsupportedFeatureFlagAdminService()
+	_, err := service.Create(context.Background(), featureflagadmin.Actor{Subject: "admin-1"}, featureflagadmin.CreateInput{
+		Key: "enabled", ValueType: featureflags.ValueBoolean, Value: true,
+	})
+	var serviceError *featureflagadmin.ServiceError
+	if !errors.As(err, &serviceError) || serviceError.HTTPStatus != http.StatusNotImplemented {
+		t.Fatalf("Create() error = %#v, want 501", err)
+	}
+	if !strings.Contains(output.String(), `"event":"feature_flag_admin"`) || !strings.Contains(output.String(), `"reason":"unsupported_provider"`) {
+		t.Fatalf("fallback mutation audit missing: %s", output.String())
+	}
+}
+
+func TestFeatureFlagAdminSwaggerDocumentsReachableResponses(t *testing.T) {
+	data, err := os.ReadFile("docs/swagger.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type swaggerResponse struct {
+		Schema struct {
+			Ref string `json:"$ref"`
+		} `json:"schema"`
+	}
+	var document struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]swaggerResponse `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	wants := map[string]map[string][]string{
+		"/api/admin/feature-flags":       {"get": {"200", "401", "403", "501", "502"}, "post": {"201", "400", "401", "403", "409", "422", "500", "501", "502", "503"}},
+		"/api/admin/feature-flags/{key}": {"put": {"200", "400", "401", "403", "404", "409", "422", "500", "501", "502", "503"}, "delete": {"204", "400", "401", "403", "404", "409", "422", "500", "501", "502", "503"}},
+	}
+	for path, methods := range wants {
+		for method, statuses := range methods {
+			operation := document.Paths[path][method]
+			for _, status := range statuses {
+				response, ok := operation.Responses[status]
+				if !ok {
+					t.Errorf("%s %s missing Swagger response %s", method, path, status)
+					continue
+				}
+				wantRef := "#/definitions/handlers.AdminAPIError"
+				if status == "401" {
+					wantRef = "#/definitions/handlers.ErrorResponse"
+				}
+				if status != "200" && status != "201" && status != "204" && response.Schema.Ref != wantRef {
+					t.Errorf("%s %s response %s schema = %q, want %q", method, path, status, response.Schema.Ref, wantRef)
+				}
+			}
+		}
+	}
+}
 
 func TestGatewayRoutesAreRemoved(t *testing.T) {
 	router := setupRouter(handlers.Handlers{})

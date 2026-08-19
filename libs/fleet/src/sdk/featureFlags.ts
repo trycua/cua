@@ -18,49 +18,69 @@ export interface FeatureFlags {
   usage: boolean
 }
 
-const DEFAULT_FLAGS: FeatureFlags = {
-  admin: false,
-  billing: false,
-  chat: false,
-  usage: false,
-}
+let cache: FeatureFlags | null = null
+let generation = 0
+let fetchPromise: { generation: number; promise: Promise<FeatureFlags> } | null = null
 
-let _cache: FeatureFlags | null = null
-let _fetchPromise: Promise<FeatureFlags> | null = null
+export async function fetchFeatureFlags(
+  options: { force?: boolean } = {},
+): Promise<FeatureFlags> {
+  if (options.force) {
+    cache = null
+    generation += 1
+  }
+  if (cache) return cache
+  if (fetchPromise?.generation === generation) return fetchPromise.promise
 
-export async function fetchFeatureFlags(): Promise<FeatureFlags> {
-  if (_cache) return _cache
-  if (_fetchPromise) return _fetchPromise
-
-  _fetchPromise = (async () => {
-    try {
-      const token = await getToken()
-      const res = await fetch("/api/config", {
-        headers: {
-          Authorization: token ? `Bearer ${token}` : "",
-          "Content-Type": "application/json",
-        },
-      })
-      if (!res.ok) return DEFAULT_FLAGS
-      const data = (await res.json()) as FeatureFlags
-      _cache = {
-        admin: data.admin ?? false,
-        billing: data.billing ?? false,
-        chat: data.chat ?? false,
-        usage: data.usage ?? false,
-      }
-      return _cache
-    } catch {
-      return DEFAULT_FLAGS
-    } finally {
-      _fetchPromise = null
+  const requestGeneration = generation
+  const promise = (async () => {
+    const token = await getToken()
+    const response = await fetch("/api/config", {
+      headers: {
+        Authorization: token ? `Bearer ${token}` : "",
+        "Content-Type": "application/json",
+      },
+    })
+    if (!response.ok) {
+      throw new Error(`feature flag config request failed: ${response.status}`)
     }
+
+    const data = (await response.json()) as Partial<FeatureFlags>
+    if (!data || typeof data !== "object") {
+      throw new Error("feature flag config response must be an object")
+    }
+    const flags = {
+      admin: data.admin ?? false,
+      billing: data.billing ?? false,
+      chat: data.chat ?? false,
+      usage: data.usage ?? false,
+    }
+    if (
+      typeof flags.admin !== "boolean" ||
+      typeof flags.billing !== "boolean" ||
+      typeof flags.chat !== "boolean" ||
+      typeof flags.usage !== "boolean"
+    ) {
+      throw new Error("feature flag config response contains invalid values")
+    }
+    if (requestGeneration === generation) {
+      cache = flags
+    }
+    return flags
   })()
 
-  return _fetchPromise
+  fetchPromise = { generation: requestGeneration, promise }
+  try {
+    return await promise
+  } finally {
+    if (fetchPromise?.generation === requestGeneration) {
+      fetchPromise = null
+    }
+  }
 }
 
 /** Invalidate the cache (e.g., after login). */
 export function invalidateFeatureFlags(): void {
-  _cache = null
+  cache = null
+  generation += 1
 }

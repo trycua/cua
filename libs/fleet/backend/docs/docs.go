@@ -15,6 +15,356 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/admin/feature-flags": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists direct non-SecureString parameters under /feature-flags/cyclops-cs/ with typed values, ownership, and SSM versions.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "List Cyclops feature flags",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/featureflagadmin.Flag"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a String parameter under /feature-flags/cyclops-cs/ with cyclops-cs-admin ownership and a typed logical value.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "Create an ad hoc Cyclops feature flag",
+                "parameters": [
+                    {
+                        "description": "Feature flag to create",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateFeatureFlagRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/featureflagadmin.Flag"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/feature-flags/{key}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Updates the typed value when expected_version matches. Terraform and external ownership protect the key from deletion, not value edits.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "Update a Cyclops feature flag value",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Flat feature flag key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Typed value and expected SSM version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateFeatureFlagRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/featureflagadmin.Flag"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes only cyclops-cs-admin-owned flags when expected_version matches. Terraform and external keys are protected.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "Delete an ad hoc Cyclops feature flag",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Flat feature flag key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expected SSM version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.DeleteFeatureFlagRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/billing/portal-session": {
             "post": {
                 "security": [
@@ -1241,6 +1591,90 @@ const docTemplate = `{
                 }
             }
         },
+        "featureflagadmin.Flag": {
+            "type": "object",
+            "properties": {
+                "deletable": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "managed_by": {
+                    "type": "string"
+                },
+                "modified_at": {
+                    "type": "string"
+                },
+                "ownership": {
+                    "$ref": "#/definitions/featureflagadmin.Ownership"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "raw_value": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "featureflagadmin.Ownership": {
+            "type": "string",
+            "enum": [
+                "terraform",
+                "ad_hoc",
+                "external"
+            ],
+            "x-enum-varnames": [
+                "OwnershipTerraform",
+                "OwnershipAdHoc",
+                "OwnershipExternal"
+            ]
+        },
+        "featureflags.ValueType": {
+            "type": "string",
+            "enum": [
+                "boolean",
+                "number",
+                "string",
+                "json"
+            ],
+            "x-enum-varnames": [
+                "ValueBoolean",
+                "ValueNumber",
+                "ValueString",
+                "ValueJSON"
+            ]
+        },
+        "handlers.AdminAPIError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "current": {
+                    "$ref": "#/definitions/featureflagadmin.Flag"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.BillingSessionResponse": {
             "type": "object",
             "properties": {
@@ -1261,6 +1695,21 @@ const docTemplate = `{
                 },
                 "chat": {
                     "type": "boolean"
+                }
+            }
+        },
+        "handlers.CreateFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
                 }
             }
         },
@@ -1348,6 +1797,14 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.DeleteFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "expected_version": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.ErrorResponse": {
             "type": "object",
             "properties": {
@@ -1414,6 +1871,18 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/chat.Message"
                     }
+                }
+            }
+        },
+        "handlers.UpdateFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "expected_version": {
+                    "type": "integer"
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
                 }
             }
         },

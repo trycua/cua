@@ -190,6 +190,173 @@ export async function mockAuth(
 }
 
 // ---------------------------------------------------------------------------
+// Feature flags / per-user config mocking
+// ---------------------------------------------------------------------------
+
+export async function mockConfigApi(
+  page: Page,
+  config: { admin: boolean; billing?: boolean },
+): Promise<void> {
+  await page.route("**/api/config", route =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ billing: false, ...config }),
+    }),
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Admin feature flags API mocking
+// ---------------------------------------------------------------------------
+
+export type MockFeatureFlagValueType = "boolean" | "number" | "string" | "json"
+export type MockFeatureFlagOwnership = "terraform" | "ad_hoc" | "external"
+
+export interface MockAdminFeatureFlag {
+  key: string
+  path: string
+  value_type: MockFeatureFlagValueType
+  value: unknown
+  raw_value: string
+  ownership: MockFeatureFlagOwnership
+  managed_by?: string
+  deletable: boolean
+  version: number
+  modified_at: string
+  description?: string
+  tags: Record<string, string>
+}
+
+export interface MockFeatureFlagRequest {
+  method: string
+  key?: string
+  body?: Record<string, unknown>
+}
+
+export const DEFAULT_ADMIN_FEATURE_FLAGS: MockAdminFeatureFlag[] = [
+  {
+    key: "admin-subs",
+    path: "/feature-flags/cyclops-cs/admin-subs",
+    value_type: "json",
+    value: ["test-user-id", "other-admin"],
+    raw_value: '["test-user-id","other-admin"]',
+    ownership: "terraform",
+    managed_by: "terraform",
+    deletable: false,
+    version: 7,
+    modified_at: "2026-08-12T10:15:00Z",
+    description: "Cyclops administrators",
+    tags: { ManagedBy: "Terraform" },
+  },
+  {
+    key: "new-checkout",
+    path: "/feature-flags/cyclops-cs/new-checkout",
+    value_type: "boolean",
+    value: true,
+    raw_value: "true",
+    ownership: "ad_hoc",
+    managed_by: "cyclops-cs",
+    deletable: true,
+    version: 3,
+    modified_at: "2026-08-13T08:30:00Z",
+    description: "Enable the checkout experiment",
+    tags: { ManagedBy: "cyclops-cs" },
+  },
+  {
+    key: "legacy-threshold",
+    path: "/feature-flags/cyclops-cs/legacy-threshold",
+    value_type: "number",
+    value: 12.5,
+    raw_value: "12.5",
+    ownership: "external",
+    managed_by: "migration-tool",
+    deletable: false,
+    version: 11,
+    modified_at: "2026-08-11T17:45:00Z",
+    tags: {},
+  },
+]
+
+function rawFeatureFlagValue(value: unknown, valueType: MockFeatureFlagValueType): string {
+  if (valueType === "string") return String(value)
+  return JSON.stringify(value)
+}
+
+export async function mockAdminFeatureFlagsApi(
+  page: Page,
+  initialFlags: MockAdminFeatureFlag[] = DEFAULT_ADMIN_FEATURE_FLAGS,
+): Promise<{ flags: MockAdminFeatureFlag[]; requests: MockFeatureFlagRequest[] }> {
+  const flags = initialFlags.map(flag => ({ ...flag, tags: { ...flag.tags } }))
+  const requests: MockFeatureFlagRequest[] = []
+
+  await page.route(/\/api\/admin\/feature-flags(?:\/[^/?]+)?(?:\?.*)?$/, async route => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const pathParts = url.pathname.split("/").filter(Boolean)
+    const encodedKey = pathParts.length > 3 ? pathParts.at(-1) : undefined
+    const key = encodedKey ? decodeURIComponent(encodedKey) : undefined
+    const body = request.postData() ? request.postDataJSON() as Record<string, unknown> : undefined
+    requests.push({ method: request.method(), key, body })
+
+    if (request.method() === "GET" && !key) {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(flags) })
+      return
+    }
+
+    if (request.method() === "POST" && !key && body) {
+      const valueType = body.value_type as MockFeatureFlagValueType
+      const created: MockAdminFeatureFlag = {
+        key: String(body.key),
+        path: `/feature-flags/cyclops-cs/${String(body.key)}`,
+        value_type: valueType,
+        value: body.value,
+        raw_value: rawFeatureFlagValue(body.value, valueType),
+        ownership: "ad_hoc",
+        managed_by: "cyclops-cs",
+        deletable: true,
+        version: 1,
+        modified_at: "2026-08-13T12:00:00Z",
+        description: body.description ? String(body.description) : undefined,
+        tags: { ManagedBy: "cyclops-cs" },
+      }
+      flags.push(created)
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(created) })
+      return
+    }
+
+    const index = flags.findIndex(flag => flag.key === key)
+    if (index < 0) {
+      await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "flag_not_found", message: "feature flag not found" }) })
+      return
+    }
+
+    if (request.method() === "PUT" && body) {
+      const valueType = body.value_type as MockFeatureFlagValueType
+      flags[index] = {
+        ...flags[index],
+        value_type: valueType,
+        value: body.value,
+        raw_value: rawFeatureFlagValue(body.value, valueType),
+        version: flags[index].version + 1,
+        modified_at: "2026-08-13T12:05:00Z",
+      }
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(flags[index]) })
+      return
+    }
+
+    if (request.method() === "DELETE") {
+      flags.splice(index, 1)
+      await route.fulfill({ status: 204, body: "" })
+      return
+    }
+
+    await route.continue()
+  })
+
+  return { flags, requests }
+}
+
+// ---------------------------------------------------------------------------
 // Namespaces API mocking
 // ---------------------------------------------------------------------------
 

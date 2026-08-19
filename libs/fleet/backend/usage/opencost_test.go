@@ -61,9 +61,10 @@ func TestParseOpenCostAllocationsMarksIncompleteCoverage(t *testing.T) {
 		wantCutoff time.Time
 		wantRows   int
 	}{
-		"empty":         {[]byte(`{"code":200,"data":[]}`), start, 0},
-		"missing_frame": {[]byte(`{"code":200,"data":[{"first":` + row(start, start.Add(time.Hour)) + `},{}]}`), start.Add(time.Hour), 1},
-		"gap":           {[]byte(`{"code":200,"data":[{"first":` + row(start, start.Add(time.Hour)) + `},{"third":` + row(start.Add(2*time.Hour), start.Add(3*time.Hour)) + `}]}`), start.Add(time.Hour), 1},
+		"empty":          {[]byte(`{"code":200,"data":[]}`), start, 0},
+		"missing_frame":  {[]byte(`{"code":200,"data":[{"first":` + row(start, start.Add(time.Hour)) + `},{}]}`), start.Add(time.Hour), 1},
+		"gap":            {[]byte(`{"code":200,"data":[{"first":` + row(start, start.Add(time.Hour)) + `},{"third":` + row(start.Add(2*time.Hour), start.Add(3*time.Hour)) + `}]}`), start.Add(3 * time.Hour), 2},
+		"missing_prefix": {[]byte(`{"code":200,"data":[{"third":` + row(start.Add(2*time.Hour), start.Add(3*time.Hour)) + `}]}`), start.Add(3 * time.Hour), 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			allocations, asOf, partial, err := parseOpenCostAllocations(test.body, start, start.Add(3*time.Hour), time.Hour, []string{"ns-a"})

@@ -262,17 +262,24 @@ func completeCoverageBoundary(frames []allocationFrame, requestedStart, requeste
 	sort.Slice(frames, func(i, j int) bool {
 		return frames[i].start.Before(frames[j].start)
 	})
-	cutoff := requestedStart
+	latest := requestedStart
+	expected := requestedStart
+	complete := true
 	for _, frame := range frames {
-		if !frame.start.Equal(cutoff) {
-			return cutoff, false
+		if !frame.start.Equal(expected) {
+			complete = false
 		}
-		cutoff = frame.end
+		if frame.end.After(expected) {
+			expected = frame.end
+		}
+		if frame.end.After(latest) {
+			latest = frame.end
+		}
 	}
-	if cutoff.After(requestedEnd) {
-		cutoff = requestedEnd
+	if latest.After(requestedEnd) {
+		latest = requestedEnd
 	}
-	return cutoff, cutoff.Equal(requestedEnd)
+	return latest, complete && expected.Equal(requestedEnd)
 }
 
 func validateOpenCostAllocation(row openCostAllocation, requestedStart, requestedEnd time.Time, step time.Duration, allowed map[string]struct{}) (Allocation, bool) {

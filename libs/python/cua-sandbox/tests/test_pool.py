@@ -627,6 +627,51 @@ async def test_create_claim_returns_a_serializable_lease(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_create_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    await pool.create_claim(ttl_seconds_after_created=1800)
+
+    spec = claim_client.claims[0].spec
+    assert spec.ttl_seconds_after_created == 1800
+    assert spec.sandbox_template_ref is pool.resource.spec.sandbox_template_ref
+    assert spec.warmpool is None
+    assert spec.bind_deadline is None
+    assert spec.lifecycle is None
+
+
+@pytest.mark.asyncio
+async def test_create_claim_rejects_ttl_alongside_an_explicit_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    clients = iter([reconcile_client, FakeFleetClient()])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    with pytest.raises(ValueError, match="inside spec"):
+        await pool.create_claim(spec=SimpleNamespace(), ttl_seconds_after_created=1800)
+
+
+@pytest.mark.asyncio
+async def test_pool_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    async with pool.claim(ttl_seconds_after_created=900):
+        pass
+
+    spec = claim_client.claims[0].spec
+    assert spec.ttl_seconds_after_created == 900
+    assert spec.sandbox_template_ref is pool.resource.spec.sandbox_template_ref
+
+
+@pytest.mark.asyncio
 async def test_lease_wait_connects_to_the_named_service_and_caches_the_bind(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
@@ -944,6 +989,47 @@ def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
 
     assert pool.name == "workspace"
     assert clients[0].reconciled[0].spec.autoscaling == autoscaling
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_forwards_creation_ttl_to_the_pool_request(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+        ttl_seconds_after_created=86400,
+    )
+
+    assert clients[0].reconciled[0].spec.ttl_seconds_after_created == 86400
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_without_creation_ttl_leaves_the_pool_unreaped(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+    )
+
+    assert clients[0].reconciled[0].spec.ttl_seconds_after_created is None
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_rejects_invalid_creation_ttl(monkeypatch):
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", FakeFleetClient)
+
+    with pytest.raises(ValueError, match="ttl_seconds_after_created"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+            ttl_seconds_after_created=-1,
+        )
 
 
 def _forbidden(operation: str) -> SdkError.Status:

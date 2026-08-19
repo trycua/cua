@@ -406,6 +406,18 @@ def _needs_ecr_pull_secret(image: "str | None") -> bool:
     return _ECR_HOST_MARKER in host and host.endswith(_ECR_HOST_SUFFIX)
 
 
+_TTL_SECONDS_MAX = 2**32 - 1
+
+
+def validate_ttl_seconds_after_created(value: "int | None") -> None:
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _TTL_SECONDS_MAX
+    ):
+        raise ValueError(
+            f"ttl_seconds_after_created must be an integer between 0 and {_TTL_SECONDS_MAX}"
+        )
+
+
 class FleetCloudTransport(FleetTransport):
     """Provision image-backed pools or claim pre-created pools through Fleet."""
 
@@ -426,6 +438,7 @@ class FleetCloudTransport(FleetTransport):
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
         autoscaling: Optional[WarmPoolAutoscaling] = None,
+        ttl_seconds_after_created: Optional[int] = None,
     ) -> None:
         if (
             isinstance(server_port, bool)
@@ -474,6 +487,7 @@ class FleetCloudTransport(FleetTransport):
                 raise ValueError(
                     "autoscaling.min_pool_size must not exceed autoscaling.max_pool_size"
                 )
+        validate_ttl_seconds_after_created(ttl_seconds_after_created)
         self._image = image
         self._name = name
         self._explicit_pool = pool_name is not None
@@ -488,6 +502,7 @@ class FleetCloudTransport(FleetTransport):
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
         self._autoscaling = autoscaling
+        self._ttl_seconds_after_created = ttl_seconds_after_created
         self._provisioned = False
         self._owns_resources = image is not None or create_claim
         self._template: Any = None
@@ -724,6 +739,10 @@ class FleetCloudTransport(FleetTransport):
         )
         if self._autoscaling is not None:
             pool_spec_builder = pool_spec_builder.autoscaling(self._autoscaling)
+        if self._ttl_seconds_after_created is not None:
+            pool_spec_builder = pool_spec_builder.ttl_seconds_after_created(
+                self._ttl_seconds_after_created
+            )
         return (
             CreatePoolRequestBuilder()
             .namespace(self._pool_name)

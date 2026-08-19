@@ -785,6 +785,11 @@ export type HttpRequest = {
   url: string;
   headers: Array<HttpHeader>;
   body?: ArrayBuffer;
+  /**
+   * Per-request timeout. Defaults to absent so callers written against the
+   * pre-timeout record shape keep constructing requests unchanged; absent
+   * falls back to the native client's 30-second default.
+   */
   timeoutSecs?: bigint;
 };
 
@@ -792,7 +797,9 @@ export type HttpRequest = {
  * Generated factory for {@link HttpRequest} record objects.
  */
 export const HttpRequest = (() => {
-  const defaults = () => ({});
+  const defaults = () => ({
+    timeoutSecs: undefined,
+  });
   const create = (() => {
     return uniffiCreateRecord<HttpRequest, ReturnType<typeof defaults>>(
       defaults,
@@ -5003,6 +5010,238 @@ const uniffiCallbackInterfaceHttpClient: { vtable: any; register: () => void } =
     },
   };
 
+export interface HttpRequestBuilderLike {
+  body(value: ArrayBuffer): HttpRequestBuilderLike;
+  build() /*throws*/ : HttpRequest;
+  headers(value: Array<HttpHeader>): HttpRequestBuilderLike;
+  method(value: string): HttpRequestBuilderLike;
+  timeoutSecs(value: bigint): HttpRequestBuilderLike;
+  url(value: string): HttpRequestBuilderLike;
+}
+/**
+ * @deprecated Use `HttpRequestBuilderLike` instead.
+ */
+export type HttpRequestBuilderInterface = HttpRequestBuilderLike;
+
+export class HttpRequestBuilder
+  extends UniffiAbstractObject
+  implements HttpRequestBuilderLike
+{
+  readonly [uniffiTypeNameSymbol] = "HttpRequestBuilder";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  constructor() {
+    super();
+    const pointer = uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeHttpRequestBuilderObjectFactory.bless(pointer);
+  }
+
+  body(value: ArrayBuffer): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_body(
+            uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterArrayBuffer.lower(
+              value,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  build(): HttpRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterTypeHttpRequest.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
+          FfiConverterTypeSdkBuildError,
+        ),
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_build(
+            uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  headers(value: Array<HttpHeader>): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers(
+            uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterSequenceTypeHttpHeader.lower(
+              value,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  method(value: string): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_method(
+            uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  timeoutSecs(value: bigint): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs(
+            uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterUInt64.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  url(value: string): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_url(
+            uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer = uniffiTypeHttpRequestBuilderObjectFactory.pointer(this);
+      uniffiTypeHttpRequestBuilderObjectFactory.freePointer(pointer);
+      uniffiTypeHttpRequestBuilderObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is HttpRequestBuilder {
+    return uniffiTypeHttpRequestBuilderObjectFactory.isConcreteType(obj_);
+  }
+}
+
+const uniffiTypeHttpRequestBuilderObjectFactory: UniffiObjectFactory<HttpRequestBuilderLike> =
+  (() => {
+    /// <reference lib="es2021" />
+    const registry =
+      typeof FinalizationRegistry !== "undefined"
+        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+            uniffiTypeHttpRequestBuilderObjectFactory.freePointer(heldValue);
+          })
+        : null;
+
+    return {
+      create(pointer: UniffiHandle): HttpRequestBuilderLike {
+        const instance = Object.create(HttpRequestBuilder.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "HttpRequestBuilder";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+          p, // make sure this object doesn't get optimized away.
+          markDestroyed: () => undefined,
+        };
+        if (registry) {
+          registry.register(ptr, p, ptr);
+        }
+        return ptr;
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+          registry.unregister(ptr_);
+        }
+      },
+
+      pointer(obj_: HttpRequestBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: HttpRequestBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_httprequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_httprequestbuilder(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is HttpRequestBuilderLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "HttpRequestBuilder"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeHttpRequestBuilder = new FfiConverterObject(
+  uniffiTypeHttpRequestBuilderObjectFactory,
+);
+
 export interface TemplateBuilderLike {
   apiVersion(value: string): TemplateBuilderLike;
   build() /*throws*/ : Template;
@@ -5798,6 +6037,62 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new() !==
+    25892
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body() !==
+    9054
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build() !==
+    14573
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers() !==
+    19982
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method() !==
+    4078
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs() !==
+    40941
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url() !==
+    12282
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new() !==
     19815
   ) {
@@ -5873,6 +6168,7 @@ export default Object.freeze({
     FfiConverterTypeHttpError,
     FfiConverterTypeHttpHeader,
     FfiConverterTypeHttpRequest,
+    FfiConverterTypeHttpRequestBuilder,
     FfiConverterTypeHttpResponse,
     FfiConverterTypeNamespace,
     FfiConverterTypeNewUserApiKey,

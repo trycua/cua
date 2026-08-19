@@ -67,8 +67,8 @@ const FfiConverterTypeClaimLifecycle = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                shutdownTime: FfiConverterOptionalString.read(from), 
-                shutdownPolicy: FfiConverterOptionalString.read(from), 
+                shutdownTime: FfiConverterOptionalString.read(from),
+                shutdownPolicy: FfiConverterOptionalString.read(from),
                 autoRenew: FfiConverterOptionalBoolean.read(from)
             };
         }
@@ -81,7 +81,7 @@ const FfiConverterTypeClaimLifecycle = (() => {
             return FfiConverterOptionalString.allocationSize(value.shutdownTime) +
              FfiConverterOptionalString.allocationSize(value.shutdownPolicy) +
              FfiConverterOptionalBoolean.allocationSize(value.autoRenew);
-            
+
         }
     };
     return new FFIConverter();
@@ -120,7 +120,7 @@ const FfiConverterTypeSandboxTemplateRef = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.name);
-            
+
         }
     };
     return new FFIConverter();
@@ -130,7 +130,8 @@ export type ClaimSpec = {
     sandboxTemplateRef: SandboxTemplateRef,
     warmpool?: string,
     bindDeadline?: number,
-    lifecycle?: ClaimLifecycle
+    lifecycle?: ClaimLifecycle,
+    ttlSecondsAfterCreated?: number
 }
 
 /**
@@ -138,6 +139,7 @@ export type ClaimSpec = {
  */
 export const ClaimSpec = (() => {
     const defaults = () => ({
+        ttlSecondsAfterCreated: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<ClaimSpec, ReturnType<typeof defaults>>(defaults);
@@ -154,10 +156,11 @@ const FfiConverterTypeClaimSpec = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from), 
-                warmpool: FfiConverterOptionalString.read(from), 
-                bindDeadline: FfiConverterOptionalUInt32.read(from), 
-                lifecycle: FfiConverterOptionalTypeClaimLifecycle.read(from)
+                sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
+                warmpool: FfiConverterOptionalString.read(from),
+                bindDeadline: FfiConverterOptionalUInt32.read(from),
+                lifecycle: FfiConverterOptionalTypeClaimLifecycle.read(from),
+                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -165,13 +168,15 @@ const FfiConverterTypeClaimSpec = (() => {
             FfiConverterOptionalString.write(value.warmpool, into);
             FfiConverterOptionalUInt32.write(value.bindDeadline, into);
             FfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, into);
+            FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
              FfiConverterOptionalString.allocationSize(value.warmpool) +
              FfiConverterOptionalUInt32.allocationSize(value.bindDeadline) +
-             FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.lifecycle);
-            
+             FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.lifecycle) +
+             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated);
+
         }
     };
     return new FFIConverter();
@@ -206,10 +211,10 @@ const FfiConverterTypeOSGymSandboxClaimCondition = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                type: FfiConverterOptionalString.read(from), 
-                status: FfiConverterOptionalString.read(from), 
-                reason: FfiConverterOptionalString.read(from), 
-                message: FfiConverterOptionalString.read(from), 
+                type: FfiConverterOptionalString.read(from),
+                status: FfiConverterOptionalString.read(from),
+                reason: FfiConverterOptionalString.read(from),
+                message: FfiConverterOptionalString.read(from),
                 lastTransitionTime: FfiConverterOptionalString.read(from)
             };
         }
@@ -226,7 +231,7 @@ const FfiConverterTypeOSGymSandboxClaimCondition = (() => {
              FfiConverterOptionalString.allocationSize(value.reason) +
              FfiConverterOptionalString.allocationSize(value.message) +
              FfiConverterOptionalString.allocationSize(value.lastTransitionTime);
-            
+
         }
     };
     return new FFIConverter();
@@ -258,7 +263,7 @@ const FfiConverterTypeOSGymSandboxClaimSandbox = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                name: FfiConverterOptionalString.read(from), 
+                name: FfiConverterOptionalString.read(from),
                 service: FfiConverterOptionalString.read(from)
             };
         }
@@ -269,7 +274,7 @@ const FfiConverterTypeOSGymSandboxClaimSandbox = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.name) +
              FfiConverterOptionalString.allocationSize(value.service);
-            
+
         }
     };
     return new FFIConverter();
@@ -302,8 +307,8 @@ const FfiConverterTypeOSGymSandboxClaimStatus = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                phase: FfiConverterOptionalString.read(from), 
-                conditions: FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.read(from), 
+                phase: FfiConverterOptionalString.read(from),
+                conditions: FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.read(from),
                 sandbox: FfiConverterOptionalTypeOSGymSandboxClaimSandbox.read(from)
             };
         }
@@ -316,7 +321,7 @@ const FfiConverterTypeOSGymSandboxClaimStatus = (() => {
             return FfiConverterOptionalString.allocationSize(value.phase) +
              FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.allocationSize(value.conditions) +
              FfiConverterOptionalTypeOSGymSandboxClaimSandbox.allocationSize(value.sandbox);
-            
+
         }
     };
     return new FFIConverter();
@@ -355,7 +360,7 @@ const FfiConverterTypeRuntimeKind = (() => {
 })();
 
 export interface PreservedJsonLike {
-    
+
     toJson(): string;
 }
 /**
@@ -376,7 +381,7 @@ private constructor(pointer: UniffiHandle) {
     this[destructorGuardSymbol] = uniffiTypePreservedJsonObjectFactory.bless(pointer);
 }
 
-    
+
     static fromJson(value: string): PreservedJsonLike /*throws*/ {
     return FfiConverterTypePreservedJson.lift(uniffiCaller.rustCallWithError(
             /*liftError:*/ FfiConverterTypeJsonValueError.lift.bind(FfiConverterTypeJsonValueError),
@@ -388,9 +393,9 @@ private constructor(pointer: UniffiHandle) {
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
     }
-    
 
-    
+
+
     toJson(): string {
     return ((__rb: Uint8Array) => {
         try {
@@ -407,7 +412,7 @@ private constructor(pointer: UniffiHandle) {
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
     }
-    
+
 
     uniffiDestroy(): void {
         const ptr = (this as any)[destructorGuardSymbol];
@@ -423,16 +428,16 @@ private constructor(pointer: UniffiHandle) {
         return uniffiTypePreservedJsonObjectFactory.isConcreteType(obj_);
     }
 
-    
+
 }
 
 const uniffiTypePreservedJsonObjectFactory: UniffiObjectFactory<PreservedJsonLike> = (() => {
-    
+
     /// <reference lib="es2021" />
     const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
         uniffiTypePreservedJsonObjectFactory.freePointer(heldValue);
     }) : null;
-    
+
     return {
     create(pointer: UniffiHandle): PreservedJsonLike {
         const instance = Object.create(PreservedJson.prototype);
@@ -442,7 +447,7 @@ const uniffiTypePreservedJsonObjectFactory: UniffiObjectFactory<PreservedJsonLik
         return instance;
     },
 
-    
+
     bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
             p, // make sure this object doesn't get optimized away.
@@ -605,8 +610,8 @@ const FfiConverterTypeSandboxService = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                name: FfiConverterString.read(from), 
-                targetPort: FfiConverterUInt16.read(from), 
+                name: FfiConverterString.read(from),
+                targetPort: FfiConverterUInt16.read(from),
                 protocol: FfiConverterOptionalTypeServiceProtocol.read(from)
             };
         }
@@ -619,7 +624,7 @@ const FfiConverterTypeSandboxService = (() => {
             return FfiConverterString.allocationSize(value.name) +
              FfiConverterUInt16.allocationSize(value.targetPort) +
              FfiConverterOptionalTypeServiceProtocol.allocationSize(value.protocol);
-            
+
         }
     };
     return new FFIConverter();
@@ -654,10 +659,10 @@ const FfiConverterTypeOidcConfig = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                credentialsSecret: FfiConverterString.read(from), 
-                tokenUrl: FfiConverterString.read(from), 
-                awsRoleArn: FfiConverterOptionalString.read(from), 
-                awsRegion: FfiConverterOptionalString.read(from), 
+                credentialsSecret: FfiConverterString.read(from),
+                tokenUrl: FfiConverterString.read(from),
+                awsRoleArn: FfiConverterOptionalString.read(from),
+                awsRegion: FfiConverterOptionalString.read(from),
                 refreshIntervalSeconds: FfiConverterOptionalUInt32.read(from)
             };
         }
@@ -674,7 +679,7 @@ const FfiConverterTypeOidcConfig = (() => {
              FfiConverterOptionalString.allocationSize(value.awsRoleArn) +
              FfiConverterOptionalString.allocationSize(value.awsRegion) +
              FfiConverterOptionalUInt32.allocationSize(value.refreshIntervalSeconds);
-            
+
         }
     };
     return new FFIConverter();
@@ -719,16 +724,16 @@ const FfiConverterTypeVmTemplate = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                containerDiskImage: FfiConverterString.read(from), 
-                command: FfiConverterOptionalSequenceString.read(from), 
-                runtime: FfiConverterOptionalTypeRuntimeKind.read(from), 
-                runtimeClassName: FfiConverterOptionalString.read(from), 
-                nodeSelector: FfiConverterOptionalMapStringString.read(from), 
-                tolerations: FfiConverterOptionalSequenceTypePreservedJson.read(from), 
-                imagePullPolicy: FfiConverterOptionalTypeImagePullPolicy.read(from), 
-                imagePullSecret: FfiConverterOptionalString.read(from), 
-                cpuCores: FfiConverterOptionalUInt32.read(from), 
-                memory: FfiConverterOptionalString.read(from), 
+                containerDiskImage: FfiConverterString.read(from),
+                command: FfiConverterOptionalSequenceString.read(from),
+                runtime: FfiConverterOptionalTypeRuntimeKind.read(from),
+                runtimeClassName: FfiConverterOptionalString.read(from),
+                nodeSelector: FfiConverterOptionalMapStringString.read(from),
+                tolerations: FfiConverterOptionalSequenceTypePreservedJson.read(from),
+                imagePullPolicy: FfiConverterOptionalTypeImagePullPolicy.read(from),
+                imagePullSecret: FfiConverterOptionalString.read(from),
+                cpuCores: FfiConverterOptionalUInt32.read(from),
+                memory: FfiConverterOptionalString.read(from),
                 firmware: FfiConverterOptionalTypeFirmware.read(from),
                 nestedVirtualization: FfiConverterOptionalBoolean.read(from),
                 probes: FfiConverterOptionalTypePreservedJson.read(from),
@@ -769,7 +774,7 @@ const FfiConverterTypeVmTemplate = (() => {
              FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
              FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.services) +
              FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc);
-            
+
         }
     };
     return new FFIConverter();
@@ -808,7 +813,7 @@ const FfiConverterTypeOSGymSandboxSpec = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeVmTemplate.allocationSize(value.vmTemplate);
-            
+
         }
     };
     return new FFIConverter();
@@ -846,13 +851,13 @@ const FfiConverterTypeOSGymSandboxStatus = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                phase: FfiConverterOptionalString.read(from), 
-                runtime: FfiConverterOptionalString.read(from), 
-                ready: FfiConverterOptionalBoolean.read(from), 
-                vmName: FfiConverterOptionalString.read(from), 
-                service: FfiConverterOptionalString.read(from), 
-                message: FfiConverterOptionalString.read(from), 
-                resetIssuedAt: FfiConverterOptionalString.read(from), 
+                phase: FfiConverterOptionalString.read(from),
+                runtime: FfiConverterOptionalString.read(from),
+                ready: FfiConverterOptionalBoolean.read(from),
+                vmName: FfiConverterOptionalString.read(from),
+                service: FfiConverterOptionalString.read(from),
+                message: FfiConverterOptionalString.read(from),
+                resetIssuedAt: FfiConverterOptionalString.read(from),
                 resetVmiUid: FfiConverterOptionalString.read(from)
             };
         }
@@ -875,7 +880,7 @@ const FfiConverterTypeOSGymSandboxStatus = (() => {
              FfiConverterOptionalString.allocationSize(value.message) +
              FfiConverterOptionalString.allocationSize(value.resetIssuedAt) +
              FfiConverterOptionalString.allocationSize(value.resetVmiUid);
-            
+
         }
     };
     return new FFIConverter();
@@ -914,7 +919,7 @@ const FfiConverterTypeOSGymSandboxTemplateSpec = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeVmTemplate.allocationSize(value.vmTemplate);
-            
+
         }
     };
     return new FFIConverter();
@@ -947,8 +952,8 @@ const FfiConverterTypeWarmPoolAutoscaling = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                minPoolSize: FfiConverterOptionalUInt32.read(from), 
-                initialPoolSize: FfiConverterOptionalUInt32.read(from), 
+                minPoolSize: FfiConverterOptionalUInt32.read(from),
+                initialPoolSize: FfiConverterOptionalUInt32.read(from),
                 maxPoolSize: FfiConverterOptionalUInt32.read(from)
             };
         }
@@ -961,7 +966,7 @@ const FfiConverterTypeWarmPoolAutoscaling = (() => {
             return FfiConverterOptionalUInt32.allocationSize(value.minPoolSize) +
              FfiConverterOptionalUInt32.allocationSize(value.initialPoolSize) +
              FfiConverterOptionalUInt32.allocationSize(value.maxPoolSize);
-            
+
         }
     };
     return new FFIConverter();
@@ -970,7 +975,8 @@ const FfiConverterTypeWarmPoolAutoscaling = (() => {
 export type OsGymSandboxWarmPoolSpec = {
     replicas: number,
     sandboxTemplateRef: SandboxTemplateRef,
-    autoscaling?: WarmPoolAutoscaling
+    autoscaling?: WarmPoolAutoscaling,
+    ttlSecondsAfterCreated?: number
 }
 
 /**
@@ -978,6 +984,7 @@ export type OsGymSandboxWarmPoolSpec = {
  */
 export const OsGymSandboxWarmPoolSpec = (() => {
     const defaults = () => ({
+        ttlSecondsAfterCreated: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<OsGymSandboxWarmPoolSpec, ReturnType<typeof defaults>>(defaults);
@@ -994,21 +1001,24 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                replicas: FfiConverterUInt32.read(from), 
-                sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from), 
-                autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from)
+                replicas: FfiConverterUInt32.read(from),
+                sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
+                autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from),
+                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterUInt32.write(value.replicas, into);
             FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into);
             FfiConverterOptionalTypeWarmPoolAutoscaling.write(value.autoscaling, into);
+            FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.replicas) +
              FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
-             FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.autoscaling);
-            
+             FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.autoscaling) +
+             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated);
+
         }
     };
     return new FFIConverter();
@@ -1041,8 +1051,8 @@ const FfiConverterTypeOSGymSandboxWarmPoolStatus = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                replicas: FfiConverterOptionalUInt32.read(from), 
-                readyReplicas: FfiConverterOptionalUInt32.read(from), 
+                replicas: FfiConverterOptionalUInt32.read(from),
+                readyReplicas: FfiConverterOptionalUInt32.read(from),
                 selector: FfiConverterOptionalString.read(from)
             };
         }
@@ -1055,7 +1065,7 @@ const FfiConverterTypeOSGymSandboxWarmPoolStatus = (() => {
             return FfiConverterOptionalUInt32.allocationSize(value.replicas) +
              FfiConverterOptionalUInt32.allocationSize(value.readyReplicas) +
              FfiConverterOptionalString.allocationSize(value.selector);
-            
+
         }
     };
     return new FFIConverter();
@@ -1070,7 +1080,7 @@ export const JsonValueError = (() => {
 
     type Invalid__interface = {
         tag: JsonValueError_Tags.Invalid;
-        inner: 
+        inner:
 Readonly<{reason: string}>
     };
     class Invalid_ extends UniffiError implements Invalid__interface {
@@ -1080,7 +1090,7 @@ Readonly<{reason: string}>
          */
         readonly [uniffiTypeNameSymbol] = "JsonValueError";
         readonly tag = JsonValueError_Tags.Invalid;
-        readonly inner: 
+        readonly inner:
 Readonly<{reason: string}>;
         constructor(
 inner: {reason: string }) {
@@ -1100,7 +1110,7 @@ inner: {reason: string }): Invalid_ {
             return Invalid_.instanceOf(obj);
         }
 
-        static getInner(obj: Invalid_): 
+        static getInner(obj: Invalid_):
 Readonly<{reason: string}> {
             return obj.inner;
         }
@@ -1160,7 +1170,107 @@ const FfiConverterTypeJsonValueError = (() => {
     return new FFIConverter();
 })();
 
-// FfiConverter for string | undefined
+
+// Error type: SchemaBuildError
+export enum SchemaBuildError_Tags {
+    MissingRequiredField = "MissingRequiredField"
+}
+export const SchemaBuildError = (() => {
+
+    type MissingRequiredField__interface = {
+        tag: SchemaBuildError_Tags.MissingRequiredField;
+        inner:
+Readonly<{recordType: string; field: string}>
+    };
+    class MissingRequiredField_ extends UniffiError implements MissingRequiredField__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SchemaBuildError";
+        readonly tag = SchemaBuildError_Tags.MissingRequiredField;
+        readonly inner:
+Readonly<{recordType: string; field: string}>;
+        constructor(
+inner: {recordType: string; field: string }) {
+            super("SchemaBuildError", "MissingRequiredField");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {recordType: string; field: string }): MissingRequiredField_ {
+            return new MissingRequiredField_(inner);
+        }
+
+        static instanceOf(obj: any): obj is MissingRequiredField_ {
+            return obj.tag === SchemaBuildError_Tags.MissingRequiredField;
+        }
+        static hasInner(obj: any): obj is MissingRequiredField_ {
+            return MissingRequiredField_.instanceOf(obj);
+        }
+
+        static getInner(obj: MissingRequiredField_):
+Readonly<{recordType: string; field: string}> {
+            return obj.inner;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is SchemaBuildError {
+        return obj[uniffiTypeNameSymbol] === "SchemaBuildError";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  MissingRequiredField: MissingRequiredField_
+    });
+
+})();
+export type SchemaBuildError = InstanceType<
+    typeof SchemaBuildError['MissingRequiredField']
+>;
+
+// FfiConverter for enum SchemaBuildError
+const FfiConverterTypeSchemaBuildError = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = SchemaBuildError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new SchemaBuildError.MissingRequiredField({recordType: FfiConverterString.read(from), field: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case SchemaBuildError_Tags.MissingRequiredField: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.recordType, into);
+                    FfiConverterString.write(inner.field, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that SchemaBuildError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case SchemaBuildError_Tags.MissingRequiredField: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.recordType);
+                    size += FfiConverterString.allocationSize(inner.field);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
 // FfiConverter for boolean | undefined
@@ -1275,6 +1385,7 @@ export default Object.freeze({
     FfiConverterTypeRuntimeKind,
     FfiConverterTypeSandboxService,
     FfiConverterTypeSandboxTemplateRef,
+    FfiConverterTypeSchemaBuildError,
     FfiConverterTypeServiceProtocol,
     FfiConverterTypeVmTemplate,
     FfiConverterTypeWarmPoolAutoscaling,

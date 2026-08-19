@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workspace_dir="$repo_root/cyclops-cs"
 generator="$workspace_dir/scripts/generate-sdk-bindings.sh"
+compat_generator="$workspace_dir/scripts/generate-compat-sdk-bindings.sh"
+compat_normalizer="$workspace_dir/scripts/normalize-compat-sdk-bindings.py"
 bindings_dir="$workspace_dir/sdk-bindings"
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-sdk-bindings-test.XXXXXX")"
 if cargo_bin="$(command -v cargo)" && [ -n "$cargo_bin" ]; then
@@ -22,8 +24,22 @@ cargo_config_directory="$workspace_dir/.cargo"
 cargo_config_file="$cargo_config_directory/config.toml"
 cargo_config_directory_created=false
 cargo_config_active=false
+compat_go_backup=""
+compat_node_backup=""
+compat_snapshots_mutated=false
 
-cleanup() {
+restore_compat_snapshots() {
+  [ "$compat_snapshots_mutated" = true ] || return 0
+  [ -n "$compat_go_backup" ] && [ -f "$compat_go_backup" ] || return 1
+  [ -n "$compat_node_backup" ] && [ -f "$compat_node_backup" ] || return 1
+  cp "$compat_go_backup" "$go_schema_source"
+  cp "$compat_node_backup" "$node_schema_source"
+  compat_snapshots_mutated=false
+}
+
+cleanup_resources() {
+  cleanup_directory="$1"
+  restore_compat_snapshots
   if [ "$cargo_config_active" = true ] && [ -f "$cargo_config_file" ]; then
     rm -f "$cargo_config_file"
   fi
@@ -31,9 +47,30 @@ cleanup() {
     # Trap cleanup must not override the harness result if the directory is nonempty.
     rmdir "$cargo_config_directory" 2>/dev/null || true  # lint-ignore: error-masking
   fi
-  rm -rf "$temporary_directory"
+  rm -rf "$cleanup_directory"
 }
-trap cleanup EXIT HUP INT TERM
+
+handle_exit() {
+  status=$?
+  cleanup_directory="$1"
+  trap - EXIT HUP INT TERM
+  set +e
+  cleanup_resources "$cleanup_directory"
+  exit "$status"
+}
+
+handle_signal() {
+  cleanup_directory="$1"
+  signal_status="$2"
+  trap - EXIT HUP INT TERM
+  set +e
+  cleanup_resources "$cleanup_directory"
+  exit "$signal_status"
+}
+trap 'handle_exit "$temporary_directory"' EXIT
+trap 'handle_signal "$temporary_directory" 129' HUP
+trap 'handle_signal "$temporary_directory" 130' INT
+trap 'handle_signal "$temporary_directory" 143' TERM
 mode_for() {
   if stat -f '%Lp' "$1" >/dev/null 2>&1; then
     stat -f '%Lp' "$1"
@@ -51,6 +88,37 @@ expect_check_failure() {
   label="$1"
   if "$generator" --check > "$temporary_directory/$label.log" 2>&1; then
     fail "expected --check to reject $label"
+  fi
+}
+
+expect_compat_signal_restore() {
+  signal_name="$1"
+  expected_status="$2"
+  compat_cleanup_probe="$temporary_directory/compat-cleanup-$signal_name"
+  mkdir "$compat_cleanup_probe"
+  cp "$go_schema_source" "$compat_cleanup_probe/go"
+  cp "$node_schema_source" "$compat_cleanup_probe/node"
+  if (
+    compat_go_backup="$compat_cleanup_probe/go"
+    compat_node_backup="$compat_cleanup_probe/node"
+    compat_snapshots_mutated=true
+    trap 'handle_exit "$compat_cleanup_probe"' EXIT
+    trap 'handle_signal "$compat_cleanup_probe" 129' HUP
+    trap 'handle_signal "$compat_cleanup_probe" 130' INT
+    trap 'handle_signal "$compat_cleanup_probe" 143' TERM
+    printf '\n// compat cleanup %s probe\n' "$signal_name" >> "$go_schema_source"
+    printf '\n// compat cleanup %s probe\n' "$signal_name" >> "$node_schema_source"
+    kill -s "$signal_name" "$BASHPID"
+  ); then
+    actual_status=0
+  else
+    actual_status=$?
+  fi
+  if [ "$actual_status" -ne "$expected_status" ]; then
+    fail "compat cleanup trap returned $actual_status for $signal_name, expected $expected_status"
+  fi
+  if grep -Fq -- "compat cleanup $signal_name probe" "$go_schema_source" || grep -Fq -- "compat cleanup $signal_name probe" "$node_schema_source"; then
+    fail "compat cleanup trap did not restore snapshots after $signal_name"
   fi
 }
 
@@ -346,12 +414,156 @@ swift_schema_source="$bindings_dir/swift/CyclopsSdkSchema.swift"
 ruby_sdk_source="$bindings_dir/ruby/cyclops_sdk/sdk.rb"
 ruby_schema_source="$bindings_dir/ruby/cyclops_sdk/schema.rb"
 node_sdk_source="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+node_schema_source="$bindings_dir/ts-uniffi/cyclops_sdk_schema.ts"
 browser_sdk_source="$bindings_dir/ts-uniffi-browser/ts/fleet_sdk.ts"
 browser_schema_source="$bindings_dir/ts-uniffi-browser/ts/cyclops_sdk_schema.ts"
 go_sdk_source="$bindings_dir/go-uniffi/fleet_sdk/fleet_sdk.go"
+go_schema_source="$bindings_dir/go-uniffi/cyclops_sdk_schema/cyclops_sdk_schema.go"
 
-for separate_binding in "$node_sdk_source" "$go_sdk_source"; do
-  if grep -Fq -- "VmTemplateBuilder" "$separate_binding" || grep -Fq -- "CreatePoolRequestBuilder" "$separate_binding"; then
+compat_go_backup="$temporary_directory/compat-go-backup"
+compat_node_backup="$temporary_directory/compat-node-backup"
+compat_raw_go="$temporary_directory/compat-raw.go"
+compat_raw_node="$temporary_directory/compat-raw.ts"
+cp "$go_schema_source" "$compat_go_backup"
+cp "$node_schema_source" "$compat_node_backup"
+
+grep -Fq -- 'required_go_generator_version="uniffi-bindgen 0.7.1+v0.31.0"' "$compat_generator" || fail "compat generator does not pin uniffi-bindgen-go"
+grep -Fq -- "CARGO_PROFILE_DEV_DEBUG=0 cargo install --debug --git https://github.com/NordSecurity/uniffi-bindgen-go.git --tag 'v0.7.1+v0.31.0' --locked uniffi-bindgen-go" "$compat_generator" || fail "compat generator does not document the resource-safe install command"
+grep -Fq -- 'command -v gofmt' "$compat_generator" || fail "compat generator does not require gofmt"
+grep -Fq -- 'gofmt is required to normalize compatibility Go bindings' "$compat_generator" || fail "compat generator does not explain a missing gofmt"
+grep -Fq -- 'command -v uniffi-bindgen-go' "$compat_generator" || fail "compat generator does not reject a missing uniffi-bindgen-go"
+grep -Fq -- "actual_go_generator_version=\"\$(uniffi-bindgen-go --version)\"" "$compat_generator" || fail "compat generator does not validate uniffi-bindgen-go version"
+"$compat_generator" --check
+
+node - "$node_schema_source" <<'NODE'
+const fs = require("node:fs");
+
+const source = fs.readFileSync(process.argv[2], "utf8");
+const declarations = new Set(
+  [...source.matchAll(/^const\s+(FfiConverterType[A-Za-z0-9_]+)\s*=/gm)].map(
+    (match) => match[1],
+  ),
+);
+const references = new Set(
+  [...source.matchAll(/\b(FfiConverterType[A-Za-z0-9_]+)\b/g)].map(
+    (match) => match[1],
+  ),
+);
+const missing = [...references].filter((reference) => !declarations.has(reference));
+if (!declarations.has("FfiConverterTypeJsonValueError")) {
+  throw new Error("Node compatibility snapshot omits FfiConverterTypeJsonValueError");
+}
+if (!declarations.has("FfiConverterTypeSchemaBuildError")) {
+  throw new Error("Node compatibility snapshot omits FfiConverterTypeSchemaBuildError");
+}
+if (missing.length > 0) {
+  throw new Error(`Node compatibility snapshot has unresolved converters: ${missing.join(", ")}`);
+}
+NODE
+
+compat_cleanup_probe="$temporary_directory/compat-cleanup-probe"
+mkdir "$compat_cleanup_probe"
+cp "$go_schema_source" "$compat_cleanup_probe/go"
+cp "$node_schema_source" "$compat_cleanup_probe/node"
+if (
+  compat_go_backup="$compat_cleanup_probe/go"
+  compat_node_backup="$compat_cleanup_probe/node"
+  compat_snapshots_mutated=true
+  trap 'handle_exit "$compat_cleanup_probe"' EXIT
+  trap 'handle_signal "$compat_cleanup_probe" 129' HUP
+  trap 'handle_signal "$compat_cleanup_probe" 130' INT
+  trap 'handle_signal "$compat_cleanup_probe" 143' TERM
+  printf '\n// compat cleanup probe\n' >> "$go_schema_source"
+  printf '\n// compat cleanup probe\n' >> "$node_schema_source"
+  exit 97
+); then
+  fail "compat cleanup probe unexpectedly succeeded"
+fi
+if grep -Fq -- 'compat cleanup probe' "$go_schema_source" || grep -Fq -- 'compat cleanup probe' "$node_schema_source"; then
+  fail "compat cleanup trap did not restore snapshots after a failing subprocess"
+fi
+expect_compat_signal_restore INT 130
+expect_compat_signal_restore TERM 143
+cp "$go_schema_source" "$compat_raw_go"
+cp "$node_schema_source" "$compat_raw_node"
+cat >> "$compat_raw_go" <<'EOF_COMPAT_GO'
+
+// compat raw fixture
+type CompatFixtureBuilder struct{}
+
+func (CompatFixtureBuilder) Build() {}
+
+type CompatFixtureRecordBuilderMetadata struct{}
+EOF_COMPAT_GO
+cat >> "$compat_raw_node" <<'EOF_COMPAT_NODE'
+
+// compat raw fixture
+export class CompatFixtureBuilder {
+    build(): void {}
+}
+export const CompatFixtureBuildError = Object.freeze({});
+const FfiConverterTypeCompatFixtureBuildError = Object.freeze({});
+export class CompatFixtureRecordBuilderMetadata {}
+const FfiConverterTypeCompatFixtureRecordBuilderMetadata = Object.freeze({});
+function compatFixtureChecksums() {
+    if (nativeModule().uniffi_compat_record_builder_metadata() !== 1) {
+        throw new Error("record builder metadata");
+    }
+}
+EOF_COMPAT_NODE
+compat_snapshots_mutated=true
+if ! "$compat_normalizer" --raw-go "$compat_raw_go" --raw-node "$compat_raw_node"; then
+  restore_compat_snapshots
+  fail "compat normalizer rejected the raw fixture"
+fi
+if ! grep -Fq -- 'compat raw fixture' "$go_schema_source" || ! grep -Fq -- 'compat raw fixture' "$node_schema_source"; then
+  restore_compat_snapshots
+  fail "compat normalizer did not derive snapshots from raw fixture output"
+fi
+if grep -Fq -- 'CompatFixtureBuilder' "$go_schema_source" || grep -Fq -- 'CompatFixtureBuilder' "$node_schema_source"; then
+  restore_compat_snapshots
+  fail "compat normalizer retained builder ABI from raw fixture output"
+fi
+if ! grep -Fq -- 'CompatFixtureRecordBuilderMetadata' "$go_schema_source"; then
+  restore_compat_snapshots
+  fail "compat normalizer removed interior Builder Go fixture symbols"
+fi
+if ! grep -Fq -- 'CompatFixtureBuildError' "$node_schema_source" || ! grep -Fq -- 'FfiConverterTypeCompatFixtureBuildError' "$node_schema_source"; then
+  restore_compat_snapshots
+  fail "compat normalizer removed non-builder BuildError fixture symbols"
+fi
+if ! grep -Fq -- 'CompatFixtureRecordBuilderMetadata' "$node_schema_source" || ! grep -Fq -- 'FfiConverterTypeCompatFixtureRecordBuilderMetadata' "$node_schema_source"; then
+  restore_compat_snapshots
+  fail "compat normalizer removed interior Builder fixture symbols"
+fi
+if ! grep -Fq -- 'uniffi_compat_record_builder_metadata' "$node_schema_source"; then
+  restore_compat_snapshots
+  fail "compat normalizer removed an interior builder snake-case symbol"
+fi
+if ! "$compat_normalizer" --raw-go "$compat_raw_go" --raw-node "$compat_raw_node" --check; then
+  restore_compat_snapshots
+  fail "compat normalizer does not reproduce fixture output"
+fi
+restore_compat_snapshots
+
+compat_snapshots_mutated=true
+printf '\n// stale manual compatibility edit\n' >> "$go_schema_source"
+if "$compat_generator" --check > "$temporary_directory/compat-stale-go.log" 2>&1; then
+  restore_compat_snapshots
+  fail "compat --check accepted a stale manual Go snapshot edit"
+fi
+restore_compat_snapshots
+compat_snapshots_mutated=true
+printf '\n// stale manual compatibility edit\n' >> "$node_schema_source"
+if "$compat_generator" --check > "$temporary_directory/compat-stale-node.log" 2>&1; then
+  restore_compat_snapshots
+  fail "compat --check accepted a stale manual Node snapshot edit"
+fi
+restore_compat_snapshots
+"$compat_generator" --check
+
+for separate_binding in "$node_sdk_source" "$node_schema_source" "$go_sdk_source" "$go_schema_source"; do
+  if grep -Fq -- "Builder" "$separate_binding"; then
     fail "separately generated Go/Node binding unexpectedly contains authoritative builders: $separate_binding"
   fi
 done
@@ -407,6 +619,78 @@ grep -Fq -- "public var creationTimestamp: String?" "$swift_sdk_source" || fail 
 grep -Fq -- "attr_reader :namespace, :name, :labels, :creation_timestamp" "$ruby_sdk_source" || fail "Ruby bindings omit creation_timestamp"
 grep -Fq -- "creationTimestamp?: string" "$node_sdk_source" || fail "Node bindings omit creationTimestamp"
 grep -Fq -- "CreationTimestamp *string" "$go_sdk_source" || fail "Go bindings omit CreationTimestamp"
+
+for typescript_binding in "$node_schema_source" "$browser_schema_source"; do
+  grep -Fq -- "ttlSecondsAfterCreated?: number" "$typescript_binding" || fail "TypeScript bindings omit ttlSecondsAfterCreated: $typescript_binding"
+  grep -Fq -- "ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)" "$typescript_binding" || fail "TypeScript bindings do not read ttlSecondsAfterCreated: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into)" "$typescript_binding" || fail "TypeScript bindings do not write ttlSecondsAfterCreated: $typescript_binding"
+done
+node - "$node_schema_source" "$browser_schema_source" <<'NODE'
+const fs = require("node:fs");
+
+function converterBlock(source, label, start, end) {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  if (startIndex < 0 || endIndex < 0) {
+    throw new Error(`${label} converter block is missing`);
+  }
+  return source.slice(startIndex, endIndex);
+}
+
+function requireOrder(source, label, first, second) {
+  const firstIndex = source.indexOf(first);
+  const secondIndex = source.indexOf(second, firstIndex + first.length);
+  if (firstIndex < 0 || secondIndex < 0) {
+    throw new Error(`${label} has stale record field order`);
+  }
+}
+
+for (const path of process.argv.slice(2)) {
+  const source = fs.readFileSync(path, "utf8");
+  const defaults = source.match(/ttlSecondsAfterCreated: undefined/g) ?? [];
+  if (defaults.length < 2) {
+    throw new Error(`${path} omits an optional TTL constructor default`);
+  }
+  const claim = converterBlock(
+    source,
+    `${path} ClaimSpec`,
+    "const FfiConverterTypeClaimSpec = (() => {",
+    "export type OsGymSandboxClaimCondition",
+  );
+  const warmPool = converterBlock(
+    source,
+    `${path} WarmPool`,
+    "const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {",
+    "export type OsGymSandboxWarmPoolStatus",
+  );
+  requireOrder(
+    claim,
+    `${path} ClaimSpec read`,
+    "lifecycle: FfiConverterOptionalTypeClaimLifecycle.read(from)",
+    "ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)",
+  );
+  requireOrder(
+    claim,
+    `${path} ClaimSpec write`,
+    "FfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, into)",
+    "FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into)",
+  );
+  requireOrder(
+    warmPool,
+    `${path} WarmPool read`,
+    "autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from)",
+    "ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)",
+  );
+  requireOrder(
+    warmPool,
+    `${path} WarmPool write`,
+    "FfiConverterOptionalTypeWarmPoolAutoscaling.write(",
+    "FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into)",
+  );
+}
+NODE
+grep -Fq -- "TtlSecondsAfterCreated *uint32" "$go_schema_source" || fail "Go bindings omit TtlSecondsAfterCreated"
+grep -Fq -- "FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)" "$go_schema_source" || fail "Go bindings do not write TtlSecondsAfterCreated"
 
 for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
   grep -Fq -- "timeoutSecs?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.timeoutSecs: $typescript_binding"

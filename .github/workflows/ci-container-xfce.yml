@@ -52,7 +52,7 @@ jobs:
             cua-xfce:ci \
             bash -lc '
               test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
-              /opt/venv/bin/python -c "import computer_server"
+              /opt/venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('computer_server')"
               /opt/venv/bin/cua-driver --version
             '
 

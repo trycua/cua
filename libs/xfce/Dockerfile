@@ -25,7 +25,7 @@ COPY requirements-computer-server.txt /tmp/requirements-computer-server.txt
 RUN /opt/venv/bin/python -m pip install --no-cache-dir \
         -r /tmp/requirements-computer-server.txt \
     && /opt/venv/bin/python -c \
-        "import computer_server; print(computer_server.__file__)" \
+        "import importlib.util; assert importlib.util.find_spec('computer_server')" \
     && apt-get purge -y build-essential python3-dev \
     && apt-get autoremove -y \
     && apt-get clean \

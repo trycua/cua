@@ -986,6 +986,34 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
     .flatten()
 }
 
+fn select_provisional_setup_port(
+    ports: &[u16],
+    listeners_before: &[u16],
+    setup_was_already_enabled: bool,
+) -> Result<Option<u16>, BrowserRefusal> {
+    let correlated = ports
+        .iter()
+        .copied()
+        .filter(|port| !listeners_before.contains(port))
+        .collect::<Vec<_>>();
+    match correlated.as_slice() {
+        [port] => Ok(Some(*port)),
+        [] if setup_was_already_enabled => match ports {
+            [] => Ok(None),
+            [port] => Ok(Some(*port)),
+            _ => Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "the pre-enabled browser setup exposed multiple existing exact-pid loopback listeners",
+            )),
+        },
+        [] => Ok(None),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "the approved setup action exposed multiple newly correlated exact-pid listeners",
+        )),
+    }
+}
+
 const ENDPOINT_DISCOVERY_ATTEMPTS: usize = 4;
 const ENDPOINT_DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(100);
 
@@ -1662,6 +1690,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 })??;
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
+        let setup_was_already_enabled = !enabled_remote_debugging;
         let focused_setup_address_field = handle.focused_setup_address_field;
         let foregrounded_window = handle.foregrounded_window;
         let injected_global_input = handle.injected_global_input;
@@ -1695,25 +1724,22 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 }
             }
             if endpoints.is_empty() {
-                let correlated = ports
-                    .iter()
-                    .copied()
-                    .filter(|port| !listeners_before.contains(port))
-                    .collect::<Vec<_>>();
-                if let [port] = correlated.as_slice() {
-                    endpoints.push((
-                        *port,
+                match select_provisional_setup_port(
+                    &ports,
+                    &listeners_before,
+                    setup_was_already_enabled,
+                ) {
+                    Ok(Some(port)) => endpoints.push((
+                        port,
                         format!("ws://127.0.0.1:{port}/devtools/browser"),
-                        "new exact browser-pid listener correlated with approved setup",
-                    ));
-                } else if correlated.len() > 1 {
-                    break Err(refusal(
-                        BrowserRefusalCode::BrowserBindingAmbiguous,
-                        format!(
-                            "{} exposed multiple newly correlated exact-pid listeners",
-                            descriptor.product_name
-                        ),
-                    ));
+                        if listeners_before.contains(&port) {
+                            "unique existing exact browser-pid listener bound to a pre-enabled exact setup page"
+                        } else {
+                            "new exact browser-pid listener correlated with approved setup"
+                        },
+                    )),
+                    Ok(None) => {}
+                    Err(error) => break Err(error),
                 }
             }
             match endpoints.as_slice() {
@@ -2385,6 +2411,18 @@ mod tests {
     }
 
     #[test]
+    fn pre_enabled_setup_reuses_one_exact_pid_port_before_consent() {
+        assert_eq!(
+            select_provisional_setup_port(&[9222], &[9222], true).unwrap(),
+            Some(9222)
+        );
+        assert_eq!(
+            select_provisional_setup_port(&[9222], &[9222], false).unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn windows_command_line_parser_preserves_quoted_profile_paths() {
         let args = parse_windows_command_line(
             r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --flag "--user-data-dir=C:\Profiles\Personal Browser""#,
@@ -2420,6 +2458,16 @@ mod tests {
         assert_eq!(
             parse_devtools_active_port("9222\n/devtools/browser/id\nextra\n"),
             None
+        );
+    }
+
+    #[test]
+    fn pre_enabled_setup_refuses_multiple_existing_exact_pid_ports() {
+        assert_eq!(
+            select_provisional_setup_port(&[9222, 9333], &[9222, 9333], true)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserBindingAmbiguous
         );
     }
 

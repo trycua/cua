@@ -6,10 +6,11 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+use std::{sync::Arc, time::Duration};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 use tokio::sync::Mutex;
 use url::Url;
 

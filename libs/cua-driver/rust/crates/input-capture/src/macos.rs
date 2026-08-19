@@ -274,9 +274,9 @@ impl EventProcessor {
                 let drag_to = self.drag_to.take();
                 match down {
                     Some((from, down_button)) if down_button == button => {
-                        let to = drag_to.unwrap_or((x, y));
-                        if (to.0 - from.0).abs() > DRAG_THRESHOLD
-                            || (to.1 - from.1).abs() > DRAG_THRESHOLD
+                        let drag_classification_point = drag_to.unwrap_or((x, y));
+                        if (drag_classification_point.0 - from.0).abs() > DRAG_THRESHOLD
+                            || (drag_classification_point.1 - from.1).abs() > DRAG_THRESHOLD
                         {
                             self.emit(HumanEvent::Drag {
                                 from,
@@ -1502,6 +1502,47 @@ mod tests {
             }
         ));
         assert!(matches!(events[2], HumanEvent::Scroll { dy: 3.0, .. }));
+    }
+
+    #[test]
+    fn drag_ends_at_mouse_up_point_when_last_dragged_location_differs() {
+        let (mut processor, receiver, _) = harness(8);
+        processor.process(
+            RawEvent::MouseDown {
+                x: 4.0,
+                y: 5.0,
+                button: Button::Left,
+            },
+            1,
+            Gate::active(),
+        );
+        processor.process(
+            RawEvent::MouseDragged {
+                x: 30.0,
+                y: 40.0,
+                button: Button::Left,
+            },
+            2,
+            Gate::active(),
+        );
+        processor.process(
+            RawEvent::MouseUp {
+                x: 31.0,
+                y: 41.0,
+                button: Button::Left,
+            },
+            3,
+            Gate::active(),
+        );
+
+        assert!(matches!(
+            receiver.recv().unwrap(),
+            HumanEvent::Drag {
+                from: (4.0, 5.0),
+                to: (31.0, 41.0),
+                ..
+            }
+        ));
     }
 
     #[test]

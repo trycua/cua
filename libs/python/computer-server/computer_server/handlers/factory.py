@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 
 from computer_server.diorama.base import BaseDioramaHandler
 
+from ..backend_policy import VNCUnavailableHandler, configured_backend
 from ..utils.helpers import get_current_os
 from .base import (
     BaseAccessibilityHandler,
@@ -64,9 +65,9 @@ class HandlerFactory:
             NotImplementedError: If the current OS is not supported
             RuntimeError: If unable to determine the current OS
         """
-        backend = os.environ.get("CUA_BACKEND", "native").strip().lower()
+        backend = configured_backend()
         vnc_host = os.environ.get("CUA_VNC_HOST")
-        if backend == "vnc" or vnc_host:
+        if backend == "vnc":
             if not vnc_host:
                 raise RuntimeError(
                     "CUA_VNC_HOST must be set when using VNC backend "
@@ -76,14 +77,15 @@ class HandlerFactory:
 
             vnc_port = int(os.environ.get("CUA_VNC_PORT", "5900"))
             vnc_password = os.environ.get("CUA_VNC_PASSWORD", "")
+            unavailable = VNCUnavailableHandler()
             logger.info(f"Using VNC backend → {vnc_host}:{vnc_port}")
             return (
                 VNCAccessibilityHandler(),
                 VNCAutomationHandler(host=vnc_host, port=vnc_port, password=vnc_password),
                 BaseDioramaHandler(),
-                GenericFileHandler(),
-                GenericDesktopHandler(),
-                GenericWindowHandler(),
+                unavailable,
+                unavailable,
+                unavailable,
             )
         if backend not in {"native", "cua-driver"}:
             raise RuntimeError("CUA_BACKEND must be native, vnc, or cua-driver")

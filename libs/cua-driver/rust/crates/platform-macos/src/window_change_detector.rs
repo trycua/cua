@@ -146,6 +146,13 @@ impl Changes {
     }
 }
 
+/// Returns true when a window belongs to this cua-driver process, including
+/// transient UI such as the agent cursor overlay. Those windows are internal
+/// implementation details rather than action-triggered application windows.
+fn is_daemon_window(window: &WindowInfo) -> bool {
+    window.pid == std::process::id() as i32
+}
+
 /// Default poll deadline — new windows triggered by a click typically
 /// appear within ~200ms on macOS; 1.0s gives the wildcard suppressor
 /// time to fire and settle.
@@ -279,26 +286,9 @@ impl Snapshot {
                 .into_iter()
                 .filter(|w| w.layer == 0)
                 .collect();
-            let current_ids: HashSet<u32> = current.iter().map(|w| w.window_id).collect();
-
-            let new_windows: Vec<WindowEvent> = current
-                .iter()
-                .filter(|w| !self.window_ids.contains(&w.window_id))
-                .map(|w| WindowEvent {
-                    window_id: w.window_id,
-                    pid: w.pid,
-                    app_name: w.app_name.clone(),
-                    title: w.title.clone(),
-                })
-                .collect();
-            // Diff the other direction too — keeps unit tests honest
-            // even though Swift's result_suffix only uses opened windows.
-            let _closed: Vec<u32> = self
-                .window_ids
-                .iter()
-                .copied()
-                .filter(|id| !current_ids.contains(id))
-                .collect();
+            // Keep the live detector and the pure regression tests on the same
+            // diff path so daemon-window filtering cannot drift between them.
+            let (new_windows, _closed) = Self::diff(&self.window_ids, &current);
 
             let current_front = apps::frontmost_pid();
             let foreground_changed = match (self.front_pid, current_front) {
@@ -324,15 +314,10 @@ impl Snapshot {
 
     /// Pure-function diff: given the snapshot's window-id set + a
     /// list of currently-visible windows, return the (opened, closed)
-    /// classification.
+    /// classification. Opened windows owned by this daemon are excluded so
+    /// transient UI such as the cursor overlay is not reported as an action
+    /// side effect.
     ///
-    /// `#[allow(dead_code)]`: today only the `#[cfg(test)]` block below
-    /// constructs this — production callers `wait_for_window_change` /
-    /// `wait_for_window_close` keep the (opened, closed) split inline.
-    /// Kept `pub(crate)` because the doc comment near the top of this
-    /// `impl` block calls it out as the entry point for unit-testing the
-    /// diff logic without driving the live window enumerator.
-    #[allow(dead_code)]
     pub(crate) fn diff(
         snapshot_ids: &HashSet<u32>,
         current: &[WindowInfo],
@@ -341,6 +326,7 @@ impl Snapshot {
         let opened: Vec<WindowEvent> = current
             .iter()
             .filter(|w| !snapshot_ids.contains(&w.window_id))
+            .filter(|w| !is_daemon_window(w))
             .map(|w| WindowEvent {
                 window_id: w.window_id,
                 pid: w.pid,
@@ -419,6 +405,27 @@ mod tests {
         let cur = vec![win(1, 100, "Safari", "A"), win(2, 100, "Safari", "B")];
         let (opened, closed) = Snapshot::diff(&snap, &cur);
         assert!(opened.is_empty());
+        assert!(closed.is_empty());
+    }
+
+    /// Regression for trycua/cua#1592 Bug 2. This exercises the same `diff`
+    /// path used by `detect_with`, rather than separately testing a predicate
+    /// that production could accidentally stop applying.
+    #[test]
+    fn diff_excludes_new_windows_owned_by_the_daemon() {
+        let snap: HashSet<u32> = [1].into_iter().collect();
+        let daemon_pid = std::process::id() as i32;
+        let cur = vec![
+            win(1, daemon_pid + 1, "Safari", "Home"),
+            win(2, daemon_pid, "Cua Driver", ""),
+            win(3, daemon_pid + 2, "Mail", "Inbox"),
+        ];
+
+        let (opened, closed) = Snapshot::diff(&snap, &cur);
+
+        assert_eq!(opened.len(), 1);
+        assert_eq!(opened[0].window_id, 3);
+        assert_eq!(opened[0].app_name, "Mail");
         assert!(closed.is_empty());
     }
 

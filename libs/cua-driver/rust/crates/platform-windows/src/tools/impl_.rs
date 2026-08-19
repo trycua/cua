@@ -1219,7 +1219,9 @@ impl Tool for GetWindowStateTool {
                 Set `query` to a case-insensitive substring to project the tree to matching \
                 rows plus their ancestor chain. \
                 Original element indices are preserved. `total_element_count` reports the \
-                complete snapshot; `returned_element_count` reports the projection.\n\n\
+                unprojected walked snapshot; `returned_element_count` reports the projection. \
+                `elements_complete` describes the underlying walk and is unaffected by query \
+                projection.\n\n\
                 Always returns BOTH the element tree AND a screenshot — ground on both \
                 and cross-check (the tree lies on some surfaces). Choose the modality at \
                 ACTION time: an element ax action (element_token → \
@@ -1236,9 +1238,12 @@ impl Tool for GetWindowStateTool {
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
-                Optional `max_elements` / `max_depth` bound the UIA walk (Electron / large web \
-                apps produce 10k+ element trees). Markdown and structured elements are \
-                truncated identically. Default: `max_elements` 250, depth ≤25.\n\n\
+                Optional `max_elements` / `max_depth` bound the UIA walk to mitigate \
+                context-window blow-up on Electron / large web apps that produce 10k+ \
+                element trees. When applied, BOTH the markdown and the structured \
+                elements are truncated identically. `elements_complete` is false when a bound \
+                actually skips a node or subtree; ending exactly at a bound remains complete. \
+                Omit both for current default behaviour (≤5 000 elements, depth ≤25).\n\n\
                 CHROMIUM COVERAGE: a browser-owned permission bubble can be \
                 composited outside the requested native window. Chromium-family \
                 snapshots therefore describe this limit in structuredContent.capture_coverage. \
@@ -1256,13 +1261,10 @@ impl Tool for GetWindowStateTool {
                 "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
-                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
-                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
-                "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
-                "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default."},
-                "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins."}
-            },"additionalProperties":false})),
+                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk."},
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."}
+            },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
         })
@@ -1458,6 +1460,7 @@ impl Tool for GetWindowStateTool {
                              delivery_mode:\"foreground\" for a dialog's default accelerator.)"
                         ),
                         nodes: Vec::new(),
+                        elements_complete: false,
                     };
                     let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
                         &[],
@@ -1550,10 +1553,7 @@ impl Tool for GetWindowStateTool {
                         header + &tr.tree_markdown,
                     ));
                     structured["element_count"] = json!(count);
-                    // UIA currently does not expose whether a bounded walk
-                    // exhausted every subtree. Keep negative existence
-                    // conservative until that proof is available.
-                    structured["elements_complete"] = json!(false);
+                    structured["elements_complete"] = json!(tr.elements_complete);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
                     walk.apply(&mut structured);
 

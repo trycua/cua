@@ -82,6 +82,12 @@ impl Coalescer {
         }
         Some(HumanEvent::Text { t_ms })
     }
+
+    pub fn discard(&mut self) {
+        self.char_count = 0;
+        self.run_start_ms = None;
+        self.last_key_ms = 0;
+    }
 }
 
 #[cfg(test)]

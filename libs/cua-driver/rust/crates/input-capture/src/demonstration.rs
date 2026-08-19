@@ -25,15 +25,19 @@ impl Demonstration {
         sink: SyncSender<HumanEvent>,
     ) -> Result<Self, CaptureError> {
         validate(&config)?;
+        let target_window = isize::try_from(config.window_id).map_err(|_| {
+            CaptureError::Hook("target window id is outside the native window range".into())
+        })?;
+        let target_pid = u32::try_from(config.pid)
+            .ok()
+            .filter(|pid| *pid != 0)
+            .ok_or_else(|| {
+                CaptureError::Hook("target pid is outside the native pid range".into())
+            })?;
         let started_at = Instant::now();
         let health = RenderHealth::new();
-        let indicator = Indicator::start(
-            config.window_id as isize,
-            config.pid as u32,
-            health.clone(),
-            started_at,
-        )
-        .map_err(|error| CaptureError::Hook(format!("indicator: {error}")))?;
+        let indicator = Indicator::start(target_window, target_pid, health.clone(), started_at)
+            .map_err(|error| CaptureError::Hook(format!("indicator: {error}")))?;
 
         // Install hooks only after the border submits its first frame.
         let deadline = Instant::now() + std::time::Duration::from_secs(1);

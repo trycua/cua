@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.21.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.20.0...cua-driver-rs-v0.21.0) (2026-08-19)
+
+
+### Features
+
+* **cua-driver:** extend Project Centennial across desktop platforms ([#3189](https://github.com/trycua/cua/issues/3189)) ([a744308](https://github.com/trycua/cua/commit/a74430843663d3840dffbee04c2e112783ad238e))
+* **cua-driver:** Project Centennial preview ([#3188](https://github.com/trycua/cua/issues/3188)) ([61e51cd](https://github.com/trycua/cua/commit/61e51cddc48edcd0ae350a1744890c04951027f1))
+
+
+### Bug Fixes
+
+* **cua-driver:** admit stable local history signatures ([#3262](https://github.com/trycua/cua/issues/3262)) ([4864ccd](https://github.com/trycua/cua/commit/4864ccd42673eaa535d5e5ad01f2e30b484a0b02))
+* **cua-driver:** attribute hosted Windows apps by window ([#3227](https://github.com/trycua/cua/issues/3227)) ([30d9130](https://github.com/trycua/cua/commit/30d9130f7c747d9d3ecb2a5eca5b53366db5f1bb))
+* **cua-driver:** drop the stale 0.17 version from element_index messages ([e14891a](https://github.com/trycua/cua/commit/e14891ae957d710e4e5cbdc1e08e8bffd355cd88))
+* **cua-driver:** harden consented existing-profile attachment ([#3211](https://github.com/trycua/cua/issues/3211)) ([3f791b2](https://github.com/trycua/cua/commit/3f791b2cfec23d690cd34e6d275b6cbe1a8acc05))
+* **cua-driver:** launch isolated browser without pid ([#3208](https://github.com/trycua/cua/issues/3208)) ([eaf5a34](https://github.com/trycua/cua/commit/eaf5a34ea7804f8837bf39f7453e4beb5e6dce39))
+* **cua-driver:** preserve history admission on macOS relaunch ([#3245](https://github.com/trycua/cua/issues/3245)) ([9045b0c](https://github.com/trycua/cua/commit/9045b0c74f7c7de72fde3d9dc622f2cacf1cf848))
+* **cua-driver:** refuse unproven Wayland window capture ([#3200](https://github.com/trycua/cua/issues/3200)) ([c78c1d8](https://github.com/trycua/cua/commit/c78c1d873b5c091a951716559d2ccc1dc2f7a0e6))
+* **cua-driver:** strip UTF-8 BOM from uninstall.ps1 ([da44420](https://github.com/trycua/cua/commit/da44420193b59e845887db1f6c4adf27fbb2ffb8)), closes [#3174](https://github.com/trycua/cua/issues/3174)
+* **cua-driver:** tell operators to reconnect agent sessions after history enable ([#3224](https://github.com/trycua/cua/issues/3224)) ([62ede45](https://github.com/trycua/cua/commit/62ede45ad8450e341e9521bb8a8f81c9705f1c12)), closes [#3220](https://github.com/trycua/cua/issues/3220)
+* **cua-driver:** tolerate missing local autostart task ([#3229](https://github.com/trycua/cua/issues/3229)) ([f913244](https://github.com/trycua/cua/commit/f9132440013edaf99937682ea3ad44326ae16df2))
+
 ## [0.20.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.19.3...cua-driver-rs-v0.20.0) (2026-08-15)
 
 

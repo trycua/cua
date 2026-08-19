@@ -1,19 +1,12 @@
 # Cua XFCE Container
 
-Multi-architecture XFCE desktop container for Computer-Using Agents.
+Vanilla XFCE desktop container for Computer-Using Agents.
 
-`trycua/cua-xfce` extends the application-neutral `trycua/xfce-cua` desktop
-with `cua-computer-server`, preserving the local `cua-sandbox` DockerRuntime
-contract:
+The image includes both `cua-computer-server` and the released `cua-driver`
+Python SDK with its bundled executable. Computer-server remains the active
+remote API on port 8000; Cua Driver is installed for co-located applications
+and future transport-adapter experiments but is not started automatically.
+The pinned Driver version is declared in
+[`requirements-cua-driver.txt`](requirements-cua-driver.txt).
 
-- computer-server API on port 8000
-- noVNC on port 6901
-- native `linux/amd64` and `linux/arm64` images
-
-The container relies on Docker's existing network configuration and does not
-run a DHCP client against Docker-managed interfaces.
-
-```bash
-docker run --rm -p 8000:8000 -p 6901:6901 trycua/cua-xfce:latest
-curl --fail http://127.0.0.1:8000/status
-```
+**[Documentation](https://cua.ai/docs/cua/reference/desktop-sandbox/linux-container/xfce)** - Setup and configuration.

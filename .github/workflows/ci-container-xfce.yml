@@ -5,83 +5,13 @@ on:
     paths:
       - "libs/xfce/**"
       - ".github/workflows/ci-container-xfce.yml"
+      - ".github/workflows/docker-reusable-build.yml"
 
 jobs:
-  build-and-smoke:
-    name: build-and-smoke (${{ matrix.platform }})
-    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set expected Debian architecture
-        id: architecture
-        run: |
-          case "${{ matrix.platform }}" in
-            linux/amd64) echo "debian=amd64" >> "$GITHUB_OUTPUT" ;;
-            linux/arm64) echo "debian=arm64" >> "$GITHUB_OUTPUT" ;;
-          esac
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build native image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./libs/xfce
-          file: ./libs/xfce/Dockerfile
-          load: true
-          platforms: ${{ matrix.platform }}
-          tags: cua-xfce:ci
-
-      - name: Verify native packages
-        env:
-          EXPECTED_ARCH: ${{ steps.architecture.outputs.debian }}
-        run: |
-          docker run --rm \
-            --user cua \
-            -e HOME=/home/cua \
-            -e EXPECTED_ARCH \
-            cua-xfce:ci \
-            bash -lc '
-              set -e
-              test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
-              test -d /opt/venv/lib/python3.13/site-packages/computer_server
-              /opt/venv/bin/cua-driver --version
-            '
-
-      - name: Verify published API and desktop ports
-        run: |
-          docker run --rm --detach \
-            --name cua-xfce-ci \
-            -p 127.0.0.1::8000 \
-            -p 127.0.0.1::6901 \
-            cua-xfce:ci
-          trap 'docker logs cua-xfce-ci; docker exec cua-xfce-ci sh -c "cat /var/log/supervisor/*.log /var/log/supervisor/*.error.log 2>/dev/null" || true; docker stop cua-xfce-ci >/dev/null 2>&1 || true' EXIT
-
-          API_PORT=$(docker port cua-xfce-ci 8000/tcp | sed 's/.*://')
-          VNC_PORT=$(docker port cua-xfce-ci 6901/tcp | sed 's/.*://')
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent "http://127.0.0.1:${API_PORT}/status" >/dev/null && \
-               curl --fail --silent "http://127.0.0.1:${VNC_PORT}/vnc.html" >/dev/null; then
-              break
-            fi
-            if [ "$attempt" -eq 60 ]; then
-              exit 1
-            fi
-            sleep 2
-          done
-
-          curl --fail --silent "http://127.0.0.1:${API_PORT}/status"
-          curl --fail --silent "http://127.0.0.1:${VNC_PORT}/vnc.html" >/dev/null
-          docker exec cua-xfce-ci supervisorctl \
-            -c /etc/supervisor/supervisord.conf status
-          docker stop cua-xfce-ci
-          trap - EXIT
+  build:
+    uses: ./.github/workflows/docker-reusable-build.yml
+    with:
+      image_name: cua-xfce
+      context_dir: libs/xfce
+      # kicad/kicad:9.0 currently publishes an amd64 image only.
+      skip_arm64: true

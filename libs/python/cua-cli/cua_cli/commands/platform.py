@@ -24,9 +24,9 @@ from cua_cli.utils.output import console, print_error, print_info
 
 PLATFORMS: Dict[str, Dict[str, Any]] = {
     "linux-docker": {
-        "image": "trycua/cua-xfce:latest",
+        "image": "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest",
         "description": "Linux GUI container (no KVM required)",
-        "internal_vnc_port": 6901,
+        "internal_vnc_port": 6080,
         "internal_api_port": 8000,
         "requires_kvm": False,
         "image_marker": None,

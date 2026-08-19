@@ -56,6 +56,7 @@ test("renders usage totals and forwards opaque pool IDs to drilldown", async ({
   await page.goto("/usage")
   await expect(page).toHaveTitle("Usage · Cua")
   await expectSharedPageShell(page)
+  await expect(page.getByText("Admin", { exact: true })).toBeVisible()
   await expect(
     page.getByRole("heading", { name: "Usage preview" }),
   ).toBeVisible()

@@ -201,7 +201,14 @@ function Shell() {
                 items={[
                   { type: "link", text: "Pools", href: "#/pools" },
                   ...(usage
-                    ? [{ type: "link" as const, text: "Usage", href: "#/usage" }]
+                    ? [
+                        {
+                          type: "link" as const,
+                          text: "Usage",
+                          href: "#/usage",
+                          info: <Badge color="blue">Admin</Badge>,
+                        },
+                      ]
                     : []),
                   ...(chat
                     ? [{ type: "link" as const, text: "Chat", href: "#/agent" }]

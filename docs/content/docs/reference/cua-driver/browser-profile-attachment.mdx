@@ -190,15 +190,19 @@ The browser-setup route is implemented for Google Chrome and Microsoft Edge on
 macOS and Windows. Chrome and Edge have product-specific acceptance evidence
 on Linux X11. Chrome is also accepted on GNOME Wayland, and Chromium is
 accepted alongside Chrome and Edge on the validated native-Wayland Sway lane.
-The Chromium-family products use the same descriptor-backed Linux route, but
-still need product-specific acceptance evidence on each desktop before they
-are listed as validated. Every route
-requires an
-exact authorized PID and native window, one uniquely matched setup control, a
-loopback endpoint owned by that process, one exact browser-owned consent
-action, and a fresh native/CDP rebind.
+Helium is recognized as a distinct Chromium-family product on Linux, resolves
+its default profile from `~/.config/net.imput.helium`, and can attach when that
+profile already exposes a uniquely PID-owned `DevToolsActivePort` endpoint.
+Automated setup is not enabled for Helium until its branded internal page has
+product-specific acceptance evidence; a profile without an existing endpoint
+fails closed. Every attachment requires an exact authorized PID and native
+window, a loopback endpoint owned by that process, and a fresh native/CDP
+rebind. Routes that surface a browser-owned connection prompt require one exact
+consent action. Setup-capable routes additionally require one uniquely matched
+setup control.
 
-Linux additionally requires the browser's complete AT-SPI renderer tree. Start
+Linux automated setup additionally requires the browser's complete AT-SPI
+renderer tree. Start
 the Chromium-family process with `--force-renderer-accessibility`, or run a
 screen reader that enables full renderer accessibility. On Sway and validated
 GNOME Shell sessions, Cua Driver briefly focuses the exact
@@ -210,7 +214,7 @@ sessions that cannot prove exact process, window, and geometry identity.
 
 The setup adapters currently recognize the products' English accessibility
 labels. Other UI locales fail closed without toggling an unrecognized control.
-Safari, Firefox, Brave, Vivaldi, Opera, Arc, and Electron do not have an
+Safari, Firefox, Helium, Brave, Vivaldi, Opera, Arc, and Electron do not have an
 existing-profile setup descriptor and return a structured refusal. An already
 available endpoint does not bypass existing-profile authorization for a
 standalone consumer browser. Driver-owned profiles and supported embedded

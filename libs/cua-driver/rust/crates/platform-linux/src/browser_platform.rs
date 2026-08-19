@@ -27,7 +27,17 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
+fn is_helium(name: &str) -> bool {
+    name.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .eq_ignore_ascii_case("helium")
+}
+
 fn is_chromium(name: &str) -> bool {
+    if is_helium(name) {
+        return true;
+    }
     let name = name.to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "msedge", "vivaldi", "opera", "arc",
@@ -48,6 +58,9 @@ fn is_firefox(name: &str) -> bool {
 }
 
 fn browser_product(identity: &str) -> BrowserProduct {
+    if is_helium(identity) {
+        return BrowserProduct::Helium;
+    }
     let tokens = identity
         .to_ascii_lowercase()
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -110,13 +123,29 @@ fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
 }
 
+fn command_line_arguments(bytes: &[u8], allow_packed: bool) -> Vec<String> {
+    bytes
+        .split(|byte| *byte == 0 || (allow_packed && byte.is_ascii_whitespace()))
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+        .collect()
+}
+
+fn command_line_has_process_type(bytes: &[u8], allow_packed: bool) -> bool {
+    command_line_arguments(bytes, allow_packed)
+        .iter()
+        .any(|arg| {
+            arg.as_bytes()
+                .strip_prefix(b"--type=")
+                .is_some_and(|kind| !kind.is_empty())
+        })
+}
+
 fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole {
     let helper = std::fs::read(format!("/proc/{pid}/cmdline"))
         .ok()
         .is_some_and(|bytes| {
-            bytes.split(|byte| *byte == 0).any(|arg| {
-                arg.starts_with(b"--type=") && arg.get(7..).is_some_and(|kind| !kind.is_empty())
-            })
+            command_line_has_process_type(&bytes, product == BrowserProduct::Helium)
         });
     if helper {
         BrowserProcessRole::Helper
@@ -126,6 +155,7 @@ fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole
         product,
         BrowserProduct::GoogleChrome
             | BrowserProduct::Chromium
+            | BrowserProduct::Helium
             | BrowserProduct::MicrosoftEdge
             | BrowserProduct::Brave
             | BrowserProduct::Vivaldi
@@ -279,6 +309,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => ".config/google-chrome",
         BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
         BrowserProduct::Chromium => ".config/chromium",
+        BrowserProduct::Helium => ".config/net.imput.helium",
         _ => return None,
     };
     Some(home.join(relative))
@@ -291,11 +322,14 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
             format!("browser process {pid} is no longer available"),
         )
     })?;
-    let args = bytes
-        .split(|byte| *byte == 0)
-        .filter(|arg| !arg.is_empty())
-        .map(|arg| String::from_utf8_lossy(arg).into_owned())
-        .collect::<Vec<_>>();
+    let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    let product = executable
+        .as_deref()
+        .map(browser_product)
+        .unwrap_or(BrowserProduct::Other);
+    let args = command_line_arguments(&bytes, product == BrowserProduct::Helium);
     let mut directories = Vec::new();
     for (index, arg) in args.iter().enumerate() {
         if let Some(path) = arg.strip_prefix("--user-data-dir=") {
@@ -311,15 +345,7 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     directories.sort();
     directories.dedup();
     match directories.as_slice() {
-        [] => {
-            let Some(executable) = std::fs::read_link(format!("/proc/{pid}/exe"))
-                .ok()
-                .map(|path| path.to_string_lossy().into_owned())
-            else {
-                return Ok(None);
-            };
-            Ok(default_user_data_dir(browser_product(&executable)))
-        }
+        [] => Ok(default_user_data_dir(product)),
         [path] if path.is_absolute() => Ok(Some(path.clone())),
         [path] => {
             let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
@@ -1202,6 +1228,11 @@ mod tests {
         assert!(is_chromium("chromium-browser"));
         assert!(is_chromium("msedge --remote-debugging-port=9222"));
         assert!(is_chromium("/opt/microsoft/msedge/msedge"));
+        assert!(is_chromium("helium"));
+        assert!(is_chromium("/opt/helium/helium"));
+        assert!(is_chromium("/opt/helium-browser-bin/helium"));
+        assert!(!is_chromium("/opt/helium/not-a-browser"));
+        assert!(!is_chromium("helium-helper"));
         assert!(!is_chromium("firefox"));
         assert!(!is_chromium("search-worker"));
         assert!(!is_chromium("ledger-service"));
@@ -1220,6 +1251,85 @@ mod tests {
         assert_eq!(
             browser_product("/opt/google/chrome/chrome"),
             BrowserProduct::GoogleChrome
+        );
+        assert_eq!(
+            browser_product("/opt/helium-browser-bin/helium"),
+            BrowserProduct::Helium
+        );
+        assert_eq!(
+            browser_product("/opt/helium/helium"),
+            BrowserProduct::Helium
+        );
+        assert_eq!(
+            browser_product("/opt/chromium/helium"),
+            BrowserProduct::Helium
+        );
+        assert_eq!(
+            browser_product("/opt/helium/not-a-browser"),
+            BrowserProduct::Other
+        );
+        assert_eq!(browser_product("helium-helper"), BrowserProduct::Other);
+    }
+
+    #[test]
+    fn helium_uses_its_branded_default_profile_directory() {
+        assert!(default_user_data_dir(BrowserProduct::Helium)
+            .expect("HOME-backed Helium profile directory")
+            .ends_with(".config/net.imput.helium"));
+    }
+
+    #[test]
+    fn process_type_detection_handles_nul_and_packed_command_lines() {
+        assert!(command_line_has_process_type(
+            b"helium\0--type=renderer\0",
+            false
+        ));
+        assert!(command_line_has_process_type(
+            b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0",
+            true
+        ));
+        assert!(!command_line_has_process_type(
+            b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0",
+            false
+        ));
+        assert!(!command_line_has_process_type(
+            b"/opt/helium-browser-bin/helium --load-extension=/tmp/example\0",
+            true
+        ));
+        assert!(!command_line_has_process_type(b"helium --type=\0", true));
+    }
+
+    #[test]
+    fn packed_helium_command_line_preserves_profile_arguments() {
+        assert_eq!(
+            command_line_arguments(
+                b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium-profile --remote-debugging-port=0\0",
+                true
+            ),
+            [
+                "/opt/helium-browser-bin/helium",
+                "--user-data-dir=/tmp/helium-profile",
+                "--remote-debugging-port=0"
+            ]
+        );
+        assert_eq!(
+            command_line_arguments(
+                b"/opt/helium-browser-bin/helium\0--user-data-dir\0/tmp/helium-profile\0",
+                false
+            ),
+            [
+                "/opt/helium-browser-bin/helium",
+                "--user-data-dir",
+                "/tmp/helium-profile"
+            ]
+        );
+    }
+
+    #[test]
+    fn helium_is_a_standalone_consumer_browser() {
+        assert_eq!(
+            process_role_for_pid(i64::from(std::process::id()), BrowserProduct::Helium),
+            BrowserProcessRole::StandaloneConsumer
         );
     }
 

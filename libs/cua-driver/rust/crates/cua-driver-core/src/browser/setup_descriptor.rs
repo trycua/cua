@@ -82,6 +82,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn helium_requires_an_existing_endpoint_until_setup_is_validated() {
+        assert!(existing_profile_setup_descriptor(BrowserProduct::Helium).is_none());
+    }
+
+    #[test]
     fn setup_is_limited_to_products_with_exact_descriptors() {
         assert_eq!(
             existing_profile_setup_descriptor(BrowserProduct::GoogleChrome)
@@ -103,6 +108,7 @@ mod tests {
         );
         for product in [
             BrowserProduct::Brave,
+            BrowserProduct::Helium,
             BrowserProduct::Firefox,
             BrowserProduct::Safari,
             BrowserProduct::Electron,

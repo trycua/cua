@@ -14,6 +14,7 @@ from cua_sandbox.transport.fleet_cloud import (
     _canonicalize_pool_access_denied,
     _FleetClient,
     _pool_access_denied,
+    validate_ttl_seconds_after_created,
 )
 from fleet_sdk import (
     Claim,
@@ -255,6 +256,7 @@ class Pool:
         memory_mb: int | None = None,
         services: dict[str, int] | None = None,
         autoscaling: WarmPoolAutoscaling | None = None,
+        ttl_seconds_after_created: int | None = None,
     ) -> "Pool":
         if not isinstance(name, str) or not name:
             raise ValueError(
@@ -274,6 +276,7 @@ class Pool:
             memory_mb=memory_mb,
             services=effective_services,
             autoscaling=autoscaling,
+            ttl_seconds_after_created=ttl_seconds_after_created,
         )
         pool = await cls.reconcile(transport._pool_request())
         try:
@@ -300,9 +303,32 @@ class Pool:
         finally:
             await client.close()
 
+    def _claim_spec(
+        self, spec: ClaimSpec | None, ttl_seconds_after_created: int | None
+    ) -> ClaimSpec | None:
+        if ttl_seconds_after_created is None:
+            return spec
+        if spec is not None:
+            raise ValueError(
+                "pass ttl_seconds_after_created inside spec when supplying an explicit ClaimSpec"
+            )
+        validate_ttl_seconds_after_created(ttl_seconds_after_created)
+        return ClaimSpec(
+            sandbox_template_ref=self._resource.spec.sandbox_template_ref,
+            warmpool=None,
+            bind_deadline=None,
+            lifecycle=None,
+            ttl_seconds_after_created=ttl_seconds_after_created,
+        )
+
     async def create_claim(
-        self, *, spec: ClaimSpec | None = None, name: str | None = None
+        self,
+        *,
+        spec: ClaimSpec | None = None,
+        name: str | None = None,
+        ttl_seconds_after_created: int | None = None,
     ) -> _ClaimHandle:
+        spec = self._claim_spec(spec, ttl_seconds_after_created)
         request = CreateClaimRequest(pool=self._resource, spec=spec, name=name)
         client = _FleetClient()
         try:
@@ -322,7 +348,10 @@ class Pool:
         name: str | None = None,
         service: str = "server",
         time_to_start: float | None = None,
+        ttl_seconds_after_created: int | None = None,
     ) -> _ClaimResult[Sandbox]:
+        spec = self._claim_spec(spec, ttl_seconds_after_created)
+
         async def acquire() -> Sandbox:
             client = _FleetClient()
             claim: Any = None

@@ -141,6 +141,57 @@ Each field is optional (pass `None` to accept the server default). With
 `min_pool_size=0` the pool scales to zero when no claims are held, so the
 first claim after an idle period cold-starts a sandbox.
 
+## Expire pools and claims automatically
+
+Pools and claims accept an optional creation-age TTL. Pass
+`ttl_seconds_after_created=` (requires `cua-sandbox>=0.4.2`) and the resource
+is deleted once it has existed that many seconds, whether or not it is in use:
+
+```python
+# Delete the whole pool 24 hours after it was first created.
+pool = await Pool.apply(
+    Image.from_registry(IMAGE),
+    name=POOL_NAME,
+    replicas=1,
+    ttl_seconds_after_created=86400,
+)
+
+# Delete this claim and its sandbox one hour after the claim was created.
+async with pool.claim(
+    name=CLAIM_NAME,
+    ttl_seconds_after_created=3600,
+) as sandbox:
+    ...
+```
+
+The clock starts at the resource's original creation, not its last use:
+re-running `Pool.apply()` reconciles the existing pool without resetting its
+age, and reconnecting to a named claim keeps the deadline set when the claim
+was first created. Without the argument nothing is reaped — pools and claims
+live until you delete them.
+
+A claim TTL fills in the claim's lifecycle shutdown time with a `Delete`
+policy; a claim that already carries an explicit lifecycle keeps it. When you
+build a claim spec by hand, put the TTL inside it — passing both
+`spec=` and `ttl_seconds_after_created=` raises `ValueError`:
+
+```python
+spec = ClaimSpec(
+    sandbox_template_ref=pool.resource.spec.sandbox_template_ref,
+    warmpool=None,
+    bind_deadline=None,
+    lifecycle=None,
+    ttl_seconds_after_created=3600,
+)
+async with pool.claim(spec=spec) as sandbox:
+    ...
+```
+
+Treat a pool TTL that can expire while claims are held as a capacity event,
+not just cleanup: deleting the pool drains its sandboxes, and a claim that
+outlives its pool destroys its sandbox on release instead of returning it to
+the pool.
+
 ## Choose pool and claim names
 
 The defaults use the same value for the pool and claim. Override either name

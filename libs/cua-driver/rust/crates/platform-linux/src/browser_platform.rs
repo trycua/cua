@@ -28,10 +28,10 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
 }
 
 fn is_helium(name: &str) -> bool {
-    name.rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(name)
-        .eq_ignore_ascii_case("helium")
+    std::path::Path::new(name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("helium"))
 }
 
 fn is_chromium(name: &str) -> bool {
@@ -1233,6 +1233,7 @@ mod tests {
         assert!(is_chromium("/opt/helium-browser-bin/helium"));
         assert!(!is_chromium("/opt/helium/not-a-browser"));
         assert!(!is_chromium("helium-helper"));
+        assert!(!is_chromium(r"/opt/fake\helium"));
         assert!(!is_chromium("firefox"));
         assert!(!is_chromium("search-worker"));
         assert!(!is_chromium("ledger-service"));

@@ -44,6 +44,15 @@ chat_enabled {
 	input.flags.chat_subs[_] == input.user.sub
 }
 
+# Usage preview is restricted to administrators and the initial internal rollout set.
+usage_enabled {
+	is_admin
+}
+
+usage_enabled {
+	input.flags.usage_subs[_] == input.user.sub
+}
+
 # ── Token families ──────────────────────────────────────────────────────────
 #
 # Three families reach the policy, distinguished by `azp`. A fourth kind of

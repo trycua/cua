@@ -53,6 +53,7 @@ type CredentialURLs struct {
 	Exporter    string
 	RoleAdmin   string
 	Metabase    string
+	Usage       string
 }
 
 type migrationFile struct {
@@ -159,6 +160,7 @@ var expectedCredentialRoles = map[string]string{
 	"exporter":    "k8s_state_exporter",
 	"role-admin":  "k8s_role_admin",
 	"metabase":    "k8s_metabase",
+	"usage":       "cyclops_usage_reader",
 }
 
 const selectAppliedMigrationsStatement = `select version, filename, sha256 from cyclops_migrations.applied_migrations order by application_order`
@@ -339,10 +341,6 @@ func Run(ctx context.Context, config Config) (runErr error) {
 	}
 	defer transaction.Rollback(ctx)
 
-	if err := validateNoPublicSecurityDefiner(ctx, transaction); err != nil {
-		return err
-	}
-
 	ddl := newRuntimeDDL(transaction)
 	started := time.Now()
 	if err := ddl.ensureMigrationLedger(ctx); err != nil {
@@ -422,6 +420,9 @@ func Run(ctx context.Context, config Config) (runErr error) {
 	if err := reconcileReportingBoundary(ctx, transaction); err != nil {
 		return err
 	}
+	if err := validateNoPublicSecurityDefiner(ctx, transaction); err != nil {
+		return err
+	}
 	credentialEvents, err := reconcilePasswords(ctx, transaction, credentials)
 	if err != nil {
 		return err
@@ -475,6 +476,7 @@ func parseCredentialURLs(urls CredentialURLs) ([]credential, error) {
 		{Name: "exporter", URL: urls.Exporter},
 		{Name: "role-admin", URL: urls.RoleAdmin},
 		{Name: "metabase", URL: urls.Metabase},
+		{Name: "usage", URL: urls.Usage},
 	}
 
 	credentials := make([]credential, 0, len(inputs))
@@ -507,11 +509,17 @@ func staticRoleContracts() []staticRoleContract {
 		{role: "k8s_role_admin", login: true, createRole: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 		{role: "k8s_reporting_owner", inherit: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 		{role: "k8s_metabase", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "cyclops_usage_reader", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 	}
 }
 
 func staticRoleSettingsContracts() map[string]staticRoleSettingsContract {
 	return map[string]staticRoleSettingsContract{
+		"cyclops_usage_reader": {
+			staticRoleSettingDefaultTransactionReadOnly:      "on",
+			staticRoleSettingStatementTimeout:                "10000ms",
+			staticRoleSettingIdleInTransactionSessionTimeout: "10000ms",
+		},
 		"k8s_metabase": {
 			staticRoleSettingDefaultTransactionReadOnly:      "on",
 			staticRoleSettingStatementTimeout:                "20000ms",
@@ -552,12 +560,13 @@ func readStaticRoleAttributes(ctx context.Context, transaction pgx.Tx, role stri
 }
 
 type reportingACL struct {
-	object    reportingObject
-	owner     string
-	privilege reportingPrivilege
-	grantee   string
-	grantor   string
-	grantable bool
+	object          reportingObject
+	routineIdentity string
+	owner           string
+	privilege       reportingPrivilege
+	grantee         string
+	grantor         string
+	grantable       bool
 }
 
 func reconcileReportingBoundary(ctx context.Context, transaction pgx.Tx) error {
@@ -591,9 +600,15 @@ func reconcileReportingBoundary(ctx context.Context, transaction pgx.Tx) error {
 		}
 	}
 	for _, acl := range expectedReportingACLs() {
+		if acl.object.kind == reportingObjectRoutine {
+			continue
+		}
 		if err := newRuntimeDDL(transaction).grantReportingACL(ctx, acl); err != nil {
 			return fmt.Errorf("reconcile reporting ACLs: %w", err)
 		}
+	}
+	if err := reconcileUsageRoutineExecute(ctx, transaction); err != nil {
+		return err
 	}
 
 	finalACLs, err := readReportingACLs(ctx, transaction)
@@ -641,13 +656,14 @@ func validateReportingBoundary(ctx context.Context, transaction pgx.Tx) error {
 
 func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL, error) {
 	rows, err := transaction.Query(ctx, `
-		select object_type, schema_name, object_name, routine_oid, owner_name, privilege_type, grantee_name, grantor_name, is_grantable
+		select object_type, schema_name, object_name, routine_oid, routine_identity, owner_name, privilege_type, grantee_name, grantor_name, is_grantable
 		from (
 			select
 				'schema'::text as object_type,
 				namespace.nspname as schema_name,
 				''::text as object_name,
 				0::oid as routine_oid,
+				''::text as routine_identity,
 				namespace.nspowner::regrole::text as owner_name,
 				acl.privilege_type,
 				case when acl.grantee = 0 then 'PUBLIC' else acl.grantee::regrole::text end as grantee_name,
@@ -658,7 +674,7 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 			where namespace.nspname !~ '^pg_'
 			  and namespace.nspname <> 'information_schema'
 			  and acl.grantee <> namespace.nspowner
-			  and (acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			  and (acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole)
 			       or (namespace.nspname = 'k8s_reporting' and acl.grantee <> namespace.nspowner))
 			union all
 			select
@@ -666,6 +682,7 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 				namespace.nspname,
 				relation.relname,
 				0::oid,
+				''::text,
 				relation.relowner::regrole::text,
 				acl.privilege_type,
 				case when acl.grantee = 0 then 'PUBLIC' else acl.grantee::regrole::text end,
@@ -678,7 +695,7 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 			  and namespace.nspname <> 'information_schema'
 			  and acl.grantee <> relation.relowner
 			  and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
-			  and (acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			  and (acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole)
 			       or (namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources' and acl.grantee <> relation.relowner))
 			union all
 			select
@@ -686,6 +703,12 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 				''::text,
 				''::text,
 				routine.oid,
+				case
+					when namespace.nspname = 'k8s_reporting'
+					 and routine.proname = 'usage_sandbox_events'
+					 and routine.proargtypes = '25 1184 1184'::oidvector then 'usage_sandbox_events'
+					else routine.oid::regprocedure::text
+				end,
 				routine.proowner::regrole::text,
 				acl.privilege_type,
 				case when acl.grantee = 0 then 'PUBLIC' else acl.grantee::regrole::text end,
@@ -697,9 +720,16 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 			where namespace.nspname !~ '^pg_'
 			  and namespace.nspname <> 'information_schema'
 			  and acl.grantee <> routine.proowner
-			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			  and (
+				acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole)
+				or (
+					namespace.nspname = 'k8s_reporting'
+					and routine.proname = 'usage_sandbox_events'
+					and routine.proargtypes = '25 1184 1184'::oidvector
+				)
+			  )
 		) as reporting_acl
-		order by object_type, schema_name, object_name, routine_oid, privilege_type, grantee_name, grantor_name`)
+		order by object_type, schema_name, object_name, routine_oid, routine_identity, privilege_type, grantee_name, grantor_name`)
 	if err != nil {
 		return nil, fmt.Errorf("enumerate reporting ACLs: %w", err)
 	}
@@ -714,6 +744,7 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 			&acl.object.schema,
 			&acl.object.name,
 			&acl.object.routineOID,
+			&acl.routineIdentity,
 			&acl.owner,
 			&privilegeSQL,
 			&acl.grantee,
@@ -743,8 +774,11 @@ func expectedReportingACLs() []reportingACL {
 	return []reportingACL{
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_state"}, owner: "k8s_state_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_reporting_owner", grantor: "k8s_state_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_state", name: "resource_state"}, owner: "k8s_state_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "k8s_state_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_state", name: "resource_event_outbox"}, owner: "k8s_state_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "k8s_state_owner"},
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "current_resources"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
+		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},
+		{object: reportingObject{kind: reportingObjectRoutine}, routineIdentity: "usage_sandbox_events", owner: "k8s_reporting_owner", privilege: reportingPrivilegeExecute, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},
 	}
 }
 
@@ -754,11 +788,40 @@ func isExpectedReportingACL(acl reportingACL) bool {
 
 func containsReportingACL(acls []reportingACL, want reportingACL) bool {
 	for _, acl := range acls {
-		if acl.object == want.object && acl.owner == want.owner && acl.privilege == want.privilege && acl.grantee == want.grantee && acl.grantor == want.grantor && acl.grantable == want.grantable {
+		objectMatches := acl.object == want.object
+		if want.object.kind == reportingObjectRoutine {
+			objectMatches = acl.object.kind == reportingObjectRoutine && acl.routineIdentity == want.routineIdentity
+		}
+		if objectMatches && acl.owner == want.owner && acl.privilege == want.privilege && acl.grantee == want.grantee && acl.grantor == want.grantor && acl.grantable == want.grantable {
 			return true
 		}
 	}
 	return false
+}
+
+func reconcileUsageRoutineExecute(ctx context.Context, transaction pgx.Tx) error {
+	var routineOID uint32
+	if err := transaction.QueryRow(ctx, `
+		select routine.oid
+		from pg_proc as routine
+		join pg_namespace as namespace on namespace.oid = routine.pronamespace
+		where namespace.nspname = 'k8s_reporting'
+		  and routine.proname = 'usage_sandbox_events'
+		  and routine.proargtypes = '25 1184 1184'::oidvector`).Scan(&routineOID); err != nil {
+		return fmt.Errorf("resolve usage reporting routine: %w", err)
+	}
+	acl := reportingACL{
+		object:          reportingObject{kind: reportingObjectRoutine, routineOID: routineOID},
+		routineIdentity: "usage_sandbox_events",
+		owner:           "k8s_reporting_owner",
+		privilege:       reportingPrivilegeExecute,
+		grantee:         "cyclops_usage_reader",
+		grantor:         "k8s_reporting_owner",
+	}
+	if err := newRuntimeDDL(transaction).grantReportingACL(ctx, acl); err != nil {
+		return fmt.Errorf("reconcile usage routine execute grant: %w", err)
+	}
+	return nil
 }
 
 func isSafeReportingACLAuthority(acl reportingACL, migrationOwner string) bool {

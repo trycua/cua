@@ -17,6 +17,7 @@ type ConfigResponse struct {
 	Admin   bool `json:"admin"`
 	Billing bool `json:"billing"`
 	Chat    bool `json:"chat"`
+	Usage   bool `json:"usage"`
 }
 
 // GetConfig returns per-user feature flags evaluated by OPA.
@@ -33,7 +34,7 @@ func (h Handlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
 	ctx := r.Context()
 
-	isAdmin, err := auth.EvalIsAdmin(ctx, user)
+	isAdmin, err := h.isAdmin(ctx, user)
 	if err != nil {
 		// Fail closed to the most restrictive view, and log so a
 		// misconfigured OPA store / provider is visible to operators.
@@ -47,11 +48,17 @@ func (h Handlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 		billingEnabled = false
 	}
 
+	usageEnabled, err := h.usageEnabled(ctx, user)
+	if err != nil {
+		slog.WarnContext(ctx, "usage access eval failed; defaulting off", "err", err)
+		usageEnabled = false
+	}
+
 	chatEnabled, err := h.chatEnabled(ctx, user)
 	if err != nil {
 		slog.WarnContext(ctx, "chat access eval failed; defaulting off", "err", err)
 		chatEnabled = false
 	}
 
-	writeJSON(w, http.StatusOK, ConfigResponse{Admin: isAdmin, Billing: billingEnabled, Chat: chatEnabled})
+	writeJSON(w, http.StatusOK, ConfigResponse{Admin: isAdmin, Billing: billingEnabled, Chat: chatEnabled, Usage: usageEnabled})
 }

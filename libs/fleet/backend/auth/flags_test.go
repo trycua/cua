@@ -113,16 +113,21 @@ func TestFlagsDataLoadsCardRequirementExemptSubs(t *testing.T) {
 	}
 }
 
-func TestComputeFlagsDataFailsClosedOnTypeMismatch(t *testing.T) {
+func TestComputeFlagsDataLoadsOnlyOPAStringListFlags(t *testing.T) {
 	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-sub"]`)
+	t.Setenv("CYCLOPS_CS_USAGE_SUBS", `["usage-sub"]`)
 	t.Setenv("CYCLOPS_CS_BILLING_ENABLED", "true")
+	t.Setenv("CYCLOPS_CS_CHAT_ACCESS", "restricted")
 	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
 		t.Fatalf("setup dev provider: %v", err)
 	}
 
 	got := computeFlagsData(context.Background())
-	if len(got) != 0 {
-		t.Fatalf("computeFlagsData() = %v, want empty flags after type mismatch", got)
+	if admins := asStrings(got["admin_subs"]); len(admins) != 1 || admins[0] != "admin-sub" {
+		t.Fatalf("admin_subs = %v, want [admin-sub]", admins)
+	}
+	if usage := asStrings(got["usage_subs"]); len(usage) != 1 || usage[0] != "usage-sub" {
+		t.Fatalf("usage_subs = %v, want [usage-sub]", usage)
 	}
 }
 
@@ -173,5 +178,24 @@ func TestEvalChatEnabledFailsClosedForMalformedAllowlist(t *testing.T) {
 	enabled, err := EvalChatEnabled(context.Background(), &User{ID: "not-json", AZP: "cyclops-cs-spa"})
 	if err != nil || enabled {
 		t.Fatalf("EvalChatEnabled(malformed allowlist) = %v, %v; want false, nil", enabled, err)
+	}
+}
+
+func TestEvalUsageEnabledAllowsAdminsAndAllowlistedUsers(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin"]`)
+	t.Setenv("CYCLOPS_CS_USAGE_SUBS", `["internal"]`)
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatal(err)
+	}
+	LoadOpa()
+	resetFlagsCache()
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{{"admin", true}, {"internal", true}, {"other", false}} {
+		got, err := EvalUsageEnabled(context.Background(), &User{ID: tc.id, AZP: "cyclops-cs-spa"})
+		if err != nil || got != tc.want {
+			t.Fatalf("%s: %v %v", tc.id, got, err)
+		}
 	}
 }

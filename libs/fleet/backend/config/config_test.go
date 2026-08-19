@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -271,5 +272,66 @@ func TestLoadConfig_ChatDisabledDoesNotRequireCredentials(t *testing.T) {
 	t.Setenv("CYCLOPS_CS_CHAT_ACCESS", "disabled")
 	if _, err := loadChatTestConfig(t); err != nil {
 		t.Fatalf("LoadConfig() error = %v, want disabled mode without credentials", err)
+	}
+}
+
+func TestLoadConfig_UsageConfiguration(t *testing.T) {
+	validDatabaseURL := "postgres://cyclops_usage_reader:secret@db.example/cyclops?sslmode=require"
+	validOpenCostURL := "https://opencost.example/api"
+	tests := []struct {
+		name      string
+		env       map[string]string
+		wantError string
+		want      UsageConfiguration
+	}{
+		{name: "absent disables usage", want: UsageConfiguration{QueryTimeout: 20 * time.Second, MaxResponseBytes: 8388608}},
+		{name: "database only is rejected", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL}, wantError: "USAGE_DATABASE_URL requires OPENCOST_BASE_URL"},
+		{name: "OpenCost only disables usage", env: map[string]string{"OPENCOST_BASE_URL": validOpenCostURL}, want: UsageConfiguration{OpenCostBaseURL: validOpenCostURL, QueryTimeout: 20 * time.Second, MaxResponseBytes: 8388608}},
+		{
+			name: "valid values",
+			env: map[string]string{
+				"USAGE_DATABASE_URL": validDatabaseURL, "OPENCOST_BASE_URL": validOpenCostURL,
+				"USAGE_QUERY_TIMEOUT": "45s", "USAGE_MAX_RESPONSE_BYTES": "1048576",
+			},
+			want: UsageConfiguration{DatabaseURL: validDatabaseURL, OpenCostBaseURL: validOpenCostURL, QueryTimeout: 45 * time.Second, MaxResponseBytes: 1048576},
+		},
+		{name: "libpq database DSN is rejected", env: map[string]string{"USAGE_DATABASE_URL": "user=cyclops_usage_reader host=db.example dbname=cyclops", "OPENCOST_BASE_URL": validOpenCostURL}, wantError: "invalid usage database URL"},
+		{name: "database reader role is required", env: map[string]string{"USAGE_DATABASE_URL": "postgres://application@db.example/cyclops", "OPENCOST_BASE_URL": validOpenCostURL}, wantError: "usage database URL must use cyclops_usage_reader"},
+		{name: "OpenCost URL cannot have a query", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "OPENCOST_BASE_URL": "https://opencost.example?token=secret"}, wantError: "invalid OpenCost URL"},
+		{name: "malformed timeout is rejected while disabled", env: map[string]string{"USAGE_QUERY_TIMEOUT": "not-a-duration"}, wantError: "invalid USAGE_QUERY_TIMEOUT"},
+		{name: "malformed response limit is rejected while disabled", env: map[string]string{"USAGE_MAX_RESPONSE_BYTES": "not-a-number"}, wantError: "invalid USAGE_MAX_RESPONSE_BYTES"},
+		{name: "short timeout is rejected while disabled", env: map[string]string{"USAGE_QUERY_TIMEOUT": "500ms"}, wantError: "USAGE_QUERY_TIMEOUT must be between 1s and 2m"},
+		{name: "small response limit is rejected while disabled", env: map[string]string{"USAGE_MAX_RESPONSE_BYTES": "1"}, wantError: "USAGE_MAX_RESPONSE_BYTES must be between 65536 and 33554432"},
+		{name: "timeout is bounded", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "OPENCOST_BASE_URL": validOpenCostURL, "USAGE_QUERY_TIMEOUT": "500ms"}, wantError: "USAGE_QUERY_TIMEOUT must be between 1s and 2m"},
+		{name: "response limit is bounded", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "OPENCOST_BASE_URL": validOpenCostURL, "USAGE_MAX_RESPONSE_BYTES": "1"}, wantError: "USAGE_MAX_RESPONSE_BYTES must be between 65536 and 33554432"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+			for _, key := range []string{"USAGE_DATABASE_URL", "OPENCOST_BASE_URL", "USAGE_QUERY_TIMEOUT", "USAGE_MAX_RESPONSE_BYTES"} {
+				t.Setenv(key, "")
+			}
+			for key, value := range test.env {
+				t.Setenv(key, value)
+			}
+			RegisterFlags(pflag.NewFlagSet("test", pflag.ContinueOnError))
+
+			cfg, err := LoadConfig()
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("LoadConfig() error = %v, want containing %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			if cfg.Usage != test.want {
+				t.Fatalf("Usage = %#v, want %#v", cfg.Usage, test.want)
+			}
+		})
 	}
 }

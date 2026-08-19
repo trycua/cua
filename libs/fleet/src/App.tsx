@@ -22,6 +22,7 @@ import { PoolNew } from "./pages/PoolNew"
 import { UserApiKeys } from "./pages/UserApiKeys"
 import { Settings } from "./pages/Settings"
 import { AgentChat } from "./pages/AgentChat"
+import { Usage } from "./pages/Usage"
 import { PageShell } from "./components/PageShell"
 import { FeatureFlagProvider, useFeatureFlags } from "./components/FeatureFlagContext"
 import { FlashContext, type FlashMsg } from "./components/FlashContext"
@@ -108,11 +109,13 @@ function Shell() {
     setNavigationOpen(tabletOrWider)
   }, [tabletOrWider])
   const user = userInfo()
-  const { chat } = useFeatureFlags()
+  const { chat, usage } = useFeatureFlags()
   useEffect(() => {
     const path = location.pathname
-    const pageTitle = path === "/agent"
-      ? "Chat"
+    const pageTitle = path === "/usage"
+      ? "Usage"
+      : path === "/agent"
+        ? "Chat"
       : path === "/user-keys"
         ? "User API keys"
         : path === "/settings"
@@ -194,6 +197,9 @@ function Shell() {
                 }}
                 items={[
                   { type: "link", text: "Pools", href: "#/pools" },
+                  ...(usage
+                    ? [{ type: "link" as const, text: "Usage", href: "#/usage" }]
+                    : []),
                   ...(chat
                     ? [{ type: "link" as const, text: "Chat", href: "#/agent" }]
                     : []),
@@ -252,6 +258,7 @@ export function App() {
             <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
             <Route path="/user-keys" element={<UserApiKeys />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/usage" element={<UsageRoute />} />
             <Route path="/agent" element={<ChatRoute />} />
             <Route path="/billing" element={<Navigate to="/settings" replace />} />
             <Route
@@ -287,4 +294,16 @@ function ChatRoute() {
     )
   }
   return chat ? <AgentChat /> : <Navigate to="/pools" replace />
+}
+
+function UsageRoute() {
+  const { usage, resolved } = useFeatureFlags()
+  if (!resolved) {
+    return (
+      <PageShell eyebrow="Resources" title="Usage preview">
+        <div />
+      </PageShell>
+    )
+  }
+  return usage ? <Usage /> : <Navigate to="/pools" replace />
 }

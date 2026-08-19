@@ -14,12 +14,15 @@ export interface FeatureFlags {
   billing: boolean
   /** Chat users can access persisted browser-bash conversations. */
   chat: boolean
+  /** Internal users can access the preview usage dashboard. */
+  usage: boolean
 }
 
 const DEFAULT_FLAGS: FeatureFlags = {
   admin: false,
   billing: false,
   chat: false,
+  usage: false,
 }
 
 let _cache: FeatureFlags | null = null
@@ -44,6 +47,7 @@ export async function fetchFeatureFlags(): Promise<FeatureFlags> {
         admin: data.admin ?? false,
         billing: data.billing ?? false,
         chat: data.chat ?? false,
+        usage: data.usage ?? false,
       }
       return _cache
     } catch {

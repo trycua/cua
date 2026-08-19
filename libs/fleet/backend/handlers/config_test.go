@@ -50,3 +50,16 @@ func TestGetConfigReturnsEffectiveChatAccess(t *testing.T) {
 		})
 	}
 }
+
+func TestGetConfigReturnsEffectiveUsageAccess(t *testing.T) {
+	h := Handlers{usageAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return true, nil }, adminAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return false, nil }}
+	w := httptest.NewRecorder()
+	h.GetConfig(w, withUser(httptest.NewRequest(http.MethodGet, "/api/config", nil), &auth.User{ID: "user", AZP: "cyclops-cs-spa"}))
+	var r ConfigResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &r); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Usage {
+		t.Fatal("usage false")
+	}
+}

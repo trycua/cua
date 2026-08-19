@@ -23,6 +23,7 @@ static_roles=(
   k8s_role_admin
   k8s_reporting_owner
   k8s_metabase
+  cyclops_usage_reader
 )
 
 base_url="${admin_url%%\?*}"
@@ -82,6 +83,7 @@ writer_url="$(url_for k8s_state_writer state-writer-password)"
 exporter_url="$(url_for k8s_state_exporter state-exporter-password)"
 role_admin_url="$(url_for k8s_role_admin role-admin-password)"
 metabase_url="$(url_for k8s_metabase metabase-password)"
+usage_url="$(url_for cyclops_usage_reader usage-reader-password)"
 
 env_file="${CYCLOPS_TEST_DATABASE_ENV_FILE:-${GITHUB_ENV:-}}"
 if [[ -z "$env_file" ]]; then
@@ -150,6 +152,7 @@ STATE_WRITER_DATABASE_URL="$writer_url" \
 STATE_EXPORTER_DATABASE_URL="$exporter_url" \
 STATE_ROLE_ADMIN_DATABASE_URL="$role_admin_url" \
 METABASE_DATABASE_URL="$metabase_url" \
+USAGE_DATABASE_URL="$usage_url" \
 go run ./cmd/db-migrate
 
 cat >> "$env_file" <<EOF_ENV

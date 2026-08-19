@@ -35,6 +35,7 @@ func main() {
 			Exporter:    required("STATE_EXPORTER_DATABASE_URL"),
 			RoleAdmin:   required("STATE_ROLE_ADMIN_DATABASE_URL"),
 			Metabase:    required("METABASE_DATABASE_URL"),
+			Usage:       required("USAGE_DATABASE_URL"),
 		},
 	}
 	if err := database.Run(context.Background(), config); err != nil {

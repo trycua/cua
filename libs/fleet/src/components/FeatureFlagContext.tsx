@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { fetchFeatureFlags, type FeatureFlags } from "../sdk/featureFlags"
 import { isLocalVisualPreview } from "../local-visual-preview"
 
-const DEFAULT_FLAGS: FeatureFlags = { admin: false, billing: false, chat: false }
+const DEFAULT_FLAGS: FeatureFlags = { admin: false, billing: false, chat: false, usage: false }
 
 interface FeatureFlagContextValue extends FeatureFlags {
   resolved: boolean

@@ -43,6 +43,7 @@ import (
 	"cyclops-cs-backend/middlewares"
 	"cyclops-cs-backend/statequery"
 	"cyclops-cs-backend/telemetry"
+	"cyclops-cs-backend/usage"
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 	"github.com/trycua/cloud/pkg/featureflags"
@@ -148,6 +149,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 
 	r.Handle("QUERY /api/state/query",
 		withAuthenticatedMiddlewares("/api/state/query", c.QueryState))
+	r.Handle("GET /api/usage/overview", withAuthenticatedMiddlewares("/api/usage/overview", c.GetUsageOverview))
+	r.Handle("GET /api/usage/pool", withAuthenticatedMiddlewares("/api/usage/pool", c.GetUsagePoolDetail))
 
 	// Stripe-hosted billing. Browser routes require the normal SPA JWT; the
 	// webhook uses Stripe signature verification as its authentication boundary.
@@ -241,6 +244,31 @@ func main() {
 	}
 }
 
+func initializeTelemetry(ctx context.Context, cfg config.TelemetryConfiguration) (func(context.Context) error, error) {
+	shutdown, err := telemetry.Init(ctx, telemetry.Config{
+		Endpoint:         cfg.Endpoint,
+		Protocol:         cfg.Protocol,
+		ServiceName:      cfg.ServiceName,
+		ServiceNamespace: cfg.ServiceNamespace,
+		Environment:      cfg.Environment,
+		ResourceAttrs:    cfg.ResourceAttrs,
+	})
+	if err != nil {
+		slog.Warn("otel: init failed; tracing disabled", "err", err)
+		return func(context.Context) error { return nil }, err
+	}
+	return shutdown, nil
+}
+
+func initializeFeatureFlags(ctx context.Context, environment string, credentials featureflags.AWSCredentials) error {
+	err := featureflags.SetupProvider(ctx, environment, credentials)
+	if err != nil {
+		slog.Warn("openfeature: provider setup degraded", "err", err)
+		return err
+	}
+	return nil
+}
+
 func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	ctx := context.Background()
@@ -253,20 +281,7 @@ func run() error {
 	}
 	configValues = cfg
 
-	telemetryShutdown := func(context.Context) error { return nil }
-	if shutdown, err := telemetry.Init(ctx, telemetry.Config{
-		Endpoint:         cfg.Telemetry.Endpoint,
-		Protocol:         cfg.Telemetry.Protocol,
-		ServiceName:      cfg.Telemetry.ServiceName,
-		ServiceNamespace: cfg.Telemetry.ServiceNamespace,
-		Environment:      cfg.Telemetry.Environment,
-		ResourceAttrs:    cfg.Telemetry.ResourceAttrs,
-	}); err != nil {
-		telemetryErr = err
-		slog.Warn("otel: init failed; tracing disabled", "err", err)
-	} else {
-		telemetryShutdown = shutdown
-	}
+	telemetryShutdown, telemetryErr := initializeTelemetry(ctx, cfg.Telemetry)
 	defer func() {
 		if err := telemetryShutdown(context.Background()); err != nil {
 			slog.Warn("otel: shutdown failed", "err", err)
@@ -281,14 +296,11 @@ func run() error {
 	// SetupProvider returns a non-nil error when it falls back to the
 	// from-env provider (missing creds / SSM init failure). Log it but
 	// keep starting — flag evaluations still resolve via the fallback.
-	if err := featureflags.SetupProvider(ctx, os.Getenv("ENVIRONMENT"), featureflags.AWSCredentials{
+	startupErrors = initializeFeatureFlags(ctx, os.Getenv("ENVIRONMENT"), featureflags.AWSCredentials{
 		AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		Region:          os.Getenv("AWS_REGION"),
-	}); err != nil {
-		startupErrors = errors.Join(startupErrors, err)
-		slog.Warn("openfeature: provider setup degraded", "err", err)
-	}
+	})
 	slog.Info("init: OpenFeature ok, loading OPA")
 	auth.LoadOpa()
 	slog.Info("init: OPA ok")
@@ -325,6 +337,17 @@ func run() error {
 	}
 
 	h := handlers.New(admin, cfg)
+	usageProvider, closeUsageProvider, err := initializeUsageProvider(ctx, cfg.Usage)
+	if err != nil {
+		return errors.Join(fmt.Errorf("initialize usage provider: %w", err), startupErrors, telemetryErr)
+	}
+	defer closeUsageProvider()
+	h.Usage = usageProvider
+	if usageProvider == nil {
+		slog.Info("usage: disabled")
+	} else {
+		slog.Info("usage: enabled")
+	}
 	if cfg.Stripe.SecretKey != "" {
 		h.Billing = billing.NewService(billing.NewStripeGateway(cfg.Stripe.SecretKey))
 		slog.Info("stripe billing: hosted flows enabled")
@@ -356,7 +379,7 @@ func run() error {
 	if err := srv.ListenAndServe(); err != nil {
 		return errors.Join(fmt.Errorf("server exited: %w", err), startupErrors, telemetryErr)
 	}
-	return nil
+	return errors.Join(startupErrors, telemetryErr)
 }
 
 const (
@@ -507,4 +530,26 @@ func retryDatabaseFeatures(ctx context.Context, cfg config.DatabaseConfiguration
 			}
 		}
 	}
+}
+
+func initializeUsageProvider(ctx context.Context, cfg config.UsageConfiguration) (usage.Provider, func(), error) {
+	noop := func() {}
+	// OpenCost is deployed independently from the usage credential. Keep the
+	// provider disabled until the database URL arrives so serving stays ready.
+	if cfg.DatabaseURL == "" {
+		return nil, noop, nil
+	}
+	if cfg.OpenCostBaseURL == "" {
+		return nil, noop, fmt.Errorf("usage provider requires OpenCost when the database URL is configured")
+	}
+	events, err := usage.NewPostgresEventStore(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return nil, noop, fmt.Errorf("create usage event store: %w", err)
+	}
+	allocations, err := usage.NewOpenCostClient(cfg.OpenCostBaseURL, cfg.QueryTimeout, cfg.MaxResponseBytes)
+	if err != nil {
+		events.Close()
+		return nil, noop, fmt.Errorf("create OpenCost client: %w", err)
+	}
+	return usage.NewProvider(events, allocations, nil), events.Close, nil
 }

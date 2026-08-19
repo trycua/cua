@@ -89,6 +89,11 @@ func TestStaticRoleAlterClausesOnlyContainPermittedDrift(t *testing.T) {
 
 func TestStaticRoleSettingsContractsAreExact(t *testing.T) {
 	want := map[string]staticRoleSettingsContract{
+		"cyclops_usage_reader": {
+			staticRoleSettingDefaultTransactionReadOnly:      "on",
+			staticRoleSettingStatementTimeout:                "10000ms",
+			staticRoleSettingIdleInTransactionSessionTimeout: "10000ms",
+		},
 		"k8s_metabase": {
 			staticRoleSettingDefaultTransactionReadOnly:      "on",
 			staticRoleSettingStatementTimeout:                "20000ms",
@@ -110,13 +115,27 @@ func TestStaticRoleAlterClausesRejectUnsupportedValidUntilContract(t *testing.T)
 	}
 }
 
-func TestStaticRoleAlterClausesRejectCreateDBDrift(t *testing.T) {
-	_, err := staticRoleAlterClauses(staticRoleContract{role: "cyclops_app", login: true}, staticRoleAttributes{
-		login:    true,
-		createDB: true,
+func TestStaticRoleAlterClausesReconcileCreateDBDrift(t *testing.T) {
+	clauses, err := staticRoleAlterClauses(staticRoleContract{role: "cyclops_app", login: true, validUntil: staticRoleValidUntilInfinity}, staticRoleAttributes{
+		login:      true,
+		createDB:   true,
+		validUntil: "infinity",
 	})
-	if err == nil || !strings.Contains(err.Error(), "rolcreatedb=true") {
-		t.Fatalf("static role createdb drift error = %v, want fail-closed rolcreatedb error", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clauses != "NOCREATEDB" {
+		t.Fatalf("static role createdb clauses = %q, want NOCREATEDB", clauses)
+	}
+}
+
+func TestStaticRoleAlterClausesRejectCreateDBContract(t *testing.T) {
+	_, err := staticRoleAlterClauses(
+		staticRoleContract{role: "cyclops_app", login: true, createDB: true, validUntil: staticRoleValidUntilInfinity},
+		staticRoleAttributes{login: true, validUntil: "infinity"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "unsupported CREATEDB contract") {
+		t.Fatalf("static role CREATEDB contract error = %v, want fail-closed unsupported contract", err)
 	}
 }
 
@@ -501,15 +520,15 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("expected exactly one initial migration, got %d", len(files))
+	if len(files) != 2 {
+		t.Fatalf("expected exactly two migrations, got %d", len(files))
 	}
-	file := files[0]
-	if file.Version != 1 || file.Name != "000001_initial_schema.sql" {
-		t.Fatalf("expected version 1 initial schema migration, got version=%d name=%q", file.Version, file.Name)
+	initial := files[0]
+	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
+		t.Fatalf("expected version 1 initial schema migration, got version=%d name=%q", initial.Version, initial.Name)
 	}
-	digest := sha256.Sum256([]byte(file.SQL))
-	if file.SHA256 != hex.EncodeToString(digest[:]) {
+	digest := sha256.Sum256([]byte(initial.SQL))
+	if initial.SHA256 != hex.EncodeToString(digest[:]) {
 		t.Fatal("embedded initial schema migration digest does not match its contents")
 	}
 	for _, expected := range []string{
@@ -530,12 +549,35 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION k8s_state.register_tenant_role(name, text, text) TO k8s_role_admin",
 		"GRANT EXECUTE ON FUNCTION k8s_state.unregister_tenant_role(name) TO k8s_role_admin",
 	} {
-		if !strings.Contains(file.SQL, expected) {
+		if !strings.Contains(initial.SQL, expected) {
 			t.Errorf("initial schema is missing direct tenant role contract %q", expected)
 		}
 	}
-	if strings.Contains(file.SQL, "k8s_query_broker") {
+	if strings.Contains(initial.SQL, "k8s_query_broker") {
 		t.Fatal("initial schema must not create or grant a shared query broker role")
+	}
+
+	usage := files[1]
+	if usage.Version != 2 || usage.Name != "000002_usage_sandbox_events.sql" {
+		t.Fatalf("expected version 2 usage migration, got version=%d name=%q", usage.Version, usage.Name)
+	}
+	for _, expected := range []string{
+		"CREATE ROLE cyclops_usage_reader LOGIN NOINHERIT NOCREATEROLE NOSUPERUSER NOCREATEDB NOREPLICATION NOBYPASSRLS",
+		"CREATE INDEX resource_event_outbox_usage_lookup_idx",
+		"GRANT SELECT ON k8s_state.resource_event_outbox TO k8s_reporting_owner",
+		"CREATE FUNCTION k8s_reporting.usage_sandbox_events",
+		"SECURITY DEFINER",
+		"SET search_path = k8s_state, pg_catalog",
+		"REVOKE ALL ON FUNCTION k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) FROM PUBLIC",
+		"GRANT USAGE ON SCHEMA k8s_reporting TO cyclops_usage_reader",
+		"GRANT EXECUTE ON FUNCTION k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) TO cyclops_usage_reader",
+	} {
+		if !strings.Contains(usage.SQL, expected) {
+			t.Errorf("usage migration is missing contract %q", expected)
+		}
+	}
+	if strings.Contains(usage.SQL, "GRANT SELECT ON k8s_state.resource_event_outbox TO cyclops_usage_reader") {
+		t.Fatal("usage reader must not receive direct outbox table access")
 	}
 }
 
@@ -653,12 +695,13 @@ func TestCredentialURLsExcludeDynamicTenantRoles(t *testing.T) {
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
+		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
 	})
 	if err != nil {
 		t.Fatalf("parse fixed runtime credentials: %v", err)
 	}
-	if len(credentials) != 5 {
-		t.Fatalf("credential count = %d, want 5", len(credentials))
+	if len(credentials) != 6 {
+		t.Fatalf("credential count = %d, want 6", len(credentials))
 	}
 	for _, credential := range credentials {
 		if credential.Role == "k8s_query_broker" || strings.HasPrefix(credential.Role, "k8s_tenant_") {
@@ -674,15 +717,16 @@ func TestStaticRoleContractsAreAllowlistedAndFixed(t *testing.T) {
 		connectionLimit                      int
 		validUntil                           staticRoleValidUntil
 	}{
-		"cyclops_app":         {true, false, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_state_owner":     {false, true, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_state_writer":    {true, false, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_state_exporter":  {true, false, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_query_tenant":    {false, true, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_query_admin":     {false, true, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_role_admin":      {true, false, true, false, -1, staticRoleValidUntilInfinity},
-		"k8s_reporting_owner": {false, true, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_metabase":        {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"cyclops_app":          {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_owner":      {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_writer":     {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_exporter":   {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_query_tenant":     {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_query_admin":      {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_role_admin":       {true, false, true, false, -1, staticRoleValidUntilInfinity},
+		"k8s_reporting_owner":  {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_metabase":         {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"cyclops_usage_reader": {true, false, false, false, -1, staticRoleValidUntilInfinity},
 	}
 	if len(contracts) != len(want) {
 		t.Fatalf("static role contract count = %d, want %d", len(contracts), len(want))
@@ -730,6 +774,7 @@ func TestCredentialURLsRequireExpectedRoleNames(t *testing.T) {
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
+		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
 	})
 	if err == nil {
 		t.Fatal("expected application role-name validation")
@@ -746,6 +791,7 @@ func TestCredentialURLsRejectEmptyPassword(t *testing.T) {
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
+		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
 	})
 	if err == nil || err.Error() != "application credential database URL must include a password" {
 		t.Fatalf("expected empty password rejection, got %v", err)
@@ -759,6 +805,7 @@ func TestCredentialURLParseErrorsPreserveCauseForBoundaryClassification(t *testi
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
+		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
 	})
 	if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("error = %v, want ErrInvalidConfiguration", err)

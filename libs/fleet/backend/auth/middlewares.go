@@ -28,6 +28,7 @@ const UserKey ctxKey = 1
 var (
 	opaAdminQuery *rego.PreparedEvalQuery
 	opaChatQuery  *rego.PreparedEvalQuery
+	opaUsageQuery *rego.PreparedEvalQuery
 )
 
 // authzPolicy is the shared principal vocabulary every surface module imports.
@@ -65,6 +66,7 @@ var surfacePolicySources = map[string]struct {
 	"authz-config":       {"authz_config.rego", authzConfigPolicy},
 	"authz-chat":         {"authz_chat.rego", authzChatPolicy},
 	"authz-billing":      {"authz_billing.rego", authzBillingPolicy},
+	"authz-usage":        {"authz_usage.rego", authzUsagePolicy},
 	"authz-namespaces":   {"authz_namespaces.rego", authzNamespacesPolicy},
 	"authz-github-trust": {"authz_github_trust.rego", authzGitHubTrustPolicy},
 	"authz-user-keys":    {"authz_user_keys.rego", authzUserKeysPolicy},
@@ -87,6 +89,9 @@ var authzChatPolicy string
 
 //go:embed authz_billing.rego
 var authzBillingPolicy string
+
+//go:embed authz_usage.rego
+var authzUsagePolicy string
 
 //go:embed authz_namespaces.rego
 var authzNamespacesPolicy string
@@ -114,10 +119,15 @@ var authzStateQueryPolicy string
 //
 //	/feature-flags/cyclops-cs/admin-subs → CYCLOPS_CS_ADMIN_SUBS
 //
-// Values are JSON string arrays (e.g. '["sub1","sub2"]').
+// OPA list values are JSON string arrays (e.g. '["sub1","sub2"]').
 const (
-	flagPrefix        = "/feature-flags/cyclops-cs/"
-	cardAdmissionFlag = flagPrefix + "require-card-for-custom-resource-creation"
+	flagPrefix                    = "/feature-flags/cyclops-cs/"
+	adminSubsFlag                 = flagPrefix + "admin-subs"
+	billingFlag                   = flagPrefix + "billing-enabled"
+	cardAdmissionFlag             = flagPrefix + "require-card-for-custom-resource-creation"
+	cardRequirementExemptSubsFlag = flagPrefix + "card-requirement-exempt-subs"
+	chatSubsFlag                  = flagPrefix + "chat-subs"
+	usageSubsFlag                 = flagPrefix + "usage-subs"
 )
 
 // flagsTTL bounds how long flagsData returns its last computed result
@@ -201,7 +211,7 @@ func computeFlagsData(ctx context.Context) map[string]interface{} {
 	}
 	flags := map[string]interface{}{}
 	for _, key := range keys {
-		if key == cardAdmissionFlag {
+		if !isOPAStringListFlag(key) {
 			continue
 		}
 		name := opaNameFromFlagKey(key)
@@ -225,6 +235,15 @@ func computeFlagsData(ctx context.Context) map[string]interface{} {
 	}
 	flags["require_card_for_custom_resource_creation"] = enabled
 	return flags
+}
+
+func isOPAStringListFlag(key string) bool {
+	switch key {
+	case adminSubsFlag, cardRequirementExemptSubsFlag, chatSubsFlag, usageSubsFlag:
+		return true
+	default:
+		return false
+	}
 }
 
 // opaNameFromFlagKey maps a discovered flag path to the Rego identifier
@@ -296,6 +315,7 @@ func LoadOpa() {
 
 	opaAdminQuery = prepareAuthzQuery("data.authz.is_admin")
 	opaChatQuery = prepareAuthzQuery("data.authz.chat_enabled")
+	opaUsageQuery = prepareAuthzQuery("data.authz.usage_enabled")
 
 	// Warm the flag cache once so the first request isn't slowed by the
 	// initial resolve and any SSM/provider misconfiguration surfaces in the
@@ -314,6 +334,10 @@ func EvalIsAdmin(ctx context.Context, user *User) (bool, error) {
 // and users listed in input.flags.chat_subs are enabled.
 func EvalChatEnabled(ctx context.Context, user *User) (bool, error) {
 	return evalUserDecision(ctx, user, opaChatQuery)
+}
+
+func EvalUsageEnabled(ctx context.Context, user *User) (bool, error) {
+	return evalUserDecision(ctx, user, opaUsageQuery)
 }
 
 func evalUserDecision(ctx context.Context, user *User, query *rego.PreparedEvalQuery) (bool, error) {
@@ -346,7 +370,7 @@ func EvalBillingEnabled(ctx context.Context, user *User) (bool, error) {
 	})
 	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	return ffClient.BooleanValue(callCtx, "/feature-flags/cyclops-cs/billing-enabled", false, openfeature.NewEvaluationContext(user.ID, nil))
+	return ffClient.BooleanValue(callCtx, billingFlag, false, openfeature.NewEvaluationContext(user.ID, nil))
 }
 
 func writeJSONErr(w http.ResponseWriter, status int, msg string) {

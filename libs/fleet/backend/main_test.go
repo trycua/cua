@@ -30,6 +30,7 @@ import (
 	"cyclops-cs-backend/handlers"
 	"cyclops-cs-backend/metrics"
 	"cyclops-cs-backend/statequery"
+	"cyclops-cs-backend/usage"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -1079,5 +1080,48 @@ func TestRetryDatabaseFeaturesStopsOnceReady(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // many ticks' worth at a 1ms interval
 	if attempts != settled {
 		t.Fatalf("attempts kept climbing after recovery (%d -> %d); the loop did not stop", settled, attempts)
+	}
+}
+
+func TestInitializeUsageProviderDoesNotGateReadiness(t *testing.T) {
+	provider, closeProvider, err := initializeUsageProvider(context.Background(), config.UsageConfiguration{
+		DatabaseURL:      "postgres://cyclops_usage_reader:secret@127.0.0.1:1/cyclops?sslmode=disable",
+		OpenCostBaseURL:  "http://127.0.0.1:1",
+		QueryTimeout:     time.Second,
+		MaxResponseBytes: 64 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("initializeUsageProvider() error = %v", err)
+	}
+	defer closeProvider()
+	if provider == nil {
+		t.Fatal("initializeUsageProvider() provider = nil")
+	}
+
+	router := setupRouter(handlers.Handlers{Usage: provider})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("readyz status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	_, err = provider.Overview(context.Background(), usage.Query{ActorSubject: "user", Subject: "user", Timeframe: usage.Timeframe24H})
+	if err == nil {
+		t.Fatal("Overview() error = nil, want unavailable dependency error")
+	}
+}
+
+func TestInitializeUsageProviderOpenCostOnlyIsDisabled(t *testing.T) {
+	provider, closeProvider, err := initializeUsageProvider(context.Background(), config.UsageConfiguration{
+		OpenCostBaseURL:  "http://127.0.0.1:1",
+		QueryTimeout:     time.Second,
+		MaxResponseBytes: 64 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("initializeUsageProvider() error = %v", err)
+	}
+	defer closeProvider()
+	if provider != nil {
+		t.Fatal("initializeUsageProvider() provider != nil, want disabled provider")
 	}
 }

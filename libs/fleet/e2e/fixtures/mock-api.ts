@@ -55,6 +55,7 @@ export interface MockFeatureFlags {
   admin?: boolean
   billing?: boolean
   chat?: boolean
+  usage?: boolean
 }
 
 export interface MockAuthOptions {
@@ -166,6 +167,7 @@ export async function mockAuth(
         admin: flags.admin ?? false,
         billing: flags.billing ?? false,
         chat: flags.chat ?? false,
+        usage: flags.usage ?? false,
       }),
     })
   })

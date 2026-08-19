@@ -80,6 +80,10 @@ func BillingRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-billing", "data.authz_billing.allow"))
 }
 
+func UsageRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-usage", "data.authz_usage.allow"))
+}
+
 // NamespaceOwnershipPolicy is the tenancy boundary for routes that name a
 // namespace in their path. It is a conjunct rather than a surface, because
 // three surfaces carry it and one of them (namespaces) holds routes on both
@@ -244,6 +248,7 @@ var surfacePolicies = map[string]surfacePolicy{
 	"config":       {tree: ConfigRoutePolicy},
 	"chat":         {tree: ChatRoutePolicy},
 	"billing":      {tree: BillingRoutePolicy},
+	"usage":        {tree: UsageRoutePolicy},
 	"namespaces":   {tree: NamespacesRoutePolicy},
 	"github-trust": {tree: GitHubTrustRoutePolicy},
 	"user-keys":    {tree: UserKeysRoutePolicy},
@@ -263,8 +268,10 @@ var surfacePolicies = map[string]surfacePolicy{
 // memoized per surface: the three billing routes share one module, one tree,
 // and one compiled plan.
 var routeSurfaces = map[string]string{
-	"/api/config":      "config",
-	"/api/state/query": "state-query",
+	"/api/config":         "config",
+	"/api/state/query":    "state-query",
+	"/api/usage/overview": "usage",
+	"/api/usage/pool":     "usage",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",

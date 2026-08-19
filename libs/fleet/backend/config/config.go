@@ -13,8 +13,13 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -30,6 +35,7 @@ type Configuration struct {
 	Chat      ChatConfiguration
 	Metrics   MetricsConfiguration
 	Telemetry TelemetryConfiguration
+	Usage     UsageConfiguration
 }
 
 type WebServerConfiguration struct {
@@ -117,6 +123,23 @@ type ChatConfiguration struct {
 	Model   string
 }
 
+// UsageConfiguration enables the usage provider only when DatabaseURL is set.
+// OpenCostBaseURL may be configured before the usage credential arrives; in
+// that state the provider remains disabled so serving readiness is unaffected.
+type UsageConfiguration struct {
+	DatabaseURL      string
+	OpenCostBaseURL  string
+	QueryTimeout     time.Duration
+	MaxResponseBytes int64
+}
+
+const (
+	minUsageQueryTimeout = time.Second
+	maxUsageQueryTimeout = 2 * time.Minute
+	minUsageResponseSize = 64 * 1024
+	maxUsageResponseSize = 32 * 1024 * 1024
+)
+
 type MetricsConfiguration struct {
 	Addr string // METRICS_ADDR — Prometheus listen addr
 }
@@ -161,6 +184,10 @@ var specs = []flagSpec{
 	{"database.url", "database-url", "DATABASE_URL", "", "Postgres URL for trust-policy storage (enables /api/github-trust-policies)"},
 	{"database.state-query-dsn", "state-query-database-dsn", "STATE_QUERY_DATABASE_DSN", "", "Postgres connection options for tenant state queries"},
 	{"database.state-query-tenant-password", "state-query-tenant-password", "STATE_QUERY_TENANT_PASSWORD", "", "Shared password for tenant query login roles"},
+	{"usage.database-url", "usage-database-url", "USAGE_DATABASE_URL", "", "Postgres URL for usage events"},
+	{"usage.opencost-base-url", "opencost-base-url", "OPENCOST_BASE_URL", "", "OpenCost base URL for usage allocations"},
+	{"usage.query-timeout", "usage-query-timeout", "USAGE_QUERY_TIMEOUT", "20s", "Usage provider query timeout"},
+	{"usage.max-response-bytes", "usage-max-response-bytes", "USAGE_MAX_RESPONSE_BYTES", "8388608", "Maximum OpenCost response bytes"},
 	{"stripe.secret-key", "stripe-secret-key", "STRIPE_SECRET_KEY", "", "Stripe secret key (server-only)"},
 	{"stripe.webhook-secret", "stripe-webhook-secret", "STRIPE_WEBHOOK_SECRET", "", "Stripe webhook signing secret"},
 	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
@@ -204,6 +231,15 @@ func splitCommaSeparated(value string) []string {
 }
 
 func LoadConfig() (*Configuration, error) {
+	usageQueryTimeout, err := parseUsageQueryTimeout(viper.GetString("usage.query-timeout"))
+	if err != nil {
+		return nil, err
+	}
+	usageMaxResponseBytes, err := parseUsageMaxResponseBytes(viper.GetString("usage.max-response-bytes"))
+	if err != nil {
+		return nil, err
+	}
+
 	base := strings.TrimRight(viper.GetString("kc.base-url"), "/")
 	realm := viper.GetString("kc.realm")
 	realmPath := fmt.Sprintf("%s/realms/%s", base, realm)
@@ -269,6 +305,12 @@ func LoadConfig() (*Configuration, error) {
 			APIKey:  viper.GetString("chat.api-key"),
 			Model:   viper.GetString("chat.model"),
 		},
+		Usage: UsageConfiguration{
+			DatabaseURL:      strings.TrimSpace(viper.GetString("usage.database-url")),
+			OpenCostBaseURL:  strings.TrimSpace(viper.GetString("usage.opencost-base-url")),
+			QueryTimeout:     usageQueryTimeout,
+			MaxResponseBytes: usageMaxResponseBytes,
+		},
 		Metrics: MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
 		Telemetry: TelemetryConfiguration{
 			Endpoint:         viper.GetString("telemetry.endpoint"),
@@ -284,6 +326,9 @@ func LoadConfig() (*Configuration, error) {
 	}
 	if cfg.Chat.Access.Enabled() && (cfg.Chat.BaseURL == "" || cfg.Chat.APIKey == "") {
 		return nil, fmt.Errorf("enabled chat access requires LITELLM_BASE_URL and LITELLM_API_KEY")
+	}
+	if err := validateUsageConfiguration(cfg.Usage); err != nil {
+		return nil, err
 	}
 	return cfg, nil
 }
@@ -302,4 +347,60 @@ func chatAccessMode(access string, legacyEnabled bool) ChatAccessMode {
 		}
 	}
 	return ChatAccessDisabled
+}
+
+func validateUsageConfiguration(cfg UsageConfiguration) error {
+	if cfg.QueryTimeout < minUsageQueryTimeout || cfg.QueryTimeout > maxUsageQueryTimeout {
+		return fmt.Errorf("USAGE_QUERY_TIMEOUT must be between 1s and 2m")
+	}
+	if cfg.MaxResponseBytes < minUsageResponseSize || cfg.MaxResponseBytes > maxUsageResponseSize {
+		return fmt.Errorf("USAGE_MAX_RESPONSE_BYTES must be between 65536 and 33554432")
+	}
+	// Deployments set OPENCOST_BASE_URL before the usage ExternalSecret is
+	// available. An absent database URL therefore disables usage, while a
+	// database URL without OpenCost remains an unsafe configuration error.
+	if cfg.DatabaseURL == "" {
+		return nil
+	}
+	if cfg.OpenCostBaseURL == "" {
+		return fmt.Errorf("USAGE_DATABASE_URL requires OPENCOST_BASE_URL")
+	}
+	databaseURL, err := url.Parse(cfg.DatabaseURL)
+	if err != nil {
+		return newSanitizedError("invalid usage database URL", err)
+	}
+	if (databaseURL.Scheme != "postgres" && databaseURL.Scheme != "postgresql") || databaseURL.Host == "" {
+		return fmt.Errorf("invalid usage database URL")
+	}
+	postgresConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return newSanitizedError("invalid usage database URL", err)
+	}
+	if postgresConfig.ConnConfig.User != "cyclops_usage_reader" {
+		return fmt.Errorf("usage database URL must use cyclops_usage_reader")
+	}
+	openCostURL, err := url.Parse(cfg.OpenCostBaseURL)
+	if err != nil {
+		return newSanitizedError("invalid OpenCost URL", err)
+	}
+	if (openCostURL.Scheme != "http" && openCostURL.Scheme != "https") || openCostURL.Host == "" || openCostURL.RawQuery != "" || openCostURL.Fragment != "" || openCostURL.User != nil {
+		return fmt.Errorf("invalid OpenCost URL")
+	}
+	return nil
+}
+
+func parseUsageQueryTimeout(raw string) (time.Duration, error) {
+	value, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("invalid USAGE_QUERY_TIMEOUT: %w", err)
+	}
+	return value, nil
+}
+
+func parseUsageMaxResponseBytes(raw string) (int64, error) {
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid USAGE_MAX_RESPONSE_BYTES: %w", err)
+	}
+	return value, nil
 }

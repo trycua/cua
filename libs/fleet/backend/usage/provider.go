@@ -1,0 +1,451 @@
+package usage
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"cyclops-cs-backend/identity"
+)
+
+var ErrPoolNotFound = errors.New("usage pool not found")
+
+type provider struct {
+	events      EventStore
+	allocations AllocationClient
+	clock       func() time.Time
+}
+
+type liveSegment struct {
+	namespace string
+	uid       string
+	pool      string
+	runtime   string
+	vmName    string
+	start     time.Time
+	end       time.Time
+}
+
+func NewProvider(events EventStore, allocations AllocationClient, clock func() time.Time) *provider {
+	if clock == nil {
+		clock = time.Now
+	}
+	return &provider{events: events, allocations: allocations, clock: clock}
+}
+
+func (p *provider) Overview(ctx context.Context, query Query) (OverviewResponse, error) {
+	data, err := p.load(ctx, query)
+	if err != nil {
+		return OverviewResponse{}, err
+	}
+	response := OverviewResponse{DataAsOf: data.asOf, Partial: data.partial, Pools: make([]PoolSummary, 0)}
+	for _, pool := range data.pools {
+		response.Pools = append(response.Pools, PoolSummary{ID: pool.id, Name: pool.name, CPU: MetricTotals{Consumed: pool.cpuConsumed, Provisioned: pool.cpuProvisioned}, Memory: MetricTotals{Consumed: pool.memoryConsumed, Provisioned: pool.memoryProvisioned}})
+	}
+	return response, nil
+}
+
+func (p *provider) PoolDetail(ctx context.Context, query PoolQuery) (PoolDetailResponse, error) {
+	namespace, poolName, ok := parsePoolID(query.PoolID)
+	if !ok {
+		return PoolDetailResponse{}, fmt.Errorf("invalid pool ID")
+	}
+	data, err := p.load(ctx, query.Query)
+	if err != nil {
+		return PoolDetailResponse{}, err
+	}
+	step, err := intervalDuration(query.Interval)
+	if err != nil {
+		return PoolDetailResponse{}, err
+	}
+	pool, ok := findPool(data.pools, query.PoolID)
+	if !ok {
+		return PoolDetailResponse{}, fmt.Errorf("%w: %s", ErrPoolNotFound, query.PoolID)
+	}
+	response := PoolDetailResponse{DataAsOf: data.asOf, Partial: data.partial, Pool: PoolIdentity{ID: pool.id, Name: pool.name}, Buckets: make([]Bucket, 0)}
+	for start := data.start; start.Before(data.end); start = start.Add(step) {
+		key := bucketKey{namespace: namespace, pool: poolName, start: start}
+		totals := data.buckets[key]
+		response.Buckets = append(response.Buckets, Bucket{Start: start, End: start.Add(step), CPUConsumed: totals.cpuConsumed, CPUProvisioned: totals.cpuProvisioned, MemoryConsumed: totals.memoryConsumed, MemoryProvisioned: totals.memoryProvisioned})
+	}
+	return response, nil
+}
+
+type usageData struct {
+	start   time.Time
+	end     time.Time
+	asOf    time.Time
+	partial bool
+	pools   []usageTotals
+	buckets map[bucketKey]usageTotals
+}
+
+type usageTotals struct {
+	id                string
+	name              string
+	cpuConsumed       float64
+	cpuProvisioned    float64
+	memoryConsumed    float64
+	memoryProvisioned float64
+}
+
+type bucketKey struct {
+	namespace string
+	pool      string
+	start     time.Time
+}
+
+func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
+	if p.events == nil || p.allocations == nil {
+		return usageData{}, fmt.Errorf("usage provider is not configured")
+	}
+	start, end, step, err := usageWindow(query.Timeframe, p.clock())
+	if err != nil {
+		return usageData{}, err
+	}
+	events, err := p.events.Events(ctx, identity.PersonalGroup(ctx, query.Subject), start, end)
+	if err != nil {
+		return usageData{}, fmt.Errorf("read usage events: %w", err)
+	}
+	segments, namespaces, partial := buildSegments(events, start, end)
+	data := usageData{start: start, end: end, asOf: end, partial: partial, pools: make([]usageTotals, 0), buckets: make(map[bucketKey]usageTotals)}
+	if len(segments) == 0 || len(namespaces) == 0 {
+		return data, nil
+	}
+	allocations, asOf, sourcePartial, err := p.allocations.Allocations(ctx, start, end, step, namespaces)
+	if err != nil {
+		return usageData{}, fmt.Errorf("read OpenCost allocations: %w", err)
+	}
+	if asOf.IsZero() {
+		asOf = start
+		sourcePartial = true
+	}
+	data.asOf = minTime(end, asOf.UTC())
+	if data.asOf.Before(start) {
+		data.asOf = start
+		sourcePartial = true
+	}
+	data.partial = data.partial || sourcePartial || data.asOf.Before(end)
+	poolTotals := make(map[string]usageTotals)
+	for _, allocation := range allocations {
+		matched, allocationPartial := attributeAllocation(allocation, segments, start, end, step, poolTotals, data.buckets)
+		if !matched || allocationPartial {
+			data.partial = true
+		}
+	}
+	for _, totals := range poolTotals {
+		if !totals.isZero() {
+			data.pools = append(data.pools, totals)
+		}
+	}
+	disambiguatePoolNames(data.pools)
+	sort.Slice(data.pools, func(i, j int) bool { return data.pools[i].id < data.pools[j].id })
+	return data, nil
+}
+
+func usageWindow(timeframe Timeframe, now time.Time) (time.Time, time.Time, time.Duration, error) {
+	cutoff := now.UTC().Truncate(time.Hour)
+	switch timeframe {
+	case Timeframe24H:
+		return cutoff.Add(-24 * time.Hour), cutoff, time.Hour, nil
+	case Timeframe7D:
+		return cutoff.Add(-7 * 24 * time.Hour), cutoff, time.Hour, nil
+	case Timeframe30D:
+		return cutoff.Add(-30 * 24 * time.Hour), cutoff, 24 * time.Hour, nil
+	default:
+		return time.Time{}, time.Time{}, 0, fmt.Errorf("invalid usage timeframe")
+	}
+}
+
+func intervalDuration(interval Interval) (time.Duration, error) {
+	switch interval {
+	case IntervalHour:
+		return time.Hour, nil
+	case IntervalDay:
+		return 24 * time.Hour, nil
+	default:
+		return 0, fmt.Errorf("invalid usage interval")
+	}
+}
+
+func parsePoolID(id string) (string, string, bool) {
+	parts := strings.Split(id, ":")
+	if len(parts) != 2 || !dns1123Label.MatchString(parts[0]) || !validPoolName(parts[1]) {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func validPoolName(name string) bool {
+	return len(name) <= 63 && dns1123Label.MatchString(name)
+}
+
+func buildSegments(events []SandboxEvent, start, end time.Time) ([]liveSegment, []string, bool) {
+	bySandbox := make(map[string][]SandboxEvent)
+	seen := make(map[[16]byte]struct{}, len(events))
+	partial := false
+	for _, event := range events {
+		if _, ok := seen[event.EventID]; ok {
+			continue
+		}
+		seen[event.EventID] = struct{}{}
+		if err := validateSandboxEvent(event); err != nil || !event.ObservedAt.Before(end) {
+			partial = true
+			continue
+		}
+		key := event.Namespace + "\x00" + event.SandboxUID
+		bySandbox[key] = append(bySandbox[key], event)
+	}
+	segments := make([]liveSegment, 0)
+	namespaceSet := make(map[string]struct{})
+	for _, timeline := range bySandbox {
+		sort.SliceStable(timeline, func(i, j int) bool {
+			return timeline[i].ObservedAt.Before(timeline[j].ObservedAt)
+		})
+		var active *SandboxEvent
+		activeStart := start
+		certain := false
+		appendActive := func(until time.Time) {
+			if active == nil || !certain || !until.After(activeStart) {
+				return
+			}
+			segmentEnd := minTime(until, end)
+			if segmentEnd.After(activeStart) {
+				segments = append(segments, liveSegment{namespace: active.Namespace, uid: active.SandboxUID, pool: active.PoolName, runtime: active.Runtime, vmName: active.VMName, start: activeStart, end: segmentEnd})
+				namespaceSet[active.Namespace] = struct{}{}
+			}
+		}
+		invalidate := func(at time.Time) {
+			appendActive(at)
+			active = nil
+			activeStart = at
+			certain = false
+		}
+		for index := 0; index < len(timeline); {
+			event := timeline[index]
+			at := event.ObservedAt.UTC()
+			if index+1 < len(timeline) && at.Equal(timeline[index+1].ObservedAt) {
+				partial = true
+				invalidate(at)
+				for index < len(timeline) && at.Equal(timeline[index].ObservedAt.UTC()) {
+					index++
+				}
+				continue
+			}
+			isBaseline := index == 0 && at.Before(start)
+			if isBaseline {
+				switch strings.ToLower(event.EventType) {
+				case "added", "modified":
+					copy := event
+					active = &copy
+					activeStart = start
+					certain = true
+				case "deleted":
+					active = nil
+					activeStart = start
+					certain = true
+				default:
+					partial = true
+					invalidate(start)
+				}
+				index++
+				continue
+			}
+			if !at.Before(start) && index == 0 {
+				partial = true
+			}
+			switch strings.ToLower(event.EventType) {
+			case "added":
+				if active != nil && certain {
+					partial = true
+					invalidate(at)
+					index++
+					continue
+				}
+				copy := event
+				active = &copy
+				activeStart = maxTime(at, start)
+				certain = true
+			case "modified":
+				if active == nil || !certain {
+					partial = true
+					invalidate(at)
+					index++
+					continue
+				}
+				appendActive(at)
+				copy := event
+				active = &copy
+				activeStart = maxTime(at, start)
+			case "deleted":
+				if active == nil || !certain {
+					partial = true
+					invalidate(at)
+					index++
+					continue
+				}
+				appendActive(at)
+				active = nil
+				activeStart = at
+				certain = true
+			default:
+				partial = true
+				invalidate(at)
+			}
+			index++
+		}
+		appendActive(end)
+	}
+	namespaces := make([]string, 0, len(namespaceSet))
+	for namespace := range namespaceSet {
+		namespaces = append(namespaces, namespace)
+	}
+	sort.Strings(namespaces)
+	return segments, namespaces, partial
+}
+
+func findPool(pools []usageTotals, id string) (usageTotals, bool) {
+	for _, pool := range pools {
+		if pool.id == id {
+			return pool, true
+		}
+	}
+	return usageTotals{}, false
+}
+
+func (totals usageTotals) isZero() bool {
+	return totals.cpuConsumed == 0 && totals.cpuProvisioned == 0 && totals.memoryConsumed == 0 && totals.memoryProvisioned == 0
+}
+
+func disambiguatePoolNames(pools []usageTotals) {
+	counts := make(map[string]int, len(pools))
+	for _, pool := range pools {
+		counts[pool.name]++
+	}
+	for index := range pools {
+		if counts[pools[index].name] > 1 {
+			namespace, _, _ := strings.Cut(pools[index].id, ":")
+			pools[index].name = namespace + "/" + pools[index].name
+		}
+	}
+}
+
+func attributeAllocation(allocation Allocation, segments []liveSegment, windowStart, windowEnd time.Time, bucketDuration time.Duration, pools map[string]usageTotals, buckets map[bucketKey]usageTotals) (bool, bool) {
+	if allocation.Start.IsZero() || allocation.End.IsZero() || !allocation.End.After(allocation.Start) || allocation.Start.Before(windowStart) || allocation.End.After(windowEnd) || allocation.Minutes < 0 {
+		return false, true
+	}
+	matches := matchingSegments(allocation, segments)
+	if len(matches) == 0 {
+		return false, true
+	}
+	covered := 0.0
+	for _, match := range matches {
+		overlapStart := maxTime(allocation.Start, match.start)
+		overlapEnd := minTime(allocation.End, match.end)
+		if overlapEnd.After(overlapStart) {
+			covered += overlapEnd.Sub(overlapStart).Seconds()
+		}
+	}
+	partial := covered+0.000001 < allocation.End.Sub(allocation.Start).Seconds()
+	for _, match := range matches {
+		for bucketStart := bucketStartFor(allocation.Start, windowStart, bucketDuration); bucketStart.Before(allocation.End); bucketStart = bucketStart.Add(bucketDuration) {
+			bucketEnd := bucketStart.Add(bucketDuration)
+			overlapStart := maxTime(maxTime(allocation.Start, match.start), bucketStart)
+			overlapEnd := minTime(minTime(allocation.End, match.end), bucketEnd)
+			if !overlapEnd.After(overlapStart) {
+				continue
+			}
+			fraction := overlapEnd.Sub(overlapStart).Seconds() / allocation.End.Sub(allocation.Start).Seconds()
+			minutes := allocation.Minutes * fraction
+			cpuConsumed := allocation.CPUUsageAverage * minutes / 60
+			cpuProvisioned := allocation.CPURequestAverage * minutes / 60
+			memoryConsumed := allocation.RAMUsageAverageBytes * minutes / 60 / gibibyte
+			memoryProvisioned := allocation.RAMRequestAverageBytes * minutes / 60 / gibibyte
+			id := match.namespace + ":" + match.pool
+			pool := pools[id]
+			pool.id, pool.name = id, match.pool
+			pool.cpuConsumed += cpuConsumed
+			pool.cpuProvisioned += cpuProvisioned
+			pool.memoryConsumed += memoryConsumed
+			pool.memoryProvisioned += memoryProvisioned
+			pools[id] = pool
+			key := bucketKey{namespace: match.namespace, pool: match.pool, start: bucketStart}
+			bucket := buckets[key]
+			bucket.cpuConsumed += cpuConsumed
+			bucket.cpuProvisioned += cpuProvisioned
+			bucket.memoryConsumed += memoryConsumed
+			bucket.memoryProvisioned += memoryProvisioned
+			buckets[key] = bucket
+		}
+	}
+	return true, partial
+}
+
+func bucketStartFor(value, origin time.Time, duration time.Duration) time.Time {
+	value, origin = value.UTC(), origin.UTC()
+	if value.Before(origin) {
+		return origin
+	}
+	return origin.Add((value.Sub(origin) / duration) * duration)
+}
+
+func matchingSegments(allocation Allocation, segments []liveSegment) []liveSegment {
+	matches := make([]liveSegment, 0)
+	for _, segment := range segments {
+		if segment.namespace != allocation.Namespace || !allocation.End.After(segment.start) || !segment.end.After(allocation.Start) || !strings.EqualFold(segment.runtime, "kubevirt") {
+			continue
+		}
+		matches = append(matches, segment)
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	best := -1
+	for _, segment := range matches {
+		if kubeVirtPodMatches(allocation.Pod, segment.vmName) && len(segment.vmName) > best {
+			best = len(segment.vmName)
+		}
+	}
+	if best < 0 {
+		return nil
+	}
+	result := matches[:0]
+	for _, segment := range matches {
+		if len(segment.vmName) == best && kubeVirtPodMatches(allocation.Pod, segment.vmName) {
+			result = append(result, segment)
+		}
+	}
+	// Adjacent events for the same sandbox can produce multiple temporal pieces;
+	// reject competing sandboxes that overlap the same allocation instant.
+	for index, left := range result {
+		for _, right := range result[index+1:] {
+			if left.uid != right.uid && left.end.After(right.start) && right.end.After(left.start) {
+				return nil
+			}
+		}
+	}
+	return result
+}
+
+func kubeVirtPodMatches(pod, vmName string) bool {
+	prefix := "virt-launcher-" + vmName + "-"
+	return strings.HasPrefix(pod, prefix) && len(pod) > len(prefix)
+}
+
+func minTime(left, right time.Time) time.Time {
+	if left.Before(right) {
+		return left
+	}
+	return right
+}
+func maxTime(left, right time.Time) time.Time {
+	if left.After(right) {
+		return left
+	}
+	return right
+}
+
+var _ Provider = (*provider)(nil)

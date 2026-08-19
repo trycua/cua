@@ -16,6 +16,7 @@ import (
 	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/keycloak"
+	"cyclops-cs-backend/usage"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -38,6 +39,10 @@ type Handlers struct {
 	// executor and the GitHub trust policy store). It is a pointer because
 	// setupRouter copies Handlers by value; see features.go.
 	Features *Features
+	Usage    usage.Provider
+
+	usageAccessEvaluator func(context.Context, *auth.User) (bool, error)
+	adminAccessEvaluator func(context.Context, *auth.User) (bool, error)
 
 	ChatAccess          config.ChatAccessMode
 	Conversations       chat.ConversationStore
@@ -67,6 +72,22 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		ChatAccess:   cfg.Chat.Access,
 		chatLocks:    newConversationLockRegistry(),
 	}
+}
+
+func (h Handlers) usageEnabled(ctx context.Context, user *auth.User) (bool, error) {
+	evaluator := h.usageAccessEvaluator
+	if evaluator == nil {
+		evaluator = auth.EvalUsageEnabled
+	}
+	return evaluator(ctx, user)
+}
+
+func (h Handlers) isAdmin(ctx context.Context, user *auth.User) (bool, error) {
+	evaluator := h.adminAccessEvaluator
+	if evaluator == nil {
+		evaluator = auth.EvalIsAdmin
+	}
+	return evaluator(ctx, user)
 }
 
 func (h Handlers) chatEnabled(ctx context.Context, user *auth.User) (bool, error) {

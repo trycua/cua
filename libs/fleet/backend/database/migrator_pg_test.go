@@ -131,14 +131,14 @@ func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
 	upgrade := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if upgrade.Current != 1 || upgrade.Target != 3 || upgrade.Pending != 2 || upgrade.Applied != 2 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+	if upgrade.Current != 1 || upgrade.Target != 4 || upgrade.Pending != 3 || upgrade.Applied != 3 || upgrade.Skipped != 1 || upgrade.Result != "success" {
 		t.Fatalf("version-one upgrade summary = %+v", upgrade)
 	}
 
 	noOp := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if noOp.Current != 3 || noOp.Target != 3 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 3 || noOp.Result != "success" {
+	if noOp.Current != 4 || noOp.Target != 4 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 4 || noOp.Result != "success" {
 		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
 	}
 }
@@ -1533,8 +1533,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 3 {
-		t.Fatalf("migration ledger row count = %d, want 3", len(ledger))
+	if len(ledger) != 4 {
+		t.Fatalf("migration ledger row count = %d, want 4", len(ledger))
 	}
 	for index, want := range []struct {
 		version  int64
@@ -1543,6 +1543,7 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 		{1, "000001_initial_schema.sql"},
 		{2, "000002_usage_sandbox_events.sql"},
 		{3, "000003_usage_claimed_sandbox_pool.sql"},
+		{4, "000004_filter_invalid_usage_sandbox_events.sql"},
 	} {
 		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
 			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
@@ -1872,7 +1873,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 3 {
+		if err != nil || count != 4 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)
@@ -1925,7 +1926,8 @@ func assertUsageReaderBoundary(t *testing.T, ctx context.Context, inspectionURL,
 		('10000000-0000-0000-0000-000000000017', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-b', 'user-alice', 'sandbox-uid-b', 'schema', 'ADDED', 2, 107, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-b-old"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-b-old"}}', '2026-08-17T20:00:00Z'),
 		('10000000-0000-0000-0000-000000000018', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-b', 'user-alice', 'sandbox-uid-b', 'schema', 'MODIFIED', 2, 108, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-b"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-b"}}', '2026-08-17T22:00:00Z'),
 		('10000000-0000-0000-0000-000000000019', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-other', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'ADDED', 2, 109, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-other-old"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-other-old"}}', '2026-08-17T19:00:00Z'),
-		('10000000-0000-0000-0000-000000000020', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-other', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'MODIFIED', 2, 110, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-other"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-other"}}', '2026-08-17T21:00:00Z')`)
+		('10000000-0000-0000-0000-000000000020', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-other', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'MODIFIED', 2, 110, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-other"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-other"}}', '2026-08-17T21:00:00Z'),
+		('10000000-0000-0000-0000-000000000021', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'legacy-unlabeled', 'user-alice', 'legacy-unlabeled-uid', 'schema', 'ADDED', 1, 1, '{"metadata":{"labels":{}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"legacy-vm"}}', '2026-08-18T10:00:00Z')`)
 	if err != nil {
 		t.Fatal("seed usage sandbox events")
 	}

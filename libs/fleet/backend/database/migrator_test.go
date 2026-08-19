@@ -520,8 +520,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 3 {
-		t.Fatalf("expected exactly three migrations, got %d", len(files))
+	if len(files) != 4 {
+		t.Fatalf("expected exactly four migrations, got %d", len(files))
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -592,6 +592,21 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	} {
 		if !strings.Contains(claimedSandboxPool.SQL, expected) {
 			t.Errorf("claimed sandbox pool migration is missing contract %q", expected)
+		}
+	}
+
+	legacyFilter := files[3]
+	if legacyFilter.Version != 4 || legacyFilter.Name != "000004_filter_invalid_usage_sandbox_events.sql" {
+		t.Fatalf("expected version 4 usage filter migration, got version=%d name=%q", legacyFilter.Version, legacyFilter.Name)
+	}
+	for _, expected := range []string{
+		"CREATE OR REPLACE FUNCTION k8s_reporting.usage_sandbox_events",
+		"event.object -> 'metadata' -> 'annotations' ->> 'osgym.cua.ai/origin-warmpool'",
+		"event.object -> 'spec' -> 'vmTemplate' ->> 'runtime' <> ''",
+		"event.object -> 'status' ->> 'vmName' <> ''",
+	} {
+		if !strings.Contains(legacyFilter.SQL, expected) {
+			t.Errorf("usage filter migration is missing contract %q", expected)
 		}
 	}
 }

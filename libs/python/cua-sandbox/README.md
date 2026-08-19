@@ -96,6 +96,19 @@ Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `
 
 Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
 
+`Image.linux()` and `Image.windows()` select Cua's pinned built-in images. To use another image, pass its OCI registry reference explicitly:
+
+```python
+image = Image.from_registry(
+    "public.ecr.aws/example/linux-desktop:2026-01-01"
+).expose(3000)
+
+async with Sandbox.ephemeral(image) as sb:
+    await sb.shell.run("df -h /")
+```
+
+Fleet does not provide image discovery or resize a guest disk at launch. The registry image must already be a Fleet-compatible OCI containerDisk containing the guest OS and Cua computer-server. A normal Docker image such as `ubuntu:24.04` is not a drop-in replacement for a desktop containerDisk.
+
 ## Fleet pools and durable claims
 
 For production workloads, claim from an existing pool. Supplying `pool=` never changes its configuration; `name=` names the claim, while `sb.name` is the separately bound sandbox resource.

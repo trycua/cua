@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/handlers"
 )
 
@@ -23,6 +25,14 @@ import (
 // The verdicts are the ones auth/testdata/route-authorization-table.txt records
 // for the same route, params and principal — a spa token here is the table's
 // "spa" row.
+
+type allowedNamespaceFacts struct{}
+
+func (allowedNamespaceFacts) CacheKey() string { return auth.NamespaceRBACFactProvider }
+
+func (allowedNamespaceFacts) LoadFacts(context.Context, *http.Request) (auth.FactSet, error) {
+	return auth.FactSet{"allowed": true}, nil
+}
 
 // isPolicyDenial reports whether a response is the authorization stage's own
 // 403 rather than a handler's. The two are told apart by message: the policy
@@ -103,6 +113,10 @@ func TestSvcRouteVerdictFollowsTheNamespaceParam(t *testing.T) {
 	const svcDeniedMessage = "forbidden"
 
 	router := setupRouter(handlers.Handlers{})
+	auth.RegisterFactProvider(auth.NamespaceRBACFactProvider, allowedNamespaceFacts{})
+	t.Cleanup(func() {
+		auth.RegisterFactProvider(auth.NamespaceRBACFactProvider, handlers.NamespaceRBACFacts(handlers.Handlers{}))
+	})
 
 	allowed := httptest.NewRecorder()
 	router.ServeHTTP(allowed, authorizedRequest(t, http.MethodGet, "/api/svc/ns-a/svc-a", nil))

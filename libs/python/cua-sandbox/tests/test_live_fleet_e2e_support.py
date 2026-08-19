@@ -11,7 +11,10 @@ from fleet_sdk import SdkError
 from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_namespace_name,
+    build_pool_namespace_name,
     collect_resource_inventory,
+    has_oauth_credentials,
+    is_pool_missing_error,
     wait_claims_absent,
     write_summary,
 )
@@ -47,6 +50,54 @@ def test_build_namespace_name_normalizes_invalid_overlong_lane_input() -> None:
     assert len(name) <= 63
     assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", name)
     assert name.startswith("cua-live-published-package-")
+
+
+@pytest.mark.parametrize("mode", ["warm", "cold"])
+@pytest.mark.parametrize(
+    ("event_name", "event_class"),
+    [("schedule", "schedule"), ("push", "push"), ("workflow_dispatch", "manual")],
+)
+def test_build_pool_namespace_name_is_stable_for_each_mode_lane_and_event_class(
+    mode: str, event_name: str, event_class: str
+) -> None:
+    name = build_pool_namespace_name(mode, "published-package", event_name)
+    assert name == f"cua-live-pool-{mode}-published-package-{event_class}"
+    assert len(name) <= 63
+
+
+def test_build_pool_namespace_name_normalizes_invalid_overlong_input() -> None:
+    name = build_pool_namespace_name(
+        "warm", "Published_Package!!!" + "X" * 100, "workflow_dispatch"
+    )
+
+    assert len(name) <= 63
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", name)
+    assert name.startswith("cua-live-pool-warm-published-package-")
+
+
+@pytest.mark.parametrize(
+    ("error", "missing"),
+    [
+        (SdkError.Status("get pool", 404, b"not found"), True),
+        (SdkError.Status("get pool", 403, b"forbidden"), True),
+        (SdkError.Status("get pool", 500, b"failure"), False),
+        (RuntimeError("transport down"), False),
+    ],
+)
+def test_is_pool_missing_error_mirrors_reconcile_semantics(
+    error: BaseException, missing: bool
+) -> None:
+    assert is_pool_missing_error(error) is missing
+
+
+def test_support_has_oauth_credentials_requires_both_values(monkeypatch) -> None:
+    monkeypatch.delenv("CUA_CLIENT_ID", raising=False)
+    monkeypatch.delenv("CUA_CLIENT_SECRET", raising=False)
+    assert not has_oauth_credentials()
+    monkeypatch.setenv("CUA_CLIENT_ID", "client")
+    assert not has_oauth_credentials()
+    monkeypatch.setenv("CUA_CLIENT_SECRET", "secret")
+    assert has_oauth_credentials()
 
 
 def test_assert_template_contract_accepts_server_port_8000() -> None:

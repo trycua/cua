@@ -6,8 +6,8 @@ mod sandbox;
 mod warmpool;
 
 pub use claim::{
-    ClaimLifecycle, ClaimSpec, OSGymSandboxClaim, OSGymSandboxClaimCondition,
-    OSGymSandboxClaimSandbox, OSGymSandboxClaimStatus,
+    ClaimLifecycle, ClaimSpec, DEFAULT_CLAIM_BIND_DEADLINE_SECONDS, OSGymSandboxClaim,
+    OSGymSandboxClaimCondition, OSGymSandboxClaimSandbox, OSGymSandboxClaimStatus,
 };
 pub use common::{
     Firmware, ImagePullPolicy, OidcConfig, RuntimeKind, SandboxService, SandboxServiceBuilder,

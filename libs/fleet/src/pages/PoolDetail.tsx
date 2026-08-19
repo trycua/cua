@@ -10,7 +10,6 @@ import Link from "@cloudscape-design/components/link"
 import Modal from "@cloudscape-design/components/modal"
 import Select from "@cloudscape-design/components/select"
 import SpaceBetween from "@cloudscape-design/components/space-between"
-import Spinner from "@cloudscape-design/components/spinner"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
 import Table from "@cloudscape-design/components/table"
 import Tabs from "@cloudscape-design/components/tabs"
@@ -20,6 +19,9 @@ import { createClaim as createSdkClaim, deleteClaim, listClaims } from "../sdk/c
 import type { Claim, PoolData } from "../sdk/models"
 import { deletePool, getPool, updatePoolServices } from "../sdk/pools"
 import { derivePoolStatus, tombstonePool } from "../sdk/status"
+import { CuaButton } from "../components/CuaButton"
+import { PageEmpty, PageError } from "../components/PageState"
+import { PageShell } from "../components/PageShell"
 
 export function PoolDetail() {
   const { namespace = "", name = "" } = useParams()
@@ -30,17 +32,21 @@ export function PoolDetail() {
   const [loading, setLoading] = useState(true)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const p = await getPool(namespace, name)
       setPool(p)
     } catch (e) {
+      const message = String((e as Error).message)
+      setLoadError(message)
       flash.push({
         type: "error",
         header: `Failed to load pool "${name}"`,
-        content: String((e as Error).message),
+        content: message,
       })
     } finally {
       setLoading(false)
@@ -70,43 +76,54 @@ export function PoolDetail() {
 
   if (loading && !pool) {
     return (
-      <Container header={<Header variant="h1">{name}</Header>}>
-        <Box textAlign="center" padding="l">
-          <Spinner /> Loading pool…
-        </Box>
-      </Container>
+      <PageShell eyebrow="Fleet / Pool" title={name || "Pool"}>
+        <PageEmpty title="Loading pool…" />
+      </PageShell>
     )
   }
-  if (!pool) return null
+  if (!pool) {
+    return (
+      <PageShell eyebrow="Fleet / Pool" title={name || "Pool"}>
+        <PageError
+          title="Pool unavailable"
+          action={<CuaButton onClick={load}>Try again</CuaButton>}
+        >
+          {loadError}
+        </PageError>
+      </PageShell>
+    )
+  }
 
   const status = derivePoolStatus(pool)
 
   return (
-    <SpaceBetween size="l">
-      <Container
-        header={
-          <Header
-            variant="h1"
-            actions={
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" onClick={load} />
-                <Button
-                  onClick={() =>
-                    pool && navigate("/pools/new", { state: { source: pool } })
-                  }
-                >
-                  Duplicate
-                </Button>
-                <Button onClick={() => setConfirmingDelete(true)}>
-                  Delete
-                </Button>
-              </SpaceBetween>
+    <PageShell
+      eyebrow="Fleet / Pool"
+      title={pool.name}
+      description={<PoolStatusPill status={status} />}
+      secondaryActions={
+        <SpaceBetween direction="horizontal" size="xs">
+          <CuaButton
+            tone="icon"
+            ariaLabel="Refresh pool"
+            iconName="refresh"
+            onClick={load}
+          />
+          <CuaButton
+            onClick={() =>
+              navigate("/pools/new", { state: { source: pool } })
             }
           >
-            {pool.name}
-          </Header>
-        }
-      >
+            Duplicate
+          </CuaButton>
+          <CuaButton onClick={() => setConfirmingDelete(true)}>
+            Delete
+          </CuaButton>
+        </SpaceBetween>
+      }
+    >
+      <SpaceBetween size="l">
+      <Container header={<Header variant="h2">Overview</Header>}>
         <ColumnLayout columns={2} variant="text-grid">
           <div>
             <Box variant="awsui-key-label">Status</Box>
@@ -141,12 +158,12 @@ export function PoolDetail() {
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setConfirmingDelete(false)}>
+              <CuaButton onClick={() => setConfirmingDelete(false)}>
                 Cancel
-              </Button>
-              <Button variant="primary" onClick={remove} loading={deleting}>
+              </CuaButton>
+              <CuaButton tone="danger" onClick={remove} loading={deleting}>
                 Delete
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           </Box>
         }
@@ -155,7 +172,8 @@ export function PoolDetail() {
         in <b>{pool.namespace}</b>.
       </Modal>
 
-    </SpaceBetween>
+      </SpaceBetween>
+    </PageShell>
   )
 }
 
@@ -334,12 +352,12 @@ function ServicesEditor({
           variant="h2"
           actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="add-plus" onClick={addRow}>
+              <CuaButton iconName="add-plus" onClick={addRow}>
                 Add service
-              </Button>
-              <Button variant="primary" loading={saving} onClick={save}>
+              </CuaButton>
+              <CuaButton tone="primary" loading={saving} onClick={save}>
                 Save
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           }
         >
@@ -375,7 +393,12 @@ function ServicesEditor({
                 }
                 options={PROTOCOL_OPTIONS}
               />
-              <Button iconName="remove" variant="icon" onClick={() => removeRow(row.id)} />
+              <CuaButton
+                tone="icon"
+                ariaLabel={`Remove service ${row.name || "row"}`}
+                iconName="remove"
+                onClick={() => removeRow(row.id)}
+              />
             </ColumnLayout>
           ))}
         </SpaceBetween>
@@ -493,10 +516,15 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
             counter={`(${claims.length})`}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" onClick={loadClaims} />
-                <Button variant="primary" onClick={() => setShowCreate(true)}>
+                <CuaButton
+                  tone="icon"
+                  ariaLabel="Refresh claims"
+                  iconName="refresh"
+                  onClick={loadClaims}
+                />
+                <CuaButton tone="primary" onClick={() => setShowCreate(true)}>
                   Create claim
-                </Button>
+                </CuaButton>
               </SpaceBetween>
             }
           >
@@ -568,19 +596,19 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button
+              <CuaButton
                 onClick={() => setShowCreate(false)}
                 disabled={creating}
               >
                 Cancel
-              </Button>
-              <Button
-                variant="primary"
+              </CuaButton>
+              <CuaButton
+                tone="primary"
                 onClick={createClaim}
                 loading={creating}
               >
                 Create
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           </Box>
         }
@@ -605,19 +633,19 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button
+              <CuaButton
                 onClick={() => setConfirmRelease(null)}
                 disabled={releasing}
               >
                 Cancel
-              </Button>
-              <Button
-                variant="primary"
+              </CuaButton>
+              <CuaButton
+                tone="danger"
                 onClick={() => confirmRelease && releaseClaim(confirmRelease)}
                 loading={releasing}
               >
                 Release
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           </Box>
         }

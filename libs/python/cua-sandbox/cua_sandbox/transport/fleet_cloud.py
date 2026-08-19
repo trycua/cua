@@ -21,7 +21,7 @@ from cua_sandbox._config import (
 )
 from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
-from cua_sandbox.transport.fleet import FleetTransport
+from cua_sandbox.transport.fleet import FleetTransport, build_http_request
 from fleet_sdk import (
     AccessTokenProvider,
     AccessTokenProviderError,
@@ -41,6 +41,7 @@ from fleet_sdk import (
     PreservedJson,
     SandboxServiceBuilder,
     SandboxTemplateRefBuilder,
+    SdkError,
     ServiceProtocol,
     VmTemplateBuilder,
     WarmPoolAutoscaling,
@@ -53,6 +54,66 @@ logger = logging.getLogger(__name__)
 
 _DNS_LABEL_MAX_LENGTH = 63
 _CLAIM_HASH_LENGTH = 16
+# Bounds each readiness probe so one stalled /status round-trip cannot eat the
+# whole wait_service_ready deadline. Ignored by cua-fleet <= 0.1.8, whose
+# native client applies the same 30-second default.
+_READINESS_PROBE_TIMEOUT_SECS = 30
+
+
+# Newer Fleet SDKs raise SdkError.PoolAccessDenied from the Rust core for 403s
+# on pool-namespace writes, so every language binding shares one message. Use
+# that type when the installed cua-fleet provides it; otherwise map the plain
+# 403 Status errors older SDKs raise into an equivalent local error.
+_UPSTREAM_POOL_ACCESS_DENIED = getattr(SdkError, "PoolAccessDenied", None)
+
+if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+    PoolAccessDeniedError = _UPSTREAM_POOL_ACCESS_DENIED
+else:
+
+    class PoolAccessDeniedError(PermissionError):  # type: ignore[no-redef]
+        """Fleet refused a pool or template operation for this credential."""
+
+
+# Catch tuple for pool-access denials raised natively by newer Fleet SDKs;
+# empty when the installed cua-fleet predates the upstream variant.
+_NATIVE_POOL_ACCESS_DENIED = (
+    () if _UPSTREAM_POOL_ACCESS_DENIED is None else (_UPSTREAM_POOL_ACCESS_DENIED,)
+)
+
+
+def _pool_access_denied_message(operation: str, namespace: str, status: int, body: str) -> str:
+    return (
+        f"Fleet denied {operation} on pool namespace '{namespace}' "
+        f"(HTTP {status}: {body}). Pool names are globally unique "
+        "across accounts, so this name may already be taken — try a new pool "
+        "name. If that does not work, contact support on Discord: "
+        "https://discord.gg/mVnXXpdE85"
+    )
+
+
+def _canonicalize_pool_access_denied(error: Exception) -> Exception:
+    # The uniffi-generated exception renders as a field dump
+    # (operation=..., namespace=..., ...); restore the Rust Display message so
+    # both raise paths read identically.
+    error.args = (
+        _pool_access_denied_message(error.operation, error.namespace, error.status, error.body),
+    )
+    return error
+
+
+def _pool_access_denied(namespace: str, error: SdkError.Status) -> Exception:
+    if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+        return _canonicalize_pool_access_denied(
+            _UPSTREAM_POOL_ACCESS_DENIED(
+                operation=error.operation,
+                namespace=namespace,
+                status=error.status,
+                body=error.body,
+            )
+        )
+    return PoolAccessDeniedError(
+        _pool_access_denied_message(error.operation, namespace, error.status, error.body)
+    )
 
 
 def _claim_name(pool_name: str) -> str:
@@ -308,8 +369,10 @@ class _FleetClient:
                 sandbox,
                 service,
                 "/status",
-                HttpRequest(
-                    method="GET", url="https://service.invalid/status", headers=[], body=None
+                build_http_request(
+                    method="GET",
+                    url="https://service.invalid/status",
+                    timeout_secs=_READINESS_PROBE_TIMEOUT_SECS,
                 ),
             )
             if 200 <= response.status < 500:
@@ -343,6 +406,18 @@ def _needs_ecr_pull_secret(image: "str | None") -> bool:
     return _ECR_HOST_MARKER in host and host.endswith(_ECR_HOST_SUFFIX)
 
 
+_TTL_SECONDS_MAX = 2**32 - 1
+
+
+def validate_ttl_seconds_after_created(value: "int | None") -> None:
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _TTL_SECONDS_MAX
+    ):
+        raise ValueError(
+            f"ttl_seconds_after_created must be an integer between 0 and {_TTL_SECONDS_MAX}"
+        )
+
+
 class FleetCloudTransport(FleetTransport):
     """Provision image-backed pools or claim pre-created pools through Fleet."""
 
@@ -363,6 +438,7 @@ class FleetCloudTransport(FleetTransport):
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
         autoscaling: Optional[WarmPoolAutoscaling] = None,
+        ttl_seconds_after_created: Optional[int] = None,
     ) -> None:
         if (
             isinstance(server_port, bool)
@@ -411,6 +487,7 @@ class FleetCloudTransport(FleetTransport):
                 raise ValueError(
                     "autoscaling.min_pool_size must not exceed autoscaling.max_pool_size"
                 )
+        validate_ttl_seconds_after_created(ttl_seconds_after_created)
         self._image = image
         self._name = name
         self._explicit_pool = pool_name is not None
@@ -425,6 +502,7 @@ class FleetCloudTransport(FleetTransport):
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
         self._autoscaling = autoscaling
+        self._ttl_seconds_after_created = ttl_seconds_after_created
         self._provisioned = False
         self._owns_resources = image is not None or create_claim
         self._template: Any = None
@@ -449,10 +527,17 @@ class FleetCloudTransport(FleetTransport):
                             self._pool = await self._sdk.wait_pool(self._pool)
                     else:
                         self._validate_image(self._image)
-                        self._pool = await self._sdk.reconcile_pool(self._pool_request())
-                        self._template = await self._sdk.reconcile_template(
-                            self._template_request()
-                        )
+                        try:
+                            self._pool = await self._sdk.reconcile_pool(self._pool_request())
+                            self._template = await self._sdk.reconcile_template(
+                                self._template_request()
+                            )
+                        except _NATIVE_POOL_ACCESS_DENIED as error:
+                            raise _canonicalize_pool_access_denied(error)
+                        except SdkError.Status as error:
+                            if error.status == 403:
+                                raise _pool_access_denied(self._pool_name, error) from error
+                            raise
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
                     if self._image is None and not self._create_claim:
@@ -654,6 +739,10 @@ class FleetCloudTransport(FleetTransport):
         )
         if self._autoscaling is not None:
             pool_spec_builder = pool_spec_builder.autoscaling(self._autoscaling)
+        if self._ttl_seconds_after_created is not None:
+            pool_spec_builder = pool_spec_builder.ttl_seconds_after_created(
+                self._ttl_seconds_after_created
+            )
         return (
             CreatePoolRequestBuilder()
             .namespace(self._pool_name)

@@ -22,11 +22,26 @@ import { PoolNew } from "./pages/PoolNew"
 import { UserApiKeys } from "./pages/UserApiKeys"
 import { Settings } from "./pages/Settings"
 import { AgentChat } from "./pages/AgentChat"
+import { PageShell } from "./components/PageShell"
 import { FeatureFlagProvider, useFeatureFlags } from "./components/FeatureFlagContext"
 import { FlashContext, type FlashMsg } from "./components/FlashContext"
 import { logout, userInfo } from "./auth/keycloak"
+import cuaLockup from "@cua/design/assets/brand/cua-lockup-white.svg"
+import designTokens from "@cua/design/tokens.json"
+import { localVisualPreviewPath } from "./local-visual-preview"
 
 const VERSION_CHECK_INTERVAL_MS = 60_000
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches)
+  useEffect(() => {
+    const media = window.matchMedia(query)
+    const update = () => setMatches(media.matches)
+    media.addEventListener("change", update)
+    return () => media.removeEventListener("change", update)
+  }, [query])
+  return matches
+}
 
 function useStaleCheck(): { stale: boolean } {
   const [stale, setStale] = useState(false)
@@ -80,8 +95,37 @@ function Shell() {
   const [flashes, setFlashes] = useState<FlashbarProps.MessageDefinition[]>([])
   const { stale } = useStaleCheck()
   const [staleDismissed, setStaleDismissed] = useState(false)
+  const [navigationOpen, setNavigationOpen] = useState(
+    () => window.innerWidth >= designTokens.layout.breakpoint.tablet,
+  )
+  const tabletOrWider = useMediaQuery(
+    `(min-width: ${designTokens.layout.breakpoint.tablet}px)`,
+  )
+  const mobile = useMediaQuery(
+    `(max-width: ${designTokens.layout.breakpoint.mobile - 1}px)`,
+  )
+  useEffect(() => {
+    setNavigationOpen(tabletOrWider)
+  }, [tabletOrWider])
   const user = userInfo()
   const { chat } = useFeatureFlags()
+  useEffect(() => {
+    const path = location.pathname
+    const pageTitle = path === "/agent"
+      ? "Chat"
+      : path === "/user-keys"
+        ? "User API keys"
+        : path === "/settings"
+          ? "Settings"
+          : path === "/pools/new"
+            ? "New pool"
+            : path.includes("/claims/")
+              ? "Claim details"
+              : path.startsWith("/pools/")
+                ? "Pool details"
+                : "Pools"
+    document.title = `${pageTitle} · Cua`
+  }, [location.pathname])
   const pushFlash = useCallback((msg: FlashMsg) => {
     const id = crypto.randomUUID()
     const dismiss = () =>
@@ -103,80 +147,91 @@ function Shell() {
 
   return (
     <FlashContext.Provider value={flashContext}>
-      <TopNavigation
-        identity={{ href: "#/", title: "Pools" }}
-        utilities={[
-          {
-            type: "button",
-            text: "Pools",
-            href: "#/pools",
-            onClick: e => {
-              e.preventDefault()
-              navigate("/pools")
-            },
-          },
-          {
-            type: "menu-dropdown",
-            text: user.name ?? user.email ?? "Account",
-            description: user.email,
-            iconName: "user-profile",
-            items: [{ id: "signout", text: "Sign out" }],
-            onItemClick: e => {
-              if (e.detail.id === "signout") logout()
-            },
-          },
-        ]}
-      />
-      <AppLayout
-        toolsHide
-        navigation={
-          <div style={{ fontSize: "1.25rem" }}>
-            <SideNavigation
-              header={{ href: "#/", text: "Pools" }}
-              activeHref={`#${location.pathname}`}
-              onFollow={e => {
-                if (!e.detail.external) {
-                  e.preventDefault()
-                  navigate(e.detail.href.replace(/^#/, ""))
-                }
-              }}
-              items={[
-                { type: "link", text: "Pools", href: "#/pools" },
-                ...(chat ? [{ type: "link" as const, text: "Chat", href: "#/agent" }] : []),
-                { type: "link", text: "User API keys", href: "#/user-keys" },
-                { type: "link", text: "Settings", href: "#/settings" },
-              ]}
-            />
-          </div>
-        }
-        notifications={
-          <Flashbar
-            items={[
-              ...(stale && !staleDismissed
-                ? [
-                    {
-                      type: "info" as const,
-                      header: "A new version is available",
-                      content: "Refresh to get the latest features and fixes.",
-                      action: (
-                        <Button onClick={() => window.location.reload()}>
-                          Refresh now
-                        </Button>
-                      ),
-                      dismissible: true,
-                      onDismiss: () => setStaleDismissed(true),
-                      id: "__stale__",
-                    },
-                  ]
-                : []),
-              ...flashes,
+      <div className="cua-dashboard-theme cua-shell">
+        <div id="cua-shell-topnav" className="cua-shell__topnav">
+          <TopNavigation
+            identity={{
+              href: "#/",
+              logo: { src: cuaLockup, alt: "Cua" },
+            }}
+            utilities={[
+              {
+                type: "menu-dropdown",
+                text: user.name ?? user.email ?? "Account",
+                iconName: "user-profile",
+                items: [{ id: "signout", text: "Sign out" }],
+                onItemClick: e => {
+                  if (e.detail.id === "signout") logout()
+                },
+              },
             ]}
-            stackItems
           />
-        }
-        content={<Outlet />}
-        contentType="default"
-      />
+        </div>
+        <AppLayout
+          headerSelector="#cua-shell-topnav"
+          ariaLabels={{
+            navigation: "Main navigation",
+            navigationClose: "Close navigation",
+            navigationToggle: "Open navigation",
+          }}
+          toolsHide
+          navigationOpen={navigationOpen}
+          onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
+          navigation={
+            <div className="cua-shell__nav">
+              <SideNavigation
+                header={mobile ? undefined : { href: "#/pools", text: "Cua" }}
+                activeHref={`#${location.pathname}`}
+                onFollow={e => {
+                  if (!e.detail.external) {
+                    e.preventDefault()
+                    navigate(
+                      localVisualPreviewPath(
+                        e.detail.href.replace(/^#/, ""),
+                      ),
+                    )
+                  }
+                }}
+                items={[
+                  { type: "link", text: "Pools", href: "#/pools" },
+                  ...(chat
+                    ? [{ type: "link" as const, text: "Chat", href: "#/agent" }]
+                    : []),
+                  { type: "link", text: "User API keys", href: "#/user-keys" },
+                  { type: "link", text: "Settings", href: "#/settings" },
+                ]}
+              />
+            </div>
+          }
+          notifications={
+            <Flashbar
+              items={[
+                ...(stale && !staleDismissed
+                  ? [
+                      {
+                        type: "info" as const,
+                        header: "A new version is available",
+                        content: "Refresh to get the latest features and fixes.",
+                        action: (
+                          <Button onClick={() => window.location.reload()}>
+                            Refresh now
+                          </Button>
+                        ),
+                        dismissible: true,
+                        onDismiss: () => setStaleDismissed(true),
+                        id: "__stale__",
+                      },
+                    ]
+                  : []),
+                ...flashes,
+              ]}
+              stackItems
+            />
+          }
+          content={<Outlet />}
+          contentType="default"
+        />
+      </div>
     </FlashContext.Provider>
   )
 }
@@ -224,6 +279,12 @@ function RedirectModule() {
 
 function ChatRoute() {
   const { chat, resolved } = useFeatureFlags()
-  if (!resolved) return null
+  if (!resolved) {
+    return (
+      <PageShell eyebrow="Agent" title="Chat">
+        <div className="agent-chat-page" />
+      </PageShell>
+    )
+  }
   return chat ? <AgentChat /> : <Navigate to="/pools" replace />
 }

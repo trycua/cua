@@ -14,6 +14,7 @@ from cua_sandbox import (
     OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpecBuilder,
     Pool,
+    PoolAccessDeniedError,
     RuntimeKind,
     SandboxServiceBuilder,
     SandboxTemplateRefBuilder,
@@ -626,6 +627,51 @@ async def test_create_claim_returns_a_serializable_lease(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_create_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    await pool.create_claim(ttl_seconds_after_created=1800)
+
+    spec = claim_client.claims[0].spec
+    assert spec.ttl_seconds_after_created == 1800
+    assert spec.sandbox_template_ref is pool.resource.spec.sandbox_template_ref
+    assert spec.warmpool is None
+    assert spec.bind_deadline is None
+    assert spec.lifecycle is None
+
+
+@pytest.mark.asyncio
+async def test_create_claim_rejects_ttl_alongside_an_explicit_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    clients = iter([reconcile_client, FakeFleetClient()])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    with pytest.raises(ValueError, match="inside spec"):
+        await pool.create_claim(spec=SimpleNamespace(), ttl_seconds_after_created=1800)
+
+
+@pytest.mark.asyncio
+async def test_pool_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    async with pool.claim(ttl_seconds_after_created=900):
+        pass
+
+    spec = claim_client.claims[0].spec
+    assert spec.ttl_seconds_after_created == 900
+    assert spec.sandbox_template_ref is pool.resource.spec.sandbox_template_ref
+
+
+@pytest.mark.asyncio
 async def test_lease_wait_connects_to_the_named_service_and_caches_the_bind(monkeypatch):
     client = FakeFleetClient()
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
@@ -840,6 +886,7 @@ async def test_pool_apply_delegates_to_template_and_pool_reconcile(monkeypatch):
 
     pool = await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
         cpu=4,
         memory_mb=4096,
     )
@@ -917,23 +964,15 @@ async def test_pool_apply_without_autoscaling_leaves_the_pool_spec_static(monkey
 
 
 @pytest.mark.asyncio
-async def test_pool_apply_autoscaling_extends_the_deterministic_name(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(6)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_requires_an_explicit_name():
     image = Image.from_registry("registry.example/workspace:latest")
-    autoscaling = WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10)
 
-    static = await Pool.apply(image)
-    scaled = await Pool.apply(image, autoscaling=autoscaling)
-    scaled_again = await Pool.apply(
-        image,
-        autoscaling=WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10),
-    )
-
-    assert scaled.name != static.name
-    assert scaled.name == scaled_again.name
-    assert scaled.name.startswith("cua-")
+    with pytest.raises(TypeError):
+        await Pool.apply(image)
+    with pytest.raises(ValueError, match="globally unique"):
+        await Pool.apply(image, name="")
+    with pytest.raises(ValueError, match="globally unique"):
+        await Pool.apply(image, name=None)
 
 
 def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
@@ -953,24 +992,131 @@ def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pool_apply_uses_stable_configuration_name(monkeypatch):
-    from cua_sandbox import Image
-
-    clients = [FakeFleetClient() for _ in range(6)]
+async def test_pool_apply_forwards_creation_ttl_to_the_pool_request(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
     iterator = iter(clients)
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-    image = Image.from_registry("registry.example/workspace:latest")
 
-    first = await Pool.apply(image, replicas=1, cpu=4, memory_mb=4096)
-    second = await Pool.apply(image, replicas=1, cpu=4, memory_mb=4096)
-    explicit_default = await Pool.apply(
-        image, replicas=1, cpu=4, memory_mb=4096, services={"server": 8000}
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+        ttl_seconds_after_created=86400,
     )
 
-    assert first.name == second.name == explicit_default.name
-    assert first.name.startswith("cua-")
-    assert clients[0].reconciled[0].namespace == first.name
-    assert clients[1].reconciled_templates[0].name == first.name
+    assert clients[0].reconciled[0].spec.ttl_seconds_after_created == 86400
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_without_creation_ttl_leaves_the_pool_unreaped(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+    )
+
+    assert clients[0].reconciled[0].spec.ttl_seconds_after_created is None
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_rejects_invalid_creation_ttl(monkeypatch):
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", FakeFleetClient)
+
+    with pytest.raises(ValueError, match="ttl_seconds_after_created"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+            ttl_seconds_after_created=-1,
+        )
+
+
+def _forbidden(operation: str) -> SdkError.Status:
+    return SdkError.Status(operation=operation, status=403, body="k8s request is not allowed")
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_maps_forbidden_pool_reconcile_to_access_denied(monkeypatch):
+    clients = [FakeFleetClient(reconcile_error=_forbidden("create pool"))]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
+
+    assert "'workspace'" in str(error.value)
+    assert isinstance(error.value.__cause__, SdkError.Status)
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_maps_forbidden_template_reconcile_and_still_rolls_back(monkeypatch):
+    clients = [
+        FakeFleetClient(),
+        FakeFleetClient(reconcile_error=_forbidden("update template")),
+        FakeFleetClient(),
+    ]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="globally unique"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
+
+    assert clients[2].deleted_pools == ["workspace"]
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_canonicalizes_native_pool_access_denied(monkeypatch):
+    upstream = getattr(SdkError, "PoolAccessDenied", None)
+    if upstream is None:
+        pytest.skip("installed cua-fleet predates SdkError.PoolAccessDenied")
+
+    native = upstream(
+        operation="create pool",
+        namespace="workspace",
+        status=403,
+        body="k8s request is not allowed",
+    )
+    clients = [FakeFleetClient(reconcile_error=native)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
+
+    assert error.value is native
+    assert "Fleet denied create pool on pool namespace 'workspace'" in str(error.value)
+    assert "https://discord.gg/mVnXXpdE85" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_rollback_failure_does_not_mask_template_error(monkeypatch):
+    class DeleteDeniedClient(FakeFleetClient):
+        async def delete_pool(self, pool: object) -> None:
+            raise _forbidden("delete pool")
+
+    clients = [
+        FakeFleetClient(),
+        FakeFleetClient(reconcile_error=_forbidden("update template")),
+        DeleteDeniedClient(),
+    ]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="update template"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
 
 
 @pytest.mark.asyncio

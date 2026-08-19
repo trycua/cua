@@ -2,12 +2,19 @@
   display: grid;
   gap: 24px;
   grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
-  height: calc(100vh - 160px);
+  height: calc(100dvh - var(--cua-chat-viewport-offset, 160px));
+  margin-block-end: calc(-1 * var(--cua-layout-application-inline));
   min-height: 560px;
 }
 
+@supports not (height: 100dvh) {
+  .agent-chat-page {
+    height: calc(100vh - var(--cua-chat-viewport-offset, 160px));
+  }
+}
+
 .agent-chat-history {
-  border-inline-end: 1px solid var(--color-border-divider-default, #d5dbdb);
+  border-inline-end: 1px solid var(--cua-color-line-soft);
   min-width: 0;
   overflow-y: auto;
   padding-inline-end: 20px;
@@ -46,7 +53,7 @@
 }
 
 .agent-chat-composer {
-  background: linear-gradient(180deg, transparent, var(--color-background-layout-main, #0f1b2a) 28%);
+  background: linear-gradient(180deg, transparent, var(--cua-dashboard-background) 28%);
   bottom: 0;
   padding: 24px 8px 12px;
   position: sticky;
@@ -63,7 +70,7 @@
 }
 
 .agent-chat-timestamp {
-  color: var(--color-text-body-secondary, #5f6b7a);
+  color: var(--cua-color-text-muted);
   font-size: 0.75rem;
 }
 
@@ -71,12 +78,12 @@
   animation: agent-chat-shimmer 1.4s ease-in-out infinite;
   background: linear-gradient(
     90deg,
-    var(--color-background-layout-toggle-default, #eaeded) 25%,
-    var(--color-background-layout-toggle-hover, #f2f3f3) 50%,
-    var(--color-background-layout-toggle-default, #eaeded) 75%
+    var(--cua-color-surface-elevated-1) 25%,
+    var(--cua-color-surface-elevated-2) 50%,
+    var(--cua-color-surface-elevated-1) 75%
   );
   background-size: 200% 100%;
-  border-radius: 8px;
+  border-radius: var(--cua-radius-control);
 }
 
 .agent-chat-skeleton--conversation {
@@ -109,8 +116,12 @@
 @media (max-width: 700px) {
   .agent-chat-page {
     display: block;
-    height: calc(100vh - 120px);
-    min-height: 480px;
+    min-height: 0;
+  }
+
+  .agent-chat-main {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: 100%;
   }
 
   .agent-chat-history {
@@ -142,7 +153,7 @@
 
 .agent-chat-mobile-overlay {
   align-items: stretch;
-  background: rgb(0 0 0 / 45%);
+  background: var(--cua-color-scrim-overlay);
   display: flex;
   inset: 0;
   position: fixed;
@@ -161,8 +172,8 @@
 .agent-chat-mobile-drawer {
   position: relative;
   z-index: 1;
-  background: var(--color-background-layout-main, #fff);
-  box-shadow: 2px 0 12px rgb(0 0 0 / 25%);
+  background: var(--cua-color-surface-elevated-1);
+  box-shadow: var(--cua-shadow-medium);
   max-width: min(360px, 92vw);
   min-width: min(320px, 92vw);
   overflow-y: auto;
@@ -175,7 +186,7 @@
 }
 
 .agent-chat-command {
-  border-inline-start: 3px solid var(--color-border-status-info, #3184c2);
+  border-inline-start: 3px solid var(--cua-color-status-info);
   margin-inline: 16px;
   padding: 8px 12px;
 }
@@ -226,8 +237,8 @@
 }
 
 .agent-chat-markdown blockquote {
-  border-inline-start: 3px solid var(--color-border-divider-default, #5f6b7a);
-  color: var(--color-text-body-secondary, #8d99a8);
+  border-inline-start: 3px solid var(--cua-color-line-strong);
+  color: var(--cua-color-text-muted);
   padding-inline-start: 0.75rem;
 }
 
@@ -238,28 +249,28 @@
 
 .agent-chat-markdown th,
 .agent-chat-markdown td {
-  border: 1px solid var(--color-border-divider-default, #5f6b7a);
+  border: 1px solid var(--cua-color-line-soft);
   padding: 0.4rem 0.6rem;
   text-align: start;
   vertical-align: top;
 }
 
 .agent-chat-markdown th {
-  background: var(--color-background-container-header, rgb(255 255 255 / 6%));
+  background: var(--cua-color-surface-elevated-2);
   font-weight: 700;
 }
 
 .agent-chat-markdown code {
-  background: var(--color-background-layout-toggle-default, rgb(255 255 255 / 8%));
+  background: var(--cua-color-surface-elevated-1);
   border-radius: 4px;
-  font-family: "Fira Code", "Cascadia Code", monospace;
+  font-family: var(--cua-font-mono);
   font-size: 0.875em;
   padding: 0.12em 0.3em;
 }
 
 .agent-chat-markdown pre {
-  background: var(--color-background-layout-main, #0f1b2a);
-  border: 1px solid var(--color-border-divider-default, #5f6b7a);
+  background: var(--cua-color-surface-base);
+  border: 1px solid var(--cua-color-line-soft);
   border-radius: 8px;
   max-width: 100%;
   overflow-x: auto;
@@ -272,7 +283,7 @@
 }
 
 .agent-chat-markdown a {
-  color: var(--color-text-link-default, #539fe5);
+  color: var(--cua-color-brand-primary);
   text-decoration: underline;
   text-underline-offset: 0.15em;
 }

@@ -147,19 +147,8 @@ func UserKeysRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-user-keys", "data.authz_user_keys.allow"))
 }
 
-// OrchRoutePolicy guards the per-namespace orchestrator catalog proxy. This
-// proxy dials Service DNS directly, so Capsule cannot scope it — the ownership
-// conjunct is the whole tenancy boundary.
-func OrchRoutePolicy() Node {
-	return All(
-		BasePolicy(),
-		surfaceLeaf("authz-orch", "data.authz_orch.allow"),
-		NamespaceOwnershipPolicy(),
-	)
-}
-
 // SvcRoutePolicy guards the generic service proxy, both with and without a
-// trailing path. Same direct-dial tenancy boundary as OrchRoutePolicy.
+// trailing path. The ownership conjunct is its direct-dial tenancy boundary.
 func SvcRoutePolicy() Node {
 	return All(
 		BasePolicy(),
@@ -258,7 +247,6 @@ var surfacePolicies = map[string]surfacePolicy{
 	"namespaces":   {tree: NamespacesRoutePolicy},
 	"github-trust": {tree: GitHubTrustRoutePolicy},
 	"user-keys":    {tree: UserKeysRoutePolicy},
-	"orch":         {tree: OrchRoutePolicy},
 	"svc":          {tree: SvcRoutePolicy},
 	"state-query":  {tree: StateQueryRoutePolicy},
 	"k8s": {
@@ -301,8 +289,7 @@ var routeSurfaces = map[string]string{
 	"/api/svc/{namespace}/{service}":           "svc",
 	"/api/svc/{namespace}/{service}/{path...}": "svc",
 
-	"/api/orch/{namespace}/{service}/{path...}": "orch",
-	"/api/k8s/{path...}":                        "k8s",
+	"/api/k8s/{path...}": "k8s",
 }
 
 // AuthenticatedRoutes returns every route the policy layer covers, sorted.

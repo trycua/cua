@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import Avatar from "@cloudscape-design/chat-components/avatar"
 import ChatBubble from "@cloudscape-design/chat-components/chat-bubble"
@@ -14,6 +14,7 @@ import PromptInput from "@cloudscape-design/components/prompt-input"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
 import { MarkdownMessage } from "../components/MarkdownMessage"
+import { PageShell } from "../components/PageShell"
 import { createClaim, deleteClaim, getClaim, listClaims } from "../sdk/claims"
 import { createPool, deletePool, getPool, listNamespaces, listPools, updatePoolServices } from "../sdk/pools"
 import { createUserKey, deleteUserKey, listUserKeys } from "../sdk/userKeys"
@@ -206,7 +207,7 @@ function MessageBubble({ message, position, loading = false }: { message: ChatMe
   const author = incoming ? "Assistant" : "You"
   const time = formatTime(message.created_at)
   return (
-    <ChatBubble ariaLabel={`${author} at ${time.full}, message ${position}`} avatar={incoming ? <Avatar ariaLabel="Assistant avatar" color="gen-ai" iconName="gen-ai" loading={loading} /> : <Avatar ariaLabel="Your avatar" initials="You" />} type={incoming ? "incoming" : "outgoing"}>
+      <ChatBubble ariaLabel={`${author} at ${time.full}, message ${position}`} avatar={incoming ? <Avatar ariaLabel="Assistant avatar" color="gen-ai" iconName="gen-ai" loading={loading} /> : <Avatar ariaLabel="Your avatar" initials="Y" />} type={incoming ? "incoming" : "outgoing"}>
       <SpaceBetween size="xxs">
         {loading && !message.content ? <div>Generating a response</div> : <MarkdownMessage content={message.content} />}
         {!loading && <span className="agent-chat-timestamp" title={time.full}>{author} - {time.local}</span>}
@@ -258,6 +259,7 @@ export function AgentChat() {
   const [refreshError, setRefreshError] = useState<string>()
   const [initialCreatePrompt, setInitialCreatePrompt] = useState<string>()
   const mobileHistory = useMobileHistory()
+  const pageRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<ButtonProps.Ref>(null)
   const closeButtonRef = useRef<ButtonProps.Ref>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -272,6 +274,28 @@ export function AgentChat() {
   const activeRunConversationIdRef = useRef<string>()
   const selectedConversationIdRef = useRef<string>()
   const loadingRunIdRef = useRef<number>()
+
+  useLayoutEffect(() => {
+    const element = pageRef.current
+    if (!element) return
+
+    const measure = () => {
+      const box = element.getBoundingClientRect()
+      const top = Math.max(0, Math.round(box.top))
+      element.style.setProperty(
+        "--cua-chat-viewport-offset",
+        `${top + 16}px`,
+      )
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(document.documentElement)
+    window.addEventListener("resize", measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", measure)
+    }
+  }, [])
 
   if (!agentRef.current) {
     agentRef.current = new BrowserBashAgent(async (conversationID, messages, signal, onDelta) => {
@@ -542,9 +566,20 @@ export function AgentChat() {
       ? `Latest ${effectiveMessage.role === "user" ? "user" : "assistant"} message available.`
       : ""
   const drawerHistory = <ConversationHistory conversations={conversations} disabled={running} loading={listLoading} onSelect={id => { if (selectConversation(id)) closeHistory() }} showHeading={false} />
+  const firstConversation = !listLoading && conversations.length === 0
 
   return (
-    <div className="agent-chat-page">
+    <>
+      <PageShell
+        eyebrow="Agent"
+        title="Chat"
+        description={
+          mobileHistory
+            ? undefined
+            : "Run fleet and browser tasks with the Cua agent."
+        }
+      >
+        <div className="agent-chat-page" ref={pageRef}>
       <aside className="agent-chat-history"><ConversationHistory conversations={conversations} disabled={running} loading={listLoading} onSelect={selectConversation} /></aside>
       <div className="agent-chat-main">
         <div className="agent-chat-mobile-history"><Button ariaLabel="View conversations" iconName="menu" onClick={() => setHistoryOpen(true)} ref={triggerRef}>Conversations</Button></div>
@@ -555,7 +590,7 @@ export function AgentChat() {
               {liveAssistant && <MessageBubble loading={abortable} message={liveAssistant} position={transcript.length + 1} />}
               {!liveAssistant && assistantLoading && <MessageBubble loading message={{ role: "assistant", content: "", created_at: new Date().toISOString() }} position={transcript.length + 1} />}
             </SpaceBetween>
-          ) : <div className="agent-chat-empty"><Box variant="h2">Select a conversation</Box><Box color="text-body-secondary">Choose a previous conversation to view its transcript.</Box></div>}
+          ) : <div className="agent-chat-empty"><Box variant="h2">{firstConversation ? "Start a conversation" : "Select a conversation"}</Box><Box color="text-body-secondary">{firstConversation ? "Ask a question below to create your first conversation." : "Choose a previous conversation to view its transcript."}</Box></div>}
           {turnError && <div role="alert"><Alert action={<Button onClick={initialCreatePrompt ? retryInitialCreate : retryTurn}>Retry</Button>} type="error">{turnError}</Alert></div>}
           {refreshError && <div role="alert"><Alert action={<Button disabled={running} onClick={() => { if (selectedId) void recoverRefresh(selectedId) }}>Refresh conversation</Button>} type="error">{refreshError}</Alert></div>}
           <div className="agent-chat-announcements">
@@ -570,12 +605,14 @@ export function AgentChat() {
           </div>
         </div>
       </div>
+        </div>
+      </PageShell>
       {mobileHistory && historyOpen && createPortal(
         <div aria-label="Conversations" aria-modal="true" className="agent-chat-mobile-overlay" onKeyDown={trapDialogFocus} ref={dialogRef} role="dialog">
           <div aria-hidden="true" className="agent-chat-mobile-backdrop" data-testid="conversation-history-backdrop" onClick={closeHistory} />
           <div className="agent-chat-mobile-drawer"><Drawer header={<h2>Conversations</h2>} headerActions={<Button ariaLabel="Close conversations" iconName="close" onClick={closeHistory} ref={closeButtonRef} variant="icon" />}>{drawerHistory}</Drawer></div>
         </div>, document.body,
       )}
-    </div>
+    </>
   )
 }

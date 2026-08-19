@@ -108,6 +108,22 @@ fn warm_pool_raw_crd_matches_the_authoritative_field_contract() {
 }
 
 #[test]
+fn claim_bind_deadline_schema_documents_900_second_default_without_materializing_it() {
+    let claim = serde_json::to_value(OSGymSandboxClaim::crd()).unwrap();
+    let bind_deadline = claim
+        .pointer("/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/bindDeadline")
+        .unwrap();
+
+    assert!(bind_deadline.get("default").is_none());
+    assert!(
+        bind_deadline["description"]
+            .as_str()
+            .unwrap()
+            .contains("default 900")
+    );
+}
+
+#[test]
 fn claim_raw_crd_matches_the_authoritative_field_contract() {
     let generated = normalize_known_kube_derive_artifacts(
         serde_json::to_value(OSGymSandboxClaim::crd()).unwrap(),

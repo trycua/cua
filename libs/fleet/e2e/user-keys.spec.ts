@@ -4,6 +4,57 @@ import {
   mockNamespacesApi,
   mockUserKeysApi,
 } from "./fixtures/mock-api"
+import { expectSharedPageShell } from "./fixtures/shell-geometry"
+
+for (const viewport of [
+  { name: "desktop", width: 1440, height: 900 },
+  { name: "mobile", width: 375, height: 900 },
+]) {
+  test(`User API keys uses the shared shell on ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize(viewport)
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockUserKeysApi(page)
+
+    await page.goto("/user-keys")
+
+    await expectSharedPageShell(page)
+    await expect(page.getByRole("button", { name: "Create key" })).toBeVisible()
+    expect(
+      await page.locator("html").evaluate(
+        element => element.scrollWidth - element.clientWidth,
+      ),
+    ).toBeLessThanOrEqual(1)
+  })
+}
+
+test("User API keys reflows at 200% zoom and 320 CSS pixels", async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 900 })
+  await mockAuth(page)
+  await mockNamespacesApi(page)
+  await mockUserKeysApi(page)
+  await page.goto("/user-keys")
+
+  await page.locator("html").evaluate(element => {
+    element.style.zoom = "200%"
+  })
+  expect(
+    await page.locator("html").evaluate(
+      element => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1)
+
+  await page.locator("html").evaluate(element => {
+    element.style.zoom = ""
+  })
+  await page.setViewportSize({ width: 320, height: 900 })
+  await expect(page.getByRole("button", { name: "Create key" })).toBeVisible()
+  expect(
+    await page.locator("html").evaluate(
+      element => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1)
+})
 
 test.describe("User API keys", () => {
   test.beforeEach(async ({ page }) => {
@@ -15,10 +66,11 @@ test.describe("User API keys", () => {
   test("renders the API keys page with existing keys", async ({ page }) => {
     await page.goto("/user-keys")
 
-    // The page should have the "Your API keys" table header
+    // The shared page shell and key table should both be visible.
     await expect(
-      page.getByRole("heading", { name: "Your API keys" }),
+      page.getByRole("heading", { name: "User API keys" }),
     ).toBeVisible()
+    await expect(page.getByRole("heading", { name: "API keys", exact: true })).toBeVisible()
 
     // The existing mock key should be listed
     await expect(page.getByText("my-key")).toBeVisible()
@@ -125,5 +177,18 @@ test.describe("User API keys", () => {
     await expect(
       page.getByText(/restrict this key to specific namespaces/i),
     ).toBeVisible()
+  })
+
+  test("shows a retryable table error without hiding the create form", async ({ page }) => {
+    await page.unroute("**/api/user-keys")
+    await page.route("**/api/user-keys", route =>
+      route.fulfill({ status: 503, body: "temporarily unavailable" }),
+    )
+
+    await page.goto("/user-keys")
+
+    await expect(page.getByRole("heading", { name: "Create API key" })).toBeVisible()
+    await expect(page.getByText("API keys are unavailable")).toBeVisible()
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible()
   })
 })

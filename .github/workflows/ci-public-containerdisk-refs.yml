@@ -10,6 +10,7 @@ on:
       - "infra/fleets-wif-smoke/**"
       - "libs/fleet/backend/auth/**"
       - "libs/python/cua-sandbox/tests/live/test_fleet_ephemeral.py"
+      - "libs/python/cua-sandbox/tests/live/test_fleet_pool_persistent.py"
       - "tests/test_public_containerdisk_refs.py"
 
 permissions:

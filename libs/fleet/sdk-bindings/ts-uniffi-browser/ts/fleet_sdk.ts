@@ -1459,6 +1459,7 @@ export enum SdkError_Tags {
   InvalidServicePath = "InvalidServicePath",
   ClaimFailed = "ClaimFailed",
   ClaimTimeout = "ClaimTimeout",
+  PoolAccessDenied = "PoolAccessDenied",
 }
 export const SdkError = (() => {
   type Configuration__interface = {
@@ -1816,6 +1817,69 @@ export const SdkError = (() => {
     }
   }
 
+  type PoolAccessDenied__interface = {
+    tag: SdkError_Tags.PoolAccessDenied;
+    inner: Readonly<{
+      operation: string;
+      namespace: string;
+      status: number;
+      body: string;
+    }>;
+  };
+  class PoolAccessDenied_
+    extends UniffiError
+    implements PoolAccessDenied__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "SdkError";
+    readonly tag = SdkError_Tags.PoolAccessDenied;
+    readonly inner: Readonly<{
+      operation: string;
+      namespace: string;
+      status: number;
+      body: string;
+    }>;
+    constructor(inner: {
+      operation: string;
+      namespace: string;
+      status: number;
+      body: string;
+    }) {
+      super("SdkError", "PoolAccessDenied");
+
+      this.inner = Object.freeze(inner);
+    }
+    static new(inner: {
+      operation: string;
+      namespace: string;
+      status: number;
+      body: string;
+    }): PoolAccessDenied_ {
+      return new PoolAccessDenied_(inner);
+    }
+
+    static instanceOf(obj: any): obj is PoolAccessDenied_ {
+      return obj.tag === SdkError_Tags.PoolAccessDenied;
+    }
+    static hasInner(obj: any): obj is PoolAccessDenied_ {
+      return PoolAccessDenied_.instanceOf(obj);
+    }
+
+    static getInner(
+      obj: PoolAccessDenied_,
+    ): Readonly<{
+      operation: string;
+      namespace: string;
+      status: number;
+      body: string;
+    }> {
+      return obj.inner;
+    }
+  }
+
   function instanceOf(obj: any): obj is SdkError {
     return obj[uniffiTypeNameSymbol] === "SdkError";
   }
@@ -1832,6 +1896,7 @@ export const SdkError = (() => {
     InvalidServicePath: InvalidServicePath_,
     ClaimFailed: ClaimFailed_,
     ClaimTimeout: ClaimTimeout_,
+    PoolAccessDenied: PoolAccessDenied_,
   });
 })();
 export type SdkError = InstanceType<
@@ -1845,7 +1910,8 @@ export type SdkError = InstanceType<
     | "UnknownService"
     | "InvalidServicePath"
     | "ClaimFailed"
-    | "ClaimTimeout"]
+    | "ClaimTimeout"
+    | "PoolAccessDenied"]
 >;
 
 // FfiConverter for enum SdkError
@@ -1895,6 +1961,13 @@ const FfiConverterTypeSdkError = (() => {
           });
         case 10:
           return new SdkError.ClaimTimeout();
+        case 11:
+          return new SdkError.PoolAccessDenied({
+            operation: FfiConverterString.read(from),
+            namespace: FfiConverterString.read(from),
+            status: FfiConverterUInt16.read(from),
+            body: FfiConverterString.read(from),
+          });
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
       }
@@ -1963,6 +2036,15 @@ const FfiConverterTypeSdkError = (() => {
         }
         case SdkError_Tags.ClaimTimeout: {
           ordinalConverter.write(10, into);
+          return;
+        }
+        case SdkError_Tags.PoolAccessDenied: {
+          ordinalConverter.write(11, into);
+          const inner = value.inner;
+          FfiConverterString.write(inner.operation, into);
+          FfiConverterString.write(inner.namespace, into);
+          FfiConverterUInt16.write(inner.status, into);
+          FfiConverterString.write(inner.body, into);
           return;
         }
         default:
@@ -2034,6 +2116,15 @@ const FfiConverterTypeSdkError = (() => {
         }
         case SdkError_Tags.ClaimTimeout: {
           return ordinalConverter.allocationSize(10);
+        }
+        case SdkError_Tags.PoolAccessDenied: {
+          const inner = value.inner;
+          let size = ordinalConverter.allocationSize(11);
+          size += FfiConverterString.allocationSize(inner.operation);
+          size += FfiConverterString.allocationSize(inner.namespace);
+          size += FfiConverterUInt16.allocationSize(inner.status);
+          size += FfiConverterString.allocationSize(inner.body);
+          return size;
         }
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -3070,6 +3161,10 @@ export interface CyclopsClientLike {
     request: CreateClaimRequest,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Claim>;
+  createNamespace(
+    name: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Namespace>;
   createPool(
     request: CreatePoolRequest,
     asyncOpts_?: { signal: AbortSignal },
@@ -3084,6 +3179,10 @@ export interface CyclopsClientLike {
   ) /*throws*/ : Promise<NewUserApiKey>;
   deleteClaim(
     claim: Claim,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<void>;
+  deleteNamespace(
+    name: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<void>;
   deletePool(
@@ -3102,6 +3201,10 @@ export interface CyclopsClientLike {
     claim: Claim,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Claim>;
+  getNamespace(
+    name: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Namespace>;
   getPool(
     name: string,
     asyncOpts_?: { signal: AbortSignal },
@@ -3421,6 +3524,42 @@ export class CyclopsClient
     );
   }
 
+  async createNamespace(
+    name: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Namespace> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeNamespace.lift.bind(
+        FfiConverterTypeNamespace,
+      ),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
   async createPool(
     request: CreatePoolRequest,
     asyncOpts_?: { signal: AbortSignal },
@@ -3563,6 +3702,33 @@ export class CyclopsClient
     );
   }
 
+  async deleteNamespace(
+    name: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
+        );
+      },
+      /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+      /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+      /*liftFunc:*/ (_v) => {},
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
   async deletePool(
     pool: Pool,
     asyncOpts_?: { signal: AbortSignal },
@@ -3673,6 +3839,42 @@ export class CyclopsClient
       // export. The bytes the runtime hands back must be deserialized
       // here using the per-callable return-type converter.
       /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
+        FfiConverterTypeSdkError,
+      ),
+    );
+  }
+
+  async getNamespace(
+    name: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Namespace> /*throws*/ {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(
+          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
+          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeNamespace.lift.bind(
+        FfiConverterTypeNamespace,
+      ),
       /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
@@ -5324,6 +5526,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() !==
+    38049
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() !==
     48557
   ) {
@@ -5356,6 +5566,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() !==
+    4545
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() !==
     31235
   ) {
@@ -5385,6 +5603,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() !==
+    184
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace",
     );
   }
   if (

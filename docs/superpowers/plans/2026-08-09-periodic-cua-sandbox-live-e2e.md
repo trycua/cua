@@ -906,3 +906,39 @@ The workflow uses step-scoped OAuth credentials only for credential preflight an
 live pytest step. After checkout, `git rev-parse HEAD` is exported as
 `CUA_LIVE_E2E_SOURCE_SHA` and is the source SHA recorded by live, controlled-failure,
 and Alertmanager evidence.
+
+## Persistent Pool Suite
+
+The workflow later gained a second suite that claims from persistent,
+pre-provisioned Fleet pools instead of creating and destroying a pool per run.
+The prepare job emits a lane-and-suite matrix: pushes stay on the `ephemeral`
+suite only, while scheduled runs cross both lanes with both suites and manual
+dispatch selects lane and suite combinations. The concurrency group is
+`periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.suite }}`,
+so a newer schedule cancels only an older scheduled run of the same lane and
+suite.
+
+The suite's step, `Run live Fleet pool smoke`, executes
+`tests/live/test_fleet_pool_persistent.py` from the same isolated copied suite
+with step-scoped OAuth credentials. Two pool namespaces per lane and event
+class are set by the workflow:
+
+- `cua-live-pool-warm-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`
+- `cua-live-pool-cold-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`
+
+The warm pool keeps `replicas=1` so claims bind to pre-provisioned capacity;
+the cold pool expresses scale-to-zero with
+`WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=0, max_pool_size=1)`
+because pool reconciliation rejects `replicas` below one. Each run records
+`pool_pre_existed` and replica counts from `Pool.get`, treating both 403 and
+404 as not-pre-existed (`is_pool_missing_error`) because Fleet evaluates
+authorization before existence for namespaces that have not been created
+yet, reconciles the pinned configuration idempotently with `Pool.apply`,
+claims through
+`Sandbox.ephemeral(pool=..., name=...)` with the claim name fixed to the
+namespace, and exits with a claim-only release. After release the monitor
+polls until claims are absent and requires the reconciled inventory to contain
+exactly the named pool and template with zero claims; the pool and template
+deliberately persist between runs. The warm mode asserts a claim-acquisition
+bound only when the pool pre-existed with a ready replica. Failure artifacts
+and Alertmanager labels carry the suite alongside the lane.

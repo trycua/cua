@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.19.3"
+version = "0.20.0"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"
@@ -42,3 +42,12 @@ uniffi = "=0.31.0"
 postcard = { version = "1", features = ["alloc"] }
 sha2 = "0.10"
 zstd = "0.13"
+chacha20poly1305 = { version = "0.11", features = ["rand_core", "zeroize"] }
+hkdf = "0.12"
+zeroize = { version = "1", features = ["derive"] }
+coset = "0.4.2"
+ciborium = "0.2.2"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+getrandom = "0.4"
+fs2 = "0.4"
+hmac = "0.12"

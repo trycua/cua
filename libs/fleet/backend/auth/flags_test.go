@@ -113,6 +113,19 @@ func TestFlagsDataLoadsCardRequirementExemptSubs(t *testing.T) {
 	}
 }
 
+func TestComputeFlagsDataFailsClosedOnTypeMismatch(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-sub"]`)
+	t.Setenv("CYCLOPS_CS_BILLING_ENABLED", "true")
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+
+	got := computeFlagsData(context.Background())
+	if len(got) != 0 {
+		t.Fatalf("computeFlagsData() = %v, want empty flags after type mismatch", got)
+	}
+}
+
 func asStrings(v any) []string {
 	items, ok := v.([]interface{})
 	if !ok {

@@ -29,7 +29,7 @@ import (
 // the same system on a route that serves every noVNC asset.
 //
 // The stage is put in front of a stub rather than the real handler on purpose.
-// h.Svc and h.Orch dial {service}.{namespace}.svc.cluster.local, which in a test
+// h.Svc dials {service}.{namespace}.svc.cluster.local, which in a test
 // is a DNS timeout; what is under test here is which requests get that far.
 
 func testHandlers() Handlers {
@@ -62,7 +62,6 @@ func authorizationStage(t *testing.T, route string) (http.Handler, *bool) {
 
 const (
 	svcRoute        = "/api/svc/{namespace}/{service}/{path...}"
-	orchRoute       = "/api/orch/{namespace}/{service}/{path...}"
 	namespacesRoute = "/api/namespaces/{name}"
 	namespaceList   = "/api/namespaces"
 )
@@ -465,27 +464,6 @@ func TestSvcRoute_K8sUnavailable_FailsClosedWith502(t *testing.T) {
 	// Indeterminate verdicts must not be cached: both requests probe.
 	if len(fk.requests) != 2 {
 		t.Fatalf("expected 2 probes (errors uncached), got %d", len(fk.requests))
-	}
-}
-
-func TestOrchRoute_NonOwnedNamespace_Forbidden(t *testing.T) {
-	resetOwnershipCache()
-	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status"}`)
-	defer fk.server.Close()
-	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
-
-	stage, reached := authorizationStage(t, orchRoute)
-	r := httptest.NewRequest(http.MethodGet, "/api/orch/other-ns/catalog/items", nil)
-	r.SetPathValue("namespace", "other-ns")
-	r.SetPathValue("service", "catalog")
-	r.SetPathValue("path", "items")
-	r = withUser(r, spaUser("intruder-uuid"))
-	w := httptest.NewRecorder()
-	stage.ServeHTTP(w, r)
-
-	if w.Code != http.StatusForbidden || *reached {
-		t.Fatalf("status = %d, reached = %v; want 403 and no handler; body = %s",
-			w.Code, *reached, w.Body.String())
 	}
 }
 

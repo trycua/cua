@@ -1,4 +1,8 @@
 import { getToken } from "../auth/keycloak";
+import {
+	isLocalVisualPreview,
+	localVisualPreviewPath,
+} from "../local-visual-preview";
 
 export interface SavedCard {
 	brand: string;
@@ -27,9 +31,23 @@ async function billingRequest<T>(
 }
 
 export const billingApi = {
-	summary: () => billingRequest<BillingSummary>("/api/billing/summary", "GET"),
+	summary: () =>
+		isLocalVisualPreview()
+			? Promise.resolve<BillingSummary>({
+					payment_method_present: true,
+					card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },
+				})
+			: billingRequest<BillingSummary>("/api/billing/summary", "GET"),
 	setup: () =>
-		billingRequest<{ url: string }>("/api/billing/setup-session", "POST"),
+		isLocalVisualPreview()
+			? Promise.resolve({
+					url: localVisualPreviewPath("/settings?billing=setup-preview"),
+				})
+			: billingRequest<{ url: string }>("/api/billing/setup-session", "POST"),
 	portal: () =>
-		billingRequest<{ url: string }>("/api/billing/portal-session", "POST"),
+		isLocalVisualPreview()
+			? Promise.resolve({
+					url: localVisualPreviewPath("/settings?billing=portal-preview"),
+				})
+			: billingRequest<{ url: string }>("/api/billing/portal-session", "POST"),
 };

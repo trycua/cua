@@ -2559,6 +2559,184 @@ public func FfiConverterTypeHttpClient_lower(_ value: HttpClient) -> UInt64 {
 
 
 
+public protocol HttpRequestBuilderProtocol: AnyObject, Sendable {
+
+    func body(value: Data)  -> HttpRequestBuilder
+
+    func build() throws  -> HttpRequest
+
+    func headers(value: [HttpHeader])  -> HttpRequestBuilder
+
+    func method(value: String)  -> HttpRequestBuilder
+
+    func timeoutSecs(value: UInt64)  -> HttpRequestBuilder
+
+    func url(value: String)  -> HttpRequestBuilder
+
+}
+open class HttpRequestBuilder: HttpRequestBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_httprequestbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_httprequestbuilder(handle, $0) }
+    }
+
+
+
+
+open func body(value: Data) -> HttpRequestBuilder  {
+    return try!  FfiConverterTypeHttpRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_httprequestbuilder_body(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(value),$0
+    )
+})
+}
+
+open func build()throws  -> HttpRequest  {
+    return try  FfiConverterTypeHttpRequest_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_httprequestbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func headers(value: [HttpHeader]) -> HttpRequestBuilder  {
+    return try!  FfiConverterTypeHttpRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeHttpHeader.lower(value),$0
+    )
+})
+}
+
+open func method(value: String) -> HttpRequestBuilder  {
+    return try!  FfiConverterTypeHttpRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_httprequestbuilder_method(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func timeoutSecs(value: UInt64) -> HttpRequestBuilder  {
+    return try!  FfiConverterTypeHttpRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(value),$0
+    )
+})
+}
+
+open func url(value: String) -> HttpRequestBuilder  {
+    return try!  FfiConverterTypeHttpRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_httprequestbuilder_url(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHttpRequestBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = HttpRequestBuilder
+
+    public static func lift(_ handle: UInt64) throws -> HttpRequestBuilder {
+        return HttpRequestBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: HttpRequestBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HttpRequestBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: HttpRequestBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHttpRequestBuilder_lift(_ handle: UInt64) throws -> HttpRequestBuilder {
+    return try FfiConverterTypeHttpRequestBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHttpRequestBuilder_lower(_ value: HttpRequestBuilder) -> UInt64 {
+    return FfiConverterTypeHttpRequestBuilder.lower(value)
+}
+
+
+
+
+
+
 public protocol TemplateBuilderProtocol: AnyObject, Sendable {
 
     func apiVersion(value: String)  -> TemplateBuilder
@@ -3223,11 +3401,21 @@ public struct HttpRequest: Equatable, Hashable {
     public var url: String
     public var headers: [HttpHeader]
     public var body: Data?
+    /**
+     * Per-request timeout. Defaults to absent so callers written against the
+     * pre-timeout record shape keep constructing requests unchanged; absent
+     * falls back to the native client's 30-second default.
+     */
     public var timeoutSecs: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(method: String, url: String, headers: [HttpHeader], body: Data?, timeoutSecs: UInt64?) {
+    public init(method: String, url: String, headers: [HttpHeader], body: Data?,
+        /**
+         * Per-request timeout. Defaults to absent so callers written against the
+         * pre-timeout record shape keep constructing requests unchanged; absent
+         * falls back to the native client's 30-second default.
+         */timeoutSecs: UInt64? = nil) {
         self.method = method
         self.url = url
         self.headers = headers
@@ -4044,6 +4232,8 @@ public enum SdkError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     case ClaimFailed(phase: String, status: String
     )
     case ClaimTimeout
+    case PoolAccessDenied(operation: String, namespace: String, status: UInt16, body: String
+    )
 
 
 
@@ -4107,6 +4297,12 @@ public struct FfiConverterTypeSdkError: FfiConverterRustBuffer {
             status: try FfiConverterString.read(from: &buf)
             )
         case 10: return .ClaimTimeout
+        case 11: return .PoolAccessDenied(
+            operation: try FfiConverterString.read(from: &buf),
+            namespace: try FfiConverterString.read(from: &buf),
+            status: try FfiConverterUInt16.read(from: &buf),
+            body: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4172,6 +4368,14 @@ public struct FfiConverterTypeSdkError: FfiConverterRustBuffer {
 
         case .ClaimTimeout:
             writeInt(&buf, Int32(10))
+
+
+        case let .PoolAccessDenied(operation,namespace,status,body):
+            writeInt(&buf, Int32(11))
+            FfiConverterString.write(operation, into: &buf)
+            FfiConverterString.write(namespace, into: &buf)
+            FfiConverterUInt16.write(status, into: &buf)
+            FfiConverterString.write(body, into: &buf)
 
         }
     }
@@ -4858,6 +5062,24 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit() != 6865) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body() != 9054) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build() != 14573) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers() != 19982) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method() != 4078) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs() != 40941) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url() != 12282) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version() != 65471) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4910,6 +5132,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new() != 43069) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new() != 25892) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new() != 19815) {

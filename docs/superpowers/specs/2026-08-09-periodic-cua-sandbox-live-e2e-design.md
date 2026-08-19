@@ -18,6 +18,8 @@ testing the current Fleet-backed public SDK contract.
 
 - Exercise Fleet-backed `Sandbox.ephemeral()` against live production
   infrastructure every 15 minutes.
+- Exercise claiming from persistent, pre-provisioned Fleet pools — both a warm
+  pool and a scale-to-zero pool — on the same cadence.
 - Test both the current repository `main` source and the latest published
   `cua-sandbox` package.
 - Run the source lane immediately after relevant changes merge to `main`.
@@ -49,31 +51,34 @@ testing the current Fleet-backed public SDK contract.
    `libs/python/cua-fleet/**`,
    `.github/workflows/periodic-cua-sandbox-live.yml`, and
    `.github/scripts/tests/test_periodic_cua_sandbox_live.py`.
-3. `workflow_dispatch` accepts `both`, `main-source`, or `published-package`,
-   plus manual-only `force_failure`.
+3. `workflow_dispatch` accepts a lane (`both`, `main-source`, or
+   `published-package`), a suite (`both`, `ephemeral`, or `pool`), plus
+   manual-only `force_failure`.
 
 Both jobs are guarded with `if: github.repository == 'trycua/cua'`. A fork
 that syncs `main` or enables the schedule therefore never runs the live smoke,
 never fails the credential preflight, and never posts a fork-originated
 `PeriodicCuaSandboxLiveE2EFailed` alert to the public Alertmanager endpoint.
 
-The preparation script emits a JSON matrix: every `push` selects only
-`main-source`; every `schedule` selects both lanes; manual runs select their
-requested lane or both. The workflow contract executes this extracted shell
-script in `bash` with a temporary `GITHUB_OUTPUT` and parses the emitted JSON,
-so a push-to-both mutation or ignored manual selection fails CI.
+The preparation script emits a JSON lane-and-suite matrix: every `push`
+selects only `main-source` with the `ephemeral` suite; every `schedule`
+selects both lanes crossed with both suites; manual runs select their
+requested lane and suite combinations. The workflow contract executes this
+extracted shell script in `bash` with a temporary `GITHUB_OUTPUT` and parses
+the emitted JSON, so a push-to-both mutation or ignored manual selection fails
+CI.
 
-The two lanes use `fail-fast: false` and this concurrency contract:
+The matrix jobs use `fail-fast: false` and this concurrency contract:
 
 ```yaml
 concurrency:
-  group: periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}
+  group: periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.suite }}
   cancel-in-progress: ${{ github.event_name == 'schedule' }}
 ```
 
-The event-and-lane grouping means a new schedule can cancel only an older
-schedule for the same lane. Push and manual runs use distinct groups and are
-allowed to finish.
+The event-lane-and-suite grouping means a new schedule can cancel only an
+older schedule for the same lane and suite. Push and manual runs use distinct
+groups and are allowed to finish.
 
 ## Installation Isolation
 
@@ -173,6 +178,52 @@ and workflow never explicitly delete a namespace, pool, or template: name-only
 deletes can race with reconciliation. Cleanup errors are reported alongside the
 primary exception.
 
+## Persistent Pool Suite
+
+The `pool` suite exercises the pre-provisioned pool consumer path that the
+`ephemeral` suite cannot: pools that survive across runs and hand out claims.
+`Run live Fleet pool smoke` executes
+`libs/python/cua-sandbox/tests/live/test_fleet_pool_persistent.py` from the
+same isolated copied suite. The suite runs on `schedule` and
+`workflow_dispatch` only; pushes keep running only the `ephemeral` suite.
+
+Each lane and event class owns two persistent pool namespaces, set by the
+workflow as:
+
+- `cua-live-pool-warm-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`
+- `cua-live-pool-cold-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`
+
+The warm mode keeps `replicas=1`, so a scheduled claim binds to an
+already-running sandbox and releasing the claim recycles that sandbox back
+into the pool. The cold mode expresses scale-to-zero with
+`WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=0, max_pool_size=1)`
+because pool reconciliation rejects `replicas` below one; a claim then
+cold-starts capacity through autoscaler demand.
+
+Each run observes the pool first with `Pool.get`, recording
+`pool_pre_existed` and the replica counts, then reconciles the pinned
+configuration with `Pool.apply` using the same certified image digest,
+`cpu=4`, and `memory_mb=4096`. Fleet evaluates authorization before
+existence, so reading a pool in a namespace that has not been created yet
+returns 403 rather than 404; the observe step treats both statuses as
+not-pre-existed (`is_pool_missing_error`), mirroring the SDK's reconcile
+semantics, and a genuine access denial still fails the run at `Pool.apply`
+with the canonical `PoolAccessDenied` guidance. Reconciliation is idempotent: it bootstraps a
+missing pool, heals drift, and never deletes. The claim uses
+`Sandbox.ephemeral(pool=..., name=...)` with the claim name fixed to the
+namespace, so an interrupted run's claim is adopted and released by the next
+run. Exiting the context performs a claim-only release: the pool and template
+must persist.
+
+After release the monitor polls until claims are absent and requires the
+reconciled inventory to contain exactly the named pool and template with zero
+claims — the persistence mirror of the ephemeral suite's empty-inventory
+invariant. Replica counts after release are recorded as telemetry only,
+because warm-pool recycling and autoscaler decay are server-controlled. The
+warm mode additionally asserts a claim-acquisition bound only when the pool
+pre-existed with at least one ready replica; bootstrap runs record timing
+without enforcing it.
+
 ## Diagnostics And Artifacts
 
 The live test writes a sanitized JSON summary containing lane, source SHA,
@@ -199,21 +250,25 @@ Each lane has an `if: failure()` notification step posting to
 - `service=cua-sandbox`
 - `job=periodic-cua-sandbox-live`
 - `lane=main-source|published-package`
+- `suite=ephemeral|pool`
 
 Annotations include the failed GitHub Actions run, the source SHA or installed
 package version, the pinned image digest, and a link to the workflow dashboard.
 Do not include credentials or raw authorization failures that may contain
 headers.
 
-The lane label lets Alertmanager group repeated failures without combining a
-source regression with a published-package or shared-infrastructure failure.
+The lane and suite labels let Alertmanager group repeated failures without
+combining a source regression with a published-package failure, or an
+ephemeral provisioning failure with a persistent pool claim failure. Failure
+artifacts are named per lane and suite so concurrent matrix jobs never collide
+on upload.
 
 ## Workflow Contract Coverage
 
 The repository-side contract parses the workflow with `yaml.BaseLoader` and
 asserts triggers, path filters, the upstream-repository fork guard on both
 jobs, the executed preparation matrix, checkout ref,
-event-and-lane concurrency, credential preflight, copied-suite isolation,
+event-lane-and-suite concurrency, credential preflight, copied-suite isolation,
 version output handling, controlled-failure diagnostics, failure-only artifacts,
 Alertmanager labels, full-SHA action pins, and absence of explicit deletion.
 Scripts CI installs `pyyaml` and runs this contract when the workflow changes.
@@ -226,10 +281,14 @@ Scripts CI installs `pyyaml` and runs this contract when the workflow changes.
    complete claim-only cleanup.
 3. Manually dispatch `published-package` and verify the installed release plus
    cleanup behavior.
-4. Exercise the Alertmanager payload without exposing secrets, then resolve the
+4. Manually dispatch the `pool` suite twice per lane: the first run
+   bootstraps both persistent pools (`pool_pre_existed` false), the second
+   proves a warm claim against pre-provisioned capacity and records cold
+   scale-to-zero telemetry.
+5. Exercise the Alertmanager payload without exposing secrets, then resolve the
    test alert.
-5. Enable the `7/15 * * * *` schedule.
-6. Observe at least two consecutive scheduled runs for both lanes before
+6. Enable the `7/15 * * * *` schedule.
+7. Observe at least two consecutive scheduled runs for both lanes before
    considering rollout complete.
 
 ## Success Criteria
@@ -240,8 +299,10 @@ Scripts CI installs `pyyaml` and runs this contract when the workflow changes.
   an older scheduled run of the same lane, while push and manual runs finish.
 - Port, screen, screenshot, and shell assertions all exercise the public SDK.
 - Normal runs retain only the named persistent pool/template with no claims; failed provisioning records read-only claim and inventory diagnostics without deleting resources.
-- A forced failure produces one actionable, lane-specific Alertmanager alert
-  and sanitized failure artifacts.
+- Pool-suite runs claim from and release back to persistent pools that survive
+  the run, with the warm pool binding against pre-provisioned capacity.
+- A forced failure produces one actionable, lane- and suite-specific
+  Alertmanager alert and sanitized failure artifacts.
 
 ## Live Evidence Remediation
 
@@ -252,10 +313,15 @@ Each lane has one DNS-safe namespace for each event class:
 - `cua-live-<lane>-push` for pushes
 - `cua-live-<lane>-manual` for `workflow_dispatch`
 
-The event-and-lane concurrency group serializes use of each deterministic claim;
-only scheduled runs cancel an older scheduled run in the same lane. Fleet
-reconciliation preserves the namespace, pool, and template, all named after the
-namespace. `Sandbox.ephemeral()` is verified with claim-only cleanup: after
-exit the monitor polls until claims are absent, records persistent reconciled
-resources, and requires exactly the named pool/template with zero claims. It
-never explicitly deletes a namespace, pool, or template.
+The persistent pool suite adds `cua-live-pool-warm-<lane>-<event-class>` and
+`cua-live-pool-cold-<lane>-<event-class>` namespaces whose pools and templates
+deliberately outlive every run.
+
+The event-lane-and-suite concurrency group serializes use of each
+deterministic claim; only scheduled runs cancel an older scheduled run in the
+same lane and suite. Fleet reconciliation preserves the namespace, pool, and
+template, all named after the namespace. `Sandbox.ephemeral()` is verified
+with claim-only cleanup: after exit the monitor polls until claims are absent,
+records persistent reconciled resources, and requires exactly the named
+pool/template with zero claims. It never explicitly deletes a namespace, pool,
+or template.

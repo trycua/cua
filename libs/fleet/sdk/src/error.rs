@@ -47,6 +47,18 @@ pub enum SdkError {
     ClaimFailed { phase: String, status: String },
     #[error("claim did not bind before the polling limit")]
     ClaimTimeout,
+    #[error(
+        "Fleet denied {operation} on pool namespace '{namespace}' (HTTP {status}: {body}). \
+         Pool names are globally unique across accounts, so this name may already be taken — \
+         try a new pool name. If that does not work, contact support on Discord: \
+         https://discord.gg/mVnXXpdE85"
+    )]
+    PoolAccessDenied {
+        operation: String,
+        namespace: String,
+        status: u16,
+        body: String,
+    },
 }
 
 impl SdkError {
@@ -55,6 +67,25 @@ impl SdkError {
             operation: operation.into(),
             status,
             body: bounded_body(body),
+        }
+    }
+
+    /// Reinterpret an HTTP 403 from a pool-namespace write as a pool access
+    /// denial. Reads are left as plain `Status` errors so reconcile flows can
+    /// keep treating 403 like "not visible, try to create".
+    pub(crate) fn deny_pool_access(namespace: &str, error: SdkError) -> SdkError {
+        match error {
+            SdkError::Status {
+                operation,
+                status: status @ 403,
+                body,
+            } => SdkError::PoolAccessDenied {
+                operation,
+                namespace: namespace.into(),
+                status,
+                body,
+            },
+            other => other,
         }
     }
 }

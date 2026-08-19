@@ -60,6 +60,38 @@ class GeneratedBuilderTest(unittest.TestCase):
         self.assertIs(type(reference), fleet_sdk.SandboxTemplateRef)
         self.assertEqual(reference.name, "legacy")
 
+    def test_http_request_builder_skips_optionals_and_enforces_required_fields(self):
+        request = (
+            fleet_sdk.HttpRequestBuilder()
+            .method("GET")
+            .url("https://run.cua.ai/v1/pools")
+            .headers([])
+            .build()
+        )
+        bounded = (
+            fleet_sdk.HttpRequestBuilder()
+            .method("GET")
+            .url("https://run.cua.ai/v1/pools")
+            .headers([])
+            .timeout_secs(30)
+            .build()
+        )
+
+        self.assertIs(type(request), fleet_sdk.HttpRequest)
+        self.assertIsNone(request.body)
+        self.assertIsNone(request.timeout_secs)
+        self.assertEqual(bounded.timeout_secs, 30)
+        with self.assertRaises(fleet_sdk.SdkBuildError.MissingRequiredField) as error:
+            fleet_sdk.HttpRequestBuilder().method("GET").headers([]).build()
+        self.assertEqual(error.exception.record_type, "HttpRequest")
+        self.assertEqual(error.exception.field, "url")
+
+    def test_http_request_constructor_treats_timeout_secs_as_optional(self):
+        request = fleet_sdk.HttpRequest(
+            method="GET", url="https://run.cua.ai/v1/pools", headers=[], body=None
+        )
+        self.assertIsNone(request.timeout_secs)
+
     def test_remaining_frontend_builders_are_generated(self):
         configuration = (
             fleet_sdk.CyclopsTokenProviderConfigurationBuilder()

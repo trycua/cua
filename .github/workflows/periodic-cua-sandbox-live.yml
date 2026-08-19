@@ -18,6 +18,12 @@ on:
         default: both
         type: choice
         options: [both, main-source, published-package]
+      suite:
+        description: "Suite to run"
+        required: true
+        default: both
+        type: choice
+        options: [both, ephemeral, pool]
       force_failure:
         description: "Fail after setup to certify alerting"
         required: true
@@ -39,14 +45,27 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_LANE: ${{ inputs.lane }}
+          REQUESTED_SUITE: ${{ inputs.suite }}
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "push" ]]; then
-            matrix='{"include":[{"lane":"main-source"}]}'
-          elif [[ "$EVENT_NAME" == "workflow_dispatch" && "$REQUESTED_LANE" != "both" ]]; then
-            matrix="{\"include\":[{\"lane\":\"$REQUESTED_LANE\"}]}"
+            matrix='{"include":[{"lane":"main-source","suite":"ephemeral"}]}'
           else
-            matrix='{"include":[{"lane":"main-source"},{"lane":"published-package"}]}'
+            lanes=("main-source" "published-package")
+            if [[ "$EVENT_NAME" == "workflow_dispatch" && "$REQUESTED_LANE" != "both" ]]; then
+              lanes=("$REQUESTED_LANE")
+            fi
+            suites=("ephemeral" "pool")
+            if [[ "$EVENT_NAME" == "workflow_dispatch" && "${REQUESTED_SUITE:-both}" != "both" ]]; then
+              suites=("$REQUESTED_SUITE")
+            fi
+            include=""
+            for lane in "${lanes[@]}"; do
+              for suite in "${suites[@]}"; do
+                include+="{\"lane\":\"$lane\",\"suite\":\"$suite\"},"
+              done
+            done
+            matrix="{\"include\":[${include%,}]}"
           fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
@@ -59,13 +78,16 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     concurrency:
-      group: periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}
+      group: periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.suite }}
       cancel-in-progress: ${{ github.event_name == 'schedule' }}
     env:
       CUA_FLEET_BASE_URL: https://run.cua.ai
       CUA_LIVE_E2E_LANE: ${{ matrix.lane }}
+      CUA_LIVE_E2E_SUITE: ${{ matrix.suite }}
       CUA_LIVE_E2E_EVENT: ${{ github.event_name }}
       CUA_LIVE_E2E_NAMESPACE: cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
+      CUA_LIVE_E2E_POOL_WARM_NAMESPACE: cua-live-pool-warm-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
+      CUA_LIVE_E2E_POOL_COLD_NAMESPACE: cua-live-pool-cold-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
       CUA_LIVE_E2E_ARTIFACT_DIR: /tmp/cua-live-e2e
       CUA_TELEMETRY_ENABLED: "false"
     steps:
@@ -154,6 +176,7 @@ jobs:
               json.dumps(
                   {
                       "lane": os.environ["CUA_LIVE_E2E_LANE"],
+                      "suite": os.environ["CUA_LIVE_E2E_SUITE"],
                       "namespace": os.environ["CUA_LIVE_E2E_NAMESPACE"],
                       "source_sha": os.environ["CUA_LIVE_E2E_SOURCE_SHA"],
                       "error": {"type": "ControlledFailure"},
@@ -170,7 +193,7 @@ jobs:
         run: exit 1
 
       - name: Run live Fleet smoke
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.force_failure) }}
+        if: ${{ matrix.suite == 'ephemeral' && !(github.event_name == 'workflow_dispatch' && inputs.force_failure) }}
         env:
           CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
           CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
@@ -178,11 +201,20 @@ jobs:
           PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT" python -m pytest -q -s \
             "$CUA_LIVE_E2E_TEST_ROOT/tests/live/test_fleet_ephemeral.py"
 
+      - name: Run live Fleet pool smoke
+        if: ${{ matrix.suite == 'pool' && !(github.event_name == 'workflow_dispatch' && inputs.force_failure) }}
+        env:
+          CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+          CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
+        run: |
+          PYTHONPATH="$CUA_LIVE_E2E_TEST_ROOT" python -m pytest -q -s \
+            "$CUA_LIVE_E2E_TEST_ROOT/tests/live/test_fleet_pool_persistent.py"
+
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
-          name: cua-sandbox-live-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: cua-sandbox-live-${{ matrix.lane }}-${{ matrix.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/cua-live-e2e
           if-no-files-found: warn
           retention-days: 7
@@ -201,10 +233,11 @@ jobs:
                 "severity": "critical",
                 "service": "cua-sandbox",
                 "job": "periodic-cua-sandbox-live",
-                "lane": "${{ matrix.lane }}"
+                "lane": "${{ matrix.lane }}",
+                "suite": "${{ matrix.suite }}"
               },
               "annotations": {
-                "summary": "Cua Sandbox live Fleet E2E failed (${{ matrix.lane }})",
+                "summary": "Cua Sandbox live Fleet E2E failed (${{ matrix.lane }}/${{ matrix.suite }})",
                 "description": "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
                 "source_sha": "${{ steps.source_sha.outputs.source_sha }}",
                 "package_version": "${{ steps.versions.outputs.sandbox }}",

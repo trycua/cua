@@ -2188,6 +2188,7 @@ export interface VmTemplateBuilderLike {
   imagePullPolicy(value: ImagePullPolicy): VmTemplateBuilderLike;
   imagePullSecret(value: string): VmTemplateBuilderLike;
   memory(value: string): VmTemplateBuilderLike;
+  nestedVirtualization(value: boolean): VmTemplateBuilderLike;
   nodeSelector(value: Map<string, string>): VmTemplateBuilderLike;
   oidc(value: OidcConfig): VmTemplateBuilderLike;
   probes(value: PreservedJsonLike): VmTemplateBuilderLike;
@@ -2352,6 +2353,21 @@ export class VmTemplateBuilder
           return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(
             uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
             FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  nestedVirtualization(value: boolean): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization(
+            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+            FfiConverterBool.lower(value, nativeModule().rustbuffer_alloc),
             callStatus,
           );
         },
@@ -3120,6 +3136,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization() !==
+    23834
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization",
     );
   }
   if (

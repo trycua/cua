@@ -148,7 +148,18 @@ function Register-CuaDriverAutostart {
 }
 
 function Stop-CuaDriverLocalDaemons {
-    & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    # A missing task is the normal state for -NoAutoStart and for a first
+    # install. Windows PowerShell 5.1 promotes schtasks.exe stderr to an
+    # ErrorRecord, so temporarily relax the script-wide Stop preference for
+    # this deliberately best-effort cleanup.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
     Get-Process -Name "cua-driver-local","cua-driver-uia-local" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
@@ -176,10 +187,21 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 Write-Step "cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli"
 Push-Location $RepoRoot
 try {
-    & cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli
-    if ($LASTEXITCODE -ne 0) {
+    # Windows PowerShell 5.1 promotes native stderr into ErrorRecord objects.
+    # Cargo writes ordinary progress there, so the script-wide Stop preference
+    # would terminate a healthy build before its exit code can be inspected.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli
+        $buildExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($buildExit -ne 0) {
         Write-Host "Error: cargo build failed." -ForegroundColor Red
-        exit $LASTEXITCODE
+        exit $buildExit
     }
 }
 finally {
@@ -408,3 +430,11 @@ if ($AutoStart) {
     Write-Host "  cua-driver-local autostart disable   (remove)" -ForegroundColor Cyan
     Write-Host ""
 }
+
+# Native tools such as `schtasks.exe /Query` leave `$LASTEXITCODE` unchanged
+# even after later PowerShell commands succeed. When this script is launched
+# through `powershell.exe -File`, that stale value can become the process exit
+# code and make a completed install look failed to CI callers. Every real
+# failure above exits or throws explicitly, so finish with an unambiguous
+# success status.
+exit 0

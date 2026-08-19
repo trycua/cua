@@ -141,6 +141,57 @@ Each field is optional (pass `None` to accept the server default). With
 `min_pool_size=0` the pool scales to zero when no claims are held, so the
 first claim after an idle period cold-starts a sandbox.
 
+## Expire pools and claims automatically
+
+Pools and claims accept an optional creation-age TTL. Pass
+`ttl_seconds_after_created=` (requires `cua-sandbox>=0.4.2`) and the resource
+is deleted once it has existed that many seconds, whether or not it is in use:
+
+```python
+# Delete the whole pool 24 hours after it was first created.
+pool = await Pool.apply(
+    Image.from_registry(IMAGE),
+    name=POOL_NAME,
+    replicas=1,
+    ttl_seconds_after_created=86400,
+)
+
+# Delete this claim and its sandbox one hour after the claim was created.
+async with pool.claim(
+    name=CLAIM_NAME,
+    ttl_seconds_after_created=3600,
+) as sandbox:
+    ...
+```
+
+The clock starts at the resource's original creation, not its last use:
+re-running `Pool.apply()` reconciles the existing pool without resetting its
+age, and reconnecting to a named claim keeps the deadline set when the claim
+was first created. Without the argument nothing is reaped — pools and claims
+live until you delete them.
+
+A claim TTL fills in the claim's lifecycle shutdown time with a `Delete`
+policy; a claim that already carries an explicit lifecycle keeps it. When you
+build a claim spec by hand, put the TTL inside it — passing both
+`spec=` and `ttl_seconds_after_created=` raises `ValueError`:
+
+```python
+spec = ClaimSpec(
+    sandbox_template_ref=pool.resource.spec.sandbox_template_ref,
+    warmpool=None,
+    bind_deadline=None,
+    lifecycle=None,
+    ttl_seconds_after_created=3600,
+)
+async with pool.claim(spec=spec) as sandbox:
+    ...
+```
+
+Treat a pool TTL that can expire while claims are held as a capacity event,
+not just cleanup: deleting the pool drains its sandboxes, and a claim that
+outlives its pool destroys its sandbox on release instead of returning it to
+the pool.
+
 ## Choose pool and claim names
 
 The defaults use the same value for the pool and claim. Override either name
@@ -154,6 +205,39 @@ uv run create_pool.py
 
 Use stable names when later runs should reconcile the same pool and reuse the
 same claim identity. Names must be lowercase DNS labels.
+
+## Pool names are globally unique
+
+A pool's name is also its namespace, and that namespace is shared across all
+Cua accounts. `Pool.apply()` therefore requires an explicit `name=`, and
+`Sandbox.create(image, ...)` refuses Fleet registry images without a pool —
+apply a named pool first and pass it as `pool=`:
+
+```python
+pool = await Pool.apply(image, name="my-team-windows-pool")
+sandbox = await Sandbox.create(pool=pool, name="my-claim")
+```
+
+If the name you pick already belongs to another account, the SDK raises
+`PoolAccessDeniedError` explaining that the name is taken:
+
+```text
+PoolAccessDeniedError: Fleet denied create pool on pool namespace
+'my-team-windows-pool' (HTTP 403: k8s request is not allowed). Pool names
+are globally unique across accounts, so this name may already be taken —
+try a new pool name. If that does not work, contact support on Discord:
+https://discord.gg/mVnXXpdE85
+```
+
+Retrying does not help, and neither does claiming with fresh claim names: the
+conflict is on the pool and its namespace, not the claim. Choose a different
+pool name. Claim names never have this problem — they only need to be unique
+inside your own pool's namespace, which is why the SDK generates random
+`claim-<petname>` claims for you but never generates pool names.
+
+`Sandbox.ephemeral(image)` remains a one-liner: it creates a disposable pool
+under a random `cua-eph-<hex>` name and deletes it on exit. Passing
+`keep_pool=True` requires `name=` so later runs can find the kept pool.
 
 ## Delete the pool
 

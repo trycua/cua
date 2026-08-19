@@ -44,7 +44,7 @@ def lifecycle_queue
   template_url = "#{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default"
   claim_url = "#{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default"
   pool_body = JSON.generate(pool_json).b
-  claim_body = '{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":null}'.b
+  claim_body = '{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"},"bindDeadline":900},"status":null}'.b
   [
     token_expected,
     Expected.new('POST', "#{BASE}/api/namespaces", JSON_HEADERS, '{"name":"default"}'.b, 201, {}),
@@ -102,7 +102,9 @@ def configuration
 end
 
 def service_request(body)
-  FleetSdk::HttpRequest.new(method: 'POST', url: 'https://ignored.invalid/mcp', headers: [], body: body, timeout_secs: nil)
+  builder = FleetSdk::HttpRequestBuilder.new.method('POST').url('https://ignored.invalid/mcp').headers([])
+  builder = builder.body(body) unless body.nil?
+  builder.build
 end
 
 sandbox = FleetSdk::Sandbox.new(namespace: 'default', claim: 'default', name: 'offline-sandbox', services: ['mcp'])

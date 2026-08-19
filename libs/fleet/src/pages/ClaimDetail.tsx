@@ -1,20 +1,21 @@
 import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import Box from "@cloudscape-design/components/box"
-import Button from "@cloudscape-design/components/button"
 import ColumnLayout from "@cloudscape-design/components/column-layout"
 import Container from "@cloudscape-design/components/container"
 import Header from "@cloudscape-design/components/header"
 import Link from "@cloudscape-design/components/link"
 import Modal from "@cloudscape-design/components/modal"
 import SpaceBetween from "@cloudscape-design/components/space-between"
-import Spinner from "@cloudscape-design/components/spinner"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
 import { useFlash } from "../components/FlashContext"
 import { DesktopPane } from "../components/DesktopPane"
 import { deleteClaim, getClaim } from "../sdk/claims"
 import type { Claim } from "../sdk/models"
 import { getPool } from "../sdk/pools"
+import { CuaButton } from "../components/CuaButton"
+import { PageEmpty, PageError } from "../components/PageState"
+import { PageShell } from "../components/PageShell"
 
 function phaseType(phase: string): "success" | "pending" | "error" | "info" {
   switch (phase) {
@@ -39,9 +40,11 @@ export function ClaimDetail() {
   const [loading, setLoading] = useState(true)
   const [confirmRelease, setConfirmRelease] = useState(false)
   const [releasing, setReleasing] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const [claimData, poolData] = await Promise.all([
         getClaim(namespace, claimName),
@@ -50,10 +53,12 @@ export function ClaimDetail() {
       setClaim(claimData)
       setServices(poolData.services)
     } catch (e) {
+      const message = String((e as Error).message)
+      setLoadError(message)
       flash.push({
         type: "error",
         header: "Failed to load claim",
-        content: String((e as Error).message),
+        content: message,
       })
     } finally {
       setLoading(false)
@@ -99,40 +104,55 @@ export function ClaimDetail() {
 
   if (loading && !claim) {
     return (
-      <Container header={<Header variant="h1">{claimName}</Header>}>
-        <Box textAlign="center" padding="l">
-          <Spinner /> Loading claim…
-        </Box>
-      </Container>
+      <PageShell eyebrow="Fleet / Claim" title={claimName || "Claim"}>
+        <PageEmpty title="Loading claim…" />
+      </PageShell>
     )
   }
-  if (!claim) return null
+  if (!claim) {
+    return (
+      <PageShell eyebrow="Fleet / Claim" title={claimName || "Claim"}>
+        <PageError
+          title="Claim unavailable"
+          action={<CuaButton onClick={load}>Try again</CuaButton>}
+        >
+          {loadError}
+        </PageError>
+      </PageShell>
+    )
+  }
 
   const sandboxName = claim.sandboxName
   const isBound = claim.phase === "Bound" && sandboxName
 
   return (
-    <SpaceBetween size="l">
-      <Container
-        header={
-          <Header
-            variant="h1"
-            actions={
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" onClick={load} />
-                <Button onClick={() => navigate(`/pools/${namespace}/${poolName}`)}>
-                  Back to pool
-                </Button>
-                <Button onClick={() => setConfirmRelease(true)}>
-                  Release
-                </Button>
-              </SpaceBetween>
-            }
-          >
-            {claimName}
-          </Header>
-        }
-      >
+    <PageShell
+      eyebrow="Fleet / Claim"
+      title={claimName}
+      description={
+        <StatusIndicator type={phaseType(claim.phase)}>
+          {claim.phase}
+        </StatusIndicator>
+      }
+      secondaryActions={
+        <SpaceBetween direction="horizontal" size="xs">
+          <CuaButton
+            tone="icon"
+            ariaLabel="Refresh claim"
+            iconName="refresh"
+            onClick={load}
+          />
+          <CuaButton onClick={() => navigate(`/pools/${namespace}/${poolName}`)}>
+            Back to pool
+          </CuaButton>
+          <CuaButton onClick={() => setConfirmRelease(true)}>
+            Release
+          </CuaButton>
+        </SpaceBetween>
+      }
+    >
+      <SpaceBetween size="l">
+      <Container header={<Header variant="h2">Overview</Header>}>
         <ColumnLayout columns={2} variant="text-grid">
           <div>
             <Box variant="awsui-key-label">Status</Box>
@@ -225,12 +245,12 @@ export function ClaimDetail() {
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setConfirmRelease(false)} disabled={releasing}>
+              <CuaButton onClick={() => setConfirmRelease(false)} disabled={releasing}>
                 Cancel
-              </Button>
-              <Button variant="primary" onClick={release} loading={releasing}>
+              </CuaButton>
+              <CuaButton tone="danger" onClick={release} loading={releasing}>
                 Release
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           </Box>
         }
@@ -238,6 +258,7 @@ export function ClaimDetail() {
         This will delete the claim and return its sandbox VM back to the warm pool.
         The VM will be restarted with a clean state.
       </Modal>
-    </SpaceBetween>
+      </SpaceBetween>
+    </PageShell>
   )
 }

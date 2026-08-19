@@ -32,6 +32,11 @@ import type {
   PoolSummary,
   PoolTemplateConfig,
 } from "./models"
+import {
+  getLocalVisualPreviewPool,
+  isLocalVisualPreview,
+  listLocalVisualPreviewPools,
+} from "../local-visual-preview"
 
 function serviceProtocol(protocol: ServiceProtocol | undefined): string {
   return protocol === ServiceProtocol.Udp ? "UDP" : "TCP"
@@ -87,10 +92,21 @@ async function listNamespacesWith(client: CyclopsClient): Promise<Namespace[]> {
 }
 
 export async function listNamespaces(): Promise<Namespace[]> {
+  if (isLocalVisualPreview()) {
+    return [
+      {
+        name: "preview",
+        status: "Active",
+        createdAt: "2026-08-16T20:20:00.000Z",
+        labels: undefined,
+      },
+    ]
+  }
   return withClient(listNamespacesWith)
 }
 
 export async function listPools(): Promise<PoolSummary[]> {
+  if (isLocalVisualPreview()) return listLocalVisualPreviewPools()
   return withClient(async client => {
     const namespaces = await listNamespacesWith(client)
     const pools = await Promise.all(
@@ -123,6 +139,11 @@ async function getPoolWith(
 }
 
 export async function getPool(namespace: string, name: string): Promise<PoolData> {
+  if (isLocalVisualPreview()) {
+    const pool = getLocalVisualPreviewPool(namespace, name)
+    if (!pool) throw new Error(`Preview pool ${namespace}/${name} was not found`)
+    return pool
+  }
   return withClient(async client => {
     const resources = await getPoolWith(client, namespace, name)
     return poolData(resources.pool, resources.template)

@@ -43,9 +43,9 @@ default rbac_allow = false
 
 # ── Where the boundary applies ──────────────────────────────────────────────
 #
-# These are exactly the call sites requireNamespaceAccess had. The /api/svc and
-# /api/orch proxies dial {service}.{namespace}.svc.cluster.local directly, so
-# Capsule cannot scope them; /api/namespaces/{name} GET reads one namespace
+# These are exactly the remaining call sites requireNamespaceAccess had. The
+# /api/svc proxy dials {service}.{namespace}.svc.cluster.local directly, so
+# Capsule cannot scope it; /api/namespaces/{name} GET reads one namespace
 # through the K8s API and wants the same answer without trusting the read.
 #
 # DELETE on /api/namespaces/{name} is deliberately absent: it never ran this
@@ -60,16 +60,12 @@ applies {
 }
 
 applies {
-	input.route == "/api/orch/{namespace}/{service}/{path...}"
-}
-
-applies {
 	input.route == "/api/namespaces/{name}"
 	input.method == "GET"
 }
 
-# target_namespace is the namespace this request is about: /api/svc and
-# /api/orch name it {namespace}, /api/namespaces/{name} names it {name}. Keyed
+# target_namespace is the namespace this request is about: /api/svc names it
+# {namespace}, /api/namespaces/{name} names it {name}. Keyed
 # off which parameter the route bound rather than off the route itself, so the
 # two lists cannot disagree — and mirrored in Go by auth.OwnedNamespace, which
 # is what the fact provider probes and what TestOwnedNamespaceMatchesRego pins

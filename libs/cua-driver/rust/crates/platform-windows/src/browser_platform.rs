@@ -10,24 +10,35 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareOutcome, PrepareRequest,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, RECT};
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, FILETIME, HWND, RECT};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_APPEND_DATA, FILE_DELETE_CHILD,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, OPEN_EXISTING,
+    WRITE_DAC, WRITE_OWNER,
+};
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Shell::{
+    FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
+};
 use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROOT};
 
 #[derive(Clone)]
@@ -121,7 +132,8 @@ fn browser_product(name: &str) -> BrowserProduct {
         .next()
         .unwrap_or(name)
         .to_ascii_lowercase();
-    match executable.trim_end_matches(".exe") {
+    let executable = executable.trim_end_matches(".exe");
+    match executable {
         "chrome" => BrowserProduct::GoogleChrome,
         "chromium" => BrowserProduct::Chromium,
         "msedge" => BrowserProduct::MicrosoftEdge,
@@ -131,8 +143,434 @@ fn browser_product(name: &str) -> BrowserProduct {
         "arc" => BrowserProduct::Arc,
         "electron" => BrowserProduct::Electron,
         "firefox" => BrowserProduct::Firefox,
+        _ if executable
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|token| token == "electron") =>
+        {
+            BrowserProduct::Electron
+        }
         _ => BrowserProduct::Other,
     }
+}
+
+fn isolated_browser_candidates_from_roots(
+    program_files: &std::path::Path,
+    program_files_x86: &std::path::Path,
+) -> Vec<(PathBuf, PathBuf, &'static str, &'static str)> {
+    vec![
+        (
+            program_files.join(r"Google\Chrome\Application\chrome.exe"),
+            program_files.to_owned(),
+            "CN=Google LLC",
+            "O=Google LLC",
+        ),
+        (
+            program_files_x86.join(r"Google\Chrome\Application\chrome.exe"),
+            program_files_x86.to_owned(),
+            "CN=Google LLC",
+            "O=Google LLC",
+        ),
+        (
+            program_files.join(r"Microsoft\Edge\Application\msedge.exe"),
+            program_files.to_owned(),
+            "CN=Microsoft Corporation",
+            "O=Microsoft Corporation",
+        ),
+        (
+            program_files_x86.join(r"Microsoft\Edge\Application\msedge.exe"),
+            program_files_x86.to_owned(),
+            "CN=Microsoft Corporation",
+            "O=Microsoft Corporation",
+        ),
+    ]
+}
+
+fn known_folder_path(id: &windows::core::GUID) -> Result<PathBuf, BrowserRefusal> {
+    let raw = unsafe { SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None) }.map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not resolve trusted Windows installation root: {error}"),
+        )
+    })?;
+    let decoded = unsafe { raw.to_string() };
+    unsafe { CoTaskMemFree(Some(raw.0.cast())) };
+    decoded.map(PathBuf::from).map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("trusted Windows installation root was not valid Unicode: {error}"),
+        )
+    })
+}
+
+fn isolated_browser_candidates(
+) -> Result<Vec<(PathBuf, PathBuf, &'static str, &'static str)>, BrowserRefusal> {
+    let program_files = known_folder_path(&FOLDERID_ProgramFiles)?;
+    let program_files_x86 = known_folder_path(&FOLDERID_ProgramFilesX86)?;
+    Ok(isolated_browser_candidates_from_roots(
+        &program_files,
+        &program_files_x86,
+    ))
+}
+
+fn authenticode_identity_matches(details: &str, expected_cn: &str, expected_org: &str) -> bool {
+    let mut lines = details.lines();
+    if lines.next().map(str::trim) != Some("Valid") {
+        return false;
+    }
+    let Some(subject) = lines.next() else {
+        return false;
+    };
+    let fields = subject.split(',').map(str::trim).collect::<Vec<_>>();
+    fields.contains(&expected_cn) && fields.contains(&expected_org)
+}
+
+fn has_trusted_authenticode_identity(
+    executable: &std::path::Path,
+    expected_cn: &str,
+    expected_org: &str,
+) -> bool {
+    let Ok(output) = authenticode_output(executable) else {
+        return false;
+    };
+    output.status.success()
+        && authenticode_identity_matches(
+            &String::from_utf8_lossy(&output.stdout),
+            expected_cn,
+            expected_org,
+        )
+}
+
+fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::process::Output> {
+    let Ok(system32) = system_directory_path() else {
+        return Err(std::io::Error::other(
+            "could not resolve the Windows system directory",
+        ));
+    };
+    let powershell = system32.join(r"WindowsPowerShell\v1.0\powershell.exe");
+    std::process::Command::new(powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            r#"$ErrorActionPreference = 'Stop'; $utf8 = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $utf8; $module = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'; Import-Module -Name $module -Force -ErrorAction Stop; $path = [Environment]::GetEnvironmentVariable('CUA_BROWSER_ATTEST_PATH'); $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $path; Write-Output $signature.Status; Write-Output $signature.SignerCertificate.Subject"#,
+        ])
+        // The static command imports Security beside the trusted System32
+        // PowerShell, ignoring an incompatible inherited PSModulePath. Pass the
+        // browser path as data so PowerShell never parses it as command text.
+        .env("CUA_BROWSER_ATTEST_PATH", executable)
+        .stdin(Stdio::null())
+        .output()
+}
+
+fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) -> Option<String> {
+    use std::os::windows::ffi::OsStrExt;
+
+    // This launch boundary protects the current agent token from executing a
+    // browser tree that it can modify. Other principals that can replace an
+    // installed browser are outside this runtime authorization boundary.
+    let wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let rights: &[(&str, u32)] = if directory {
+        &[
+            ("add_file", FILE_ADD_FILE.0),
+            ("add_subdirectory", FILE_ADD_SUBDIRECTORY.0),
+            ("delete_child", FILE_DELETE_CHILD.0),
+            ("write_ea", FILE_WRITE_EA.0),
+            ("write_attributes", FILE_WRITE_ATTRIBUTES.0),
+            ("delete", DELETE.0),
+            ("write_dac", WRITE_DAC.0),
+            ("write_owner", WRITE_OWNER.0),
+        ]
+    } else {
+        &[
+            ("write_data", FILE_WRITE_DATA.0),
+            ("append_data", FILE_APPEND_DATA.0),
+            ("write_ea", FILE_WRITE_EA.0),
+            ("write_attributes", FILE_WRITE_ATTRIBUTES.0),
+            ("delete", DELETE.0),
+            ("write_dac", WRITE_DAC.0),
+            ("write_owner", WRITE_OWNER.0),
+        ]
+    };
+    let flags = if directory {
+        FILE_FLAG_BACKUP_SEMANTICS
+    } else {
+        FILE_FLAGS_AND_ATTRIBUTES(0)
+    };
+    for &(name, right) in rights {
+        match unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                right,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                None,
+                OPEN_EXISTING,
+                flags,
+                None,
+            )
+        } {
+            Ok(handle) => {
+                let _ = unsafe { CloseHandle(handle) };
+                return Some(format!("current token was granted {name}"));
+            }
+            Err(error) if error.code() == E_ACCESSDENIED => {}
+            Err(error) => return Some(format!("{name} probe failed closed: {error}")),
+        }
+    }
+    None
+}
+
+fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
+    current_token_write_denial_reason(path, directory).is_none()
+}
+
+fn trusted_windows_installation(
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+) -> bool {
+    trusted_windows_installation_with_probe(executable, trusted_root, current_token_cannot_write)
+}
+
+fn trusted_windows_installation_with_probe(
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+    mut cannot_write: impl FnMut(&std::path::Path, bool) -> bool,
+) -> bool {
+    if !executable.starts_with(trusted_root) || !cannot_write(executable, false) {
+        return false;
+    }
+    let mut current = executable.parent();
+    while let Some(directory) = current {
+        if !cannot_write(directory, true) {
+            return false;
+        }
+        if directory == trusted_root {
+            return true;
+        }
+        current = directory.parent();
+    }
+    false
+}
+
+fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
+    let root = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
+    let relative = match product {
+        BrowserProduct::GoogleChrome => ["Google", "Chrome", "User Data"].as_slice(),
+        BrowserProduct::MicrosoftEdge => ["Microsoft", "Edge", "User Data"].as_slice(),
+        BrowserProduct::Chromium => ["Chromium", "User Data", ""].as_slice(),
+        BrowserProduct::Brave => ["BraveSoftware", "Brave-Browser", "User Data"].as_slice(),
+        BrowserProduct::Vivaldi => ["Vivaldi", "User Data", ""].as_slice(),
+        _ => return None,
+    };
+    Some(
+        relative
+            .iter()
+            .filter(|part| !part.is_empty())
+            .fold(root, |path, part| path.join(part)),
+    )
+}
+
+fn parse_windows_command_line(command_line: &str) -> Vec<String> {
+    let chars = command_line.chars().collect::<Vec<_>>();
+    let mut args = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+        if index == chars.len() {
+            break;
+        }
+        let mut arg = String::new();
+        let mut quoted = false;
+        while index < chars.len() {
+            if !quoted && chars[index].is_whitespace() {
+                break;
+            }
+            let mut slashes = 0;
+            while index < chars.len() && chars[index] == '\\' {
+                slashes += 1;
+                index += 1;
+            }
+            if index < chars.len() && chars[index] == '"' {
+                arg.extend(std::iter::repeat_n('\\', slashes / 2));
+                if slashes % 2 == 0 {
+                    quoted = !quoted;
+                } else {
+                    arg.push('"');
+                }
+                index += 1;
+            } else {
+                arg.extend(std::iter::repeat_n('\\', slashes));
+                if index < chars.len() && (quoted || !chars[index].is_whitespace()) {
+                    arg.push(chars[index]);
+                    index += 1;
+                }
+            }
+        }
+        args.push(arg);
+    }
+    args
+}
+
+fn is_windows_absolute_path(path: &std::path::Path) -> bool {
+    let value = path.as_os_str().to_string_lossy();
+    let bytes = value.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/'))
+        || value.starts_with(r"\\")
+}
+
+fn user_data_dir_from_command_line(
+    command_line: &str,
+    default: Option<PathBuf>,
+) -> Result<Option<PathBuf>, BrowserRefusal> {
+    let args = parse_windows_command_line(command_line);
+    let mut directories = Vec::new();
+    for (index, arg) in args.iter().enumerate() {
+        if let Some(path) = arg.strip_prefix("--user-data-dir=") {
+            if !path.is_empty() {
+                directories.push(PathBuf::from(path));
+            }
+        } else if arg == "--user-data-dir" {
+            if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
+                directories.push(PathBuf::from(path));
+            }
+        }
+    }
+    directories.sort();
+    directories.dedup();
+    match directories.as_slice() {
+        [] => Ok(default),
+        [path] if is_windows_absolute_path(path) => Ok(Some(path.clone())),
+        [_] => Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the browser uses a relative --user-data-dir that cannot be attested without its launch working directory",
+        )),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "browser process has multiple distinct --user-data-dir arguments",
+        )),
+    }
+}
+
+fn system_powershell_path() -> Result<PathBuf, BrowserRefusal> {
+    let system = system_netstat_path()?
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "could not resolve the trusted Windows system directory",
+            )
+        })?;
+    Ok(system.join("WindowsPowerShell\\v1.0\\powershell.exe"))
+}
+
+async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
+    let powershell = system_powershell_path()?;
+    let script = format!(
+        "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop).CommandLine"
+    );
+    let output = tokio::process::Command::new(powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect browser arguments: {error}"),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} arguments are unavailable"),
+        ));
+    }
+    let command_line = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if command_line.is_empty() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} has no command line"),
+        ));
+    }
+    Ok(command_line)
+}
+
+fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let port = lines.next()?.parse::<u16>().ok()?;
+    let path = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let instance = path.strip_prefix("/devtools/browser/")?;
+    (!instance.is_empty()
+        && instance
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
+    .then_some((port, path))
+}
+
+async fn active_port_endpoint(
+    pid: u32,
+    product: BrowserProduct,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    let default = default_user_data_dir(product);
+    let user_data_dir = match browser_command_line(pid).await {
+        Ok(command_line) => user_data_dir_from_command_line(&command_line, default.clone())?,
+        Err(_) => default,
+    };
+    let Some(user_data_dir) = user_data_dir else {
+        return Ok(None);
+    };
+    let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not read the browser's DevToolsActivePort file: {error}"),
+            ))
+        }
+    };
+    let Some((port, path)) = parse_devtools_active_port(&text) else {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the browser's DevToolsActivePort file did not contain one exact browser endpoint",
+        ));
+    };
+    if !loopback_ports_for_exact_pid(pid).await?.contains(&port) {
+        return Ok(None);
+    }
+    Ok(Some(OwnedEndpoint {
+        ws_url: format!("ws://127.0.0.1:{port}{path}"),
+        http_port: Some(port),
+        transport: EndpointTransport::DevToolsActivePort,
+        ownership: EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+            owner_pid: i64::from(pid),
+            listener_pid: Some(i64::from(pid)),
+            detail: Some(
+                "exact OS-reported argv profile port file plus loopback listener owner".to_owned(),
+            ),
+        },
+    }))
 }
 
 fn allows_embedded_descendant_endpoint(executable_path: &str) -> bool {
@@ -346,7 +784,7 @@ fn parse_netstat_loopback_ports(text: &str, allowed_pids: &[u32]) -> Vec<u16> {
     ports
 }
 
-fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
+fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
     let mut buffer = [0u16; 32768];
     let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
     if length == 0 || length >= buffer.len() {
@@ -355,7 +793,11 @@ fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
             "could not resolve the trusted Windows system directory",
         ));
     }
-    Ok(PathBuf::from(String::from_utf16_lossy(&buffer[..length])).join("netstat.exe"))
+    Ok(PathBuf::from(String::from_utf16_lossy(&buffer[..length])))
+}
+
+fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
+    Ok(system_directory_path()?.join("netstat.exe"))
 }
 
 async fn netstat_loopback_listeners(
@@ -753,10 +1195,12 @@ fn owned_endpoint_from_listener(
     ws_url: String,
     listener_pid: u32,
     context: &str,
+    transport: EndpointTransport,
 ) -> OwnedEndpoint {
     OwnedEndpoint {
         ws_url,
         http_port: Some(port),
+        transport,
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::ListeningSocketPid,
             // The discovery route proved listener_pid under its documented
@@ -776,6 +1220,7 @@ fn select_unique_owned_endpoint(
     root_pid: i64,
     discovered: Vec<(u16, String, u32)>,
     context: &str,
+    transport: EndpointTransport,
 ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
     match discovered.as_slice() {
         [] => Ok(None),
@@ -785,6 +1230,7 @@ fn select_unique_owned_endpoint(
             ws_url.clone(),
             *listener_pid,
             context,
+            transport,
         ))),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserBindingAmbiguous,
@@ -815,6 +1261,21 @@ async fn loopback_port_is_owned_with_retry(
     .await
 }
 
+fn legacy_setup_endpoint_is_stable(
+    observation: &mut Option<(String, std::time::Instant)>,
+    ws_url: &str,
+    now: std::time::Instant,
+    preference_window: Duration,
+) -> bool {
+    if let Some((observed_url, observed_at)) = observation.as_ref() {
+        if observed_url == ws_url {
+            return now.saturating_duration_since(*observed_at) >= preference_window;
+        }
+    }
+    *observation = Some((ws_url.to_owned(), now));
+    false
+}
+
 async fn retry_port_ownership<F, Fut>(
     attempts: usize,
     delay: Duration,
@@ -839,6 +1300,27 @@ where
 
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        for (candidate, trusted_root, expected_cn, expected_org) in isolated_browser_candidates()? {
+            let Ok(executable) = select_isolated_browser_executable([candidate.clone()]) else {
+                continue;
+            };
+            if trusted_windows_installation(&candidate, &trusted_root)
+                && has_trusted_authenticode_identity(
+                    std::path::Path::new(&executable),
+                    expected_cn,
+                    expected_org,
+                )
+            {
+                return Ok(executable);
+            }
+        }
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "no vendor-signed protected Chromium executable is available for isolated launch",
+        ))
+    }
+
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
         if action.session.is_empty()
             || action.cdp_target_id.is_empty()
@@ -936,6 +1418,34 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let chromium = is_chromium(&name);
         let gecko = is_firefox(&name);
         let product_kind = browser_product(&name);
+        let command_line = if chromium {
+            browser_command_line(pid_u32).await.ok()
+        } else {
+            None
+        };
+        let helper = command_line.as_deref().is_some_and(|line| {
+            parse_windows_command_line(line)
+                .iter()
+                .any(|arg| arg.starts_with("--type=") && arg.len() > "--type=".len())
+        });
+        let process_role = if helper {
+            BrowserProcessRole::Helper
+        } else if product_kind == BrowserProduct::Electron {
+            BrowserProcessRole::EmbeddedApplication
+        } else if matches!(
+            product_kind,
+            BrowserProduct::GoogleChrome
+                | BrowserProduct::Chromium
+                | BrowserProduct::MicrosoftEdge
+                | BrowserProduct::Brave
+                | BrowserProduct::Vivaldi
+                | BrowserProduct::Opera
+                | BrowserProduct::Arc
+        ) {
+            BrowserProcessRole::StandaloneConsumer
+        } else {
+            BrowserProcessRole::Unknown
+        };
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {
@@ -947,7 +1457,23 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             },
             product_kind,
             product: Some(name),
-            channel: None,
+            channel: if process_role == BrowserProcessRole::StandaloneConsumer {
+                command_line.as_deref().map(|line| {
+                    let lower = line.to_ascii_lowercase();
+                    if lower.contains("chrome sxs") || lower.contains("canary") {
+                        "canary".to_owned()
+                    } else if lower.contains(" beta") || lower.contains("\\beta\\") {
+                        "beta".to_owned()
+                    } else if lower.contains(" dev") || lower.contains("\\dev\\") {
+                        "dev".to_owned()
+                    } else {
+                        "stable".to_owned()
+                    }
+                })
+            } else {
+                None
+            },
+            process_role,
             supports_cdp: chromium,
         })
     }
@@ -1035,6 +1561,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             pid,
             browser_endpoints_for_pid(pid_u32).await?,
             "listener owned by the exact approved browser pid or its classified embedded webview tree",
+            EndpointTransport::LegacyJsonVersion,
         )
     }
 
@@ -1053,6 +1580,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             pid,
             spawned_browser_endpoints_for_pid(pid_u32, expected_ws_url).await?,
             "exact private-profile endpoint owned by the driver-spawned browser tree",
+            EndpointTransport::SpawnedExact,
         )
     }
 
@@ -1066,10 +1594,15 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint(pid_u32, classification.product_kind).await? {
+            return Ok(Some(endpoint));
+        }
         select_unique_owned_endpoint(
             pid,
             exact_browser_endpoints_for_pid(pid_u32).await?,
             "Windows exact browser-pid listener plus /json/version",
+            EndpointTransport::LegacyJsonVersion,
         )
     }
 
@@ -1090,6 +1623,16 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 "the approved existing-profile endpoint is not loopback-only",
             ));
         };
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint(pid_u32, classification.product_kind).await? {
+            if endpoint.ws_url != expected_ws_url {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the browser's exact DevTools endpoint changed after approval",
+                ));
+            }
+            return Ok(Some(endpoint));
+        }
         // Setup may approve the exact PID-owned port before Chromium publishes
         // its final browser WebSocket id. Reprove that stable port ownership
         // here; the connection layer still uses the approved WebSocket path.
@@ -1099,6 +1642,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: expected_ws_url.to_owned(),
             http_port: Some(port),
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -1152,7 +1696,19 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let injected_global_input = handle.injected_global_input;
 
         let deadline = std::time::Instant::now() + Duration::from_secs(6);
+        // Chrome and Edge can expose /json/version a few milliseconds before
+        // their profile-scoped DevToolsActivePort file becomes visible on
+        // Windows. Prefer the stronger file + exact-pid listener proof during
+        // that bounded publication window. Accepting the HTTP result
+        // immediately can mint a grant for a transient browser WebSocket id
+        // that the just-published file then (correctly) disproves.
+        let mut legacy_endpoint_observation: Option<(String, std::time::Instant)> = None;
         let endpoint_result = loop {
+            match active_port_endpoint(pid_u32, request.browser).await {
+                Ok(Some(endpoint)) => break Ok(endpoint),
+                Ok(None) => {}
+                Err(error) => break Err(error),
+            }
             let ports = match loopback_ports_for_exact_pid(pid_u32).await {
                 Ok(ports) => ports,
                 Err(error) => break Err(error),
@@ -1188,9 +1744,29 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             }
             match endpoints.as_slice() {
                 [(port, ws_url, detail)] => {
+                    let now = std::time::Instant::now();
+                    if !legacy_setup_endpoint_is_stable(
+                        &mut legacy_endpoint_observation,
+                        ws_url,
+                        now,
+                        Duration::from_secs(1),
+                    ) {
+                        if now >= deadline {
+                            break Err(refusal(
+                                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                                format!(
+                                    "{} did not keep one exact browser endpoint stable after the approved setup action",
+                                    descriptor.product_name
+                                ),
+                            ));
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
                     break Ok(OwnedEndpoint {
                         ws_url: ws_url.clone(),
                         http_port: Some(*port),
+                        transport: EndpointTransport::LegacyJsonVersion,
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
@@ -1317,7 +1893,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -1337,6 +1919,163 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_browser_candidates_are_vendor_attested_protected_installs() {
+        let candidates = isolated_browser_candidates_from_roots(
+            std::path::Path::new(r"D:\Apps"),
+            std::path::Path::new(r"E:\Apps32"),
+        );
+        assert_eq!(candidates.len(), 4);
+        assert_eq!(
+            candidates[0].0,
+            PathBuf::from(r"D:\Apps\Google\Chrome\Application\chrome.exe")
+        );
+        assert_eq!(
+            candidates[1].0,
+            PathBuf::from(r"E:\Apps32\Google\Chrome\Application\chrome.exe")
+        );
+        assert_eq!(
+            candidates[2].0,
+            PathBuf::from(r"D:\Apps\Microsoft\Edge\Application\msedge.exe")
+        );
+    }
+
+    #[test]
+    fn authenticode_identity_requires_valid_exact_publisher_fields() {
+        let details = "Valid\r\nCN=Google LLC, O=Google LLC, L=Mountain View\r\n";
+        assert!(authenticode_identity_matches(
+            details,
+            "CN=Google LLC",
+            "O=Google LLC"
+        ));
+        assert!(!authenticode_identity_matches(
+            "NotSigned\r\nCN=Google LLC, O=Google LLC\r\n",
+            "CN=Google LLC",
+            "O=Google LLC"
+        ));
+        assert!(!authenticode_identity_matches(
+            "Valid\r\nCN=Google LLC, O=Google LLC Evil\r\n",
+            "CN=Google LLC",
+            "O=Google LLC"
+        ));
+    }
+
+    #[test]
+    fn writable_installation_tree_is_rejected() {
+        let root = tempfile::tempdir().expect("writable product root");
+        let product = root.path().join(r"Google\Chrome\Application");
+        std::fs::create_dir_all(&product).expect("writable product directories");
+        let executable = product.join("chrome.exe");
+        std::fs::write(&executable, b"not a browser").expect("writable executable");
+
+        assert!(!trusted_windows_installation(&executable, root.path()));
+    }
+
+    #[test]
+    fn installation_trust_walk_requires_every_probe_to_deny_write() {
+        let root = std::path::Path::new(r"C:\Program Files");
+        let executable = root.join(r"Google\Chrome\Application\chrome.exe");
+
+        assert!(trusted_windows_installation_with_probe(
+            &executable,
+            root,
+            |_, _| true,
+        ));
+        assert!(!trusted_windows_installation_with_probe(
+            &executable,
+            root,
+            |path, directory| !(directory && path.ends_with(r"Google\Chrome")),
+        ));
+        assert!(!trusted_windows_installation_with_probe(
+            &executable,
+            root,
+            |path, directory| !(directory && path == root),
+        ));
+        assert!(!trusted_windows_installation_with_probe(
+            &std::path::PathBuf::from(r"D:\UserControlled\chrome.exe"),
+            root,
+            |_, _| true,
+        ));
+    }
+
+    #[test]
+    fn installed_vendor_browser_tree_is_accepted_only_for_a_nonwritable_token() {
+        let candidates = isolated_browser_candidates().expect("trusted Known Folder roots");
+        let installed = candidates
+            .iter()
+            .find(|(candidate, _, expected_cn, expected_org)| {
+                candidate.is_file()
+                    && has_trusted_authenticode_identity(candidate, expected_cn, expected_org)
+            });
+        let Some(installed) = installed else {
+            let diagnostics = candidates
+                .iter()
+                .map(|(candidate, _, _, _)| {
+                    let name = candidate
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("unknown.exe");
+                    if !candidate.is_file() {
+                        return format!("{name}: missing");
+                    }
+                    match authenticode_output(candidate) {
+                        Ok(output) => format!(
+                            "{name}: exit={:?}, stdout_utf8={:?}, stdout_bytes={:?}, stderr_utf8={:?}",
+                            output.status.code(),
+                            String::from_utf8_lossy(&output.stdout),
+                            output.stdout,
+                            String::from_utf8_lossy(&output.stderr),
+                        ),
+                        Err(error) => format!("{name}: invocation_error={error}"),
+                    }
+                })
+                .collect::<Vec<_>>();
+            panic!(
+                "Windows CI image must provide signed Chrome or Edge; diagnostics: {diagnostics:?}"
+            );
+        };
+
+        if !trusted_windows_installation(&installed.0, &installed.1) {
+            let mut diagnostics = vec![(
+                "executable".to_string(),
+                current_token_write_denial_reason(&installed.0, false),
+            )];
+            let mut current = installed.0.parent();
+            let mut index = 0;
+            while let Some(directory) = current {
+                diagnostics.push((
+                    format!("ancestor_{index}"),
+                    current_token_write_denial_reason(directory, true),
+                ));
+                if directory == installed.1 {
+                    break;
+                }
+                current = directory.parent();
+                index += 1;
+            }
+            for (location, reason) in &diagnostics {
+                if let Some(reason) = reason {
+                    assert!(
+                        reason.starts_with("current token was granted "),
+                        "{location} refusal must prove write-capable token posture, not an unexpected probe failure: {reason}"
+                    );
+                }
+            }
+            assert!(
+                diagnostics.iter().any(|(_, reason)| reason.is_some()),
+                "a refused installation must identify an explicitly granted write right: {diagnostics:?}"
+            );
+            assert!(
+                std::env::var_os("CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER").is_none(),
+                "the standalone-browser runner must provide a vendor-signed browser tree protected from its current token: {diagnostics:?}"
+            );
+            eprintln!(
+                "installed browser correctly refused for this write-capable runner token: {diagnostics:?}"
+            );
+            return;
+        }
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -1407,6 +2146,7 @@ mod tests {
             "ws://127.0.0.1:9222/devtools/browser/id".to_owned(),
             43,
             "verified process tree",
+            EndpointTransport::EmbeddedDescendant,
         );
 
         assert_eq!(endpoint.ownership.owner_pid, 42);
@@ -1421,11 +2161,14 @@ mod tests {
 
     #[test]
     fn owned_endpoint_selection_requires_exactly_one_lifetime_matched_listener() {
-        assert!(
-            select_unique_owned_endpoint(42, Vec::new(), "verified process tree")
-                .expect("empty discovery is not an error")
-                .is_none()
-        );
+        assert!(select_unique_owned_endpoint(
+            42,
+            Vec::new(),
+            "verified process tree",
+            EndpointTransport::LegacyJsonVersion,
+        )
+        .expect("empty discovery is not an error")
+        .is_none());
 
         let selected = select_unique_owned_endpoint(
             42,
@@ -1435,6 +2178,7 @@ mod tests {
                 43,
             )],
             "verified process tree",
+            EndpointTransport::LegacyJsonVersion,
         )
         .expect("one lifetime-matched listener")
         .expect("selected endpoint");
@@ -1456,6 +2200,7 @@ mod tests {
                 ),
             ],
             "verified process tree",
+            EndpointTransport::LegacyJsonVersion,
         )
         .expect_err("multiple lifetime-matched listeners must be refused");
         assert_eq!(ambiguous.code, BrowserRefusalCode::BrowserBindingAmbiguous);
@@ -1475,6 +2220,10 @@ mod tests {
     #[test]
     fn classifier_covers_embedded_and_standalone_chromium() {
         assert!(is_chromium("CuaTestHarness.Electron.exe"));
+        assert_eq!(
+            browser_product("CuaTestHarness.Electron.exe"),
+            BrowserProduct::Electron
+        );
         assert!(is_chromium("msedge.exe"));
         assert!(!is_chromium("firefox.exe"));
         assert!(!is_chromium("Operator.exe"));
@@ -1674,6 +2423,45 @@ mod tests {
     }
 
     #[test]
+    fn windows_command_line_parser_preserves_quoted_profile_paths() {
+        let args = parse_windows_command_line(
+            r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --flag "--user-data-dir=C:\Profiles\Personal Browser""#,
+        );
+        assert_eq!(
+            args,
+            vec![
+                r#"C:\Program Files\Google\Chrome\Application\chrome.exe"#,
+                "--flag",
+                r#"--user-data-dir=C:\Profiles\Personal Browser"#,
+            ]
+        );
+        assert_eq!(
+            user_data_dir_from_command_line(
+                r#"chrome.exe "--user-data-dir=C:\Profiles\Personal Browser""#,
+                None,
+            )
+            .expect("one absolute custom profile"),
+            Some(PathBuf::from(r#"C:\Profiles\Personal Browser"#))
+        );
+    }
+
+    #[test]
+    fn active_port_parser_rejects_non_browser_and_ambiguous_paths() {
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/exact-id\n"),
+            Some((9222, "/devtools/browser/exact-id"))
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/page/id\n"),
+            None
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/id\nextra\n"),
+            None
+        );
+    }
+
+    #[test]
     fn pre_enabled_setup_refuses_multiple_existing_exact_pid_ports() {
         assert_eq!(
             select_provisional_setup_port(&[9222, 9333], &[9222, 9333], true)
@@ -1681,6 +2469,44 @@ mod tests {
                 .code,
             BrowserRefusalCode::BrowserBindingAmbiguous
         );
+    }
+
+    #[test]
+    fn legacy_setup_endpoint_must_remain_exact_during_active_port_preference_window() {
+        let start = std::time::Instant::now();
+        let window = Duration::from_secs(1);
+        let mut observation = None;
+
+        assert!(!legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/first",
+            start,
+            window,
+        ));
+        assert!(!legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/first",
+            start + Duration::from_millis(999),
+            window,
+        ));
+        assert!(legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/first",
+            start + window,
+            window,
+        ));
+        assert!(!legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/second",
+            start + window,
+            window,
+        ));
+        assert!(legacy_setup_endpoint_is_stable(
+            &mut observation,
+            "ws://127.0.0.1:9222/devtools/browser/second",
+            start + window + window,
+            window,
+        ));
     }
 
     #[tokio::test]

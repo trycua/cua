@@ -249,8 +249,8 @@ definitions:
 info:
   contact: {}
   description: Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key
-    management, service proxies (k8s / orch / svc), and namespace management. All
-    pool operations use OSGymSandboxClaim CRs (Path B).
+    management, service proxies (k8s / svc), and namespace management. All pool operations
+    use OSGymSandboxClaim CRs (Path B).
   title: Cyclops CS Backend API
   version: "0.1"
 paths:
@@ -827,54 +827,6 @@ paths:
       summary: Get a namespace owned by the calling user
       tags:
       - namespaces
-  /api/orch/{namespace}/{service}/{path}:
-    get:
-      description: Resolves <service>.<namespace>.svc.cluster.local at request time
-        (in-cluster DNS). The caller must hold RBAC in {namespace} (verified via an
-        impersonated RoleBinding probe); OPA additionally validates that namespace
-        and service look like DNS-1123 labels.
-      parameters:
-      - description: Namespace (DNS-1123 label)
-        in: path
-        name: namespace
-        required: true
-        type: string
-      - description: Service name (DNS-1123 label)
-        in: path
-        name: service
-        required: true
-        type: string
-      - description: Upstream path
-        in: path
-        name: path
-        required: true
-        type: string
-      responses:
-        "200":
-          description: Upstream response
-          schema:
-            type: string
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "502":
-          description: Bad Gateway
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: SPA-authenticated proxy to a per-namespace orchestrator service
-      tags:
-      - passthrough
   /api/svc/{namespace}/{service}/{path}:
     get:
       description: Proxies to {service}.{namespace}.svc.cluster.local:80. Per-key
@@ -1015,8 +967,8 @@ paths:
       - health
 securityDefinitions:
   BearerAuth:
-    description: Keycloak access token. For /api/keys and /api/{k8s,orch} the token
-      is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).
+    description: Keycloak access token. For /api/keys and /api/k8s the token is an
+      interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).
     in: header
     name: Authorization
     type: apiKey

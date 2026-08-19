@@ -1,4 +1,11 @@
 import { getToken } from "../auth/keycloak"
+import {
+  createLocalVisualPreviewConversation,
+  getLocalVisualPreviewConversation,
+  isLocalVisualPreview,
+  listLocalVisualPreviewConversations,
+  streamLocalVisualPreviewTurn,
+} from "../local-visual-preview"
 
 export type ChatRole = "user" | "assistant" | "tool"
 
@@ -130,15 +137,22 @@ function parseAssistantMessage(value: unknown): ChatMessage {
   }
 }
 
-export function createConversation(): Promise<Conversation> {
+export async function createConversation(): Promise<Conversation> {
+  if (isLocalVisualPreview()) return createLocalVisualPreviewConversation()
   return chatJson<Conversation>("/api/chat/conversations", { method: "POST" })
 }
 
-export function listConversations(): Promise<ConversationSummary[]> {
+export async function listConversations(): Promise<ConversationSummary[]> {
+  if (isLocalVisualPreview()) return listLocalVisualPreviewConversations()
   return chatJson<ConversationSummary[]>("/api/chat/conversations")
 }
 
-export function getConversation(id: string): Promise<Conversation> {
+export async function getConversation(id: string): Promise<Conversation> {
+  if (isLocalVisualPreview()) {
+    const conversation = getLocalVisualPreviewConversation(id)
+    if (!conversation) throw new ChatApiError("Conversation not found", 404)
+    return conversation
+  }
   return chatJson<Conversation>(`/api/chat/conversations/${encodeURIComponent(id)}`)
 }
 
@@ -148,6 +162,9 @@ export async function streamTurn(
   onDelta: (delta: string) => void,
   signal?: AbortSignal,
 ): Promise<ChatMessage> {
+  if (isLocalVisualPreview()) {
+    return streamLocalVisualPreviewTurn(conversationId, messages, onDelta)
+  }
   const response = await chatFetch(
     `/api/chat/conversations/${encodeURIComponent(conversationId)}/turns`,
     { method: "POST", body: JSON.stringify({ messages }), signal },

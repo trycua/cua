@@ -520,8 +520,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 2 {
-		t.Fatalf("expected exactly two migrations, got %d", len(files))
+	if len(files) != 3 {
+		t.Fatalf("expected exactly three migrations, got %d", len(files))
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -578,6 +578,21 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	}
 	if strings.Contains(usage.SQL, "GRANT SELECT ON k8s_state.resource_event_outbox TO cyclops_usage_reader") {
 		t.Fatal("usage reader must not receive direct outbox table access")
+	}
+
+	claimedSandboxPool := files[2]
+	if claimedSandboxPool.Version != 3 || claimedSandboxPool.Name != "000003_usage_claimed_sandbox_pool.sql" {
+		t.Fatalf("expected version 3 claimed sandbox pool migration, got version=%d name=%q", claimedSandboxPool.Version, claimedSandboxPool.Name)
+	}
+	for _, expected := range []string{
+		"CREATE OR REPLACE FUNCTION k8s_reporting.usage_sandbox_events",
+		"event.object -> 'metadata' -> 'annotations' ->> 'osgym.cua.ai/origin-warmpool'",
+		"REVOKE ALL ON FUNCTION k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) FROM PUBLIC",
+		"GRANT EXECUTE ON FUNCTION k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) TO cyclops_usage_reader",
+	} {
+		if !strings.Contains(claimedSandboxPool.SQL, expected) {
+			t.Errorf("claimed sandbox pool migration is missing contract %q", expected)
+		}
 	}
 }
 

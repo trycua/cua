@@ -267,7 +267,7 @@ pub fn verify_installed_app_for_history() -> anyhow::Result<()> {
         .lines()
         .find_map(|line| line.trim().strip_prefix("TeamIdentifier="))
         .filter(|value| !value.is_empty() && *value != "not set")
-        .ok_or_else(|| anyhow::anyhow!("installed Cua Driver signature has no team identifier"))?;
+        .unwrap_or("");
     let entitlements = Command::new("/usr/bin/codesign")
         .args(["-d", "--entitlements", "-", "--xml", helper.as_ref()])
         .output()?;
@@ -306,11 +306,15 @@ fn validate_history_app_signature(
     if !requirement.contains("certificate leaf") {
         anyhow::bail!("installed Cua Driver signature is not certificate-backed");
     }
-    if team_identifier.is_empty() || team_identifier == "not set" {
-        anyhow::bail!("installed Cua Driver signature has no team identifier");
-    }
+    // A stable self-signed local-development certificate has a certificate-leaf
+    // designated requirement but no Apple TeamIdentifier. That leaf pins local
+    // history to the same signing identity across rebuilds. Production still
+    // requires the exact Apple team and device-protected Keychain entitlements.
     if !require_release_entitlements {
         return Ok(());
+    }
+    if team_identifier.is_empty() || team_identifier == "not set" {
+        anyhow::bail!("installed Cua Driver signature has no team identifier");
     }
     if team_identifier != RELEASE_TEAM_IDENTIFIER {
         anyhow::bail!("installed Cua Driver signature does not match the release signing team");
@@ -554,11 +558,11 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "macos")]
-    fn local_history_accepts_exact_certificate_identity_without_release_entitlements() {
+    fn local_history_accepts_certificate_identity_without_apple_team_identifier() {
         validate_history_app_signature(
-            "Identifier=com.trycua.driver.local\nTeamIdentifier=TEAM123",
-            "designated => identifier \"com.trycua.driver.local\" and certificate leaf[subject.OU] = TEAM123",
-            "TEAM123",
+            "Identifier=com.trycua.driver.local\nTeamIdentifier=not set",
+            "designated => identifier \"com.trycua.driver.local\" and certificate leaf = H\"d2badc24c61056ede3b61724c54c5a7d1649ce4d\"",
+            "",
             "",
             "com.trycua.driver.local",
             false,
@@ -592,6 +596,15 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn release_history_still_requires_device_protected_keychain_entitlements() {
+        assert!(validate_history_app_signature(
+            "Identifier=com.trycua.driver\nTeamIdentifier=not set",
+            "designated => anchor apple generic and identifier \"com.trycua.driver\" and certificate leaf = H\"1234\"",
+            "",
+            "",
+            "com.trycua.driver",
+            true,
+        )
+        .is_err());
         let detail =
             format!("Identifier=com.trycua.driver\nTeamIdentifier={RELEASE_TEAM_IDENTIFIER}");
         let requirement = format!(

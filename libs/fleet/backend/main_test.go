@@ -10,8 +10,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -704,6 +706,80 @@ func TestInitializeDatabaseFeatures(t *testing.T) {
 			}
 			assertStartupContext(t, requireVersionContext, test.wantRequireVersion)
 			assertStartupContext(t, storeContext, test.wantNewStore)
+		})
+	}
+}
+
+func TestInitializeDatabaseFeaturesDoesNotLogDatabaseCauses(t *testing.T) {
+	const secret = "postgres://user:secret-password@db.internal/cyclops"
+	tests := []struct {
+		name         string
+		config       config.DatabaseConfiguration
+		dependencies databaseFeatureDependencies
+		wantMessage  string
+		wantClass    string
+	}{
+		{
+			name: "state query",
+			config: config.DatabaseConfiguration{
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			dependencies: databaseFeatureDependencies{
+				requireVersion: func(context.Context, string, int64) error { return nil },
+				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
+					return nil, errors.New(secret)
+				},
+				newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) { return nil, nil },
+			},
+			wantMessage: "kubernetes state query: executor init failed",
+			wantClass:   "state_query_initialization_failed",
+		},
+		{
+			name:   "schema",
+			config: config.DatabaseConfiguration{URL: "postgres://application/application"},
+			dependencies: databaseFeatureDependencies{
+				requireVersion:        func(context.Context, string, int64) error { return errors.New(secret) },
+				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) { return nil, nil },
+				newGitHubTrustStore:   func(context.Context, string) (githubtrust.Store, error) { return nil, nil },
+			},
+			wantMessage: "postgres database schema unavailable",
+			wantClass:   "internal",
+		},
+		{
+			name:   "trust store",
+			config: config.DatabaseConfiguration{URL: "postgres://application/application"},
+			dependencies: databaseFeatureDependencies{
+				requireVersion:        func(context.Context, string, int64) error { return nil },
+				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) { return nil, nil },
+				newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
+					return nil, errors.New(secret)
+				},
+			},
+			wantMessage: "github trust policies: init failed",
+			wantClass:   "internal",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			var logged bytes.Buffer
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+			t.Cleanup(func() { slog.SetDefault(restore) })
+
+			h := handlers.Handlers{Features: handlers.NewFeatures()}
+			initializeDatabaseFeatures(context.Background(), testCase.config, &h, testCase.dependencies)
+
+			if strings.Contains(logged.String(), secret) || strings.Contains(logged.String(), "secret-password") {
+				t.Fatalf("database startup log leaked cause:\n%s", logged.String())
+			}
+			if !strings.Contains(logged.String(), testCase.wantMessage) {
+				t.Fatalf("database startup log omitted event message %q:\n%s", testCase.wantMessage, logged.String())
+			}
+			if !strings.Contains(logged.String(), `"class":"`+testCase.wantClass+`"`) {
+				t.Fatalf("database startup log omitted class %q:\n%s", testCase.wantClass, logged.String())
+			}
 		})
 	}
 }

@@ -17,7 +17,6 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -103,8 +102,9 @@ func (facts namespaceRBACFacts) LoadFacts(ctx context.Context, r *http.Request) 
 	allowed, err := facts.handlers.userHasNamespaceRBAC(ctx, user.ID, namespace)
 	if err != nil {
 		slog.Warn("namespace access check unavailable",
-			"sub", user.ID, "azp", user.AZP, "namespace", namespace, "err", err)
-		return nil, errors.Join(&auth.FactUnavailableError{Namespace: auth.NamespaceRBACFactNamespace, Err: err}, err)
+			"class", "dependency_unavailable", "retryable", true,
+			"sub", user.ID, "azp", user.AZP, "namespace", namespace)
+		return nil, auth.NewFactUnavailableError(auth.NamespaceRBACFactNamespace, err)
 
 	}
 	if !allowed {

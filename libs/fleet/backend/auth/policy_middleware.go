@@ -326,7 +326,7 @@ type FactUnavailableError struct {
 }
 
 func (err *FactUnavailableError) Error() string {
-	return fmt.Sprintf("fact %q unavailable: %v", err.Namespace, err.Err)
+	return fmt.Sprintf("fact %q unavailable", err.Namespace)
 }
 
 func (err *FactUnavailableError) Unwrap() error { return err.Err }
@@ -463,13 +463,17 @@ func PolicyMiddleware(expression Node, options ...MiddlewareOption) Middleware {
 					// A dependency the policy consults is down. Warn rather than
 					// Error: nothing here is broken, and the alert this should
 					// raise is the dependency's, not ours.
-					slog.Warn("opa: authorization fact unavailable", "err", verdict.err,
+					slog.Warn("opa: authorization fact unavailable",
+						"class", "dependency_unavailable",
+						"retryable", true,
 						"facts", factErr.Namespace,
 						"route", request.Context().Value(routeKey),
 						"traceId", request.Context().Value(middlewares.ContextKey("traceId")))
 					writeJSONErr(w, http.StatusBadGateway, "authorization check unavailable")
 				default:
-					slog.Error("opa: policy evaluation failed", "err", verdict.err,
+					slog.Error("opa: policy evaluation failed",
+						"class", "policy_evaluation_failed",
+						"retryable", false,
 						"route", request.Context().Value(routeKey),
 						"traceId", request.Context().Value(middlewares.ContextKey("traceId")))
 					writeJSONErr(w, http.StatusInternalServerError, "policy evaluation failed")

@@ -217,8 +217,9 @@ allow { input.facts.user.age >= 21 }
 	}
 }
 
-func TestPolicyMiddlewareFactProviderErrorFailsClosed(t *testing.T) {
-	provider := &testFactProvider{cacheKey: "broken", err: errors.New("database unavailable")}
+func TestPolicyMiddlewareFactProviderErrorFailsClosedWithoutRenderingCause(t *testing.T) {
+	const secret = "database-password=secret-provider-detail"
+	provider := &testFactProvider{cacheKey: "broken", err: errors.New(secret)}
 	expression := Policy(
 		Inline("facts.rego", `package facts
 allow { input.facts.user.age >= 21 }
@@ -226,6 +227,11 @@ allow { input.facts.user.age >= 21 }
 		Query("data.facts.allow"),
 		WithFacts("user", provider),
 	)
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
 
 	called := false
 	handler := PolicyMiddleware(expression)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -240,6 +246,15 @@ allow { input.facts.user.age >= 21 }
 	}
 	if called {
 		t.Fatal("provider error reached downstream handler")
+	}
+	if strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("response leaked provider cause: %q", response.Body.String())
+	}
+	if strings.Contains(logged.String(), secret) {
+		t.Fatalf("policy log leaked provider cause:\n%s", logged.String())
+	}
+	if !strings.Contains(logged.String(), `"class":"policy_evaluation_failed"`) {
+		t.Fatalf("policy log omitted safe classification:\n%s", logged.String())
 	}
 }
 
@@ -515,16 +530,11 @@ allow = false {
 }
 `
 
-// TestPolicyMiddlewareLogsTheEvaluationError pins the one thing the 500 does
-// not carry. The response body is the fixed string "policy evaluation failed",
-// so unless the middleware logs verdict.err an undecidable policy is an error
-// with its cause recorded nowhere, at no level — which is what this code did
-// until the test existed.
-//
-// slog.Default is swapped rather than injected because PolicyMiddleware has no
-// logger seam, and this package forbids t.Parallel (see policy_optimize.go),
-// which is what makes swapping a global safe here.
-func TestPolicyMiddlewareLogsTheEvaluationError(t *testing.T) {
+// TestPolicyMiddlewareClassifiesEvaluationError pins the safe diagnostic that
+// accompanies the fixed 500 response. OPA's raw evaluation error can contain
+// request-derived values, so the ordinary log records a stable class rather
+// than rendering verdict.err.
+func TestPolicyMiddlewareClassifiesEvaluationError(t *testing.T) {
 	var logged bytes.Buffer
 	restore := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
@@ -547,11 +557,11 @@ func TestPolicyMiddlewareLogsTheEvaluationError(t *testing.T) {
 	if called {
 		t.Fatal("an evaluation error reached the downstream handler")
 	}
-	// The specific OPA error code, not merely that something was logged: a
-	// record naming only the route would satisfy a laxer check while still
-	// losing the cause.
-	if !strings.Contains(logged.String(), "eval_conflict_error") {
-		t.Fatalf("the evaluation error was not logged; got:\n%s", logged.String())
+	if !strings.Contains(logged.String(), `"class":"policy_evaluation_failed"`) {
+		t.Fatalf("the evaluation error classification was not logged; got:\n%s", logged.String())
+	}
+	if strings.Contains(logged.String(), "eval_conflict_error") {
+		t.Fatalf("the raw evaluation error reached the ordinary log; got:\n%s", logged.String())
 	}
 }
 
@@ -942,5 +952,78 @@ allow { input.facts.user.allowed }
 				}
 			}
 		})
+	}
+}
+
+func TestPolicyMiddlewareFactUnavailableDoesNotRenderCause(t *testing.T) {
+	const secret = "secret-provider-detail"
+	provider := &testFactProvider{
+		cacheKey: "unavailable-safe-boundary",
+		err:      NewFactUnavailableError("account", errors.New(secret)),
+	}
+	expression := Policy(
+		Inline("fact-unavailable.rego", `package fact_unavailable
+allow { input.facts.account.available }
+`),
+		Query("data.fact_unavailable.allow"),
+		WithFacts("account", provider),
+	)
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	handler := PolicyMiddleware(expression)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("fact-unavailable request reached downstream handler")
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusBadGateway, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "authorization check unavailable") {
+		t.Fatalf("body = %q, want fixed unavailable message", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("response leaked fact provider cause: %q", response.Body.String())
+	}
+	if strings.Contains(logged.String(), secret) {
+		t.Fatalf("policy log leaked fact provider cause:\n%s", logged.String())
+	}
+}
+
+type fixedCompiledNode struct{ result verdict }
+
+func (node fixedCompiledNode) eval(context.Context, *requestPolicyInput) verdict { return node.result }
+func (fixedCompiledNode) bodyBudget() int64                                      { return 0 }
+
+func TestPolicyPlanDiscardedFactErrorDoesNotRenderCause(t *testing.T) {
+	const secret = "discarded-provider-secret"
+	children := []compiledNode{
+		fixedCompiledNode{result: verdict{
+			truth: truthError,
+			err:   NewFactUnavailableError("account", errors.New(secret)),
+		}},
+		fixedCompiledNode{result: verdict{truth: truthTrue}},
+	}
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	result := fold(request.Context(), newRequestPolicyInput(request, 0), children, disjunction)
+
+	if result.truth != truthTrue {
+		t.Fatalf("truth = %v, want truthTrue", result.truth)
+	}
+	if strings.Contains(logged.String(), secret) {
+		t.Fatalf("discarded policy error log leaked cause:\n%s", logged.String())
+	}
+	if !strings.Contains(logged.String(), `"class":"discarded_dependency_unavailable"`) {
+		t.Fatalf("discarded policy error log omitted safe classification:\n%s", logged.String())
 	}
 }

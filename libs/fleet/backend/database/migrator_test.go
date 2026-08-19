@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestBackendImageBuildsMigrationCommand(t *testing.T) {
@@ -751,21 +752,20 @@ func TestCredentialURLsRejectEmptyPassword(t *testing.T) {
 	}
 }
 
-func TestCredentialURLParseErrorsAreSafe(t *testing.T) {
-	const username = "leaked-user"
-	const password = "leaked-password"
+func TestCredentialURLParseErrorsPreserveCauseForBoundaryClassification(t *testing.T) {
 	_, err := parseCredentialURLs(CredentialURLs{
-		Application: "postgres://" + username + ":" + password + "@%zz/cyclops",
+		Application: "postgres://leaked-user:leaked-password@%zz/cyclops",
 		Writer:      "postgres://k8s_state_writer:pw@db/cyclops",
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 	})
-	if err == nil || err.Error() != "parse application credential database URL" {
-		t.Fatalf("expected safe credential parse error, got %v", err)
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("error = %v, want ErrInvalidConfiguration", err)
 	}
-	if strings.Contains(err.Error(), username) || strings.Contains(err.Error(), password) {
-		t.Fatalf("credential parse error leaked secret data: %v", err)
+	var parseErr *pgconn.ParseConfigError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("error = %v, want preserved *pgconn.ParseConfigError", err)
 	}
 }
 
@@ -786,8 +786,13 @@ func TestMigrationConfigAndLoggingAreSafe(t *testing.T) {
 		t.Fatalf("database target leaked secret data: %q", target)
 	}
 
-	if _, err := parseMigrationConfig("postgres://" + username + ":" + password + "@%zz/cyclops"); err == nil || err.Error() != "parse migration database URL" {
-		t.Fatalf("expected safe migration parse error, got %v", err)
+	_, err = parseMigrationConfig("postgres://" + username + ":" + password + "@%zz/cyclops")
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("error = %v, want ErrInvalidConfiguration", err)
+	}
+	var parseErr *pgconn.ParseConfigError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("error = %v, want preserved *pgconn.ParseConfigError", err)
 	}
 
 	var output bytes.Buffer

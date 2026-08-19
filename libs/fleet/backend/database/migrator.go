@@ -21,6 +21,27 @@ import (
 //go:embed all:migrations
 var migrationFS embed.FS
 
+var (
+	ErrInvalidConfiguration = errors.New("invalid database configuration")
+	ErrUnavailable          = errors.New("database unavailable")
+)
+
+type ErrorClassification struct {
+	Class     string
+	Retryable bool
+}
+
+func ClassifyError(err error) ErrorClassification {
+	switch {
+	case errors.Is(err, ErrInvalidConfiguration):
+		return ErrorClassification{Class: "invalid_configuration"}
+	case errors.Is(err, ErrUnavailable):
+		return ErrorClassification{Class: "unavailable", Retryable: true}
+	default:
+		return ErrorClassification{Class: "internal"}
+	}
+}
+
 type Config struct {
 	MigrationURL string
 	Credentials  CredentialURLs
@@ -261,7 +282,7 @@ func databaseTarget(connectionConfig *pgx.ConnConfig) string {
 func parseMigrationConfig(url string) (*pgx.ConnConfig, error) {
 	connectionConfig, err := pgx.ParseConfig(url)
 	if err != nil {
-		return nil, newSanitizedError("parse migration database URL", err)
+		return nil, fmt.Errorf("%w: parse migration database URL: %w", ErrInvalidConfiguration, err)
 
 	}
 	return connectionConfig, nil
@@ -307,7 +328,7 @@ func Run(ctx context.Context, config Config) (runErr error) {
 
 	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
-		return newSanitizedError(fmt.Sprintf("connect migration database%s", databaseTarget(connectionConfig)), err)
+		return fmt.Errorf("%w%s: %w", ErrUnavailable, databaseTarget(connectionConfig), err)
 
 	}
 	defer connection.Close(ctx)
@@ -460,7 +481,7 @@ func parseCredentialURLs(urls CredentialURLs) ([]credential, error) {
 	for _, input := range inputs {
 		connectionConfig, err := pgx.ParseConfig(input.URL)
 		if err != nil {
-			return nil, newSanitizedError(fmt.Sprintf("parse %s credential database URL", input.Name), err)
+			return nil, fmt.Errorf("%w: parse %s credential database URL: %w", ErrInvalidConfiguration, input.Name, err)
 
 		}
 		expectedRole := expectedCredentialRoles[input.Name]
@@ -1398,12 +1419,12 @@ func reconcilePasswords(ctx context.Context, transaction pgx.Tx, credentials []c
 func CurrentVersion(ctx context.Context, url string) (int64, error) {
 	connectionConfig, err := pgx.ParseConfig(url)
 	if err != nil {
-		return 0, newSanitizedError("parse database URL", err)
+		return 0, fmt.Errorf("%w: parse database URL: %w", ErrInvalidConfiguration, err)
 
 	}
 	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
-		return 0, newSanitizedError(fmt.Sprintf("connect database%s", databaseTarget(connectionConfig)), err)
+		return 0, fmt.Errorf("%w%s: %w", ErrUnavailable, databaseTarget(connectionConfig), err)
 
 	}
 	defer connection.Close(ctx)

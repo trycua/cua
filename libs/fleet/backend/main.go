@@ -418,7 +418,8 @@ func attemptDatabaseFeatures(parent context.Context, cfg config.DatabaseConfigur
 	default:
 		executor, err := dependencies.newStateQueryExecutor(cfg.StateQueryDSN, cfg.StateQueryTenantPassword)
 		if err != nil {
-			slog.Error("kubernetes state query: executor init failed; /api/state/query will return 503", "err", err)
+			slog.Error("kubernetes state query: executor init failed; /api/state/query will return 503",
+				"class", "state_query_initialization_failed", "retryable", false)
 			metrics.StateQueryReady.WithLabelValues("true").Set(0)
 		} else {
 			h.Features.SetStateQuery(executor)
@@ -450,14 +451,18 @@ func attemptDatabaseFeatures(parent context.Context, cfg config.DatabaseConfigur
 	defer cancel()
 
 	if err := dependencies.requireVersion(ctx, cfg.URL, 1); err != nil {
-		slog.Error("postgres database schema unavailable; database-backed routes will return 503", "err", err)
+		classification := database.ClassifyError(err)
+		slog.Error("postgres database schema unavailable; database-backed routes will return 503",
+			"class", classification.Class, "retryable", classification.Retryable)
 		return progress
 	}
 	slog.Info("postgres database schema ready", "version", 1)
 
 	store, err := dependencies.newGitHubTrustStore(ctx, cfg.URL)
 	if err != nil {
-		slog.Error("github trust policies: init failed; /api/github-trust-policies will return 503", "err", err)
+		classification := database.ClassifyError(err)
+		slog.Error("github trust policies: init failed; /api/github-trust-policies will return 503",
+			"class", classification.Class, "retryable", classification.Retryable)
 		return progress
 	}
 	if store != nil {

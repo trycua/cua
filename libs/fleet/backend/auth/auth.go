@@ -21,7 +21,7 @@
 //
 // Two conjuncts read something beyond the token. pool_admission.rego reads the
 // request body; authz_ownership.rego — the namespace-tenancy boundary on
-// /api/svc, /api/orch and GET /api/namespaces/{name} — reads a Kubernetes RBAC
+// /api/svc and GET /api/namespaces/{name} — reads a Kubernetes RBAC
 // probe, delivered as input.facts by a FactProvider that handlers registers and
 // main.go binds. Both are separate leaves rather than rules folded into a
 // surface, so the expensive read only happens on the requests a cheap sibling

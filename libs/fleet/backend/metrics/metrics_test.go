@@ -78,7 +78,6 @@ func TestNormalizePath(t *testing.T) {
 		{"/api/gateway/mypool/vms/list", "/api/gateway/:name/:path"},
 		{"/api/svc/pool-mypool/my-svc/health", "/api/svc/:namespace/:service/:path"},
 		{"/api/svc/pool-mypool/my-svc", "/api/svc/:namespace/:service/:path"},
-		{"/api/orch/myns/svc/api/vms", "/api/orch/:namespace/:service/:path"},
 		{"/api/k8s/api/v1/pods", "/api/k8s/:path"},
 		{"/api/k8s/apis/apps/v1/deployments", "/api/k8s/:path"},
 		{"/api/swagger/doc.json", "/api/swagger/doc.json"},

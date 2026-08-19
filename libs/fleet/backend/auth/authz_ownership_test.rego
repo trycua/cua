@@ -114,15 +114,6 @@ test_empty_namespace_is_not_probe_eligible {
 
 # ── Where the boundary applies ─────────────────────────────────────────────
 
-test_orch_applies {
-	probe_eligible with input as {
-		"route": "/api/orch/{namespace}/{service}/{path...}",
-		"method": "GET",
-		"params": {"namespace": "ns-a", "service": "catalog", "path": "items"},
-		"user": spa_user,
-	}
-}
-
 test_namespace_get_applies_and_reads_the_name_param {
 	probe_eligible with input as {
 		"route": "/api/namespaces/{name}",

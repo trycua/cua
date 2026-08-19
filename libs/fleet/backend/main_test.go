@@ -50,6 +50,15 @@ func TestGatewayRoutesAreRemoved(t *testing.T) {
 	}
 }
 
+func TestOrchRouteIsRemoved(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/orch/ns-a/catalog/items", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestHealthAndReadinessRoutes(t *testing.T) {
 	router := setupRouter(handlers.Handlers{})
 
@@ -78,6 +87,16 @@ func TestSwaggerOmitsGatewayRoute(t *testing.T) {
 	}
 	if strings.Contains(string(data), `"/api/gateway/`) {
 		t.Fatal("swagger.json still exposes the removed gateway route")
+	}
+}
+
+func TestSwaggerOmitsOrchRoute(t *testing.T) {
+	data, err := os.ReadFile("docs/swagger.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"/api/orch/`) {
+		t.Fatal("swagger.json still exposes the removed orch route")
 	}
 }
 

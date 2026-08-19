@@ -2,10 +2,9 @@ import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import { fileURLToPath, URL } from "node:url"
 
-// /api/k8s and /api/orch are served by the cyclops-cs backend sidecar
-// (Keycloak SSO + OPA), which isn't reachable from a laptop. In dev,
-// route them through the deployed cyclops-cs Tailscale ingress so the
-// in-cluster nginx forwards to the sidecar.
+// Backend-owned routes such as /api/k8s are served by cyclops-cs behind
+// Keycloak SSO + OPA and aren't reachable from a laptop. In dev, route them
+// through the deployed cyclops-cs Tailscale ingress.
 const ORCH_API = process.env.ORCH_API ?? "https://cyclops-cs.tail204509.ts.net"
 
 export default defineConfig({

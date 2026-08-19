@@ -58,10 +58,10 @@ var (
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 	}, []string{"operation", "status"})
 
-	// Upstream proxy SLIs (/api/svc + /api/orch + /api/k8s)
+	// Upstream proxy SLIs (/api/svc + /api/k8s)
 	UpstreamProxyRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "cyclops_cs_upstream_proxy_requests_total",
-		Help: "Total requests proxied to upstream services (svc/orch/k8s).",
+		Help: "Total requests proxied to upstream services (svc/k8s).",
 	}, []string{"target", "status_code"})
 
 	BillingWebhookEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -209,7 +209,6 @@ func Middleware(next http.Handler) http.Handler {
 //
 //	/api/keys/3f2a...  → /api/keys/:id
 //	/api/gateway/mypool/reset → /api/gateway/:name/:path
-//	/api/orch/ns/svc/api/vms → /api/orch/:namespace/:service/:path
 //	/api/k8s/api/v1/pods     → /api/k8s/:path
 func normalizePath(p string) string {
 	switch {
@@ -223,8 +222,6 @@ func normalizePath(p string) string {
 		return "/api/gateway/:name/:path"
 	case len(p) > 9 && p[:9] == "/api/svc/":
 		return "/api/svc/:namespace/:service/:path"
-	case len(p) > 10 && p[:10] == "/api/orch/":
-		return "/api/orch/:namespace/:service/:path"
 	case len(p) > 9 && p[:9] == "/api/k8s/":
 		return "/api/k8s/:path"
 	default:
@@ -245,7 +242,7 @@ func RecordKeycloakRequest(operation string, duration time.Duration, err error) 
 }
 
 // RecordUpstreamProxy records a reverse-proxy request to an upstream target.
-// target: "gateway", "orch", or "k8s"
+// target: "svc" or "k8s"
 // statusCode: HTTP status code returned from upstream (0 if dial failed)
 func RecordUpstreamProxy(target string, statusCode int, duration time.Duration) {
 	statusStr := strconv.Itoa(statusCode)

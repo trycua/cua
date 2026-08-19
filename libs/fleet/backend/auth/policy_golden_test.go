@@ -47,7 +47,7 @@ import (
 // whatsoever. Run it with an empty pipeline and it still passes.
 //
 // That survived the arrival of the first fact loader, which is worth stating
-// rather than assuming. svc, orch and namespaces now carry a leaf that calls a
+// rather than assuming. svc and namespaces carry a leaf that calls a
 // FactProvider — precisely what sinkFactLoaders exists to move — and it moves
 // nothing, because NamespaceOwnershipPolicy already declares its cheap children
 // first and the sort is stable. The pass is load-bearing in the sense that

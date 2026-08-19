@@ -11,12 +11,12 @@
 //
 //	@title						Cyclops CS Backend API
 //	@version					0.1
-//	@description				Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), and namespace management. All pool operations use OSGymSandboxClaim CRs (Path B).
+//	@description				Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / svc), and namespace management. All pool operations use OSGymSandboxClaim CRs (Path B).
 //	@BasePath					/
 //	@securityDefinitions.apikey	BearerAuth
 //	@in							header
 //	@name						Authorization
-//	@description				Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).
+//	@description				Keycloak access token. For /api/keys and /api/k8s the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).
 package main
 
 import (
@@ -116,7 +116,7 @@ func onlyLog(route string, h http.HandlerFunc) http.Handler {
 }
 
 func setupRouter(c handlers.Handlers) http.Handler {
-	// The namespace-ownership conjunct on /api/svc, /api/orch and
+	// The namespace-ownership conjunct on /api/svc and
 	// /api/namespaces/{name} asks Kubernetes a question, through a probe that
 	// is a handlers method. auth cannot import handlers, so the policy names
 	// the provider and this is where the name is bound to it. It must happen
@@ -159,9 +159,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	r.Handle("POST /api/billing/webhook",
 		onlyLog("/api/billing/webhook", c.HandleBillingWebhook))
 
-	// Swagger UI + JSON. The SPA points its codegen at /api/swagger/doc.json
-	// (see cyclops-cs/scripts/codegen.sh). We don't put the doc behind auth
-	// — the schema is public and the actual endpoints are still gated.
+	// Swagger UI + JSON. The schema is public API documentation, while the
+	// actual endpoints remain behind their normal authentication boundaries.
 	r.Handle("GET /api/swagger/", onlyLog("/api/swagger/", func(w http.ResponseWriter, r *http.Request) {
 		httpSwagger.Handler(httpSwagger.URL("/api/swagger/doc.json")).ServeHTTP(w, r)
 	}))
@@ -211,12 +210,9 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	r.Handle("/api/svc/{namespace}/{service}/{path...}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}/{path...}", c.Svc))
 
-	// K8s API + per-namespace orchestrator catalog access — replace the
-	// unauthenticated /k8s-api and /orch-api nginx locations from before.
+	// K8s API access replaces the unauthenticated /k8s-api nginx location.
 	r.Handle("/api/k8s/{path...}",
 		withAuthenticatedMiddlewares("/api/k8s/{path...}", c.K8s))
-	r.Handle("/api/orch/{namespace}/{service}/{path...}",
-		withAuthenticatedMiddlewares("/api/orch/{namespace}/{service}/{path...}", c.Orch))
 
 	// Wrap the entire mux in the metrics middleware so every request
 	// (including /healthz and unmatched routes) is recorded. This must be

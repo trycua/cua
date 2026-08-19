@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), and namespace management. All pool operations use OSGymSandboxClaim CRs (Path B).",
+        "description": "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / svc), and namespace management. All pool operations use OSGymSandboxClaim CRs (Path B).",
         "title": "Cyclops CS Backend API",
         "contact": {},
         "version": "0.1"
@@ -883,75 +883,6 @@
                 }
             }
         },
-        "/api/orch/{namespace}/{service}/{path}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Resolves \u003cservice\u003e.\u003cnamespace\u003e.svc.cluster.local at request time (in-cluster DNS). The caller must hold RBAC in {namespace} (verified via an impersonated RoleBinding probe); OPA additionally validates that namespace and service look like DNS-1123 labels.",
-                "tags": [
-                    "passthrough"
-                ],
-                "summary": "SPA-authenticated proxy to a per-namespace orchestrator service",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Namespace (DNS-1123 label)",
-                        "name": "namespace",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Service name (DNS-1123 label)",
-                        "name": "service",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Upstream path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Upstream response",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "502": {
-                        "description": "Bad Gateway",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/svc/{namespace}/{service}/{path}": {
             "get": {
                 "security": [
@@ -1536,7 +1467,7 @@
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).",
+            "description": "Keycloak access token. For /api/keys and /api/k8s the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

@@ -207,7 +207,7 @@ class VNCBackendScopeGuard:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        host_scoped = path == "/playwright_exec" or path == "/pty" or path.startswith("/pty/")
+        host_scoped = path in {"/playwright_exec", "/responses", "/pty"} or path.startswith("/pty/")
         if not is_vnc_backend() or not host_scoped:
             await self.app(scope, receive, send)
             return

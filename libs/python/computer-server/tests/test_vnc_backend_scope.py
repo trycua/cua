@@ -1,5 +1,6 @@
 """Fail-closed transport coverage for the remote VNC backend."""
 
+import os
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -137,7 +138,7 @@ def test_vnc_http_and_websocket_commands_refuse_before_host_mutation(
     assert not marker.exists()
 
 
-def test_vnc_pty_and_browser_http_surfaces_are_refused(vnc_backend, monkeypatch):
+def test_vnc_host_scoped_http_surfaces_are_refused(vnc_backend, monkeypatch):
     from computer_server import main
 
     create_pty = AsyncMock()
@@ -151,11 +152,23 @@ def test_vnc_pty_and_browser_http_surfaces_are_refused(vnc_backend, monkeypatch)
             "/playwright_exec",
             json={"command": "visit_url", "params": {"url": "https://example.com"}},
         )
+        agent_response = client.post(
+            "/responses",
+            json={
+                "model": "test-model",
+                "input": "inspect the remote target",
+                "env": {"CUA_BACKEND": "native", "CUA_VNC_HOST": ""},
+            },
+        )
 
     assert pty_response.status_code == 409
     assert pty_response.json()["code"] == VNC_UNSUPPORTED_CODE
     assert browser_response.status_code == 409
     assert browser_response.json()["code"] == VNC_UNSUPPORTED_CODE
+    assert agent_response.status_code == 409
+    assert agent_response.json()["code"] == VNC_UNSUPPORTED_CODE
+    assert os.environ["CUA_BACKEND"] == "vnc"
+    assert os.environ["CUA_VNC_HOST"] == "127.0.0.1"
     create_pty.assert_not_awaited()
     browser_command.assert_not_awaited()
 

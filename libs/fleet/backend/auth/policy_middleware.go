@@ -374,8 +374,9 @@ func (input *requestPolicyInput) loadBody(maxBytes int64) ([]byte, error) {
 			input.request.Body = spliceBody(input.body, original)
 		}
 	}
-	if input.bodyErr != nil {
-		return input.body, input.bodyErr
+	bodyErr := input.bodyErr
+	if bodyErr != nil {
+		return input.body, bodyErr
 	}
 	if int64(len(input.body)) > maxBytes {
 		return input.body, policyBodyError{message: "request body exceeds policy limit"}

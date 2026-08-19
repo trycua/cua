@@ -17,6 +17,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -103,7 +104,8 @@ func (facts namespaceRBACFacts) LoadFacts(ctx context.Context, r *http.Request) 
 	if err != nil {
 		slog.Warn("namespace access check unavailable",
 			"sub", user.ID, "azp", user.AZP, "namespace", namespace, "err", err)
-		return nil, &auth.FactUnavailableError{Namespace: auth.NamespaceRBACFactNamespace, Err: err}
+		return nil, errors.Join(&auth.FactUnavailableError{Namespace: auth.NamespaceRBACFactNamespace, Err: err}, err)
+
 	}
 	if !allowed {
 		// The verdict is the policy's to reach, but this is the only place the

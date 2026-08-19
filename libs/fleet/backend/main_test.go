@@ -664,16 +664,20 @@ func TestInitializeDatabaseFeatures(t *testing.T) {
 				},
 				newStateQueryExecutor: func(_ string, _ string) (handlers.StateQueryExecutor, error) {
 					newExecutorCalls++
-					if test.newExecutorError != nil {
-						return nil, test.newExecutorError
+					newExecutorError := test.newExecutorError
+					if newExecutorError != nil {
+						return nil, newExecutorError
+
 					}
 					return stateQueryExecutorStub{}, nil
 				},
 				newGitHubTrustStore: func(ctx context.Context, _ string) (githubtrust.Store, error) {
 					newStoreCalls++
 					storeContext = ctx
-					if test.newStoreError != nil {
-						return nil, test.newStoreError
+					newStoreError := test.newStoreError
+					if newStoreError != nil {
+						return nil, newStoreError
+
 					}
 					return githubTrustStoreStub{}, nil
 				},
@@ -824,14 +828,18 @@ func TestInitializeDatabaseFeaturesReportsReadinessMetric(t *testing.T) {
 					return test.requireVersionError
 				},
 				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
-					if test.newExecutorError != nil {
-						return nil, test.newExecutorError
+					newExecutorError := test.newExecutorError
+					if newExecutorError != nil {
+						return nil, newExecutorError
+
 					}
 					return stateQueryExecutorStub{}, nil
 				},
 				newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
-					if test.newStoreError != nil {
-						return nil, test.newStoreError
+					newStoreError := test.newStoreError
+					if newStoreError != nil {
+						return nil, newStoreError
+
 					}
 					return githubTrustStoreStub{}, nil
 				},

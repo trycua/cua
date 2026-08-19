@@ -5,6 +5,7 @@ package keycloak
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -196,7 +197,8 @@ func (a *Admin) ListKeyClients(ctx context.Context, ownerSub string) ([]KeyClien
 		clients, listErr := a.client.GetClients(ctx, tok, a.realm, params)
 		if listErr != nil {
 			err = fmt.Errorf("list clients: %w", listErr)
-			return nil, err
+			return nil, errors.Join(err, listErr)
+
 		}
 		for _, c := range clients {
 			attrs := derefMap(c.Attributes)
@@ -382,7 +384,8 @@ func (a *Admin) ListUserKeyClients(ctx context.Context, ownerSub string) ([]User
 		clients, listErr := a.client.GetClients(ctx, tok, a.realm, params)
 		if listErr != nil {
 			err = fmt.Errorf("list clients: %w", listErr)
-			return nil, err
+			return nil, errors.Join(err, listErr)
+
 		}
 		for _, c := range clients {
 			attrs := derefMap(c.Attributes)

@@ -162,7 +162,8 @@ func embeddedMigrations() ([]migrationFile, error) {
 		}
 		version, err := strconv.ParseInt(prefix, 10, 64)
 		if err != nil || version < 1 {
-			return nil, fmt.Errorf("migration %q has invalid version", entry.Name())
+			return nil, errors.Join(fmt.Errorf("migration %q has invalid version", entry.Name()), err)
+
 		}
 
 		contents, err := migrationFS.ReadFile("migrations/" + entry.Name())
@@ -260,7 +261,8 @@ func databaseTarget(connectionConfig *pgx.ConnConfig) string {
 func parseMigrationConfig(url string) (*pgx.ConnConfig, error) {
 	connectionConfig, err := pgx.ParseConfig(url)
 	if err != nil {
-		return nil, errors.New("parse migration database URL")
+		return nil, newSanitizedError("parse migration database URL", err)
+
 	}
 	return connectionConfig, nil
 }
@@ -305,7 +307,8 @@ func Run(ctx context.Context, config Config) (runErr error) {
 
 	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
-		return fmt.Errorf("connect migration database%s", databaseTarget(connectionConfig))
+		return newSanitizedError(fmt.Sprintf("connect migration database%s", databaseTarget(connectionConfig)), err)
+
 	}
 	defer connection.Close(ctx)
 
@@ -457,7 +460,8 @@ func parseCredentialURLs(urls CredentialURLs) ([]credential, error) {
 	for _, input := range inputs {
 		connectionConfig, err := pgx.ParseConfig(input.URL)
 		if err != nil {
-			return nil, fmt.Errorf("parse %s credential database URL", input.Name)
+			return nil, newSanitizedError(fmt.Sprintf("parse %s credential database URL", input.Name), err)
+
 		}
 		expectedRole := expectedCredentialRoles[input.Name]
 		if connectionConfig.User != expectedRole {
@@ -814,6 +818,7 @@ func reconcileStaticMembershipContracts(ctx context.Context, transaction pgx.Tx,
 	}
 
 	membershipEvents := make([]membershipReconciliationEvent, 0, len(membershipContracts))
+	var toleratedErrors error
 	for index, contract := range membershipContracts {
 		started := time.Now()
 		if !isStaticMembershipRepair(contract, repairs) {
@@ -822,18 +827,23 @@ func reconcileStaticMembershipContracts(ctx context.Context, transaction pgx.Tx,
 		}
 
 		authoritativeGrant, err := authoritativeStaticMembershipGrant(contract, migrationOwner, grantsByContract[index])
-		if err != nil && !errors.Is(err, errStaticMembershipGrantMissing) && !errors.Is(err, errStaticMembershipGrantOwnerOptions) {
-			return nil, err
+		if err != nil {
+			if !errors.Is(err, errStaticMembershipGrantMissing) && !errors.Is(err, errStaticMembershipGrantOwnerOptions) {
+				return nil, errors.Join(err, toleratedErrors)
+			}
+			toleratedErrors = errors.Join(toleratedErrors, err)
 		}
 
 		ddl := newRuntimeDDL(transaction)
 		if authoritativeGrant != nil {
 			if err := ddl.revokeStaticMembership(ctx, contract, migrationOwner); err != nil {
-				return nil, fmt.Errorf("remove drifted static role membership %s -> %s: %w", contract.role, contract.member, err)
+				return nil, errors.Join(fmt.Errorf("remove drifted static role membership %s -> %s: %w", contract.role, contract.member, err), toleratedErrors)
+
 			}
 		}
 		if err := ddl.grantStaticMembership(ctx, contract, migrationOwner); err != nil {
-			return nil, fmt.Errorf("reconcile static role membership %s -> %s: %w", contract.role, contract.member, err)
+			return nil, errors.Join(fmt.Errorf("reconcile static role membership %s -> %s: %w", contract.role, contract.member, err), toleratedErrors)
+
 		}
 		membershipEvents = append(membershipEvents, membershipReconciliationEvent{Role: contract.role, DurationMS: time.Since(started).Milliseconds()})
 	}
@@ -873,33 +883,37 @@ func foreignStaticMembershipGrantError(contract staticMembershipContract, granto
 }
 
 func validateStaticRoleMemberships(ctx context.Context, transaction pgx.Tx, migrationOwner string, contracts []staticMembershipContract) error {
+	var toleratedErrors error
 	for _, contract := range contracts {
 		grants, err := readStaticMembershipGrants(ctx, transaction, contract)
 		if err != nil {
-			return err
+			return errors.Join(err, toleratedErrors)
 		}
 		_, err = authoritativeStaticMembershipGrant(contract, migrationOwner, grants)
-		if err != nil && !errors.Is(err, errStaticMembershipGrantMissing) && !errors.Is(err, errStaticMembershipGrantOwnerOptions) {
-			return err
+		if err != nil {
+			if !errors.Is(err, errStaticMembershipGrantMissing) && !errors.Is(err, errStaticMembershipGrantOwnerOptions) {
+				return errors.Join(err, toleratedErrors)
+			}
+			toleratedErrors = errors.Join(toleratedErrors, err)
 		}
 	}
 
 	dynamicTenants, err := validateQueryTenantRoleMembers(ctx, transaction, migrationOwner, contracts)
 	if err != nil {
-		return err
+		return errors.Join(err, toleratedErrors)
 	}
 	for _, contract := range staticRoleContracts() {
 		if contract.role == "k8s_query_tenant" {
 			continue
 		}
 		if err := validateStaticRoleMembers(ctx, transaction, migrationOwner, contract.role, contracts); err != nil {
-			return err
+			return errors.Join(err, toleratedErrors)
 		}
 	}
 
 	for _, contract := range staticRoleContracts() {
 		if err := validateStaticRoleParents(ctx, transaction, contract.role, contracts, dynamicTenants); err != nil {
-			return err
+			return errors.Join(err, toleratedErrors)
 		}
 	}
 	return nil
@@ -1384,11 +1398,13 @@ func reconcilePasswords(ctx context.Context, transaction pgx.Tx, credentials []c
 func CurrentVersion(ctx context.Context, url string) (int64, error) {
 	connectionConfig, err := pgx.ParseConfig(url)
 	if err != nil {
-		return 0, errors.New("parse database URL")
+		return 0, newSanitizedError("parse database URL", err)
+
 	}
 	connection, err := pgx.ConnectConfig(ctx, connectionConfig)
 	if err != nil {
-		return 0, fmt.Errorf("connect database%s", databaseTarget(connectionConfig))
+		return 0, newSanitizedError(fmt.Sprintf("connect database%s", databaseTarget(connectionConfig)), err)
+
 	}
 	defer connection.Close(ctx)
 

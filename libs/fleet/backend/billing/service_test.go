@@ -50,8 +50,9 @@ func (f *fakeGateway) CreateCustomer(_ context.Context, metadata map[string]stri
 func (f *fakeGateway) UpdateCustomerMetadata(_ context.Context, customerID string, metadata map[string]string) (Customer, error) {
 	f.operations = append(f.operations, "publish")
 	f.updatedMetadata = metadata
-	if f.updateErr != nil {
-		return Customer{}, f.updateErr
+	updateErr := f.updateErr
+	if updateErr != nil {
+		return Customer{}, updateErr
 	}
 	if f.updatedCustomer.ID != "" {
 		return f.updatedCustomer, nil
@@ -78,8 +79,9 @@ func (f *fakeGateway) SetDefaultPaymentMethodForSetupGeneration(_ context.Contex
 func (f *fakeGateway) CreateSetupSession(_ context.Context, request SetupSessionRequest) (string, error) {
 	f.operations = append(f.operations, "create")
 	f.setupRequest = request
-	if f.setupErr != nil {
-		return "", f.setupErr
+	setupErr := f.setupErr
+	if setupErr != nil {
+		return "", setupErr
 	}
 	return "https://checkout.stripe.test/session", nil
 }

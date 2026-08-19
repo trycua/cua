@@ -52,19 +52,22 @@ func (e *Executor) Execute(ctx context.Context, tenant, sql string, writer Resul
 	}
 	conn, err := pgx.ConnectConfig(ctx, e.connectionConfig(tenant))
 	if err != nil {
-		return fmt.Errorf("%w: connect tenant role: %v", ErrExecution, err)
+		return errors.Join(fmt.Errorf("%w: connect tenant role: %v", ErrExecution, err), err)
+
 	}
 	defer conn.Close(ctx)
 
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return fmt.Errorf("%w: begin transaction", ErrExecution)
+		return errors.Join(fmt.Errorf("%w: begin transaction", ErrExecution), err)
+
 	}
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx, sql)
 	if err != nil {
-		return fmt.Errorf("%w: execute query", ErrExecution)
+		return errors.Join(fmt.Errorf("%w: execute query", ErrExecution), err)
+
 	}
 	defer rows.Close()
 	if err := writer.WriteFieldDescriptions(rows.FieldDescriptions()); err != nil {
@@ -73,7 +76,8 @@ func (e *Executor) Execute(ctx context.Context, tenant, sql string, writer Resul
 	for rows.Next() {
 		values, err := rows.Values()
 		if err != nil {
-			return fmt.Errorf("%w: decode result row", ErrExecution)
+			return errors.Join(fmt.Errorf("%w: decode result row", ErrExecution), err)
+
 		}
 		if err := writer.WriteRow(values); err != nil {
 			return err

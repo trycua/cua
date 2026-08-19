@@ -319,7 +319,8 @@ func validateTurn(history, messages []chat.Message) error {
 			return errors.New("invalid tool message")
 		}
 		if err := validateBashToolResult(message.Content); err != nil {
-			return errors.New("invalid tool result")
+			return errors.Join(errors.New("invalid tool result"), err)
+
 		}
 	}
 
@@ -402,7 +403,8 @@ func decodeTurnRequest(body io.Reader) (TurnRequest, error) {
 	}
 	var rawMessages []json.RawMessage
 	if err := json.Unmarshal(*raw.Messages, &rawMessages); err != nil || rawMessages == nil {
-		return TurnRequest{}, errors.New("messages must be an array")
+		return TurnRequest{}, errors.Join(errors.New("messages must be an array"), err)
+
 	}
 
 	request := TurnRequest{Messages: make([]chat.Message, 0, len(rawMessages))}

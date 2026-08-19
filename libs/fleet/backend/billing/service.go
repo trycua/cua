@@ -116,7 +116,11 @@ func (s *Service) FindOrCreateCustomer(ctx context.Context, subject string) (Cus
 	}
 	metadata := map[string]string{MetadataSubject: subject}
 	digest := sha256.Sum256([]byte(subject))
-	return s.gateway.CreateCustomer(ctx, metadata, CustomerIdempotencyPrefix+hex.EncodeToString(digest[:]))
+	created, createErr := s.gateway.CreateCustomer(ctx, metadata, CustomerIdempotencyPrefix+hex.EncodeToString(digest[:]))
+	if createErr != nil {
+		return created, errors.Join(createErr, err)
+	}
+	return created, nil
 }
 
 type CardSummary struct {

@@ -203,11 +203,14 @@ func (r githubTrustResolver) ResolveGitHubTrustPolicies(ctx context.Context, rep
 	defer cancel()
 	policies, err := r.store.ResolveByRepository(databaseCtx, repository)
 	if err != nil {
+		originErr := err
 		err = auth.ClassifyDatabaseError(err)
 		if auth.IsDatabaseUnavailable(err) {
-			return nil, auth.DatabaseUnavailable(err)
+			return nil, errors.Join(auth.DatabaseUnavailable(err), originErr)
+
 		}
-		return nil, err
+		return nil, errors.Join(err, originErr)
+
 	}
 	out := make([]auth.GitHubTrustPolicy, 0, len(policies))
 	for _, policy := range policies {

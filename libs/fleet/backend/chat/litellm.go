@@ -152,8 +152,8 @@ func (client *LiteLLMClient) Complete(ctx context.Context, messages []Message, o
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		if ctx.Err() != nil {
-			return Message{}, ctx.Err()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Message{}, errors.Join(ctxErr, err)
 		}
 		return Message{}, fmt.Errorf("send LiteLLM request: %w", err)
 	}
@@ -166,17 +166,19 @@ func (client *LiteLLMClient) Complete(ctx context.Context, messages []Message, o
 	var content strings.Builder
 	toolCalls := make(map[int]ToolCall)
 	done := false
+	var streamErrors error
 	reader := bufio.NewReader(response.Body)
 	for {
 		data, err := readSSEData(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				streamErrors = errors.Join(streamErrors, err)
 				break
 			}
-			if ctx.Err() != nil {
-				return Message{}, ctx.Err()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return Message{}, errors.Join(ctxErr, err, streamErrors)
 			}
-			return Message{}, fmt.Errorf("read LiteLLM stream: %w", err)
+			return Message{}, errors.Join(fmt.Errorf("read LiteLLM stream: %w", err), streamErrors)
 		}
 		if err := ctx.Err(); err != nil {
 			return Message{}, err
@@ -234,12 +236,14 @@ func (client *LiteLLMClient) Complete(ctx context.Context, messages []Message, o
 		}
 	}
 	if !done {
-		return Message{}, errors.New("LiteLLM stream ended without [DONE]")
+		return Message{}, errors.Join(errors.New("LiteLLM stream ended without [DONE]"), streamErrors)
+
 	}
 
 	id, err := newUUID()
 	if err != nil {
-		return Message{}, fmt.Errorf("generate assistant message ID: %w", err)
+		return Message{}, errors.Join(fmt.Errorf("generate assistant message ID: %w", err), streamErrors)
+
 	}
 	return Message{
 		ID:        id,
@@ -345,24 +349,33 @@ func liteLLMResponseError(response *http.Response) error {
 	}
 
 	message := strings.TrimSpace(string(body))
+	var parseErrors error
 	var payload struct {
 		Error json.RawMessage `json:"error"`
 	}
-	if json.Unmarshal(body, &payload) == nil && len(payload.Error) > 0 {
+	payloadErr := json.Unmarshal(body, &payload)
+	if payloadErr == nil && len(payload.Error) > 0 {
 		var detail struct {
 			Message string `json:"message"`
 		}
-		if json.Unmarshal(payload.Error, &detail) == nil && detail.Message != "" {
+		detailErr := json.Unmarshal(payload.Error, &detail)
+		if detailErr == nil && detail.Message != "" {
 			message = detail.Message
 		} else {
+			parseErrors = errors.Join(parseErrors, detailErr)
 			var errorString string
-			if json.Unmarshal(payload.Error, &errorString) == nil && errorString != "" {
+			stringErr := json.Unmarshal(payload.Error, &errorString)
+			if stringErr == nil && errorString != "" {
 				message = errorString
+			} else {
+				parseErrors = errors.Join(parseErrors, stringErr)
 			}
 		}
+	} else {
+		parseErrors = errors.Join(parseErrors, payloadErr)
 	}
 	if message == "" {
 		message = response.Status
 	}
-	return fmt.Errorf("LiteLLM request failed: status %d: %s", response.StatusCode, message)
+	return errors.Join(fmt.Errorf("LiteLLM request failed: status %d: %s", response.StatusCode, message), parseErrors)
 }

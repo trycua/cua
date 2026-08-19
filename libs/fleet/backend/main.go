@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -243,6 +244,8 @@ func main() {
 func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	ctx := context.Background()
+	var startupErrors error
+	var telemetryErr error
 
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -259,6 +262,7 @@ func run() error {
 		Environment:      cfg.Telemetry.Environment,
 		ResourceAttrs:    cfg.Telemetry.ResourceAttrs,
 	}); err != nil {
+		telemetryErr = err
 		slog.Warn("otel: init failed; tracing disabled", "err", err)
 	} else {
 		telemetryShutdown = shutdown
@@ -282,6 +286,7 @@ func run() error {
 		SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		Region:          os.Getenv("AWS_REGION"),
 	}); err != nil {
+		startupErrors = errors.Join(startupErrors, err)
 		slog.Warn("openfeature: provider setup degraded", "err", err)
 	}
 	slog.Info("init: OpenFeature ok, loading OPA")
@@ -349,7 +354,7 @@ func run() error {
 
 	srv := &http.Server{Addr: cfg.WebServer.Addr, Handler: router}
 	if err := srv.ListenAndServe(); err != nil {
-		return fmt.Errorf("server exited: %w", err)
+		return errors.Join(fmt.Errorf("server exited: %w", err), startupErrors, telemetryErr)
 	}
 	return nil
 }

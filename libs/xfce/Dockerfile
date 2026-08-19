@@ -12,7 +12,9 @@ ENV API_PORT=8000
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     gnome-screenshot \
+    python3-dev \
     socat \
     wmctrl \
     xclip \
@@ -23,7 +25,11 @@ COPY requirements-computer-server.txt /tmp/requirements-computer-server.txt
 RUN /opt/venv/bin/python -m pip install --no-cache-dir \
         -r /tmp/requirements-computer-server.txt \
     && /opt/venv/bin/python -c \
-        "import computer_server; print(computer_server.__file__)"
+        "import computer_server; print(computer_server.__file__)" \
+    && apt-get purge -y build-essential python3-dev \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete
 
 COPY src/scripts/start-computer-server.sh /usr/local/bin/start-computer-server.sh
 COPY src/supervisor/supervisord.conf /etc/supervisor/supervisord.conf

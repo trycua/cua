@@ -194,7 +194,11 @@ export function UserApiKeys() {
                 }
                 options={nsOptions}
                 placeholder="All namespaces (no restriction)"
+                filteringType="auto"
+                filteringPlaceholder="Filter namespaces"
+                filteringAriaLabel="Filter namespaces"
                 loadingText="Loading namespaces..."
+                noMatch="No matching namespaces"
                 statusType={loading ? "loading" : "finished"}
                 empty="No namespaces found"
               />

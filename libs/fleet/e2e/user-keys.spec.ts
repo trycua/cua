@@ -179,6 +179,18 @@ test.describe("User API keys", () => {
     ).toBeVisible()
   })
 
+  test("filters namespace options by typed text", async ({ page }) => {
+    await page.goto("/user-keys")
+
+    await page
+      .getByText("All namespaces (no restriction)", { exact: true })
+      .click()
+    await page.getByPlaceholder("Filter namespaces").fill("stag")
+
+    await expect(page.getByRole("option", { name: "staging" })).toBeVisible()
+    await expect(page.getByRole("option", { name: "demo-pool" })).toHaveCount(0)
+  })
+
   test("shows a retryable table error without hiding the create form", async ({ page }) => {
     await page.unroute("**/api/user-keys")
     await page.route("**/api/user-keys", route =>

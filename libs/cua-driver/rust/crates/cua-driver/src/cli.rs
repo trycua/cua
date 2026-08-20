@@ -1731,6 +1731,18 @@ pub fn run_manifest(pretty: bool) {
     println!("{out}");
 }
 
+fn manifest_feature_flags(
+    target_is_linux: bool,
+    portal_input_enabled: bool,
+    portal_capture_enabled: bool,
+) -> (bool, bool, bool) {
+    (
+        target_is_linux,
+        target_is_linux && portal_input_enabled,
+        target_is_linux && portal_capture_enabled,
+    )
+}
+
 /// Build the JSON manifest document. Pure function — surfaced separately
 /// from `run_manifest` so tests can introspect the shape without going
 /// through stdout.
@@ -1742,6 +1754,12 @@ pub fn build_manifest() -> serde_json::Value {
         .ok()
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_else(|| "cua-driver".to_owned());
+
+    let (wayland_native, portal_input, portal_capture) = manifest_feature_flags(
+        cfg!(target_os = "linux"),
+        cfg!(feature = "portal-input"),
+        cfg!(feature = "portal-capture"),
+    );
 
     serde_json::json!({
         // `schema_version` is bumped only on a breaking change to the
@@ -1755,9 +1773,9 @@ pub fn build_manifest() -> serde_json::Value {
         // machine-readable map to decide whether native Wayland may be
         // auto-enabled safely.
         "features": {
-            "wayland_native": cfg!(target_os = "linux"),
-            "portal_input": cfg!(feature = "portal-input"),
-            "portal_capture": cfg!(feature = "portal-capture"),
+            "wayland_native": wayland_native,
+            "portal_input": portal_input,
+            "portal_capture": portal_capture,
         },
         "mcp_invocation": {
             "command": binary,
@@ -4956,11 +4974,11 @@ mod tests {
         );
         assert_eq!(
             features.get("portal_input").and_then(|v| v.as_bool()),
-            Some(cfg!(feature = "portal-input"))
+            Some(cfg!(all(target_os = "linux", feature = "portal-input")))
         );
         assert_eq!(
             features.get("portal_capture").and_then(|v| v.as_bool()),
-            Some(cfg!(feature = "portal-capture"))
+            Some(cfg!(all(target_os = "linux", feature = "portal-capture")))
         );
 
         // mcp_invocation — { command: <bin path>, args: ["mcp"] }
@@ -5003,6 +5021,17 @@ mod tests {
         ] {
             assert!(names.contains(&need), "missing subcommand '{need}'");
         }
+    }
+
+    #[test]
+    fn manifest_never_advertises_linux_portal_features_on_non_linux_targets() {
+        // Simulate a non-Linux build with both Cargo features enabled. This
+        // runs on every CI host, so the exact cross-target regression is
+        // covered even when Windows only compiles the broader test suite.
+        assert_eq!(
+            manifest_feature_flags(false, true, true),
+            (false, false, false)
+        );
     }
 
     /// Every subcommand entry has the same JSON shape — name + description

@@ -69,21 +69,21 @@ try {
         $message = $_.Exception.Message
     }
 
-    if ($message -notlike "*simulated replacement mklink failure*restored previous target*") {
-        throw "replacement failure did not report restoration: $message"
+    if ($message -notlike "*simulated replacement mklink failure*") {
+        throw "replacement failure was not preserved: $message"
     }
     if (-not (Test-IsJunction $link)) {
-        throw "working junction was lost after replacement failure"
+        throw "working junction was lost after staged replacement failure"
     }
     $actual = Get-JunctionTarget $link
     if ([System.IO.Path]::GetFullPath($actual) -ne [System.IO.Path]::GetFullPath($oldTarget)) {
-        throw "junction target changed after replacement failure: expected '$oldTarget', got '$actual'"
+        throw "junction target changed after staged replacement failure: expected '$oldTarget', got '$actual'"
     }
-    if ($script:MklinkCalls -ne 2) {
-        throw "expected one failed replacement and one restoration, got $script:MklinkCalls calls"
+    if ($script:MklinkCalls -ne 1) {
+        throw "expected one failed staged replacement, got $script:MklinkCalls calls"
     }
 
-    Write-Host "PASS: PowerShell 5.1 code-page-936 fallback restores the prior junction"
+    Write-Host "PASS: PowerShell 5.1 code-page-936 fallback preserves the prior junction"
 } finally {
     if (Test-Path -LiteralPath $link) {
         [System.IO.Directory]::Delete($link, $false)

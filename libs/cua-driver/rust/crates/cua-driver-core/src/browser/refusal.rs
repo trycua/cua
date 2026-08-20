@@ -64,6 +64,9 @@ pub enum BrowserRefusalCode {
     /// A semantic ref is live, but it does not declare the requested typed
     /// browser action.
     BrowserActionUnavailable,
+    /// A semantic scope request could not prove one unique same-frame scope
+    /// anchor from the supplied ref and ancestor role.
+    BrowserScopeUnavailable,
     /// The live top-level document left the origin set approved in the
     /// capability manifest. Further browser input is paused.
     BrowserOriginOutsideScope,
@@ -93,6 +96,7 @@ impl BrowserRefusalCode {
             Self::BrowserReconnectExhausted => "browser_reconnect_exhausted",
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
+            Self::BrowserScopeUnavailable => "browser_scope_unavailable",
             Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
             Self::BackgroundUnavailable => "background_unavailable",
         }
@@ -310,6 +314,10 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserActionUnavailable,
                 "browser_action_unavailable",
+            ),
+            (
+                BrowserRefusalCode::BrowserScopeUnavailable,
+                "browser_scope_unavailable",
             ),
             (
                 BrowserRefusalCode::BrowserOriginOutsideScope,

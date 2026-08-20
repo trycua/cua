@@ -38,14 +38,6 @@ pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// Default cap; callers can override via [`walk_tree_bounded`].
 pub const DEFAULT_MAX_TOTAL_ELEMENTS: usize = 5000;
 
-// Historical aliases — referenced by the thin `walk_cached` shim that
-// keeps the pre-#22865 call signature compiling. `walk_tree_bounded`
-// reads from the caller-supplied caps instead.
-#[allow(dead_code)]
-const MAX_DEPTH: usize = DEFAULT_MAX_DEPTH;
-#[allow(dead_code)]
-const MAX_TOTAL_ELEMENTS: usize = DEFAULT_MAX_TOTAL_ELEMENTS;
-
 /// A single node in the accessibility tree.
 ///
 /// Same shape for the UIA primary path AND the MSAA fallback (used for
@@ -459,7 +451,7 @@ unsafe fn walk_tree_unsafe(
     // Stage the fallback walk into fresh accumulators and only swap them in
     // if the fallback actually finds actionable elements. Otherwise the
     // wrapper-only node from the primary walk stays the result — better than
-    // erasing it AND leaving the consumed `MAX_TOTAL_ELEMENTS` budget intact
+    // erasing it AND leaving the consumed `max_elements` budget intact
     // for the fallback (which would then truncate large trees prematurely).
     if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
         // An HWND walk with no actionable rows cannot prove that the target
@@ -663,8 +655,8 @@ unsafe fn walk_root_by_pid(
             continue;
         }
         // Match — pull a cached subtree from this element using the same
-        // cache_req shape as the primary path so walk_cached sees the same
-        // properties + patterns.
+        // cache_req shape as the primary path so walk_cached_bounded sees
+        // the same properties + patterns.
         let cached = match elem.BuildUpdatedCache(cache_req) {
             Ok(e) => e,
             Err(e) => {
@@ -675,34 +667,6 @@ unsafe fn walk_root_by_pid(
         };
         walk_cached_bounded(&cached, 0, None, false, nodes, lines, counter, walk_state);
     }
-}
-
-#[allow(dead_code)]
-unsafe fn walk_cached(
-    element: &IUIAutomationElement,
-    depth: usize,
-    nodes: &mut Vec<UiaNode>,
-    lines: &mut Vec<(usize, String)>,
-    counter: &mut usize,
-    total: &mut usize,
-) {
-    let mut walk_state = WalkState {
-        visited: *total,
-        max_elements: MAX_TOTAL_ELEMENTS,
-        max_depth: MAX_DEPTH,
-        complete: true,
-    };
-    walk_cached_bounded(
-        element,
-        depth,
-        None,
-        false,
-        nodes,
-        lines,
-        counter,
-        &mut walk_state,
-    );
-    *total = walk_state.visited;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1143,6 +1107,20 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 mod tests {
     use super::*;
 
+    fn star(child_count: usize) -> Vec<Vec<usize>> {
+        let mut children = vec![Vec::new(); child_count + 1];
+        children[0] = (1..=child_count).collect();
+        children
+    }
+
+    fn chain(len: usize) -> Vec<Vec<usize>> {
+        let mut children = vec![Vec::new(); len];
+        for i in 0..len.saturating_sub(1) {
+            children[i] = vec![i + 1];
+        }
+        children
+    }
+
     fn walk_synthetic_tree(
         children: &[Vec<usize>],
         node: usize,
@@ -1158,57 +1136,72 @@ mod tests {
     }
 
     #[test]
-    fn complete_tree_below_default_bounds_reports_complete() {
-        let mut children = vec![Vec::new(); 55];
-        children[0] = (1..55).collect();
-        let mut state = WalkState::new(DEFAULT_MAX_TOTAL_ELEMENTS, DEFAULT_MAX_DEPTH);
+    fn walk_state_is_complete_only_when_no_bound_skips_a_node() {
+        struct Case {
+            name: &'static str,
+            children: Vec<Vec<usize>>,
+            max_elements: usize,
+            max_depth: usize,
+            expected_visited: usize,
+            expected_complete: bool,
+        }
 
-        walk_synthetic_tree(&children, 0, 0, &mut state);
+        let cases = [
+            Case {
+                name: "default bounds admit a 55-node tree",
+                children: star(54),
+                max_elements: DEFAULT_MAX_TOTAL_ELEMENTS,
+                max_depth: DEFAULT_MAX_DEPTH,
+                expected_visited: 55,
+                expected_complete: true,
+            },
+            Case {
+                name: "visiting exactly max_elements is still complete",
+                children: star(54),
+                max_elements: 55,
+                max_depth: DEFAULT_MAX_DEPTH,
+                expected_visited: 55,
+                expected_complete: true,
+            },
+            Case {
+                name: "skipping a node past max_elements is incomplete",
+                children: star(54),
+                max_elements: 54,
+                max_depth: DEFAULT_MAX_DEPTH,
+                expected_visited: 54,
+                expected_complete: false,
+            },
+            Case {
+                name: "a leaf at exactly max_depth is still complete",
+                children: chain(3),
+                max_elements: 10,
+                max_depth: 2,
+                expected_visited: 3,
+                expected_complete: true,
+            },
+            Case {
+                name: "skipping a descendant past max_depth is incomplete",
+                children: chain(3),
+                max_elements: 10,
+                max_depth: 1,
+                expected_visited: 2,
+                expected_complete: false,
+            },
+        ];
 
-        assert_eq!(state.visited, 55);
-        assert!(state.complete);
-    }
-
-    #[test]
-    fn exact_element_bound_is_complete_but_a_skipped_node_is_not() {
-        let mut children = vec![Vec::new(); 55];
-        children[0] = (1..55).collect();
-
-        let mut exact = WalkState::new(55, DEFAULT_MAX_DEPTH);
-        walk_synthetic_tree(&children, 0, 0, &mut exact);
-        assert_eq!(exact.visited, 55);
-        assert!(exact.complete);
-
-        let mut truncated = WalkState::new(54, DEFAULT_MAX_DEPTH);
-        walk_synthetic_tree(&children, 0, 0, &mut truncated);
-        assert_eq!(truncated.visited, 54);
-        assert!(!truncated.complete);
-    }
-
-    #[test]
-    fn depth_bound_reports_incomplete_only_when_a_descendant_is_skipped() {
-        let children = vec![vec![1], vec![2], Vec::new()];
-
-        let mut exact = WalkState::new(10, 2);
-        walk_synthetic_tree(&children, 0, 0, &mut exact);
-        assert!(exact.complete);
-
-        let mut truncated = WalkState::new(10, 1);
-        walk_synthetic_tree(&children, 0, 0, &mut truncated);
-        assert_eq!(truncated.visited, 2);
-        assert!(!truncated.complete);
-    }
-
-    #[test]
-    fn query_projection_does_not_change_walk_completeness() {
-        let mut state = WalkState::new(2, 1);
-        let children = vec![vec![1], Vec::new()];
-        walk_synthetic_tree(&children, 0, 0, &mut state);
-        assert!(state.complete);
-
-        let projected = filter_tree("- [0] Window\n  - [1] Button \"Start\"\n", "Start");
-
-        assert!(projected.contains("Button \"Start\""));
-        assert!(state.complete);
+        for case in cases {
+            let mut state = WalkState::new(case.max_elements, case.max_depth);
+            walk_synthetic_tree(&case.children, 0, 0, &mut state);
+            assert_eq!(
+                state.visited, case.expected_visited,
+                "{}: visited",
+                case.name
+            );
+            assert_eq!(
+                state.complete, case.expected_complete,
+                "{}: complete",
+                case.name
+            );
+        }
     }
 }

@@ -103,7 +103,6 @@ impl RenderStateCore {
     /// `pos` starts empty so the first placement can snap rather than animate.
     pub fn new(cfg: CursorConfig) -> Self {
         let motion = cfg.motion.clone();
-        let visible = cfg.enabled;
         let visual = CursorVisualState {
             reduced_motion: cfg.reduced_motion,
             ..CursorVisualState::default()
@@ -135,7 +134,7 @@ impl RenderStateCore {
             spring_tgt: None,
             click_t: None,
             pressed: false,
-            visible,
+            visible: true,
             idle_secs: 0.0,
             idle_alpha: 1.0,
             pinned_wid: None,
@@ -972,18 +971,6 @@ fn paint_cursor_impl(
 mod placement_tests {
     use super::*;
     use crate::CursorConfig;
-
-    #[test]
-    fn launch_visibility_has_one_source_of_truth() {
-        let mut config = CursorConfig::default();
-        config.enabled = false;
-        let mut core = RenderStateCore::new(config);
-        assert!(!core.visible);
-        assert!(!core.cursor_is_revealed());
-
-        core.apply_command_base(OverlayCommand::SetEnabled(true), true);
-        assert!(core.visible);
-    }
 
     #[test]
     fn only_unplaced_cursors_are_unrevealed() {

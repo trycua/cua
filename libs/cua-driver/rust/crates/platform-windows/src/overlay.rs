@@ -343,7 +343,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| rs.core.cursor_is_revealed())
+                .map(|rs| rs.core.cfg.enabled && rs.core.cursor_is_revealed())
         })
         .unwrap_or(false)
 }
@@ -424,7 +424,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.visible && rs.core.pos.is_none()) {
+    if !(rs.core.cfg.enabled && rs.core.pos.is_none()) {
         return false;
     }
     let mut sx = target_x - SEED_OFFSET;
@@ -466,7 +466,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     let should_animate = {
         let guard = RENDER.lock().unwrap();
         match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.visible && rs.core.pos.is_some() => true,
+            Some(rs) if rs.core.cfg.enabled && rs.core.pos.is_some() => true,
             _ => false,
         }
     };

@@ -24,6 +24,31 @@ LIBRARY = Path(__file__).parents[1] / "src" / "cua_driver" / _library_name()
 
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
+class GeneratedOptionsTests(unittest.TestCase):
+    def test_embedded_overlay_option_defaults_false_and_accepts_true(self) -> None:
+        from cua_driver import EmbeddedDriverHostOptions
+
+        required = {
+            "binary_path": "/example/cua-driver",
+            "host_bundle_id": "com.example.host",
+            "socket_path": None,
+            "startup_timeout_ms": None,
+            "shutdown_timeout_ms": None,
+            "permission_mode": None,
+            "session_policy_path": None,
+            "approve_session_policy": False,
+            "dangerously_bypass_approvals": False,
+            "environment": [],
+            "inherit_stderr": False,
+        }
+
+        self.assertFalse(EmbeddedDriverHostOptions(**required).no_overlay)
+        self.assertTrue(
+            EmbeddedDriverHostOptions(**required, no_overlay=True).no_overlay
+        )
+
+
+@unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 @unittest.skipIf(os.name == "nt", "Unix socket fixture")
 class SdkLoaderTests(unittest.TestCase):
     def test_generated_python_embedded_host_owns_the_rust_lifecycle(self) -> None:

@@ -131,67 +131,80 @@ fn command_line_arguments(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
-fn command_line_has_process_type(bytes: &[u8]) -> bool {
-    command_line_arguments(bytes).iter().any(|arg| {
-        arg.as_bytes()
-            .strip_prefix(b"--type=")
+fn has_process_type(arguments: &[String]) -> bool {
+    arguments.iter().any(|argument| {
+        argument
+            .strip_prefix("--type=")
             .is_some_and(|kind| !kind.is_empty())
     })
 }
 
-fn packed_helium_process_type(bytes: &[u8]) -> bool {
+/// Recover argv from the single space-joined `/proc/<pid>/cmdline` record
+/// observed for Helium, which does not use the usual NUL delimiter.
+///
+/// This is deliberately narrow: it applies only to a one-record command line
+/// whose first word is the exact Helium executable, and it splits only at a
+/// ` --` switch boundary so a value containing spaces
+/// (`--user-data-dir=/tmp/helium profile`) survives intact. Every other
+/// process keeps ordinary NUL semantics.
+fn packed_helium_arguments(bytes: &[u8]) -> Option<Vec<String>> {
     let arguments = command_line_arguments(bytes);
     let [packed] = arguments.as_slice() else {
-        return false;
+        return None;
     };
-    let mut words = packed.split_ascii_whitespace();
-    let executable = words.next().unwrap_or_default();
-    let process_type = words.next().unwrap_or_default();
-    is_helium(executable)
-        && process_type
-            .strip_prefix("--type=")
-            .is_some_and(|kind| !kind.is_empty())
+    let (executable, switches) = packed.split_once(" --")?;
+    if !is_helium(executable) {
+        return None;
+    }
+    let mut recovered = Vec::new();
+    for switch in switches.split(" --") {
+        // Inside one switch record the boundary is already known, so a
+        // `--flag value` pair splits at its first space and everything after
+        // it is the value. `--flag=value` stays a single argument.
+        match switch.split_once(' ') {
+            Some((flag, value)) if !flag.contains('=') => {
+                recovered.push(format!("--{flag}"));
+                recovered.push(value.to_owned());
+            }
+            _ => recovered.push(format!("--{switch}")),
+        }
+    }
+    Some(recovered)
 }
 
-fn packed_helium_user_data_dir(bytes: &[u8]) -> Result<Option<PathBuf>, BrowserRefusal> {
-    let arguments = command_line_arguments(bytes);
-    let [packed] = arguments.as_slice() else {
-        return Ok(None);
-    };
-    let executable = packed.split_ascii_whitespace().next().unwrap_or_default();
-    if !is_helium(executable) {
-        return Ok(None);
+fn packed_helium_process_type(bytes: &[u8]) -> bool {
+    // Chromium helpers place `--type=` first, so only that position counts.
+    // A `--type=` later in a packed record can be text inside another value,
+    // and honoring it would misclassify the main browser process as a helper.
+    packed_helium_arguments(bytes).is_some_and(|arguments| {
+        arguments
+            .first()
+            .and_then(|argument| argument.strip_prefix("--type="))
+            .is_some_and(|kind| !kind.is_empty())
+    })
+}
+
+fn user_data_dir_arguments(arguments: &[String]) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    for (index, argument) in arguments.iter().enumerate() {
+        if let Some(path) = argument.strip_prefix("--user-data-dir=") {
+            if !path.is_empty() {
+                directories.push(PathBuf::from(path));
+            }
+        } else if argument == "--user-data-dir" {
+            if let Some(path) = arguments.get(index + 1).filter(|path| !path.is_empty()) {
+                directories.push(PathBuf::from(path));
+            }
+        }
     }
-    let marker = "--user-data-dir=";
-    let mut matches = packed.match_indices(marker);
-    let Some((marker_start, _)) = matches.next() else {
-        return Ok(None);
-    };
-    if matches.next().is_some() {
-        return Err(refusal(
-            BrowserRefusalCode::BrowserBindingAmbiguous,
-            "packed Helium command line has multiple --user-data-dir arguments",
-        ));
-    }
-    if marker_start == 0 || !packed[..marker_start].ends_with(' ') {
-        return Ok(None);
-    }
-    let value = &packed[marker_start + marker.len()..];
-    let value = value.split_once(" --").map_or(value, |(value, _)| value);
-    if value.is_empty() {
-        return Err(refusal(
-            BrowserRefusalCode::BrowserBindingAmbiguous,
-            "packed Helium command line has an empty --user-data-dir value",
-        ));
-    }
-    Ok(Some(PathBuf::from(value)))
+    directories
 }
 
 fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole {
     let helper = std::fs::read(format!("/proc/{pid}/cmdline"))
         .ok()
         .is_some_and(|bytes| {
-            command_line_has_process_type(&bytes)
+            has_process_type(&command_line_arguments(&bytes))
                 || (product == BrowserProduct::Helium && packed_helium_process_type(&bytes))
         });
     if helper {
@@ -376,22 +389,10 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
         .as_deref()
         .map(browser_product)
         .unwrap_or(BrowserProduct::Other);
-    let args = command_line_arguments(&bytes);
-    let mut directories = Vec::new();
-    for (index, arg) in args.iter().enumerate() {
-        if let Some(path) = arg.strip_prefix("--user-data-dir=") {
-            if !path.is_empty() {
-                directories.push(PathBuf::from(path));
-            }
-        } else if arg == "--user-data-dir" {
-            if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
-                directories.push(PathBuf::from(path));
-            }
-        }
-    }
+    let mut directories = user_data_dir_arguments(&command_line_arguments(&bytes));
     if directories.is_empty() && product == BrowserProduct::Helium {
-        if let Some(path) = packed_helium_user_data_dir(&bytes)? {
-            directories.push(path);
+        if let Some(packed) = packed_helium_arguments(&bytes) {
+            directories = user_data_dir_arguments(&packed);
         }
     }
     directories.sort();
@@ -830,11 +831,15 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        let classification = self.classify_browser(pid).await?;
         if let Some(endpoint) = active_port_endpoint(pid)? {
             return Ok(Some(endpoint));
         }
-        if classification.product_kind == BrowserProduct::Helium {
+        // Helium's documented Linux boundary is its own PID-owned
+        // DevToolsActivePort file. Without it, refuse instead of accepting an
+        // arbitrary PID-owned listener through generic /json/version
+        // discovery. Classification is deliberately deferred to here so the
+        // ordinary Chrome/Edge path does not pay a full /proc enumeration.
+        if self.classify_browser(pid).await?.product_kind == BrowserProduct::Helium {
             return Ok(None);
         }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
@@ -1340,13 +1345,17 @@ mod tests {
 
     #[test]
     fn process_type_detection_handles_nul_and_packed_command_lines() {
-        assert!(command_line_has_process_type(b"helium\0--type=renderer\0"));
+        assert!(has_process_type(&command_line_arguments(
+            b"helium\0--type=renderer\0"
+        )));
         assert!(packed_helium_process_type(
             b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0"
         ));
-        assert!(!command_line_has_process_type(
+        // Packed records are never split on whitespace by the NUL parser.
+        assert!(!has_process_type(&command_line_arguments(
             b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0"
-        ));
+        )));
+        // A `--type=` that is not the first switch is not a helper marker.
         assert!(!packed_helium_process_type(
             b"/opt/helium-browser-bin/helium --load-extension=/tmp/example --type=renderer\0"
         ));
@@ -1354,6 +1363,13 @@ mod tests {
             b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --type=renderer\0"
         ));
         assert!(!packed_helium_process_type(b"helium --type=\0"));
+        // The packed fallback is Helium-only and single-record only.
+        assert!(!packed_helium_process_type(
+            b"/opt/google/chrome/chrome --type=renderer\0"
+        ));
+        assert!(!packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium\0--type=renderer\0"
+        ));
     }
 
     #[test]
@@ -1374,12 +1390,64 @@ mod tests {
                 "/tmp/helium-profile"
             ]
         );
+    }
+
+    #[test]
+    fn packed_helium_recovery_keeps_switch_boundaries_and_spaced_values() {
+        let packed = packed_helium_arguments(
+            b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --remote-debugging-port=0\0",
+        )
+        .expect("packed Helium argv");
         assert_eq!(
-            packed_helium_user_data_dir(
-                b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --remote-debugging-port=0\0"
-            )
-            .expect("packed profile argument"),
-            Some(PathBuf::from("/tmp/helium profile"))
+            packed,
+            [
+                "--user-data-dir=/tmp/helium profile",
+                "--remote-debugging-port=0"
+            ]
+        );
+        assert_eq!(
+            user_data_dir_arguments(&packed),
+            [PathBuf::from("/tmp/helium profile")]
+        );
+        // The separated form resolves through the same shared extractor.
+        assert_eq!(
+            user_data_dir_arguments(
+                &packed_helium_arguments(
+                    b"/opt/helium-browser-bin/helium --user-data-dir /tmp/helium profile --no-first-run\0"
+                )
+                .expect("packed Helium argv")
+            ),
+            [PathBuf::from("/tmp/helium profile")]
+        );
+        // Non-Helium executables and NUL-delimited records are not recovered.
+        assert!(
+            packed_helium_arguments(b"/opt/google/chrome/chrome --user-data-dir=/tmp/x\0")
+                .is_none()
+        );
+        assert!(
+            packed_helium_arguments(b"/opt/helium-browser-bin/helium\0--no-first-run\0").is_none()
+        );
+        assert!(packed_helium_arguments(b"/opt/helium-browser-bin/helium\0").is_none());
+    }
+
+    #[test]
+    fn user_data_dir_extraction_is_shared_by_both_argument_forms() {
+        let joined = ["--user-data-dir=/tmp/a".to_owned()];
+        let separated = ["--user-data-dir".to_owned(), "/tmp/b".to_owned()];
+        assert_eq!(user_data_dir_arguments(&joined), [PathBuf::from("/tmp/a")]);
+        assert_eq!(
+            user_data_dir_arguments(&separated),
+            [PathBuf::from("/tmp/b")]
+        );
+        assert!(user_data_dir_arguments(&["--user-data-dir=".to_owned()]).is_empty());
+        assert!(user_data_dir_arguments(&["--user-data-dir".to_owned()]).is_empty());
+        assert_eq!(
+            user_data_dir_arguments(&[
+                "--user-data-dir=/tmp/a".to_owned(),
+                "--user-data-dir=/tmp/b".to_owned()
+            ])
+            .len(),
+            2
         );
     }
 

@@ -1,0 +1,255 @@
+name: "CD: HCOMP private Cua Driver"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hcomp-private-cua-driver-${{ github.workflow_sha }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 8662ab0e110fa2dee791a6a27f4726e404a6568c
+
+jobs:
+  build-linux:
+    name: linux-x86_64
+    runs-on: ubuntu-latest
+    container:
+      image: debian:11
+    steps:
+      - name: Install Debian 11 build floor
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git ca-certificates curl build-essential pkg-config \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev
+
+      - name: Check out packaging tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+
+      - name: Check out pinned native source
+        uses: actions/checkout@v4
+        with:
+          ref: 8662ab0e110fa2dee791a6a27f4726e404a6568c
+          path: source
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build pinned native payload
+        working-directory: source/libs/cua-driver/rust
+        env:
+          CUA_DRIVER_SOURCE_SHA: ${{ env.SOURCE_SHA }}
+        run: |
+          cargo build --locked \
+            -p cua-driver -p cua-driver-sdk \
+            --release --features cua-driver/portal-input \
+            --target x86_64-unknown-linux-gnu
+          mkdir -p ../python/src/cua_driver/bin
+          cp target/x86_64-unknown-linux-gnu/release/cua-driver \
+            ../python/src/cua_driver/bin/cua-driver
+          cp target/x86_64-unknown-linux-gnu/release/libcua_driver_sdk.so \
+            ../python/src/cua_driver/libcua_driver_sdk.so
+
+      - name: Install private packaging tools
+        run: python -m pip install --upgrade build hatchling pydantic
+
+      - name: Build, install, and gate private wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tooling/libs/cua-driver/python/scripts/build_hcomp_private_wheel.py \
+            --source-dir source \
+            --source-sha "$SOURCE_SHA" \
+            --packaging-sha "${{ github.workflow_sha }}" \
+            --arch x86_64 \
+            --output-dir dist \
+            --skip-download
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          wheel="${wheels[0]}"
+          stem="${wheel%.whl}"
+          python tooling/libs/cua-driver/python/scripts/gate_list_tools_schema.py \
+            "$wheel" --inventory-output "${stem}.inventory.json"
+          python tooling/libs/cua-driver/python/scripts/write_hcomp_release_manifest.py \
+            "$wheel" \
+            --inventory "${stem}.inventory.json" \
+            --output "${stem}.manifest.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-hcomp-linux-x86_64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+  build-macos:
+    name: macos-universal2
+    runs-on: macos-26
+    steps:
+      - name: Check out packaging tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+
+      - name: Check out pinned native source
+        uses: actions/checkout@v4
+        with:
+          ref: 8662ab0e110fa2dee791a6a27f4726e404a6568c
+          path: source
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build pinned universal native payload
+        working-directory: source/libs/cua-driver/rust
+        env:
+          CUA_DRIVER_SOURCE_SHA: ${{ env.SOURCE_SHA }}
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+        run: |
+          cargo build --locked -p cua-driver -p cua-driver-sdk \
+            --release --target aarch64-apple-darwin
+          cargo build --locked -p cua-driver -p cua-driver-sdk \
+            --release --target x86_64-apple-darwin
+          mkdir -p ../python/src/cua_driver/bin
+          lipo -create \
+            target/aarch64-apple-darwin/release/cua-driver \
+            target/x86_64-apple-darwin/release/cua-driver \
+            -output ../python/src/cua_driver/bin/cua-driver
+          lipo -create \
+            target/aarch64-apple-darwin/release/libcua_driver_sdk.dylib \
+            target/x86_64-apple-darwin/release/libcua_driver_sdk.dylib \
+            -output ../python/src/cua_driver/libcua_driver_sdk.dylib
+          lipo -info ../python/src/cua_driver/bin/cua-driver
+          lipo -info ../python/src/cua_driver/libcua_driver_sdk.dylib
+
+      - name: Install private packaging tools
+        run: python -m pip install --upgrade build hatchling pydantic
+
+      - name: Build, install, and gate private wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tooling/libs/cua-driver/python/scripts/build_hcomp_private_wheel.py \
+            --source-dir source \
+            --source-sha "$SOURCE_SHA" \
+            --packaging-sha "${{ github.workflow_sha }}" \
+            --arch universal \
+            --output-dir dist \
+            --skip-download
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          wheel="${wheels[0]}"
+          stem="${wheel%.whl}"
+          python tooling/libs/cua-driver/python/scripts/gate_list_tools_schema.py \
+            "$wheel" --inventory-output "${stem}.inventory.json"
+          python tooling/libs/cua-driver/python/scripts/write_hcomp_release_manifest.py \
+            "$wheel" \
+            --inventory "${stem}.inventory.json" \
+            --output "${stem}.manifest.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-hcomp-macos-universal2
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: publish CodeArtifact
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    environment: hcomp-private-cua-driver
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified wheels and manifests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cua-driver-hcomp-*
+          path: dist
+          merge-multiple: true
+
+      - name: Validate complete publication set
+        env:
+          PACKAGING_SHA: ${{ github.workflow_sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("dist")
+          wheels = list(root.glob("*.whl"))
+          manifests = list(root.glob("*.manifest.json"))
+          inventories = list(root.glob("*.inventory.json"))
+          if (len(wheels), len(manifests), len(inventories)) != (2, 2, 2):
+              raise SystemExit(
+                  f"expected two wheels, manifests, and inventories; found "
+                  f"{len(wheels)}, {len(manifests)}, {len(inventories)}"
+              )
+          for path in manifests:
+              manifest = json.loads(path.read_text())
+              if manifest["distribution"] != "cua-driver-hcomp":
+                  raise SystemExit(f"unexpected distribution in {path}")
+              if manifest["source_sha"] != os.environ["SOURCE_SHA"]:
+                  raise SystemExit(f"unexpected source SHA in {path}")
+              if manifest["packaging_sha"] != os.environ["PACKAGING_SHA"]:
+                  raise SystemExit(f"unexpected packaging SHA in {path}")
+          PY
+
+      - name: Require restricted CodeArtifact role
+        id: publish-role
+        env:
+          ROLE_ARN: ${{ vars.HCOMP_CUA_DRIVER_CODEARTIFACT_PUBLISH_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$ROLE_ARN" =~ ^arn:aws:iam::[0-9]{12}:role/.+ ]]; then
+            echo "HCOMP_CUA_DRIVER_CODEARTIFACT_PUBLISH_ROLE_ARN is missing or invalid" >&2
+            exit 1
+          fi
+          echo "role-arn=$ROLE_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Assume restricted CodeArtifact role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.publish-role.outputs.role-arn }}
+          aws-region: us-west-2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Publish immutable wheels with Twine
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*.whl
+          aws codeartifact login --tool twine \
+            --domain hai \
+            --domain-owner 905418030904 \
+            --repository hai-private \
+            --region us-west-2
+          python -m twine upload --repository codeartifact dist/*.whl

@@ -11,7 +11,6 @@ rfc_pr: https://github.com/trycua/cua/pull/3279
 implementation:
   - https://github.com/trycua/cua/pull/3280
   - https://github.com/trycua/cua/pull/3281
-  - https://github.com/trycua/cua/pull/3282
   - https://github.com/trycua/cua/pull/3283
 supersedes:
 superseded_by:
@@ -71,8 +70,8 @@ private-worker topology.
   fails.
 - Offer a host-only Python artifact without a bundled driver executable.
 - Preserve exact contract validation for externally supplied executables.
-- Make version mismatches deterministic and actionable before a host exposes an
-  MCP connection.
+- Preserve deterministic, actionable mismatch refusals before a host exposes
+  an MCP connection.
 - Preserve all existing package names, constructors, defaults, generated
   bindings, and bundled-binary workflows.
 - Give downstream applications enough parity to delete duplicate socket,
@@ -143,9 +142,9 @@ required.
 
 The embedded readiness handshake already rejects exact contract mismatches.
 When a caller supplies an independently updated executable, that refusal occurs
-after process spawn and is reported as a general incompatible-daemon reason.
-There is no distribution contract telling a host how to keep a host-only SDK
-and executable aligned.
+after process spawn and identifies the first incompatible expected and observed
+contract value. There is no distribution contract telling a host how to keep a
+host-only SDK and executable aligned.
 
 ## Proposal
 
@@ -192,18 +191,15 @@ metadata agreement. A host-only artifact does not search `PATH`, choose the
 newest installation, silently download a release, or accept a protocol range.
 Trusted host code owns executable provenance and update coordination.
 
-Before returning an MCP connection, mismatch diagnostics must identify expected
-and observed values for:
-
-- component version when available;
-- contract version;
-- tools-list schema version;
-- capability version; and
-- MCP protocol version.
+Before returning an MCP connection, the existing mismatch error continues to
+identify the first incompatible expected and observed contract, tools-list
+schema, capability, or MCP protocol value. A separate compatibility-report
+accessor would duplicate that evidence without coordinating releases, so this
+RFC does not add one.
 
 The daemon metadata handshake remains authoritative because semantic version
-alone does not prove generated-contract parity. The implementation does not add a semantic-version preflight; the daemon
-metadata handshake remains the single compatibility authority.
+alone does not prove generated-contract parity. The implementation does not add
+a semantic-version preflight.
 
 A host-only package and external executable are supported only when they come
 from the same Cua Driver component release. Applications that update the
@@ -356,14 +352,7 @@ macOS TCC identity.
 - Preserve current inheritance defaults and Windows no-console behavior.
 - Test startup exit, timeout, truncation, concurrent stop, and cleanup.
 
-### PR 3: External executable mismatch evidence
-
-- Return accepted structured expected and observed contract fields.
-- Keep the metadata handshake authoritative without adding semantic-version
-  preflight.
-- Test matching, mismatching, early-exit, and endpoint-substitution cases.
-
-### PR 4: Host-only Python package
+### PR 3: Host-only Python package
 
 - Add the accepted Python distribution name.
 - Exclude executables while retaining the native SDK library and generated
@@ -372,8 +361,9 @@ macOS TCC identity.
 - Test archive contents and launch against an explicitly supplied matching
   fixture.
 
-Each pull request remains independently revertible. PR 4 depends on PR 3. PRs
-1 and 2 do not need to stack on unrelated implementation branches.
+Each pull request remains independently revertible. The package uses the
+existing exact metadata handshake and does not depend on a new compatibility
+API.
 
 ## Test and acceptance plan
 
@@ -385,8 +375,8 @@ The RFC is complete when:
 - diagnostics tests prove the byte cap, truncation marker, optional tee,
   startup timeout, early exit, and cleanup behavior;
 - diagnostics are absent from Cua telemetry fixtures;
-- mismatch tests expose expected and observed contract fields and never return
-  an MCP connection;
+- existing mismatch tests identify expected and observed contract values and
+  never return an MCP connection;
 - host-only wheels contain the native SDK and omit the driver executable;
 - host-only package smoke tests launch a matching explicit fixture and reject a
   mismatching fixture;
@@ -411,7 +401,9 @@ conversion, tee behavior when inheritance and capture are both enabled,
 the `cua-driver-host` package name, and the existing daemon metadata handshake
 as the sole compatibility authority. Repository inspection during
 implementation confirmed that Node already omits the driver executable, so no
-new npm package is needed. Exact contract
-matching, typed options, current defaults, and host-owned platform identity
-remain mandatory. Implementation will proceed as linked draft pull requests;
+new npm package is needed. Stack review also rejected a separate compatibility
+report because existing mismatch errors already carry the required evidence.
+Exact contract matching, typed options, current defaults, and host-owned
+platform identity remain mandatory. Implementation will proceed as linked
+draft pull requests;
 the RFC must merge before or with the first implementation pull request.

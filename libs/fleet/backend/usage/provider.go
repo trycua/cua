@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"cyclops-cs-backend/identity"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var ErrPoolNotFound = errors.New("usage pool not found")
@@ -65,12 +67,17 @@ func (p *provider) PoolDetail(ctx context.Context, query PoolQuery) (PoolDetailR
 	if !ok {
 		return PoolDetailResponse{}, fmt.Errorf("%w: %s", ErrPoolNotFound, query.PoolID)
 	}
+	_, bucketSpan := usageTracer().Start(ctx, "usage.buckets.build", trace.WithAttributes(
+		attribute.String("usage.interval", string(query.Interval)),
+	))
 	response := PoolDetailResponse{DataAsOf: data.asOf, Partial: data.partial, Pool: PoolIdentity{ID: pool.id, Name: pool.name}, Buckets: make([]Bucket, 0)}
 	for start := data.start; start.Before(data.end); start = start.Add(step) {
 		key := bucketKey{namespace: namespace, pool: poolName, start: start}
 		totals := data.buckets[key]
 		response.Buckets = append(response.Buckets, Bucket{Start: start, End: start.Add(step), CPUConsumed: totals.cpuConsumed, CPUProvisioned: totals.cpuProvisioned, MemoryConsumed: totals.memoryConsumed, MemoryProvisioned: totals.memoryProvisioned})
 	}
+	bucketSpan.SetAttributes(attribute.Int("usage.bucket_count", len(response.Buckets)))
+	bucketSpan.End()
 	return response, nil
 }
 
@@ -99,26 +106,74 @@ type bucketKey struct {
 }
 
 func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
+	ctx, span := usageTracer().Start(ctx, "usage.load", trace.WithAttributes(
+		attribute.String("usage.timeframe", string(query.Timeframe)),
+		attribute.Bool("usage.admin", query.Admin),
+		attribute.Bool("usage.subject_override", query.ActorSubject != "" && query.ActorSubject != query.Subject),
+	))
+	defer span.End()
+
 	if p.events == nil || p.allocations == nil {
-		return usageData{}, fmt.Errorf("usage provider is not configured")
+		err := fmt.Errorf("usage provider is not configured")
+		markUsageSpanError(span, "usage provider unavailable")
+		return usageData{}, err
 	}
 	start, end, step, err := usageWindow(query.Timeframe, p.clock())
 	if err != nil {
+		markUsageSpanError(span, "invalid usage window")
 		return usageData{}, err
 	}
-	events, err := p.events.Events(ctx, identity.PersonalGroup(ctx, query.Subject), start, end)
+	span.SetAttributes(attribute.Int64("usage.window_seconds", int64(end.Sub(start).Seconds())))
+
+	eventsCtx, eventsSpan := usageTracer().Start(ctx, "usage.events.query")
+	events, err := p.events.Events(eventsCtx, identity.PersonalGroup(eventsCtx, query.Subject), start, end)
 	if err != nil {
+		markUsageSpanError(eventsSpan, "usage event query failed")
+		eventsSpan.End()
+		markUsageSpanError(span, "usage event query failed")
 		return usageData{}, fmt.Errorf("read usage events: %w", err)
 	}
+	eventsSpan.SetAttributes(attribute.Int("usage.event_count", len(events)))
+	eventsSpan.End()
+
+	_, segmentsSpan := usageTracer().Start(ctx, "usage.segments.build", trace.WithAttributes(
+		attribute.Int("usage.event_count", len(events)),
+	))
 	segments, namespaces, partial := buildSegments(events, start, end)
+	segmentsSpan.SetAttributes(
+		attribute.Int("usage.segment_count", len(segments)),
+		attribute.Int("usage.namespace_count", len(namespaces)),
+		attribute.Bool("usage.partial", partial),
+	)
+	segmentsSpan.End()
+
 	data := usageData{start: start, end: end, asOf: end, partial: partial, pools: make([]usageTotals, 0), buckets: make(map[bucketKey]usageTotals)}
 	if len(segments) == 0 || len(namespaces) == 0 {
+		span.SetAttributes(
+			attribute.Int("usage.pool_count", 0),
+			attribute.Int("usage.bucket_count", 0),
+			attribute.Bool("usage.partial", data.partial),
+		)
 		return data, nil
 	}
-	allocations, asOf, sourcePartial, err := p.allocations.Allocations(ctx, start, end, step, namespaces)
+
+	allocationsCtx, allocationsSpan := usageTracer().Start(ctx, "usage.allocations.query", trace.WithAttributes(
+		attribute.Int("usage.namespace_count", len(namespaces)),
+		attribute.Int64("usage.step_seconds", int64(step.Seconds())),
+	))
+	allocations, asOf, sourcePartial, err := p.allocations.Allocations(allocationsCtx, start, end, step, namespaces)
 	if err != nil {
+		markUsageSpanError(allocationsSpan, "OpenCost allocation query failed")
+		allocationsSpan.End()
+		markUsageSpanError(span, "OpenCost allocation query failed")
 		return usageData{}, fmt.Errorf("read OpenCost allocations: %w", err)
 	}
+	allocationsSpan.SetAttributes(
+		attribute.Int("usage.allocation_count", len(allocations)),
+		attribute.Bool("usage.partial", sourcePartial),
+	)
+	allocationsSpan.End()
+
 	if asOf.IsZero() {
 		asOf = start
 		sourcePartial = true
@@ -129,6 +184,10 @@ func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
 		sourcePartial = true
 	}
 	data.partial = data.partial || sourcePartial || data.asOf.Before(end)
+
+	_, attributionSpan := usageTracer().Start(ctx, "usage.allocations.attribute", trace.WithAttributes(
+		attribute.Int("usage.allocation_count", len(allocations)),
+	))
 	poolTotals := make(map[string]usageTotals)
 	for _, allocation := range allocations {
 		matched, allocationPartial := attributeAllocation(allocation, segments, start, end, step, poolTotals, data.buckets)
@@ -143,6 +202,17 @@ func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
 	}
 	disambiguatePoolNames(data.pools)
 	sort.Slice(data.pools, func(i, j int) bool { return data.pools[i].id < data.pools[j].id })
+	attributionSpan.SetAttributes(
+		attribute.Int("usage.pool_count", len(data.pools)),
+		attribute.Int("usage.bucket_count", len(data.buckets)),
+		attribute.Bool("usage.partial", data.partial),
+	)
+	attributionSpan.End()
+	span.SetAttributes(
+		attribute.Int("usage.pool_count", len(data.pools)),
+		attribute.Int("usage.bucket_count", len(data.buckets)),
+		attribute.Bool("usage.partial", data.partial),
+	)
 	return data, nil
 }
 

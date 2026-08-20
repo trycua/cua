@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	"cyclops-cs-backend/usage"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type UsageTimeframe = usage.Timeframe
@@ -45,6 +48,9 @@ func parseUsageTimeframe(raw string) (UsageTimeframe, UsageInterval, bool) {
 }
 
 func (h Handlers) authorizeUsage(w http.ResponseWriter, r *http.Request) (UsageQuery, UsageInterval, bool) {
+	ctx, span := handlerTracer().Start(r.Context(), "usage.authorize")
+	defer span.End()
+
 	u := currentUser(r)
 	if u == nil || u.ID == "" {
 		writeErr(w, 401, "authentication required")
@@ -55,7 +61,7 @@ func (h Handlers) authorizeUsage(w http.ResponseWriter, r *http.Request) (UsageQ
 		writeErr(w, 400, "timeframe must be one of 24h, 7d, or 30d")
 		return UsageQuery{}, "", false
 	}
-	enabled, err := h.usageEnabled(r.Context(), u)
+	enabled, err := h.usageEnabled(ctx, u)
 	if err != nil || !enabled {
 		if err != nil {
 			slog.WarnContext(r.Context(), "usage access evaluation failed", "err", err)
@@ -63,7 +69,7 @@ func (h Handlers) authorizeUsage(w http.ResponseWriter, r *http.Request) (UsageQ
 		writeErr(w, 403, "usage preview is not enabled")
 		return UsageQuery{}, "", false
 	}
-	admin, err := h.isAdmin(r.Context(), u)
+	admin, err := h.isAdmin(ctx, u)
 	if err != nil {
 		admin = false
 	}
@@ -78,10 +84,20 @@ func (h Handlers) authorizeUsage(w http.ResponseWriter, r *http.Request) (UsageQ
 		writeErr(w, 400, "subject is too long")
 		return UsageQuery{}, "", false
 	}
+	span.SetAttributes(
+		attribute.String("usage.timeframe", string(tf)),
+		attribute.String("usage.interval", string(iv)),
+		attribute.Bool("usage.admin", admin),
+		attribute.Bool("usage.subject_override", sub != u.ID),
+		attribute.Bool("usage.authorized", true),
+	)
 	return UsageQuery{ActorSubject: u.ID, Subject: sub, Admin: admin, Timeframe: tf}, iv, true
 }
 
 func (h Handlers) GetUsageOverview(w http.ResponseWriter, r *http.Request) {
+	ctx, span := handlerTracer().Start(r.Context(), "usage.overview")
+	defer span.End()
+	r = r.WithContext(ctx)
 	w.Header().Set("Cache-Control", "private, no-store")
 	q, _, ok := h.authorizeUsage(w, r)
 	if !ok {
@@ -91,8 +107,10 @@ func (h Handlers) GetUsageOverview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 503, "usage data provider is not configured")
 		return
 	}
+	span.SetAttributes(attribute.String("usage.timeframe", string(q.Timeframe)))
 	v, err := h.Usage.Overview(r.Context(), q)
 	if err != nil {
+		markUsageHandlerError(span, "usage overview failed")
 		writeErr(w, 502, "usage data is temporarily unavailable")
 		return
 	}
@@ -100,6 +118,9 @@ func (h Handlers) GetUsageOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handlers) GetUsagePoolDetail(w http.ResponseWriter, r *http.Request) {
+	ctx, span := handlerTracer().Start(r.Context(), "usage.pool_detail")
+	defer span.End()
+	r = r.WithContext(ctx)
 	w.Header().Set("Cache-Control", "private, no-store")
 	q, iv, ok := h.authorizeUsage(w, r)
 	if !ok {
@@ -114,14 +135,23 @@ func (h Handlers) GetUsagePoolDetail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 503, "usage data provider is not configured")
 		return
 	}
+	span.SetAttributes(
+		attribute.String("usage.timeframe", string(q.Timeframe)),
+		attribute.String("usage.interval", string(iv)),
+	)
 	v, err := h.Usage.PoolDetail(r.Context(), UsagePoolQuery{Query: q, PoolID: pool, Interval: iv})
 	if errors.Is(err, usage.ErrPoolNotFound) {
 		writeErr(w, 404, "usage pool was not found")
 		return
 	}
 	if err != nil {
+		markUsageHandlerError(span, "usage pool detail failed")
 		writeErr(w, 502, "usage data is temporarily unavailable")
 		return
 	}
 	writeJSON(w, 200, v)
+}
+
+func markUsageHandlerError(span trace.Span, description string) {
+	span.SetStatus(codes.Error, description)
 }

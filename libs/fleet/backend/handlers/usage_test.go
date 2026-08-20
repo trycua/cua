@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type fakeUsageProvider struct {
@@ -104,4 +108,47 @@ func TestUsageProviderErrorsAreRedacted(t *testing.T) {
 			t.Fatalf("body = %q, want %q", got, want)
 		}
 	})
+}
+
+func TestUsagePoolDetailCreatesHandlerAndAuthorizationSpans(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previousProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previousProvider) })
+
+	ctx, root := provider.Tracer("test").Start(context.Background(), "request")
+	request := withUser(
+		httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=pool-should-not-appear", nil).WithContext(ctx),
+		&auth.User{ID: "user-should-not-appear"},
+	)
+	response := httptest.NewRecorder()
+
+	uh(&fakeUsageProvider{}, true, false).GetUsagePoolDetail(response, request)
+	root.End()
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	for _, name := range []string{"usage.pool_detail", "usage.authorize"} {
+		if handlerSpanByName(recorder.Ended(), name) == nil {
+			t.Fatalf("expected %q span", name)
+		}
+	}
+	for _, span := range recorder.Ended() {
+		for _, attr := range span.Attributes() {
+			if attr.Value.AsString() == "user-should-not-appear" || attr.Value.AsString() == "pool-should-not-appear" {
+				t.Fatalf("span %q contains sensitive/high-cardinality attribute %q", span.Name(), attr.Key)
+			}
+		}
+	}
+}
+
+func handlerSpanByName(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
+	for _, span := range spans {
+		if span.Name() == name {
+			return span
+		}
+	}
+	return nil
 }

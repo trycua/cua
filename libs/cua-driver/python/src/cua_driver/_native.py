@@ -648,6 +648,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection() != 44467:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_compatibility_report() != 57156:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics() != 57979:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart() != 27248:
@@ -1446,6 +1448,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection.argt
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_compatibility_report.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_compatibility_report.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -1728,6 +1735,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_with
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_compatibility_report.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_compatibility_report.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics.restype = ctypes.c_uint16
@@ -2655,6 +2665,96 @@ class _UniffiFfiConverterTypeDriverOptions(_UniffiConverterRustBuffer):
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterBoolean.write(value.claude_code_compatibility, buf)
+
+@dataclass
+class EmbeddedDriverCompatibilityReport:
+    def __init__(self, *, compatible:bool, expected_driver_version:str, observed_driver_version:str, expected_contract_version:str, observed_contract_version:str, expected_tools_list_schema_version:str, observed_tools_list_schema_version:str, expected_capability_version:str, observed_capability_version:str, expected_mcp_protocol_version:str, observed_mcp_protocol_version:str):
+        self.compatible = compatible
+        self.expected_driver_version = expected_driver_version
+        self.observed_driver_version = observed_driver_version
+        self.expected_contract_version = expected_contract_version
+        self.observed_contract_version = observed_contract_version
+        self.expected_tools_list_schema_version = expected_tools_list_schema_version
+        self.observed_tools_list_schema_version = observed_tools_list_schema_version
+        self.expected_capability_version = expected_capability_version
+        self.observed_capability_version = observed_capability_version
+        self.expected_mcp_protocol_version = expected_mcp_protocol_version
+        self.observed_mcp_protocol_version = observed_mcp_protocol_version
+
+
+
+
+    def __str__(self):
+        return "EmbeddedDriverCompatibilityReport(compatible={}, expected_driver_version={}, observed_driver_version={}, expected_contract_version={}, observed_contract_version={}, expected_tools_list_schema_version={}, observed_tools_list_schema_version={}, expected_capability_version={}, observed_capability_version={}, expected_mcp_protocol_version={}, observed_mcp_protocol_version={})".format(self.compatible, self.expected_driver_version, self.observed_driver_version, self.expected_contract_version, self.observed_contract_version, self.expected_tools_list_schema_version, self.observed_tools_list_schema_version, self.expected_capability_version, self.observed_capability_version, self.expected_mcp_protocol_version, self.observed_mcp_protocol_version)
+    def __eq__(self, other):
+        if self.compatible != other.compatible:
+            return False
+        if self.expected_driver_version != other.expected_driver_version:
+            return False
+        if self.observed_driver_version != other.observed_driver_version:
+            return False
+        if self.expected_contract_version != other.expected_contract_version:
+            return False
+        if self.observed_contract_version != other.observed_contract_version:
+            return False
+        if self.expected_tools_list_schema_version != other.expected_tools_list_schema_version:
+            return False
+        if self.observed_tools_list_schema_version != other.observed_tools_list_schema_version:
+            return False
+        if self.expected_capability_version != other.expected_capability_version:
+            return False
+        if self.observed_capability_version != other.observed_capability_version:
+            return False
+        if self.expected_mcp_protocol_version != other.expected_mcp_protocol_version:
+            return False
+        if self.observed_mcp_protocol_version != other.observed_mcp_protocol_version:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeEmbeddedDriverCompatibilityReport(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return EmbeddedDriverCompatibilityReport(
+            compatible=_UniffiFfiConverterBoolean.read(buf),
+            expected_driver_version=_UniffiFfiConverterString.read(buf),
+            observed_driver_version=_UniffiFfiConverterString.read(buf),
+            expected_contract_version=_UniffiFfiConverterString.read(buf),
+            observed_contract_version=_UniffiFfiConverterString.read(buf),
+            expected_tools_list_schema_version=_UniffiFfiConverterString.read(buf),
+            observed_tools_list_schema_version=_UniffiFfiConverterString.read(buf),
+            expected_capability_version=_UniffiFfiConverterString.read(buf),
+            observed_capability_version=_UniffiFfiConverterString.read(buf),
+            expected_mcp_protocol_version=_UniffiFfiConverterString.read(buf),
+            observed_mcp_protocol_version=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.compatible)
+        _UniffiFfiConverterString.check_lower(value.expected_driver_version)
+        _UniffiFfiConverterString.check_lower(value.observed_driver_version)
+        _UniffiFfiConverterString.check_lower(value.expected_contract_version)
+        _UniffiFfiConverterString.check_lower(value.observed_contract_version)
+        _UniffiFfiConverterString.check_lower(value.expected_tools_list_schema_version)
+        _UniffiFfiConverterString.check_lower(value.observed_tools_list_schema_version)
+        _UniffiFfiConverterString.check_lower(value.expected_capability_version)
+        _UniffiFfiConverterString.check_lower(value.observed_capability_version)
+        _UniffiFfiConverterString.check_lower(value.expected_mcp_protocol_version)
+        _UniffiFfiConverterString.check_lower(value.observed_mcp_protocol_version)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.compatible, buf)
+        _UniffiFfiConverterString.write(value.expected_driver_version, buf)
+        _UniffiFfiConverterString.write(value.observed_driver_version, buf)
+        _UniffiFfiConverterString.write(value.expected_contract_version, buf)
+        _UniffiFfiConverterString.write(value.observed_contract_version, buf)
+        _UniffiFfiConverterString.write(value.expected_tools_list_schema_version, buf)
+        _UniffiFfiConverterString.write(value.observed_tools_list_schema_version, buf)
+        _UniffiFfiConverterString.write(value.expected_capability_version, buf)
+        _UniffiFfiConverterString.write(value.observed_capability_version, buf)
+        _UniffiFfiConverterString.write(value.expected_mcp_protocol_version, buf)
+        _UniffiFfiConverterString.write(value.observed_mcp_protocol_version, buf)
 
 @dataclass
 class EmbeddedEnvironmentVariable:
@@ -6262,6 +6362,31 @@ class _UniffiFfiConverterOptionalTypeEmbeddedDriverConnection(_UniffiConverterRu
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeEmbeddedDriverCompatibilityReport(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeEmbeddedDriverCompatibilityReport.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeEmbeddedDriverCompatibilityReport.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeEmbeddedDriverCompatibilityReport.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 class _UniffiFfiConverterOptionalTypeEmbeddedDriverDiagnostics(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -6291,6 +6416,8 @@ class _UniffiFfiConverterOptionalTypeEmbeddedDriverDiagnostics(_UniffiConverterR
 class EmbeddedCuaDriverHostProtocol(typing.Protocol):
 
     def connection(self, ) -> typing.Optional[EmbeddedDriverConnection]:
+        raise NotImplementedError
+    def last_compatibility_report(self, ) -> typing.Optional[EmbeddedDriverCompatibilityReport]:
         raise NotImplementedError
     def last_diagnostics(self, ) -> typing.Optional[EmbeddedDriverDiagnostics]:
         raise NotImplementedError
@@ -6367,6 +6494,18 @@ class EmbeddedCuaDriverHost(EmbeddedCuaDriverHostProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def last_compatibility_report(self, ) -> typing.Optional[EmbeddedDriverCompatibilityReport]:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterOptionalTypeEmbeddedDriverCompatibilityReport.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_compatibility_report,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -6598,6 +6737,7 @@ __all__ = [
     "DriverAuthorizationRequest",
     "DriverMetadata",
     "DriverOptions",
+    "EmbeddedDriverCompatibilityReport",
     "EmbeddedEnvironmentVariable",
     "EmbeddedMcpConfiguration",
     "EmbeddedDriverConnection",

@@ -669,6 +669,85 @@ const FfiConverterTypeDriverOptions = (() => {
     return new FFIConverter();
 })();
 
+export type EmbeddedDriverCompatibilityReport = {
+    compatible: boolean,
+    expectedDriverVersion: string,
+    observedDriverVersion: string,
+    expectedContractVersion: string,
+    observedContractVersion: string,
+    expectedToolsListSchemaVersion: string,
+    observedToolsListSchemaVersion: string,
+    expectedCapabilityVersion: string,
+    observedCapabilityVersion: string,
+    expectedMcpProtocolVersion: string,
+    observedMcpProtocolVersion: string
+}
+
+/**
+ * Generated factory for {@link EmbeddedDriverCompatibilityReport} record objects.
+ */
+export const EmbeddedDriverCompatibilityReport = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<EmbeddedDriverCompatibilityReport, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<EmbeddedDriverCompatibilityReport>,
+    });
+})();
+
+const FfiConverterTypeEmbeddedDriverCompatibilityReport = (() => {
+    type TypeName = EmbeddedDriverCompatibilityReport;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                compatible: FfiConverterBool.read(from),
+                expectedDriverVersion: FfiConverterString.read(from),
+                observedDriverVersion: FfiConverterString.read(from),
+                expectedContractVersion: FfiConverterString.read(from),
+                observedContractVersion: FfiConverterString.read(from),
+                expectedToolsListSchemaVersion: FfiConverterString.read(from),
+                observedToolsListSchemaVersion: FfiConverterString.read(from),
+                expectedCapabilityVersion: FfiConverterString.read(from),
+                observedCapabilityVersion: FfiConverterString.read(from),
+                expectedMcpProtocolVersion: FfiConverterString.read(from),
+                observedMcpProtocolVersion: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.compatible, into);
+            FfiConverterString.write(value.expectedDriverVersion, into);
+            FfiConverterString.write(value.observedDriverVersion, into);
+            FfiConverterString.write(value.expectedContractVersion, into);
+            FfiConverterString.write(value.observedContractVersion, into);
+            FfiConverterString.write(value.expectedToolsListSchemaVersion, into);
+            FfiConverterString.write(value.observedToolsListSchemaVersion, into);
+            FfiConverterString.write(value.expectedCapabilityVersion, into);
+            FfiConverterString.write(value.observedCapabilityVersion, into);
+            FfiConverterString.write(value.expectedMcpProtocolVersion, into);
+            FfiConverterString.write(value.observedMcpProtocolVersion, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.compatible) +
+             FfiConverterString.allocationSize(value.expectedDriverVersion) +
+             FfiConverterString.allocationSize(value.observedDriverVersion) +
+             FfiConverterString.allocationSize(value.expectedContractVersion) +
+             FfiConverterString.allocationSize(value.observedContractVersion) +
+             FfiConverterString.allocationSize(value.expectedToolsListSchemaVersion) +
+             FfiConverterString.allocationSize(value.observedToolsListSchemaVersion) +
+             FfiConverterString.allocationSize(value.expectedCapabilityVersion) +
+             FfiConverterString.allocationSize(value.observedCapabilityVersion) +
+             FfiConverterString.allocationSize(value.expectedMcpProtocolVersion) +
+             FfiConverterString.allocationSize(value.observedMcpProtocolVersion);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type EmbeddedEnvironmentVariable = {
     name: string,
     value: string
@@ -5427,6 +5506,7 @@ const uniffiCallbackInterfaceDriverAuthorizationHost: { vtable: any; register: (
 export interface EmbeddedCuaDriverHostLike {
 
     connection(): EmbeddedDriverConnection | undefined;
+    lastCompatibilityReport(): EmbeddedDriverCompatibilityReport | undefined;
     lastDiagnostics(): EmbeddedDriverDiagnostics | undefined;
     restart(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<EmbeddedDriverConnection>;
     start(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<EmbeddedDriverConnection>;
@@ -5487,6 +5567,23 @@ export class EmbeddedCuaDriverHost extends UniffiAbstractObject implements Embed
     })(uniffiCaller.rustCall(
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection(
+                uniffiTypeEmbeddedCuaDriverHostObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    lastCompatibilityReport(): EmbeddedDriverCompatibilityReport | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeEmbeddedDriverCompatibilityReport.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_compatibility_report(
                 uniffiTypeEmbeddedCuaDriverHostObjectFactory.clonePointer(this),
                 callStatus);
             },
@@ -5763,6 +5860,9 @@ const FfiConverterOptionalTypeVerifyStateOutput = new FfiConverterOptional(FfiCo
 
 // FfiConverter for EmbeddedDriverConnection | undefined
 const FfiConverterOptionalTypeEmbeddedDriverConnection = new FfiConverterOptional(FfiConverterTypeEmbeddedDriverConnection);
+
+// FfiConverter for EmbeddedDriverCompatibilityReport | undefined
+const FfiConverterOptionalTypeEmbeddedDriverCompatibilityReport = new FfiConverterOptional(FfiConverterTypeEmbeddedDriverCompatibilityReport);
 
 // FfiConverter for EmbeddedDriverDiagnostics | undefined
 const FfiConverterOptionalTypeEmbeddedDriverDiagnostics = new FfiConverterOptional(FfiConverterTypeEmbeddedDriverDiagnostics);
@@ -6041,6 +6141,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection() !== 44467) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_compatibility_report() !== 57156) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_compatibility_report");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics() !== 57979) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics");
     }
@@ -6084,6 +6187,7 @@ export default Object.freeze({
     FfiConverterTypeDriverMetadata,
     FfiConverterTypeDriverOptions,
     FfiConverterTypeEmbeddedCuaDriverHost,
+    FfiConverterTypeEmbeddedDriverCompatibilityReport,
     FfiConverterTypeEmbeddedDriverConnection,
     FfiConverterTypeEmbeddedDriverDiagnostics,
     FfiConverterTypeEmbeddedDriverError,

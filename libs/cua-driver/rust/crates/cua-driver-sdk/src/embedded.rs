@@ -101,6 +101,21 @@ pub struct EmbeddedDriverDiagnostics {
     pub stderr_truncated: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmbeddedDriverCompatibilityReport {
+    pub compatible: bool,
+    pub expected_driver_version: String,
+    pub observed_driver_version: String,
+    pub expected_contract_version: String,
+    pub observed_contract_version: String,
+    pub expected_tools_list_schema_version: String,
+    pub observed_tools_list_schema_version: String,
+    pub expected_capability_version: String,
+    pub observed_capability_version: String,
+    pub expected_mcp_protocol_version: String,
+    pub observed_mcp_protocol_version: String,
+}
+
 #[derive(Debug, Error, uniffi::Error)]
 pub enum EmbeddedDriverError {
     #[error("invalid embedded host configuration: {reason}")]
@@ -216,6 +231,7 @@ pub struct EmbeddedCuaDriverHost {
     options: ValidatedOptions,
     inner: Mutex<HostInner>,
     diagnostics: Arc<Mutex<Option<DiagnosticCapture>>>,
+    compatibility_report: Mutex<Option<EmbeddedDriverCompatibilityReport>>,
     changed: Notify,
 }
 
@@ -333,6 +349,7 @@ impl EmbeddedCuaDriverHost {
                 last_exit: None,
             }),
             diagnostics: Arc::new(Mutex::new(None)),
+            compatibility_report: Mutex::new(None),
             changed: Notify::new(),
         }))
     }
@@ -357,6 +374,10 @@ impl EmbeddedCuaDriverHost {
         }
     }
 
+    pub fn last_compatibility_report(&self) -> Option<EmbeddedDriverCompatibilityReport> {
+        self.compatibility_report.lock().unwrap().clone()
+    }
+
     pub fn last_diagnostics(&self) -> Option<EmbeddedDriverDiagnostics> {
         self.diagnostics
             .lock()
@@ -376,6 +397,7 @@ impl EmbeddedCuaDriverHost {
                     HostPhase::Stopped => {
                         *self.diagnostics.lock().unwrap() =
                             self.options.capture_stderr.then(DiagnosticCapture::default);
+                        *self.compatibility_report.lock().unwrap() = None;
                         let generation = Uuid::new_v4().to_string();
                         let cancel = Arc::new(AtomicBool::new(false));
                         inner.phase = HostPhase::Starting {
@@ -614,6 +636,7 @@ impl EmbeddedCuaDriverHost {
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
 
+        *self.compatibility_report.lock().unwrap() = Some(compatibility_report(&metadata));
         let endpoint_identity = match capture_endpoint_identity(&socket_path) {
             Ok(identity) => identity,
             Err(error) => {
@@ -1012,6 +1035,25 @@ fn merge_safe_environment(
         }
     }
     values.into_values().collect()
+}
+
+fn compatibility_report(metadata: &DaemonMetadata) -> EmbeddedDriverCompatibilityReport {
+    EmbeddedDriverCompatibilityReport {
+        compatible: metadata.contract_version == CONTRACT_VERSION
+            && metadata.tools_list_schema_version == TOOLS_LIST_SCHEMA_VERSION
+            && metadata.capability_version == CAPABILITY_VERSION
+            && metadata.mcp_protocol_version == MCP_PROTOCOL_VERSION,
+        expected_driver_version: env!("CARGO_PKG_VERSION").into(),
+        observed_driver_version: metadata.driver_version.clone(),
+        expected_contract_version: CONTRACT_VERSION.into(),
+        observed_contract_version: metadata.contract_version.clone(),
+        expected_tools_list_schema_version: TOOLS_LIST_SCHEMA_VERSION.into(),
+        observed_tools_list_schema_version: metadata.tools_list_schema_version.clone(),
+        expected_capability_version: CAPABILITY_VERSION.into(),
+        observed_capability_version: metadata.capability_version.clone(),
+        expected_mcp_protocol_version: MCP_PROTOCOL_VERSION.into(),
+        observed_mcp_protocol_version: metadata.mcp_protocol_version.clone(),
+    }
 }
 
 fn validate_metadata(
@@ -1452,6 +1494,17 @@ mod tests {
             embedded: true,
             host_bundle_id: Some("com.example.host".into()),
         };
+        let report = compatibility_report(&metadata);
+        assert!(report.compatible);
+        assert_eq!(report.observed_contract_version, CONTRACT_VERSION);
+
+        let mut mismatched = metadata.clone();
+        mismatched.contract_version = "future-contract".into();
+        let mismatch = compatibility_report(&mismatched);
+        assert!(!mismatch.compatible);
+        assert_eq!(mismatch.expected_contract_version, CONTRACT_VERSION);
+        assert_eq!(mismatch.observed_contract_version, "future-contract");
+
         assert!(validate_metadata(&metadata, 42, "com.example.host").is_ok());
         assert!(validate_metadata(&metadata, 43, "com.example.host").is_err());
         assert!(validate_metadata(&metadata, 42, "com.other").is_err());

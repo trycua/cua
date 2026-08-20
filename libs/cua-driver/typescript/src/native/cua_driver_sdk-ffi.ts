@@ -743,6 +743,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_compatibility_report": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics": {
       args: [FfiType.Handle],
       ret: FfiType.RustBuffer,
@@ -1198,6 +1203,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_compatibility_report": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics": {
       args: [],
       ret: FfiType.UInt16,
@@ -1445,6 +1455,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_new(binaryPath: Uint8Array, hostBundleId: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_with_options(options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_compatibility_report(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_restart(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_start(uniffiSelf: bigint): bigint;
@@ -1536,6 +1547,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new(): number;
     uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_with_options(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection(): number;
+    uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_compatibility_report(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_start(): number;

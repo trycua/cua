@@ -1,25 +1,50 @@
 ---
 title: Hermes
-description: Connect Nous Research's Hermes Agent to Cua Driver over MCP.
+description: Use Cua Driver through Hermes Agent's built-in Computer Use toolset.
 icon: Waypoints
 ---
 
-Hermes Agent can launch local MCP servers from `~/.hermes/config.yaml`. Generate the current configuration from Cua Driver:
+Hermes Agent includes a `computer_use` toolset that wraps Cua Driver with
+Hermes-native actions, approvals, image handling, diagnostics, and session
+cleanup. Use this built-in integration instead of adding Cua Driver as a second,
+raw MCP server.
+
+Hermes setup normally attempts to install Cua Driver, but that step is
+best-effort. Install or repair the driver when needed, then verify the complete
+path:
 
 ```bash
-cua-driver mcp-config --client hermes
+hermes computer-use install
+hermes computer-use status
+hermes computer-use doctor
+hermes tools list
 ```
 
-Paste the generated block under `mcp_servers`, then run `/reload-mcp` inside Hermes. The configuration shape is:
+If `computer_use` is disabled, enable it for the Hermes CLI:
 
-```yaml
-mcp_servers:
-  cua-driver:
-    command: '/absolute/path/to/cua-driver'
-    args: ['mcp']
+```bash
+hermes tools enable computer_use --platform cli
 ```
 
-Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent#other-supported-clients) for runtime and permission guidance.
+Start a session with the Computer Use toolset:
+
+```bash
+hermes -t computer_use chat
+```
+
+For deeper platform guidance, install Cua Driver's maintained skill pack. Cua
+Driver links it into the standard Hermes skill directory:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+Raw `cua-driver mcp` registration remains available for driver development and
+low-level MCP debugging, but it exposes an overlapping interface without
+Hermes's Computer Use wrapper. Do not enable both interfaces by default. The
+[`mcp-config` reference](/reference/cua-driver/cli-reference#cua-driver-mcp-config)
+records that advanced path.
 
 <VideoDemo
   src="https://github.com/user-attachments/assets/dcc5a81f-6379-4378-a225-adaf5dfa5dcd"
@@ -30,4 +55,4 @@ Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-y
   Independent Hermes agents operate separate apps through the same Cua Driver runtime.
 </VideoDemo>
 
-Upstream: [Hermes Agent documentation](https://hermes-agent.nousresearch.com/docs/).
+Upstream: [Hermes Computer Use documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/computer-use).

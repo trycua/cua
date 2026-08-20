@@ -192,25 +192,19 @@ Register Cua Driver with your agent harness once.
     </Callout>
   </Tab>
   <Tab value="Hermes">
-    Print the Hermes snippet:
+    Hermes includes a built-in `computer_use` toolset. Verify it and the
+    available Cua Driver instead of adding a second raw MCP server:
 
     ```bash
-    cua-driver mcp-config --client hermes
+    hermes computer-use status
+    hermes computer-use doctor
+    hermes tools list
     ```
 
-    Paste it under mcp_servers in ~/.hermes/config.yaml:
+    If `computer_use` is disabled, enable it for the CLI:
 
-    ```yaml
-    mcp_servers:
-      cua-driver:
-        command: "cua-driver"
-        args: ["mcp"]
-    ```
-
-    Then reload MCP servers inside Hermes:
-
-    ```text
-    /reload-mcp
+    ```bash
+    hermes tools enable computer_use --platform cli
     ```
   </Tab>
 </Tabs>

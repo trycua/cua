@@ -7,11 +7,10 @@
  * Reads config.json and runs appropriate generators based on what changed.
  *
  * Usage:
- *   npx tsx scripts/docs-generators/runner.ts                    # Generate all enabled docs
- *   npx tsx scripts/docs-generators/runner.ts --check            # Check for drift (CI mode)
- *   npx tsx scripts/docs-generators/runner.ts --library lume     # Generate specific library
- *   npx tsx scripts/docs-generators/runner.ts --list             # List all configured generators
- *   npx tsx scripts/docs-generators/runner.ts --changed          # Only run for changed files (CI)
+ *   pnpm --dir docs docs:generate                  # Generate all enabled docs
+ *   pnpm --dir docs docs:check                     # Check for drift (CI mode)
+ *   pnpm --dir docs docs:check:lume                # Check one library
+ *   pnpm --dir docs docs:list                      # List configured generators
  */
 
 import { execSync, spawnSync } from 'child_process';
@@ -54,6 +53,17 @@ interface Config {
 
 const ROOT_DIR = path.resolve(__dirname, '../..');
 const CONFIG_PATH = path.join(__dirname, 'config.json');
+const DOCS_TSX_PATH = path.join(
+  ROOT_DIR,
+  'docs',
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'tsx.cmd' : 'tsx'
+);
+const SHARED_GENERATOR_FILES = new Set([
+  'scripts/docs-generators/runner.ts',
+  'scripts/docs-generators/config.json',
+]);
 
 // ============================================================================
 // Main
@@ -66,11 +76,12 @@ async function main() {
   const checkOnly = args.includes('--check') || args.includes('--check-only');
   const listOnly = args.includes('--list');
   const changedOnly = args.includes('--changed');
+  const changedFilesFileIndex = args.indexOf('--changed-files-file');
+  const changedFilesFile =
+    changedFilesFileIndex !== -1 ? args[changedFilesFileIndex + 1] : undefined;
+  const testRouting = args.includes('--test-routing');
   const libraryIndex = args.indexOf('--library');
   const specificLibrary = libraryIndex !== -1 ? args[libraryIndex + 1] : null;
-
-  console.log('📚 Documentation Generator Runner');
-  console.log('==================================\n');
 
   // Load config
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -79,6 +90,24 @@ async function main() {
   }
 
   const config: Config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+
+  if (testRouting) {
+    testGeneratorRouting(config);
+    return;
+  }
+
+  if (changedFilesFile) {
+    if (!fs.existsSync(changedFilesFile)) {
+      console.error(`Changed-files input not found: ${changedFilesFile}`);
+      process.exit(1);
+    }
+    const changedFiles = fs.readFileSync(changedFilesFile, 'utf-8').split(/\r?\n/).filter(Boolean);
+    console.log(selectGenerators(config, changedFiles).join(' '));
+    return;
+  }
+
+  console.log('📚 Documentation Generator Runner');
+  console.log('==================================\n');
 
   // List mode
   if (listOnly) {
@@ -145,7 +174,7 @@ async function main() {
   if (hasErrors) {
     console.error('❌ Some generators failed or detected drift.');
     if (checkOnly) {
-      console.log("\n💡 Run 'npx tsx scripts/docs-generators/runner.ts' to update documentation");
+      console.log("\n💡 Run 'pnpm --dir docs docs:generate' to update documentation");
     }
     process.exit(1);
   } else {
@@ -172,9 +201,10 @@ async function runGenerator(
   }
 
   try {
-    // Run the generator
+    // Use the docs app's lockfile-installed tsx; never fall back to npx downloads.
+    requireDocsTsx();
     const args = checkOnly ? ['--check'] : [];
-    const result = spawnSync('npx', ['tsx', generatorPath, ...args], {
+    const result = spawnSync(DOCS_TSX_PATH, [generatorPath, ...args], {
       cwd: ROOT_DIR,
       stdio: 'inherit',
       encoding: 'utf-8',
@@ -191,9 +221,125 @@ async function runGenerator(
 // Changed Files Detection (for CI)
 // ============================================================================
 
-function getChangedGenerators(config: Config): string[] {
-  const changedGenerators: string[] = [];
+function requireDocsTsx(): string {
+  if (!fs.existsSync(DOCS_TSX_PATH)) {
+    throw new Error(
+      `Pinned tsx executable not found at ${DOCS_TSX_PATH}. Run pnpm --dir docs install --frozen-lockfile.`
+    );
+  }
 
+  const packagePath = path.join(ROOT_DIR, 'docs', 'node_modules', 'tsx', 'package.json');
+  const lockfilePath = path.join(ROOT_DIR, 'docs', 'pnpm-lock.yaml');
+  const installedVersion = JSON.parse(fs.readFileSync(packagePath, 'utf-8')).version as string;
+  const lockfile = fs.readFileSync(lockfilePath, 'utf-8');
+
+  if (!lockfile.includes(`tsx@${installedVersion}:`)) {
+    throw new Error(`Installed tsx ${installedVersion} is not pinned by docs/pnpm-lock.yaml`);
+  }
+
+  return installedVersion;
+}
+
+function globToRegExp(glob: string): RegExp {
+  let pattern = '';
+
+  for (let index = 0; index < glob.length; index += 1) {
+    const character = glob[index];
+
+    if (character === '*' && glob[index + 1] === '*') {
+      if (glob[index + 2] === '/') {
+        pattern += '(?:.*/)?';
+        index += 2;
+      } else {
+        pattern += '.*';
+        index += 1;
+      }
+    } else if (character === '*') {
+      pattern += '[^/]*';
+    } else {
+      pattern += character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+
+  return new RegExp(`^${pattern}$`);
+}
+
+function selectGenerators(config: Config, changedFiles: readonly string[]): string[] {
+  const enabledGenerators = Object.entries(config.generators).filter(([_, cfg]) => cfg.enabled);
+  const normalizedFiles = changedFiles.map((file) => file.replace(/\\/g, '/'));
+
+  if (normalizedFiles.some((file) => SHARED_GENERATOR_FILES.has(file))) {
+    return enabledGenerators.map(([key]) => key);
+  }
+
+  return enabledGenerators.flatMap(([key, generator]) => {
+    const ownedFiles = new Set([
+      generator.generatorScript,
+      ...generator.outputs.map((output) =>
+        path.posix.join(generator.docsOutputPath, output.outputFile)
+      ),
+    ]);
+    const watchPatterns = generator.watchPaths.map(globToRegExp);
+    const selected = normalizedFiles.some(
+      (file) =>
+        file.startsWith(`${generator.sourcePath}/`) ||
+        ownedFiles.has(file) ||
+        watchPatterns.some((pattern) => pattern.test(file))
+    );
+
+    return selected ? [key] : [];
+  });
+}
+
+function assertSelection(
+  config: Config,
+  changedFiles: readonly string[],
+  expected: readonly string[]
+): void {
+  const actual = selectGenerators(config, changedFiles);
+  if (actual.join('\n') !== expected.join('\n')) {
+    throw new Error(
+      `Routing assertion failed for ${changedFiles.join(', ')}: expected ${expected.join(', ')}, got ${actual.join(', ')}`
+    );
+  }
+}
+
+function testGeneratorRouting(config: Config): void {
+  const tsxVersion = requireDocsTsx();
+
+  assertSelection(
+    config,
+    [
+      'docs/content/docs/use-cua-with/hermes.mdx',
+      'docs/content/docs/reference/cua-driver/macos-permissions.mdx',
+    ],
+    []
+  );
+  assertSelection(
+    config,
+    [
+      'libs/cua-driver/rust/crates/cua-driver/src/main.rs',
+      'docs/content/docs/reference/cua-driver/cli-reference.mdx',
+      'scripts/docs-generators/cua-driver.ts',
+    ],
+    ['cua-driver']
+  );
+  assertSelection(
+    config,
+    [
+      'libs/lume/src/Commands/List.swift',
+      'docs/content/docs/reference/lume/http-api.mdx',
+      'scripts/docs-generators/lume.ts',
+    ],
+    ['lume']
+  );
+  assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume']);
+  assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume']);
+
+  console.log(`Generator routing assertions passed with pinned tsx ${tsxVersion}`);
+}
+
+function getChangedGenerators(config: Config): string[] {
   try {
     // Get changed files from git
     // This works for both PRs (comparing to base) and pushes
@@ -206,31 +352,15 @@ function getChangedGenerators(config: Config): string[] {
 
     console.log(`📝 Changed files: ${changedFiles.length}`);
 
-    for (const [key, generator] of Object.entries(config.generators)) {
-      if (!generator.enabled) continue;
-
-      // Check if any watch path matches changed files
-      const watchPatterns = generator.watchPaths.map(
-        (p) => new RegExp(p.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*').replace(/\//g, '\\/'))
-      );
-
-      const hasChanges = changedFiles.some((file) =>
-        watchPatterns.some((pattern) => pattern.test(file))
-      );
-
-      if (hasChanges) {
-        changedGenerators.push(key);
-        console.log(`   📌 ${key}: changes detected`);
-      }
-    }
+    const changedGenerators = selectGenerators(config, changedFiles);
+    for (const key of changedGenerators) console.log(`   📌 ${key}: changes detected`);
+    return changedGenerators;
   } catch (error) {
     console.warn('⚠️  Could not detect changed files, running all generators');
     return Object.entries(config.generators)
       .filter(([_, cfg]) => cfg.enabled)
       .map(([key, _]) => key);
   }
-
-  return changedGenerators;
 }
 
 // ============================================================================

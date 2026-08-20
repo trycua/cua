@@ -23,6 +23,7 @@ on:
       - "libs/cuabot/src/**"
       # Documentation files themselves
       - "docs/content/docs/reference/cua-driver/**"
+      - "docs/content/docs/reference/lume/**"
       - "docs/content/docs/cua/reference/**"
       - "docs/content/docs/cuabot/reference/**"
       # Generator scripts
@@ -47,8 +48,11 @@ jobs:
         uses: pnpm/action-setup@v4
 
       - name: Install Node dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
         working-directory: docs
+
+      - name: Verify generator routing and tool resolution
+        run: docs/node_modules/.bin/tsx scripts/docs-generators/runner.ts --test-routing
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -63,67 +67,15 @@ jobs:
         run: |
           # Diff all commits in this PR against the base branch
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" HEAD)
+          CHANGED_FILES_FILE="${RUNNER_TEMP}/docs-changed-files.txt"
+          git diff --name-only "$BASE_SHA" HEAD > "$CHANGED_FILES_FILE"
           echo "Changed files:"
-          echo "$CHANGED_FILES"
+          cat "$CHANGED_FILES_FILE"
 
-          # Check which generators need to run
-          GENERATORS=""
+          GENERATORS=$(docs/node_modules/.bin/tsx scripts/docs-generators/runner.ts \
+            --changed-files-file "$CHANGED_FILES_FILE")
 
-          # Source changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/cua-driver/rust/crates/\|^libs/cua-driver/rust/Cargo.toml\|^libs/cua-driver/rust/Cargo.lock\|^docs/content/docs/reference/cua-driver/"; then
-            GENERATORS="$GENERATORS cua-driver"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/lume/src/"; then
-            GENERATORS="$GENERATORS lume"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/typescript/cua-cli/src/"; then
-            GENERATORS="$GENERATORS cua-cli"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/mcp-server/src/"; then
-            GENERATORS="$GENERATORS mcp-server"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/computer/computer/\|^libs/python/agent/agent/"; then
-            GENERATORS="$GENERATORS python-sdk"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/cuabot/src/"; then
-            GENERATORS="$GENERATORS cuabot"
-          fi
-
-          # Individual generator script changes — only trigger their own generator
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/cua-driver\.ts"; then
-            GENERATORS="$GENERATORS cua-driver"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/lume\.ts"; then
-            GENERATORS="$GENERATORS lume"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/python-sdk\.ts"; then
-            GENERATORS="$GENERATORS python-sdk"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/cuabot\.ts"; then
-            GENERATORS="$GENERATORS cuabot"
-          fi
-
-          # Only runner.ts changes trigger all generators (it's the orchestration layer)
-          # config.json changes only affect whichever generator scripts were also changed
-          if echo "$CHANGED_FILES" | grep -qE "^scripts/docs-generators/runner\.ts$"; then
-            GENERATORS="all"
-          fi
-
-          # Deduplicate
-          GENERATORS=$(echo "$GENERATORS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
-
-          echo "generators=$GENERATORS" >> $GITHUB_OUTPUT
-
-      - name: Build cua-driver (if needed)
-        if: contains(steps.changed.outputs.generators, 'cua-driver') || steps.changed.outputs.generators == 'all'
-        run: cargo build -p cua-driver --release
-        working-directory: libs/cua-driver/rust
-
-      - name: Build Lume (if needed)
-        if: contains(steps.changed.outputs.generators, 'lume') || steps.changed.outputs.generators == 'all'
-        run: swift build -c release
-        working-directory: libs/lume
+          echo "generators=$GENERATORS" >> "$GITHUB_OUTPUT"
 
       - name: Run documentation check
         run: |
@@ -134,14 +86,10 @@ jobs:
             exit 0
           fi
 
-          if [ "$GENERATORS" = "all" ]; then
-            npx tsx scripts/docs-generators/runner.ts --check
-          else
-            for gen in $GENERATORS; do
-              echo "Checking generator: $gen"
-              npx tsx scripts/docs-generators/runner.ts --library "$gen" --check
-            done
-          fi
+          for gen in $GENERATORS; do
+            echo "Checking generator: $gen"
+            docs/node_modules/.bin/tsx scripts/docs-generators/runner.ts --library "$gen" --check
+          done
         working-directory: .
 
       - name: Show help if check failed
@@ -156,18 +104,17 @@ jobs:
           echo "║                                                                      ║"
           echo "║  To regenerate all docs, run from the repository root:               ║"
           echo "║                                                                      ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts                         ║"
+          echo "║    pnpm --dir docs docs:generate                                    ║"
           echo "║                                                                      ║"
           echo "║  Or for a specific library:                                          ║"
           echo "║                                                                      ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts --library lume          ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts --library python-sdk    ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts --library cuabot        ║"
+          echo "║    pnpm --dir docs docs:generate:lume                               ║"
+          echo "║    pnpm --dir docs docs:generate:cua-driver                         ║"
           echo "║                                                                      ║"
           echo "║  For versioned docs and changelogs (after tagging a new release):    ║"
           echo "║                                                                      ║"
-          echo "║    npx tsx scripts/docs-generators/generate-versioned-docs.ts        ║"
-          echo "║    npx tsx scripts/docs-generators/generate-changelog.ts             ║"
+          echo "║    pnpm --dir docs docs:generate:versions                            ║"
+          echo "║    pnpm --dir docs docs:generate:changelog                           ║"
           echo "║                                                                      ║"
           echo "║  Then commit the updated documentation files.                        ║"
           echo "║                                                                      ║"

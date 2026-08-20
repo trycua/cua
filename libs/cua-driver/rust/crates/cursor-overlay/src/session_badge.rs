@@ -57,6 +57,28 @@ pub struct SessionBadgeLayout {
     pub scale: f32,
 }
 
+impl SessionBadgeLayout {
+    /// Translate a resolved layout into a cursor-local presentation tile.
+    pub fn translated(mut self, dx: f32, dy: f32) -> Self {
+        let translate_rect = |rect: Rect| {
+            Rect::from_xywh(rect.x() + dx, rect.y() + dy, rect.width(), rect.height())
+                .expect("translating a valid badge rectangle remains valid")
+        };
+        self.rect = translate_rect(self.rect);
+        if let Some(label) = self.label.as_mut() {
+            label.origin.0 += dx;
+            label.origin.1 += dy;
+        }
+        if let Some(chip) = self.delivery_chip.as_mut() {
+            chip.rect = translate_rect(chip.rect);
+        }
+        if let Some(chip) = self.target_chip.as_mut() {
+            chip.rect = translate_rect(chip.rect);
+        }
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SessionBadgeInput<'a> {
     pub label: Option<&'a str>,

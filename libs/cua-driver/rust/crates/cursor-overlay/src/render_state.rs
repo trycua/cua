@@ -72,6 +72,8 @@ pub struct RenderStateCore {
     pub visual: CursorVisualState,
     /// Decoded installed or embedded theme.
     pub theme: Option<Arc<CompiledTheme>>,
+    /// Conservative logical radius touched by any frame of the active theme.
+    theme_paint_radius: f64,
     /// Non-fatal launch-time fallback reason, if an installed theme failed.
     pub theme_fallback: Option<String>,
     /// User-controlled visibility.
@@ -118,11 +120,13 @@ impl RenderStateCore {
                 )),
             ),
         };
+        let theme_paint_radius = theme.as_deref().map_or(64.0, CompiledTheme::paint_radius);
         Self {
             cfg,
             motion,
             visual,
             theme,
+            theme_paint_radius,
             theme_fallback,
             pos: None,
             heading: std::f64::consts::FRAC_PI_4,
@@ -142,6 +146,11 @@ impl RenderStateCore {
             badge_modifiers: None,
             badge_modifier_fade_secs: None,
         }
+    }
+
+    /// Conservative logical radius around `pos` touched by cursor artwork.
+    pub fn paint_radius(&self) -> f64 {
+        self.theme_paint_radius.max(2.0)
     }
 
     /// Return whether cursor pixels and related UI may be shown.
@@ -695,6 +704,8 @@ impl RenderStateCore {
             } => {
                 match crate::resolve_theme_selection(&theme_id) {
                     Ok(theme) => {
+                        self.theme_paint_radius =
+                            theme.as_deref().map_or(64.0, CompiledTheme::paint_radius);
                         self.theme = theme;
                         self.theme_fallback = None;
                         self.cfg.theme_id = theme_id;
@@ -807,8 +818,8 @@ pub fn paint_cursor(
     );
 }
 
-/// Paint cursor artwork on a neighboring display without duplicating the
-/// display-clamped session badge owned by the cursor's anchor display.
+/// Paint cursor artwork without its host-owned session badge. Tile renderers
+/// use this to compose artwork first, then paint one display-clamped badge.
 pub fn paint_cursor_art(
     pm: &mut tiny_skia::Pixmap,
     core: &RenderStateCore,

@@ -153,6 +153,15 @@ new connection. `wait_for_exit(connection.generation)` observes unexpected
 termination. Dropping the host closes its parent-liveness pipe and kills the
 child as a fallback, but orderly applications should still await `stop()`.
 
+For startup troubleshooting, construct the host with
+`EmbeddedCuaDriverHost.with_options()` and set `capture_stderr=True`. After a
+failed start, `last_diagnostics()` returns the generation-scoped final 65,536
+bytes, exit code, and truncation state; a successful start clears the previous
+diagnostics. Captured text is raw child stderr and can contain application data,
+so do not place secrets in daemon stderr or forward diagnostics to telemetry.
+When `inherit_stderr` is also enabled, the host tees output on a bounded
+best-effort path so a blocked terminal cannot stop diagnostic collection.
+
 ## Binary wrapper
 
 The package also exposes the bundled executable:

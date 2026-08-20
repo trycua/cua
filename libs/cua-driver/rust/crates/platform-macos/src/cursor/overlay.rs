@@ -4,15 +4,14 @@
 //!
 //! The MCP/tokio server runs on a **background thread** (spawned in
 //! `cua-driver/src/main.rs`).  AppKit MUST run on the **main thread**.
-//! The two sides communicate through a bounded process-global channel:
+//! The two sides communicate through a global lock-free channel:
 //!
 //! - MCP tool calls → `send_command(OverlayCommand)` → `CMD_TX` (SyncSender)
-//! - render worker → bounded per-display tiles → one-slot presentation mailbox
-//! - main thread → `AppKitOverlayHost` child layers
+//! - render worker → per-display pixmaps → main-thread `AppKitOverlayHost`
 //!
 //! One shared render map owns cursor state. The AppKit host owns one transparent
-//! window and one movable content layer per active display, and replaces that
-//! surface set after display-layout changes.
+//! presentation surface per active display and replaces that surface set after
+//! display-layout changes.
 //!
 //! ## Coordinate system
 //!
@@ -39,7 +38,7 @@ use std::time::{Duration, Instant};
 
 use cursor_overlay::{
     CursorConfig, CursorKey, FocusRect, KeyedOverlayCommand, MotionConfig, OverlayCommand,
-    OverlayMsg, RenderStateCore,
+    OverlayMsg, RenderStateCore, ZOrderEnforcer,
 };
 use indexmap::IndexMap;
 
@@ -77,7 +76,7 @@ fn arrival_fire(key: &CursorKey) {
 
 enum MacOverlayMsg {
     Cursor(OverlayMsg),
-    LayoutChanged,
+    DisplaysChanged,
 }
 
 static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<MacOverlayMsg>> = OnceLock::new();
@@ -86,8 +85,7 @@ static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<MacOverlayMsg>>> = Mu
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
 static HOST: Mutex<Option<AppKitOverlayHost>> = Mutex::new(None);
 static DISPLAY_GENERATION: AtomicU64 = AtomicU64::new(0);
-static REBUILD_REQUESTED: AtomicBool = AtomicBool::new(false);
-static REBUILD_SCHEDULED: AtomicBool = AtomicBool::new(false);
+static REBUILD_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// The keyed, insertion-ordered collection of owned cursors that the render
 /// loop composites every frame. Insertion order = stable z-order (later keys
@@ -108,7 +106,7 @@ struct RenderMap {
     /// resurrection race). An explicit owner-checked `start_session` revival
     /// clears this tombstone before the cursor is reused. "default" is never
     /// tombstoned.
-    ended: HashSet<CursorKey>,
+    ended: std::collections::HashSet<CursorKey>,
 }
 
 /// Build the `RenderState` for a lazily-created session cursor from the
@@ -184,7 +182,7 @@ pub fn init(cfg: CursorConfig) {
             layout: DisplayLayout::default(),
             active_key: None,
             template: cfg,
-            ended: HashSet::new(),
+            ended: std::collections::HashSet::new(),
         });
     });
     cua_driver_core::cursor_events::install_cursor_event_sink(std::sync::Arc::new(
@@ -227,7 +225,7 @@ pub fn init(cfg: CursorConfig) {
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    // An empty key disables cursors for direct platform calls
+    // Empty key is the explicit no-cursor sentinel for direct platform calls
     // that bypass lifecycle dispatch.
     if key.is_empty() {
         return;
@@ -246,7 +244,7 @@ pub fn send_command_default(cmd: OverlayCommand) {
 }
 
 /// Truthful render acknowledgement for lifecycle inspection. This never falls
-/// back to the seeded default cursor: an absent, unplaced, disabled, or
+/// back to the seeded default cursor: an absent, off-screen, disabled, or
 /// idle-faded session cursor is not reported as visible.
 pub fn is_visible_for_session(key: &str) -> bool {
     RENDER
@@ -256,7 +254,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|state| state.core.cursor_is_revealed())
+                .map(cursor_is_externally_visible)
         })
         .unwrap_or(false)
 }
@@ -365,7 +363,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.is_none()) {
+    if !(rs.core.cfg.enabled && !rs.placed) {
         return false;
     }
     let mut sx = target_x - SEED_OFFSET;
@@ -384,7 +382,8 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
             sy = (target_y + SEED_OFFSET).min(max_y);
         }
     }
-    rs.core.pos = Some((sx, sy));
+    rs.core.pos = (sx, sy);
+    rs.placed = true;
     true
 }
 
@@ -398,7 +397,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
 /// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
 /// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
-    // An empty key disables cursors for direct platform calls.
+    // Empty key is the explicit no-cursor sentinel → nothing to animate.
     if key.is_empty() {
         return;
     }
@@ -413,7 +412,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.is_some()
+            Some(rs) if rs.core.cfg.enabled && rs.placed
         )
     };
     if !should_animate {
@@ -498,10 +497,12 @@ pub fn run_on_main_thread() {
 //
 // The platform-agnostic fields + tick + apply_command + render pipeline live
 // in `cursor_overlay::render_state` (2026-05 dedup audit). What stays here
-// is the macOS-specific focus-rect overlay and native presentation host.
+// is the macOS-specific NSScreen window dimensions and the focus-rect
+// overlay (a macOS-only post-arrival element highlight).
 
 struct RenderState {
     core: RenderStateCore,
+    placed: bool,
     /// Focus-highlight rectangle `[x, y, w, h]` in screen coords; None = not shown.
     focus_rect: Option<[f64; 4]>,
     /// Fade progress for the focus rect: 0.0 = fully visible, 1.0 = gone.
@@ -512,6 +513,7 @@ impl RenderState {
     fn new(cfg: CursorConfig) -> Self {
         RenderState {
             core: RenderStateCore::new(cfg),
+            placed: false,
             focus_rect: None,
             focus_rect_t: 1.0,
         }
@@ -546,7 +548,14 @@ impl RenderState {
                 self.focus_rect_t = 0.0; // reset fade to fully visible
             }
             other => {
-                let _ = self.core.apply_command_base(other, false);
+                let places = matches!(
+                    other,
+                    OverlayCommand::MoveTo { .. }
+                        | OverlayCommand::SnapTo { .. }
+                        | OverlayCommand::ClickPulse { .. }
+                );
+                let _ = self.core.apply_command_base(other, true, true);
+                self.placed |= places;
             }
         }
     }
@@ -554,14 +563,14 @@ impl RenderState {
     /// True while the render loop must wake at frame cadence because the next
     /// tick can change pixels. A brand-new unplaced cursor is deliberately
     /// quiescent, so `serve` with no agent activity can block on the command
-    /// channel instead of producing empty frames at 60 fps.
+    /// channel instead of compositing an empty fullscreen pixmap at 60fps.
     fn needs_frame_tick(&self) -> bool {
         self.core.path.is_some()
             || self.core.spring.is_some()
             || self.core.click_t.is_some()
             || self.focus_rect.is_some()
             || self.core.session_badge_needs_frame_tick()
-            || (self.core.motion.idle_hide_ms > 0.0 && self.core.cursor_is_revealed())
+            || (self.core.motion.idle_hide_ms > 0.0 && cursor_is_externally_visible(self))
     }
 }
 
@@ -576,23 +585,19 @@ struct ZOrderRoute {
     target_wid: Option<u64>,
 }
 
-fn z_order_routes(map: &RenderMap) -> Vec<ZOrderRoute> {
-    let Some(state) = map
+fn z_order_route(map: &RenderMap) -> Option<ZOrderRoute> {
+    let state = map
         .active_key
         .as_ref()
         .and_then(|key| map.cursors.get(key))
-        .filter(|state| state.core.cursor_is_revealed())
-    else {
-        return Vec::new();
-    };
-    state_display_ids(map, state)
-        .into_iter()
-        .map(|display_id| ZOrderRoute {
-            generation: map.layout.generation,
-            display_id,
-            target_wid: state.core.pinned_wid,
-        })
-        .collect()
+        .filter(|state| cursor_is_externally_visible(state))?;
+    let (x, y) = state.core.pos;
+    let display_id = map.layout.display_at(x, y)?.id;
+    Some(ZOrderRoute {
+        generation: map.layout.generation,
+        display_id,
+        target_wid: state.core.pinned_wid,
+    })
 }
 
 // ── AppKit / CGImage plumbing ─────────────────────────────────────────────
@@ -600,8 +605,6 @@ fn z_order_routes(map: &RenderMap) -> Vec<ZOrderRoute> {
 struct NativeSurface {
     win_ptr: usize,
     layer_ptr: usize,
-    logical_height: f64,
-    backing_scale: f64,
 }
 
 struct AppKitOverlayHost {
@@ -673,24 +676,17 @@ unsafe fn create_native_surface(
 
     let content_view: *mut AnyObject = msg_send![win, contentView];
     let _: () = msg_send![content_view, setWantsLayer: true];
-    let root_layer: *mut AnyObject = msg_send![content_view, layer];
-    let _: () = msg_send![root_layer, setGeometryFlipped: false];
-    let _: () = msg_send![root_layer, setMasksToBounds: true];
-    let layer: *mut AnyObject = msg_send![class!(CALayer), layer];
-    let scale = geometry.backing_scale.max(1.0);
-    let _: () = msg_send![layer, setContentsScale: scale];
+    let layer: *mut AnyObject = msg_send![content_view, layer];
+    let _: () = msg_send![layer, setContentsScale: geometry.backing_scale.max(1.0)];
     let gravity_ns: *mut AnyObject = msg_send![class!(NSString),
-        stringWithUTF8String: c"resize".as_ptr().cast::<u8>()
+        stringWithUTF8String: c"topLeft".as_ptr().cast::<u8>()
     ];
     let _: () = msg_send![layer, setContentsGravity: gravity_ns];
-    let _: () = msg_send![root_layer, addSublayer: layer];
     let _: () = msg_send![win, orderFrontRegardless];
 
     Some(NativeSurface {
         win_ptr: win as usize,
         layer_ptr: layer as usize,
-        logical_height: geometry.height,
-        backing_scale: scale,
     })
 }
 
@@ -763,27 +759,16 @@ fn register_display_reconfiguration_callback() {
 }
 
 fn dispatch_rebuild_appkit_host() {
-    REBUILD_REQUESTED.store(true, Ordering::Release);
-    if REBUILD_SCHEDULED.swap(true, Ordering::AcqRel) {
+    if REBUILD_PENDING.swap(true, Ordering::AcqRel) {
         return;
     }
     dispatch_on_main(Box::new(|| unsafe {
-        loop {
-            REBUILD_REQUESTED.store(false, Ordering::Release);
-            if rebuild_appkit_host() {
-                if let Some(tx) = CMD_TX.get() {
-                    let _ = tx.try_send(MacOverlayMsg::LayoutChanged);
-                }
+        let rebuilt = rebuild_appkit_host();
+        REBUILD_PENDING.store(false, Ordering::Release);
+        if rebuilt {
+            if let Some(tx) = CMD_TX.get() {
+                let _ = tx.try_send(MacOverlayMsg::DisplaysChanged);
             }
-            if !REBUILD_REQUESTED.swap(false, Ordering::AcqRel) {
-                break;
-            }
-        }
-        REBUILD_SCHEDULED.store(false, Ordering::Release);
-        // Close the race where a callback marks the layout dirty after the
-        // loop's final check but before the scheduled marker is released.
-        if REBUILD_REQUESTED.load(Ordering::Acquire) {
-            dispatch_rebuild_appkit_host();
         }
     }));
 }
@@ -794,7 +779,8 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
     let mut hover_poll_needed = false;
-    let mut presented_z_order = Vec::<ZOrderRoute>::new();
+    let mut presented_displays = HashSet::<DisplayId>::new();
+    let mut presented_z_order: Option<ZOrderRoute> = None;
     let mut repin_frames: u32 = 0;
 
     loop {
@@ -827,6 +813,7 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
             arrived,
             had_msg,
             cursor_commanded,
+            layout_changed,
             hover_changed,
             next_frame_tick_needed,
             next_hover_poll_needed,
@@ -837,15 +824,19 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
             };
             let mut had_msg = false;
             let mut cursor_commanded = false;
+            let mut layout_changed = false;
 
             let mut apply = |message: MacOverlayMsg| {
                 had_msg = true;
-                if let MacOverlayMsg::Cursor(message) = message {
-                    cursor_commanded |= match &message {
-                        OverlayMsg::Cmd(command) => !map.ended.contains(&command.key),
-                        _ => false,
-                    };
-                    apply_msg(map, message);
+                match message {
+                    MacOverlayMsg::Cursor(message) => {
+                        cursor_commanded |= match &message {
+                            OverlayMsg::Cmd(command) => !map.ended.contains(&command.key),
+                            _ => false,
+                        };
+                        apply_msg(map, message);
+                    }
+                    MacOverlayMsg::DisplaysChanged => layout_changed = true,
                 }
             };
             if let Some(message) = first_msg {
@@ -881,7 +872,7 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                 }
             }
 
-            let z_order = z_order_routes(map);
+            let z_order = z_order_route(map);
             let next_frame_tick_needed = render_map_needs_frame_tick(map);
             let next_hover_poll_needed = map
                 .cursors
@@ -893,6 +884,7 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                 arrived,
                 had_msg,
                 cursor_commanded,
+                layout_changed,
                 hover_changed,
                 next_frame_tick_needed,
                 next_hover_poll_needed,
@@ -906,48 +898,59 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
         if frame_tick_needed || had_msg {
             repin_frames += 1;
             let route_changed = z_order != presented_z_order;
-            let periodic_repin = repin_frames >= 60;
-            let mut ordered = false;
-            for route in &z_order {
-                match route.target_wid {
-                    Some(target_wid) if periodic_repin || !presented_z_order.contains(route) => {
-                        dispatch_pin_above(route.generation, route.display_id, target_wid);
-                        ordered = true;
+            if let Some(route) = z_order {
+                if route.target_wid.is_some() && (route_changed || repin_frames >= 60) {
+                    MacZOrderEnforcer {
+                        display_id: route.display_id,
                     }
-                    None if route_changed || cursor_commanded => {
-                        dispatch_order_front(route.generation, route.display_id);
-                        ordered = true;
-                    }
-                    _ => {}
+                    .reassert(route.target_wid);
+                    repin_frames = 0;
+                } else if route.target_wid.is_none() && (route_changed || cursor_commanded) {
+                    dispatch_order_front(route.display_id);
+                    repin_frames = 0;
                 }
             }
-            if periodic_repin || ordered {
+            presented_z_order = z_order;
+            if repin_frames >= 60 {
                 repin_frames = 0;
             }
-            presented_z_order = z_order;
         }
 
         if had_msg || hover_changed || frame_tick_needed || next_frame_tick_needed {
-            let batch = {
+            let frames = {
                 let guard = RENDER.lock().unwrap();
                 let Some(map) = guard.as_ref() else {
                     break;
                 };
-                FrameBatch {
-                    generation: map.layout.generation,
-                    surfaces: map
-                        .layout
-                        .displays
-                        .iter()
-                        .copied()
-                        .map(|display| SurfaceFrame {
-                            display_id: display.id,
-                            tile: render_display_tile(map, display),
-                        })
-                        .collect(),
+                let painted = painted_display_ids(map);
+                let mut displays_to_present = presented_displays
+                    .union(&painted)
+                    .copied()
+                    .collect::<HashSet<_>>();
+                if layout_changed {
+                    displays_to_present
+                        .extend(map.layout.displays.iter().map(|display| display.id));
                 }
+                let frames = displays_to_present
+                    .into_iter()
+                    .filter_map(|display_id| {
+                        map.layout
+                            .displays
+                            .iter()
+                            .copied()
+                            .find(|display| display.id == display_id)
+                            .map(|display| {
+                                (map.layout.generation, display, render_display(map, display))
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                presented_displays = painted;
+                frames
             };
-            queue_present(batch);
+
+            for (generation, display, pixmap) in frames {
+                dispatch_present(generation, display.id, pixmap);
+            }
         }
 
         frame_tick_needed = next_frame_tick_needed;
@@ -961,197 +964,90 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PixelRect {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-}
+// Matches the established default-theme envelope used by the X11 tile path.
+const DEFAULT_CURSOR_PAINT_RADIUS: f64 = 64.0;
 
-impl PixelRect {
-    fn union(self, other: Self) -> Self {
-        let x0 = self.x.min(other.x);
-        let y0 = self.y.min(other.y);
-        let x1 = (self.x + self.width).max(other.x + other.width);
-        let y1 = (self.y + self.height).max(other.y + other.height);
-        Self {
-            x: x0,
-            y: y0,
-            width: x1 - x0,
-            height: y1 - y0,
-        }
-    }
-}
-
-fn tile_layer_frame(
-    bounds: PixelRect,
-    logical_height: f64,
-    scale: f64,
-) -> objc2_foundation::NSRect {
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
-
-    NSRect::new(
-        NSPoint::new(
-            f64::from(bounds.x) / scale,
-            logical_height - f64::from(bounds.y + bounds.height) / scale,
-        ),
-        NSSize::new(
-            f64::from(bounds.width) / scale,
-            f64::from(bounds.height) / scale,
-        ),
-    )
-}
-
-struct RenderedTile {
-    bounds: PixelRect,
-    pixmap: tiny_skia::Pixmap,
-}
-
-fn logical_rect_to_pixels(
-    rect: (f64, f64, f64, f64),
-    display: DisplayGeometry,
-    padding: f64,
-) -> Option<PixelRect> {
-    let (x, y, width, height) = rect;
-    if width <= 0.0 || height <= 0.0 {
-        return None;
-    }
-    let scale = display.backing_scale.max(1.0);
-    let (pixel_width, pixel_height) = display.pixel_size();
-    let x0 = ((x - padding - display.x) * scale)
-        .floor()
-        .clamp(0.0, f64::from(pixel_width)) as u32;
-    let y0 = ((y - padding - display.y) * scale)
-        .floor()
-        .clamp(0.0, f64::from(pixel_height)) as u32;
-    let x1 = ((x + width + padding - display.x) * scale)
-        .ceil()
-        .clamp(0.0, f64::from(pixel_width)) as u32;
-    let y1 = ((y + height + padding - display.y) * scale)
-        .ceil()
-        .clamp(0.0, f64::from(pixel_height)) as u32;
-    (x1 > x0 && y1 > y0).then_some(PixelRect {
-        x: x0,
-        y: y0,
-        width: x1 - x0,
-        height: y1 - y0,
-    })
-}
-
-fn badge_layout_for_display(
-    map: &RenderMap,
-    state: &RenderState,
-    display: DisplayGeometry,
-) -> Option<cursor_overlay::SessionBadgeLayout> {
-    if !state.core.cursor_is_revealed() {
-        return None;
-    }
-    let (x, y) = state.core.pos?;
-    if map.layout.display_at(x, y)?.id != display.id {
-        return None;
-    }
-    let scale = display.backing_scale.max(1.0) as f32;
-    let (width, height) = display.pixel_size();
-    let (delivery, target) = state.core.badge_modifiers.unwrap_or((None, None));
-    cursor_overlay::session_badge_layout(cursor_overlay::SessionBadgeInput {
-        label: state.core.session_label.as_deref(),
-        delivery,
-        target,
-        cursor: (
-            ((x - display.x) * f64::from(scale)) as f32,
-            ((y - display.y) * f64::from(scale)) as f32,
-        ),
-        backing_scale: scale,
-        label_alpha: state.core.session_badge_alpha(),
-        chip_alpha: state.core.session_badge_chip_alpha(),
-        clip: Some((width as f32, height as f32)),
-    })
-}
-
-fn state_pixel_bounds(
-    map: &RenderMap,
-    state: &RenderState,
-    display: DisplayGeometry,
-) -> Option<PixelRect> {
-    if !state.core.cursor_is_revealed() {
-        return None;
-    }
-    let (x, y) = state.core.pos?;
-    let radius = state.core.paint_radius();
-    let mut bounds = logical_rect_to_pixels(
-        (x - radius, y - radius, radius * 2.0, radius * 2.0),
-        display,
-        2.0,
-    );
-    if let Some([x, y, width, height]) = state.focus_rect {
-        if let Some(focus) = logical_rect_to_pixels((x, y, width, height), display, 3.0) {
-            bounds = Some(bounds.map_or(focus, |bounds| bounds.union(focus)));
-        }
-    }
-    if let Some(layout) = badge_layout_for_display(map, state, display) {
-        let rect = layout.rect;
-        let scale = display.backing_scale.max(1.0);
-        let badge = logical_rect_to_pixels(
-            (
-                display.x + f64::from(rect.x()) / scale,
-                display.y + f64::from(rect.y()) / scale,
-                f64::from(rect.width()) / scale,
-                f64::from(rect.height()) / scale,
-            ),
-            display,
-            8.0,
-        );
-        if let Some(badge) = badge {
-            bounds = Some(bounds.map_or(badge, |bounds| bounds.union(badge)));
-        }
-    }
-    bounds
-}
-
-fn state_display_ids(map: &RenderMap, state: &RenderState) -> Vec<DisplayId> {
-    map.layout
-        .displays
-        .iter()
-        .copied()
-        .filter(|display| state_pixel_bounds(map, state, *display).is_some())
-        .map(|display| display.id)
-        .collect()
-}
-
-fn render_display_tile(map: &RenderMap, display: DisplayGeometry) -> Option<RenderedTile> {
-    let bounds = map
-        .cursors
-        .values()
-        .filter_map(|state| state_pixel_bounds(map, state, display))
-        .reduce(PixelRect::union)?;
-    let mut pixmap = tiny_skia::Pixmap::new(bounds.width, bounds.height)?;
-    let scale = display.backing_scale.max(1.0);
-    let origin_x = display.x + f64::from(bounds.x) / scale;
-    let origin_y = display.y + f64::from(bounds.y) / scale;
+/// Displays whose buffers can contain pixels in the current frame. This is
+/// based on painted bounds, not cursor ownership: artwork may span a seam.
+fn painted_display_ids(map: &RenderMap) -> HashSet<DisplayId> {
+    let mut painted = HashSet::new();
     for state in map.cursors.values() {
+        if cursor_is_externally_visible(state) {
+            let (x, y) = state.core.pos;
+            let custom_theme = state
+                .core
+                .theme
+                .as_deref()
+                .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
+            for display in &map.layout.displays {
+                if custom_theme
+                    || rectangles_intersect(
+                        (
+                            x - DEFAULT_CURSOR_PAINT_RADIUS,
+                            y - DEFAULT_CURSOR_PAINT_RADIUS,
+                            DEFAULT_CURSOR_PAINT_RADIUS * 2.0,
+                            DEFAULT_CURSOR_PAINT_RADIUS * 2.0,
+                        ),
+                        *display,
+                    )
+                {
+                    painted.insert(display.id);
+                }
+            }
+        }
+        if let Some([x, y, width, height]) = state.focus_rect {
+            for display in &map.layout.displays {
+                if rectangles_intersect((x, y, width, height), *display) {
+                    painted.insert(display.id);
+                }
+            }
+        }
+    }
+    painted
+}
+
+fn rectangles_intersect(rect: (f64, f64, f64, f64), display: DisplayGeometry) -> bool {
+    let (x, y, width, height) = rect;
+    width > 0.0
+        && height > 0.0
+        && x < display.x + display.width
+        && x + width > display.x
+        && y < display.y + display.height
+        && y + height > display.y
+}
+
+fn render_display(map: &RenderMap, display: DisplayGeometry) -> tiny_skia::Pixmap {
+    let (width, height) = display.pixel_size();
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+    for state in map.cursors.values() {
+        if !cursor_is_externally_visible(state) {
+            continue;
+        }
         let focus = state.focus_rect.map(|rect| FocusRect {
             rect,
             t: state.focus_rect_t,
         });
-        cursor_overlay::paint_cursor_art(
+        let anchor_display = state
+            .placed
+            .then_some(state.core.pos)
+            .and_then(|(x, y)| map.layout.display_at(x, y))
+            .map(|display| display.id);
+        let painter = if anchor_display == Some(display.id) {
+            cursor_overlay::paint_cursor
+        } else {
+            cursor_overlay::paint_cursor_art
+        };
+        painter(
             &mut pixmap,
             &state.core,
-            origin_x,
-            origin_y,
+            display.x,
+            display.y,
             focus,
-            scale as f32,
+            display.backing_scale as f32,
         );
-        if let Some(layout) = badge_layout_for_display(map, state, display) {
-            cursor_overlay::paint_session_badge(
-                &mut pixmap,
-                &layout.translated(-(bounds.x as f32), -(bounds.y as f32)),
-                cursor_overlay::session_fill_rgba(&state.core.cfg.cursor_id),
-                state.core.idle_alpha as f32,
-            );
-        }
     }
-    Some(RenderedTile { bounds, pixmap })
+    pixmap
 }
 
 fn hardware_cursor_position() -> Option<(f64, f64)> {
@@ -1166,18 +1062,9 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
     Some((location.x, location.y))
 }
 
-struct SurfaceFrame {
-    display_id: DisplayId,
-    tile: Option<RenderedTile>,
+fn cursor_is_externally_visible(state: &RenderState) -> bool {
+    state.placed && state.core.cfg.enabled && state.core.visible && state.core.idle_alpha >= 0.004
 }
-
-struct FrameBatch {
-    generation: u64,
-    surfaces: Vec<SurfaceFrame>,
-}
-
-static PRESENT_MAILBOX: Mutex<Option<FrameBatch>> = Mutex::new(None);
-static PRESENT_SCHEDULED: AtomicBool = AtomicBool::new(false);
 
 type MainWork = Box<dyn FnOnce() + Send>;
 
@@ -1204,67 +1091,29 @@ fn dispatch_on_main(work: MainWork) {
     }
 }
 
-/// Replace the pending presentation batch. At most one batch is queued on the
-/// main thread, so a busy renderer drops stale frames instead of retaining
-/// unbounded image buffers.
-fn queue_present(batch: FrameBatch) {
-    *PRESENT_MAILBOX.lock().unwrap() = Some(batch);
-    schedule_present();
-}
-
-fn schedule_present() {
-    if PRESENT_SCHEDULED.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    dispatch_on_main(Box::new(|| unsafe {
-        if let Some(batch) = PRESENT_MAILBOX.lock().unwrap().take() {
-            present_frames(batch);
-        }
-        PRESENT_SCHEDULED.store(false, Ordering::Release);
-        if PRESENT_MAILBOX.lock().unwrap().is_some() {
-            schedule_present();
-        }
-    }));
-}
-
-unsafe fn present_frames(batch: FrameBatch) {
-    use objc2::{class, msg_send};
-
-    extern "C" {
-        fn CGImageRelease(image: *mut c_void);
-    }
-
-    let host = HOST.lock().unwrap();
-    let Some(host) = host.as_ref() else {
+/// Present one display-local pixmap. AppKit objects remain main-thread-owned;
+/// stale frames are rejected by display-layout generation.
+fn dispatch_present(generation: u64, display_id: DisplayId, pixmap: tiny_skia::Pixmap) {
+    let Some(cg_image_ptr) = pixmap_to_cgimage(&pixmap) else {
         return;
     };
-    if host.generation != batch.generation {
-        return;
-    }
-    let _: () = msg_send![class!(CATransaction), begin];
-    let _: () = msg_send![class!(CATransaction), setDisableActions: true];
-    for frame in batch.surfaces {
-        let Some(surface) = host.surfaces.get(&frame.display_id) else {
-            continue;
-        };
-        let layer = surface.layer_ptr as *mut objc2::runtime::AnyObject;
-        let Some(tile) = frame.tile else {
-            let _: () = objc2::msg_send![layer,
-                setContents: std::ptr::null_mut::<objc2::runtime::AnyObject>()
-            ];
-            continue;
-        };
-        let Some(cg_image_ptr) = pixmap_to_cgimage(&tile.pixmap) else {
-            continue;
-        };
-        let bounds = tile.bounds;
-        let layer_frame = tile_layer_frame(bounds, surface.logical_height, surface.backing_scale);
-        let _: () = objc2::msg_send![layer, setFrame: layer_frame];
-        let image = cg_image_ptr as *mut objc2::runtime::AnyObject;
-        let _: () = objc2::msg_send![layer, setContents: image];
+    dispatch_on_main(Box::new(move || unsafe {
+        extern "C" {
+            fn CGImageRelease(image: *mut c_void);
+        }
+
+        let host = HOST.lock().unwrap();
+        if let Some(surface) = host
+            .as_ref()
+            .filter(|host| host.generation == generation)
+            .and_then(|host| host.surfaces.get(&display_id))
+        {
+            let layer = surface.layer_ptr as *mut objc2::runtime::AnyObject;
+            let image = cg_image_ptr as *mut objc2::runtime::AnyObject;
+            let _: () = objc2::msg_send![layer, setContents: image];
+        }
         CGImageRelease(cg_image_ptr as *mut c_void);
-    }
-    let _: () = msg_send![class!(CATransaction), commit];
+    }));
 }
 
 /// Raise the normal-level overlay without activating the driver application.
@@ -1272,12 +1121,11 @@ unsafe fn present_frames(batch: FrameBatch) {
 /// This is used only for an externally visible cursor with no target window.
 /// Target-bound actions continue to use [`dispatch_pin_above`] so background
 /// delivery remains below unrelated foreground applications.
-fn dispatch_order_front(generation: u64, display_id: DisplayId) {
+fn dispatch_order_front(display_id: DisplayId) {
     dispatch_on_main(Box::new(move || unsafe {
         let host = HOST.lock().unwrap();
         if let Some(surface) = host
             .as_ref()
-            .filter(|host| host.generation == generation)
             .and_then(|host| host.surfaces.get(&display_id))
         {
             let win = surface.win_ptr as *mut objc2::runtime::AnyObject;
@@ -1317,7 +1165,7 @@ fn target_is_frontmost_visible_window(
         .is_some_and(|window| u64::from(window.window_id) == target_wid)
 }
 
-fn dispatch_pin_above(generation: u64, display_id: DisplayId, target_wid: u64) {
+fn dispatch_pin_above(display_id: DisplayId, target_wid: u64) {
     let windows = crate::windows::visible_windows();
     let raise_front =
         target_is_frontmost_visible_window(target_wid, crate::apps::frontmost_pid(), &windows);
@@ -1325,7 +1173,6 @@ fn dispatch_pin_above(generation: u64, display_id: DisplayId, target_wid: u64) {
         let host = HOST.lock().unwrap();
         if let Some(surface) = host
             .as_ref()
-            .filter(|host| host.generation == generation)
             .and_then(|host| host.surfaces.get(&display_id))
         {
             let win = surface.win_ptr as *mut objc2::runtime::AnyObject;
@@ -1335,6 +1182,29 @@ fn dispatch_pin_above(generation: u64, display_id: DisplayId, target_wid: u64) {
             }
         }
     }));
+}
+
+// ── Z-order enforcer (macOS impl of cursor_overlay::ZOrderEnforcer) ──────
+
+/// macOS implementation of [`cursor_overlay::ZOrderEnforcer`].
+///
+/// Identifies the display surface and dispatches target-relative ordering to
+/// the main-thread AppKit host.
+///
+/// `target = None` is treated as a no-op here. Direct unpinned cursor commands
+/// raise the overlay once in the render loop, while this enforcer remains
+/// responsible only for target-relative ordering.
+struct MacZOrderEnforcer {
+    display_id: DisplayId,
+}
+
+impl ZOrderEnforcer for MacZOrderEnforcer {
+    fn reassert(&self, target: Option<u64>) {
+        if let Some(wid) = target {
+            dispatch_pin_above(self.display_id, wid);
+        }
+        // target = None → no-op; see struct doc comment.
+    }
 }
 
 /// Create a `CGImage` from a `tiny_skia::Pixmap` (premultiplied RGBA).
@@ -1446,24 +1316,6 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn tile_frame_converts_pixel_top_left_to_appkit_points() {
-        let frame = tile_layer_frame(
-            PixelRect {
-                x: 200,
-                y: 100,
-                width: 400,
-                height: 300,
-            },
-            900.0,
-            2.0,
-        );
-        assert_eq!(frame.origin.x, 100.0);
-        assert_eq!(frame.origin.y, 700.0);
-        assert_eq!(frame.size.width, 200.0);
-        assert_eq!(frame.size.height, 150.0);
-    }
-
-    #[test]
     fn keyed_render_state_carries_the_session_color_identity() {
         let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
         assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
@@ -1512,7 +1364,7 @@ mod tests {
             },
             active_key: None,
             template: CursorConfig::default(),
-            ended: HashSet::new(),
+            ended: std::collections::HashSet::new(),
         }
     }
 
@@ -1683,17 +1535,18 @@ mod tests {
     }
 
     #[test]
-    fn seed_places_cursor_inside_a_display_for_first_action() {
-        // A brand-new session cursor needs a display-valid start so the first
-        // MoveTo produces a visible glide instead of a zero-length path.
+    fn seed_places_cursor_on_screen_for_first_action() {
+        // BUG 2 regression: a brand-new session cursor without a position must be
+        // seeded on-screen (pos.0 > -50) so the immediately-following MoveTo
+        // glides instead of silently snapping via ClickPulse.
         let mut map = empty_map(); // 100x100 frame
                                    // No "sessA" cursor exists yet — the seed must get-or-create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(seeded, "unplaced cursor must be seeded");
-        let pos = map.cursors["sessA"].core.pos.expect("seeded position");
+        let pos = map.cursors["sessA"].core.pos;
         assert!(
-            map.layout.display_at(pos.0, pos.1).is_some(),
-            "seed must be inside a display, got {pos:?}"
+            pos.0 > -50.0 && pos.1 > -50.0,
+            "seed must be on-screen, got {pos:?}"
         );
         // And it must be a DIFFERENT point from the target so there is a glide.
         assert!(
@@ -1703,16 +1556,19 @@ mod tests {
     }
 
     #[test]
-    fn seed_is_noop_when_cursor_is_already_placed() {
-        // A later action must start from the cursor's current placement.
+    fn seed_is_noop_when_cursor_already_on_screen() {
+        // A second action: the cursor already landed somewhere on-screen, so the
+        // seed must NOT move it (the MoveTo path should start from where it is).
         let mut map = empty_map();
+        // Put sessA on-screen first.
         seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((30.0, 30.0));
+        map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
+        map.cursors.get_mut("sessA").unwrap().placed = true;
         let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
-        assert!(!seeded_again, "placed cursor must not be re-seeded");
+        assert!(!seeded_again, "on-screen cursor must not be re-seeded");
         assert_eq!(
             map.cursors["sessA"].core.pos,
-            Some((30.0, 30.0)),
+            (30.0, 30.0),
             "pos must be untouched"
         );
     }
@@ -1721,7 +1577,8 @@ mod tests {
     fn negative_display_coordinates_are_visible_and_not_reseeded() {
         let mut map = empty_map();
         seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-867.0, 400.0));
+        map.cursors.get_mut("sessA").unwrap().core.pos = (-867.0, 400.0);
+        map.cursors.get_mut("sessA").unwrap().placed = true;
 
         assert!(!seed_start_in_map(
             &mut map,
@@ -1729,8 +1586,8 @@ mod tests {
             80.0,
             80.0
         ));
-        assert_eq!(map.cursors["sessA"].core.pos, Some((-867.0, 400.0)));
-        assert!(map.cursors["sessA"].core.cursor_is_revealed());
+        assert_eq!(map.cursors["sessA"].core.pos, (-867.0, 400.0));
+        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
     }
 
     #[test]
@@ -1747,39 +1604,12 @@ mod tests {
         };
         map.layout.displays.push(secondary);
         seed_start_in_map(&mut map, &"sessA".to_owned(), -867.0, 400.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-867.0, 400.0));
+        map.cursors.get_mut("sessA").unwrap().core.pos = (-867.0, 400.0);
+        map.cursors.get_mut("sessA").unwrap().placed = true;
 
-        let state = &map.cursors["sessA"];
-        assert_eq!(state_display_ids(&map, state), vec![2]);
-        let tile = render_display_tile(&map, secondary).unwrap();
-        assert!(tile.pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
-        assert!(tile.bounds.width < secondary.pixel_size().0);
-        assert!(tile.bounds.height < secondary.pixel_size().1);
-    }
-
-    #[test]
-    fn bounded_tile_preserves_the_full_display_pixels() {
-        let mut map = empty_map();
-        map.layout.displays[0].width = 1440.0;
-        map.layout.displays[0].height = 900.0;
-        seed_start_in_map(&mut map, &"sessA".to_owned(), 400.0, 400.0);
-        let state = map.cursors.get_mut("sessA").unwrap();
-        state.core.pos = Some((400.0, 400.0));
-        state.apply_command(OverlayCommand::SetSessionLabel("research".to_owned()));
-        let display = map.layout.displays[0];
-
-        let tile = render_display_tile(&map, display).unwrap();
-        let mut full = tiny_skia::Pixmap::new(1440, 900).unwrap();
-        cursor_overlay::paint_cursor(&mut full, &map.cursors["sessA"].core, 0.0, 0.0, None, 1.0);
-        let alpha_sum = |pixels: &[u8]| {
-            pixels
-                .chunks_exact(4)
-                .map(|pixel| u64::from(pixel[3]))
-                .sum::<u64>()
-        };
-        assert_eq!(alpha_sum(tile.pixmap.data()), alpha_sum(full.data()));
-        assert!(tile.bounds.width < display.pixel_size().0 / 4);
-        assert!(tile.bounds.height < display.pixel_size().1 / 4);
+        assert_eq!(painted_display_ids(&map), HashSet::from([2]));
+        let pixmap = render_display(&map, secondary);
+        assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]
@@ -1799,34 +1629,34 @@ mod tests {
         map.layout.displays.push(secondary);
         seed_start_in_map(&mut map, &"sessA".to_owned(), -867.0, 400.0);
 
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-1.0, 400.0));
-        assert_eq!(state_display_ids(&map, &map.cursors["sessA"]), vec![1, 2]);
+        map.cursors.get_mut("sessA").unwrap().core.pos = (-1.0, 400.0);
+        map.cursors.get_mut("sessA").unwrap().placed = true;
+        assert_eq!(painted_display_ids(&map), HashSet::from([1, 2]));
         let primary = map.layout.displays[0];
-        let primary_art = render_display_tile(&map, primary).unwrap();
-        let secondary_art = render_display_tile(&map, secondary).unwrap();
-        for tile in [&primary_art, &secondary_art] {
-            assert!(tile.pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
+        let primary_art = render_display(&map, primary);
+        let secondary_art = render_display(&map, secondary);
+        for pixmap in [&primary_art, &secondary_art] {
+            assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
         }
 
         map.cursors
             .get_mut("sessA")
             .unwrap()
             .apply_command(OverlayCommand::SetSessionLabel("research".to_owned()));
-        let primary_with_badge = render_display_tile(&map, primary).unwrap();
-        assert_eq!(primary_with_badge.bounds, primary_art.bounds);
         assert_eq!(
-            primary_with_badge.pixmap.data(),
-            primary_art.pixmap.data(),
+            render_display(&map, primary).data(),
+            primary_art.data(),
             "the neighboring display must not duplicate the anchor display's badge"
         );
-        assert_ne!(
-            render_display_tile(&map, secondary).unwrap().bounds,
-            secondary_art.bounds
-        );
+        assert_ne!(render_display(&map, secondary).data(), secondary_art.data());
 
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((400.0, 400.0));
-        assert_eq!(state_display_ids(&map, &map.cursors["sessA"]), vec![1]);
-        assert!(render_display_tile(&map, secondary).is_none());
+        map.cursors.get_mut("sessA").unwrap().core.pos = (400.0, 400.0);
+        map.cursors.get_mut("sessA").unwrap().placed = true;
+        assert_eq!(painted_display_ids(&map), HashSet::from([1]));
+        assert!(render_display(&map, secondary)
+            .data()
+            .chunks_exact(4)
+            .all(|pixel| pixel[3] == 0));
     }
 
     #[test]
@@ -1853,27 +1683,20 @@ mod tests {
         );
 
         assert_eq!(
-            z_order_routes(&map),
-            vec![ZOrderRoute {
+            z_order_route(&map),
+            Some(ZOrderRoute {
                 generation: 1,
                 display_id: 1,
                 target_wid: Some(77),
-            }]
+            })
         );
 
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-1.0, 400.0));
-        assert_eq!(
-            z_order_routes(&map)
-                .into_iter()
-                .map(|route| route.display_id)
-                .collect::<Vec<_>>(),
-            vec![1, 2]
-        );
+        map.cursors.get_mut("sessA").unwrap().core.pos = (-400.0, 400.0);
+        map.cursors.get_mut("sessA").unwrap().placed = true;
+        assert_eq!(z_order_route(&map).unwrap().display_id, 2);
 
         map.layout.generation = 2;
-        assert!(z_order_routes(&map)
-            .iter()
-            .all(|route| route.generation == 2));
+        assert_eq!(z_order_route(&map).unwrap().generation, 2);
     }
 
     #[test]
@@ -1892,11 +1715,23 @@ mod tests {
 
     #[test]
     fn unplaced_default_cursor_does_not_require_frame_ticks() {
-        // Regression for idle CPU: a freshly-started serve daemon has only an
-        // unplaced default cursor. With no commands in flight, the render loop
+        // Regression for idle CPU: a freshly-started serve daemon seeds only the
+        // off-screen default cursor. With no commands in flight, the render loop
         // should be able to block on rx.recv() instead of repainting at 60fps.
         let map = empty_map();
         assert!(!render_map_needs_frame_tick(&map));
+    }
+
+    #[test]
+    fn only_enabled_on_screen_cursor_is_externally_visible() {
+        let mut map = empty_map();
+        assert!(!cursor_is_externally_visible(&map.cursors["default"]));
+
+        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+
+        map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
     }
 
     #[test]

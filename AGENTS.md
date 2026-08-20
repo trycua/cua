@@ -48,6 +48,11 @@ understand, reproduce, or continue the work.
   superseded;
 - use one issue or RFC as the problem/decision record and one isolated branch
   or worktree per implementation workstream;
+- when the authenticated GitHub account has write access, create and push the
+  work branch directly in the canonical repository. Do not default to a personal
+  fork merely because a fork remote exists. Use a fork only when write access is
+  unavailable or the maintainer explicitly requests one, and verify the pull
+  request head owner before reporting it;
 - keep the linked pull request description current with scope, progress,
   validation evidence, known gaps, and blockers instead of posting noisy
   periodic status comments;

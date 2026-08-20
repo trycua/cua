@@ -94,6 +94,9 @@ static REBUILD_PENDING: AtomicBool = AtomicBool::new(false);
 struct RenderMap {
     cursors: IndexMap<CursorKey, RenderState>,
     layout: DisplayLayout,
+    /// Most recently commanded cursor. Its live position determines which
+    /// display surface owns target-relative z-order while it animates.
+    active_key: Option<CursorKey>,
     /// Frozen launch-time config used as the template for lazily-created cursors.
     template: CursorConfig,
     /// Render-side tombstone of ended session cursor keys. A `Cmd`
@@ -118,15 +121,16 @@ fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
 /// out as a pure function so the per-session ownership + removal lifecycle is
 /// unit-testable without AppKit.
 ///
-/// Returns the resolved cursor key for a `Cmd` (so the caller can track the
-/// last-active key for z-order pinning); `None` for a lifecycle message.
-fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
+fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) {
     match msg {
         OverlayMsg::Remove(key) => {
             // The "default" cursor backs the anonymous / one-shot path and
             // must survive every session_end + the daemon lifetime.
             if key != "default" {
                 map.cursors.shift_remove(&key);
+                if map.active_key.as_ref() == Some(&key) {
+                    map.active_key = None;
+                }
                 if let Ok(mut guard) = ARRIVAL_TX.lock() {
                     if let Some(m) = guard.as_mut() {
                         m.remove(&key);
@@ -137,29 +141,26 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
                 // re-create the just-removed cursor. Never tombstone "default".
                 map.ended.insert(key);
             }
-            None
         }
         OverlayMsg::Revive(key) => {
             if key != "default" {
                 map.ended.remove(&key);
             }
-            None
         }
         OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
             // Drop a command for an already-ended session WITHOUT get-or-create
             // — this is the resurrection guard. Without it, a ClickPulse/MoveTo
             // landing after Remove would re-insert (and re-leak) the cursor.
             if map.ended.contains(&key) {
-                return None;
+                return;
             }
             let template = map.template.clone();
-            let k = key.clone();
             let rs = map
                 .cursors
-                .entry(key)
-                .or_insert_with(|| render_state_for_key(&template, &k));
+                .entry(key.clone())
+                .or_insert_with(|| render_state_for_key(&template, &key));
             rs.apply_command(cmd);
-            Some(k)
+            map.active_key = Some(key);
         }
     }
 }
@@ -179,6 +180,7 @@ pub fn init(cfg: CursorConfig) {
         *RENDER.lock().unwrap() = Some(RenderMap {
             cursors,
             layout: DisplayLayout::default(),
+            active_key: None,
             template: cfg,
             ended: std::collections::HashSet::new(),
         });
@@ -569,6 +571,28 @@ fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
     map.cursors.values().any(RenderState::needs_frame_tick)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ZOrderRoute {
+    generation: u64,
+    display_id: DisplayId,
+    target_wid: Option<u64>,
+}
+
+fn z_order_route(map: &RenderMap) -> Option<ZOrderRoute> {
+    let state = map
+        .active_key
+        .as_ref()
+        .and_then(|key| map.cursors.get(key))
+        .filter(|state| cursor_is_externally_visible(state))?;
+    let (x, y) = state.core.pos?;
+    let (display_id, _) = map.layout.route(GlobalPoint { x, y })?;
+    Some(ZOrderRoute {
+        generation: map.layout.generation,
+        display_id,
+        target_wid: state.core.pinned_wid,
+    })
+}
+
 // ── AppKit / CGImage plumbing ─────────────────────────────────────────────
 
 struct NativeSurface {
@@ -748,10 +772,9 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
     let mut hover_poll_needed = false;
-    let mut last_pinned: Option<u64> = None;
-    let mut last_display: Option<DisplayId> = None;
+    let mut presented_displays = HashSet::<DisplayId>::new();
+    let mut presented_z_order: Option<ZOrderRoute> = None;
     let mut repin_frames: u32 = 0;
-    let mut previously_active = HashSet::<DisplayId>::new();
 
     loop {
         let (first_msg, hover_poll_tick) = if frame_tick_needed {
@@ -779,11 +802,10 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
         last_tick = now;
 
         let (
-            pinned_wid,
-            active_display,
-            raise_unpinned,
+            z_order,
             arrived,
             had_msg,
+            cursor_commanded,
             layout_changed,
             hover_changed,
             next_frame_tick_needed,
@@ -793,17 +815,19 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
             let Some(map) = guard.as_mut() else {
                 break;
             };
-            let mut last_key: Option<CursorKey> = None;
             let mut had_msg = false;
+            let mut cursor_commanded = false;
             let mut layout_changed = false;
 
             let mut apply = |message: MacOverlayMsg| {
                 had_msg = true;
                 match message {
                     MacOverlayMsg::Cursor(message) => {
-                        if let Some(key) = apply_msg(map, message) {
-                            last_key = Some(key);
-                        }
+                        cursor_commanded |= match &message {
+                            OverlayMsg::Cmd(command) => !map.ended.contains(&command.key),
+                            _ => false,
+                        };
+                        apply_msg(map, message);
                     }
                     MacOverlayMsg::DisplaysChanged => layout_changed = true,
                 }
@@ -841,17 +865,7 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                 }
             }
 
-            let active_state = last_key.as_ref().and_then(|key| map.cursors.get(key));
-            let pinned = active_state
-                .map(|state| state.core.pinned_wid)
-                .unwrap_or(last_pinned);
-            let active_display = active_state
-                .and_then(|state| state.core.pos)
-                .and_then(|(x, y)| map.layout.route(GlobalPoint { x, y }))
-                .map(|(display, _)| display)
-                .or_else(|| last_display.filter(|display| map.layout.display(*display).is_some()));
-            let raise_unpinned =
-                active_state.is_some_and(cursor_is_externally_visible) && pinned.is_none();
+            let z_order = z_order_route(map);
             let next_frame_tick_needed = render_map_needs_frame_tick(map);
             let next_hover_poll_needed = map
                 .cursors
@@ -859,11 +873,10 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                 .any(|state| state.core.session_badge_needs_hover_poll());
 
             (
-                pinned,
-                active_display,
-                raise_unpinned,
+                z_order,
                 arrived,
                 had_msg,
+                cursor_commanded,
                 layout_changed,
                 hover_changed,
                 next_frame_tick_needed,
@@ -877,18 +890,20 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
 
         if frame_tick_needed || had_msg {
             repin_frames += 1;
-            let pin_changed = pinned_wid != last_pinned || active_display != last_display;
-            last_pinned = pinned_wid;
-            last_display = active_display;
-            if let Some(display_id) = active_display {
-                if pinned_wid.is_some() && (pin_changed || repin_frames >= 60) {
-                    MacZOrderEnforcer { display_id }.reassert(pinned_wid);
+            let route_changed = z_order != presented_z_order;
+            if let Some(route) = z_order {
+                if route.target_wid.is_some() && (route_changed || repin_frames >= 60) {
+                    MacZOrderEnforcer {
+                        display_id: route.display_id,
+                    }
+                    .reassert(route.target_wid);
                     repin_frames = 0;
-                } else if raise_unpinned {
-                    dispatch_order_front(display_id);
+                } else if route.target_wid.is_none() && (route_changed || cursor_commanded) {
+                    dispatch_order_front(route.display_id);
                     repin_frames = 0;
                 }
             }
+            presented_z_order = z_order;
             if repin_frames >= 60 {
                 repin_frames = 0;
             }
@@ -900,15 +915,16 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                 let Some(map) = guard.as_ref() else {
                     break;
                 };
-                let active = active_display_ids(map);
-                let mut dirty = previously_active
-                    .union(&active)
+                let painted = painted_display_ids(map);
+                let mut displays_to_present = presented_displays
+                    .union(&painted)
                     .copied()
                     .collect::<HashSet<_>>();
                 if layout_changed {
-                    dirty.extend(map.layout.displays.iter().map(|display| display.id));
+                    displays_to_present
+                        .extend(map.layout.displays.iter().map(|display| display.id));
                 }
-                let frames = dirty
+                let frames = displays_to_present
                     .into_iter()
                     .filter_map(|display_id| {
                         map.layout.display(display_id).map(|display| {
@@ -916,7 +932,7 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                         })
                     })
                     .collect::<Vec<_>>();
-                previously_active = active;
+                presented_displays = painted;
                 frames
             };
 
@@ -936,25 +952,47 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
     }
 }
 
-fn active_display_ids(map: &RenderMap) -> HashSet<DisplayId> {
-    let mut active = HashSet::new();
+// Matches the established default-theme envelope used by the X11 tile path.
+const DEFAULT_CURSOR_PAINT_RADIUS: f64 = 64.0;
+
+/// Displays whose buffers can contain pixels in the current frame. This is
+/// based on painted bounds, not cursor ownership: artwork may span a seam.
+fn painted_display_ids(map: &RenderMap) -> HashSet<DisplayId> {
+    let mut painted = HashSet::new();
     for state in map.cursors.values() {
         if cursor_is_externally_visible(state) {
             if let Some((x, y)) = state.core.pos {
-                if let Some((display, _)) = map.layout.route(GlobalPoint { x, y }) {
-                    active.insert(display);
+                let custom_theme = state
+                    .core
+                    .theme
+                    .as_deref()
+                    .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
+                for display in &map.layout.displays {
+                    if custom_theme
+                        || rectangles_intersect(
+                            (
+                                x - DEFAULT_CURSOR_PAINT_RADIUS,
+                                y - DEFAULT_CURSOR_PAINT_RADIUS,
+                                DEFAULT_CURSOR_PAINT_RADIUS * 2.0,
+                                DEFAULT_CURSOR_PAINT_RADIUS * 2.0,
+                            ),
+                            *display,
+                        )
+                    {
+                        painted.insert(display.id);
+                    }
                 }
             }
         }
         if let Some([x, y, width, height]) = state.focus_rect {
             for display in &map.layout.displays {
                 if rectangles_intersect((x, y, width, height), *display) {
-                    active.insert(display.id);
+                    painted.insert(display.id);
                 }
             }
         }
     }
-    active
+    painted
 }
 
 fn rectangles_intersect(rect: (f64, f64, f64, f64), display: DisplayGeometry) -> bool {
@@ -976,7 +1014,17 @@ fn render_display(map: &RenderMap, display: DisplayGeometry) -> tiny_skia::Pixma
             rect,
             t: state.focus_rect_t,
         });
-        cursor_overlay::paint_cursor(
+        let anchor_display = state
+            .core
+            .pos
+            .and_then(|(x, y)| map.layout.route(GlobalPoint { x, y }))
+            .map(|(display_id, _)| display_id);
+        let painter = if anchor_display == Some(display.id) {
+            cursor_overlay::paint_cursor
+        } else {
+            cursor_overlay::paint_cursor_art
+        };
+        painter(
             &mut pixmap,
             &state.core,
             display.x,
@@ -1300,6 +1348,7 @@ mod tests {
                     is_primary: true,
                 }],
             },
+            active_key: None,
             template: CursorConfig::default(),
             ended: std::collections::HashSet::new(),
         }
@@ -1428,11 +1477,7 @@ mod tests {
 
         // A late in-flight Cmd for the ended session must be dropped WITHOUT
         // re-inserting (no get-or-create resurrection).
-        let resolved = apply_msg(&mut map, move_msg("sessA", 99.0, 99.0));
-        assert!(
-            resolved.is_none(),
-            "ended-session Cmd must be dropped, not resolved"
-        );
+        apply_msg(&mut map, move_msg("sessA", 99.0, 99.0));
         assert!(
             !map.cursors.contains_key("sessA"),
             "tombstone must block resurrection"
@@ -1449,15 +1494,16 @@ mod tests {
         let mut map = empty_map();
         apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
         apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert!(apply_msg(&mut map, move_msg("sessA", 20.0, 20.0)).is_none());
+        apply_msg(&mut map, move_msg("sessA", 20.0, 20.0));
+        assert!(!map.cursors.contains_key("sessA"));
 
         apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
         assert!(!map.cursors.contains_key("sessA"));
         assert!(!map.ended.contains("sessA"));
 
-        let resolved = apply_msg(&mut map, move_msg("sessA", 30.0, 30.0));
-        assert_eq!(resolved.as_deref(), Some("sessA"));
+        apply_msg(&mut map, move_msg("sessA", 30.0, 30.0));
         assert!(map.cursors.contains_key("sessA"));
+        assert_eq!(map.active_key.as_deref(), Some("sessA"));
     }
 
     #[test]
@@ -1469,9 +1515,9 @@ mod tests {
         assert!(map.cursors.contains_key("default"));
         assert!(!map.ended.contains("default"));
 
-        let resolved = apply_msg(&mut map, move_msg("default", 5.0, 5.0));
-        assert_eq!(resolved.as_deref(), Some("default"));
+        apply_msg(&mut map, move_msg("default", 5.0, 5.0));
         assert!(map.cursors.contains_key("default"));
+        assert_eq!(map.active_key.as_deref(), Some("default"));
     }
 
     #[test]
@@ -1544,14 +1590,61 @@ mod tests {
         seed_start_in_map(&mut map, &"sessA".to_owned(), -867.0, 400.0);
         map.cursors.get_mut("sessA").unwrap().core.pos = Some((-867.0, 400.0));
 
-        assert_eq!(active_display_ids(&map), HashSet::from([2]));
+        assert_eq!(painted_display_ids(&map), HashSet::from([2]));
         let pixmap = render_display(&map, secondary);
         assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]
-    fn moved_cursor_drops_the_old_display_from_the_active_set() {
+    fn cursor_art_routes_to_both_sides_of_a_display_seam_then_clears() {
         let mut map = empty_map();
+        map.layout.displays[0].width = 1440.0;
+        map.layout.displays[0].height = 900.0;
+        let secondary = DisplayGeometry {
+            id: 2,
+            x: -1920.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+            backing_scale: 1.0,
+            is_primary: false,
+        };
+        map.layout.displays.push(secondary);
+        seed_start_in_map(&mut map, &"sessA".to_owned(), -867.0, 400.0);
+
+        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-1.0, 400.0));
+        assert_eq!(painted_display_ids(&map), HashSet::from([1, 2]));
+        let primary = map.layout.display(1).unwrap();
+        let primary_art = render_display(&map, primary);
+        let secondary_art = render_display(&map, secondary);
+        for pixmap in [&primary_art, &secondary_art] {
+            assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
+        }
+
+        map.cursors
+            .get_mut("sessA")
+            .unwrap()
+            .apply_command(OverlayCommand::SetSessionLabel("research".to_owned()));
+        assert_eq!(
+            render_display(&map, primary).data(),
+            primary_art.data(),
+            "the neighboring display must not duplicate the anchor display's badge"
+        );
+        assert_ne!(render_display(&map, secondary).data(), secondary_art.data());
+
+        map.cursors.get_mut("sessA").unwrap().core.pos = Some((400.0, 400.0));
+        assert_eq!(painted_display_ids(&map), HashSet::from([1]));
+        assert!(render_display(&map, secondary)
+            .data()
+            .chunks_exact(4)
+            .all(|pixel| pixel[3] == 0));
+    }
+
+    #[test]
+    fn z_order_follows_the_active_cursor_and_layout_generation() {
+        let mut map = empty_map();
+        map.layout.displays[0].width = 1440.0;
+        map.layout.displays[0].height = 900.0;
         map.layout.displays.push(DisplayGeometry {
             id: 2,
             x: -1920.0,
@@ -1561,12 +1654,29 @@ mod tests {
             backing_scale: 1.0,
             is_primary: false,
         });
-        seed_start_in_map(&mut map, &"sessA".to_owned(), -867.0, 400.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-867.0, 40.0));
-        assert_eq!(active_display_ids(&map), HashSet::from([2]));
+        seed_start_in_map(&mut map, &"sessA".to_owned(), 400.0, 400.0);
+        apply_msg(
+            &mut map,
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "sessA".to_owned(),
+                cmd: OverlayCommand::PinAbove(77),
+            }),
+        );
 
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((40.0, 40.0));
-        assert_eq!(active_display_ids(&map), HashSet::from([1]));
+        assert_eq!(
+            z_order_route(&map),
+            Some(ZOrderRoute {
+                generation: 1,
+                display_id: 1,
+                target_wid: Some(77),
+            })
+        );
+
+        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-400.0, 400.0));
+        assert_eq!(z_order_route(&map).unwrap().display_id, 2);
+
+        map.layout.generation = 2;
+        assert_eq!(z_order_route(&map).unwrap().generation, 2);
     }
 
     #[test]

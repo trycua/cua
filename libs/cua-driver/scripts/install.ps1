@@ -516,36 +516,43 @@ function Set-JunctionTarget([string]$linkPath, [string]$targetPath) {
         return
     }
 
-    # The fallback cannot retarget a junction in place. Preserve the prior
-    # target so a failed replacement never destroys a working install path.
-    $oldTarget = $null
-    if (Test-Path -LiteralPath $linkPath) {
-        if (-not (Test-IsJunction $linkPath)) {
-            throw "found existing non-junction directory at $linkPath; refusing to replace"
-        }
-        $oldTarget = Get-JunctionTarget $linkPath
-        if ([string]::IsNullOrWhiteSpace($oldTarget)) {
-            throw "could not read existing junction target at $linkPath; refusing unsafe replacement"
-        }
-        [System.IO.Directory]::Delete($linkPath, $false)
-    }
     $parent = Split-Path -Parent $linkPath
     if ($parent -and -not (Test-Path -LiteralPath $parent)) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
-    try {
+    if (-not (Test-Path -LiteralPath $linkPath)) {
         Invoke-MklinkJunction $linkPath $targetPath
-    } catch {
-        $replaceError = $_.Exception.Message
-        if ($oldTarget) {
+        return
+    }
+    if (-not (Test-IsJunction $linkPath)) {
+        throw "found existing non-junction directory at $linkPath; refusing to replace"
+    }
+
+    # Build the replacement first. A failed mklink leaves the stable junction
+    # untouched. Directory renames then swap the staged and prior junctions;
+    # if the second rename fails, put the prior junction back before returning.
+    $suffix = [guid]::NewGuid().ToString("N")
+    $stagePath = Join-Path $parent ".cua-junction-stage-$suffix"
+    $backupPath = Join-Path $parent ".cua-junction-backup-$suffix"
+    try {
+        Invoke-MklinkJunction $stagePath $targetPath
+        [System.IO.Directory]::Move($linkPath, $backupPath)
+        try {
+            [System.IO.Directory]::Move($stagePath, $linkPath)
+        } catch {
+            $replaceError = $_.Exception.Message
             try {
-                Invoke-MklinkJunction $linkPath $oldTarget
+                [System.IO.Directory]::Move($backupPath, $linkPath)
             } catch {
-                throw "$replaceError; restoring previous target '$oldTarget' also failed: $($_.Exception.Message)"
+                throw "junction swap failed: $replaceError; previous junction remains at '$backupPath' because restoring '$linkPath' also failed: $($_.Exception.Message)"
             }
-            throw "$replaceError; restored previous target '$oldTarget'"
+            throw "junction swap failed: $replaceError; restored previous junction at '$linkPath'"
         }
-        throw
+        [System.IO.Directory]::Delete($backupPath, $false)
+    } finally {
+        if (Test-Path -LiteralPath $stagePath) {
+            [System.IO.Directory]::Delete($stagePath, $false)
+        }
     }
 }
 
@@ -555,11 +562,24 @@ function Get-JunctionTarget([string]$linkPath) {
         return [CuaDriverInstaller.Junction]::GetTarget($linkPath)
     }
 
+    # PowerShell 7 exposes FileSystemInfo.Target, but Windows PowerShell 5.1
+    # does not. Prefer the property when present, then parse fsutil's stable
+    # NT substitute-name prefix without depending on localized field labels.
     try {
         $item = Get-Item -LiteralPath $linkPath -Force -ErrorAction Stop
-        $targets = @($item.Target) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        if ($targets.Count -eq 0) { return $null }
-        return [string]$targets[0]
+        $targetProperty = $item.PSObject.Properties["Target"]
+        if ($targetProperty) {
+            $targets = @($targetProperty.Value) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            if ($targets.Count -gt 0) { return [string]$targets[0] }
+        }
+
+        $output = & $env:ComSpec /d /c "fsutil reparsepoint query `"$linkPath`"" 2>&1
+        if ($LASTEXITCODE -ne 0) { return $null }
+        foreach ($line in @($output)) {
+            $match = [regex]::Match([string]$line, '\\\?\?\\(.+)$')
+            if ($match.Success) { return $match.Groups[1].Value.Trim() }
+        }
+        return $null
     } catch {
         return $null
     }
@@ -576,7 +596,8 @@ function Get-JunctionTarget([string]$linkPath) {
 # reparse points (CreateSymbolicLink + MoveFileEx-replace-existing only
 # works for files, not directories). For the initial-create case the path
 # is the same: Directory.CreateDirectory followed by SET_REPARSE_POINT.
-# The mklink fallback (Add-Type unavailable) removes/recreates instead.
+# The mklink fallback (Add-Type unavailable) stages a sibling junction, then
+# swaps directory names while retaining the prior junction for rollback.
 function Ensure-Junction([string]$linkPath, [string]$targetPath) {
     if (Test-Path -LiteralPath $linkPath) {
         if (Test-IsJunction $linkPath) {

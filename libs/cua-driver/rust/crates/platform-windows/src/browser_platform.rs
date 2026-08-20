@@ -1,6 +1,7 @@
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
@@ -756,6 +757,9 @@ fn network_port(value: u32) -> u16 {
     u16::from_be((value & u32::from(u16::MAX)) as u16)
 }
 
+const MAX_TCP_OWNER_TABLE_BYTES: usize = 64 * 1024 * 1024;
+const TCP_OWNER_TABLE_READ_ATTEMPTS: usize = 3;
+
 fn select_loopback_listeners(rows: &[TcpOwnerRow], allowed_pids: &[u32]) -> Vec<(u16, u32)> {
     let mut listeners = rows
         .iter()
@@ -806,19 +810,11 @@ unsafe fn decode_owner_table<R: Copy>(bytes: &[u8]) -> Result<Vec<R>, BrowserRef
     Ok(rows)
 }
 
-fn query_tcp_owner_table(address_family: u32) -> Result<Vec<u8>, BrowserRefusal> {
-    const MAX_TABLE_BYTES: usize = 64 * 1024 * 1024;
+fn query_tcp_owner_table_with(
+    mut query: impl FnMut(Option<*mut c_void>, &mut u32) -> u32,
+) -> Result<Vec<u8>, BrowserRefusal> {
     let mut size = 0u32;
-    let status = unsafe {
-        GetExtendedTcpTable(
-            None,
-            &mut size,
-            false,
-            address_family,
-            TCP_TABLE_OWNER_PID_LISTENER,
-            0,
-        )
-    };
+    let status = query(None, &mut size);
     if status != ERROR_INSUFFICIENT_BUFFER.0 && status != NO_ERROR.0 {
         return Err(refusal(
             BrowserRefusalCode::BrowserRouteUnavailable,
@@ -829,27 +825,18 @@ fn query_tcp_owner_table(address_family: u32) -> Result<Vec<u8>, BrowserRefusal>
         return Ok(0u32.to_ne_bytes().to_vec());
     }
 
-    for _ in 0..3 {
+    for _ in 0..TCP_OWNER_TABLE_READ_ATTEMPTS {
         let requested = size as usize;
-        if requested > MAX_TABLE_BYTES {
+        if requested > MAX_TCP_OWNER_TABLE_BYTES {
             return Err(refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("Windows TCP owner table exceeded {MAX_TABLE_BYTES} bytes"),
+                format!("Windows TCP owner table exceeded {MAX_TCP_OWNER_TABLE_BYTES} bytes"),
             ));
         }
         let word_count = requested.div_ceil(std::mem::size_of::<u32>());
         let mut buffer = vec![0u32; word_count];
         let mut buffer_size = (word_count * std::mem::size_of::<u32>()) as u32;
-        let status = unsafe {
-            GetExtendedTcpTable(
-                Some(buffer.as_mut_ptr().cast()),
-                &mut buffer_size,
-                false,
-                address_family,
-                TCP_TABLE_OWNER_PID_LISTENER,
-                0,
-            )
-        };
+        let status = query(Some(buffer.as_mut_ptr().cast()), &mut buffer_size);
         if status == NO_ERROR.0 {
             let returned = buffer_size as usize;
             let allocated = buffer.len() * std::mem::size_of::<u32>();
@@ -874,8 +861,23 @@ fn query_tcp_owner_table(address_family: u32) -> Result<Vec<u8>, BrowserRefusal>
 
     Err(refusal(
         BrowserRefusalCode::BrowserRouteUnavailable,
-        "Windows TCP owner table changed during three consecutive reads",
+        format!(
+            "Windows TCP owner table changed during {TCP_OWNER_TABLE_READ_ATTEMPTS} consecutive reads"
+        ),
     ))
+}
+
+fn query_tcp_owner_table(address_family: u32) -> Result<Vec<u8>, BrowserRefusal> {
+    query_tcp_owner_table_with(|buffer, size| unsafe {
+        GetExtendedTcpTable(
+            buffer,
+            size,
+            false,
+            address_family,
+            TCP_TABLE_OWNER_PID_LISTENER,
+            0,
+        )
+    })
 }
 
 fn windows_loopback_listeners(allowed_pids: &[u32]) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
@@ -2272,6 +2274,87 @@ mod tests {
     #[test]
     fn native_owner_table_port_uses_network_byte_order() {
         assert_eq!(network_port(0x0000_0624), 9222);
+    }
+
+    #[test]
+    fn native_owner_table_decoder_rejects_truncated_and_invalid_counts() {
+        let truncated = unsafe { decode_owner_table::<u32>(&[0, 0, 0]) }.unwrap_err();
+        assert!(truncated.message.contains("truncated TCP owner table"));
+
+        let impossible_count = u32::MAX.to_ne_bytes();
+        let invalid = unsafe { decode_owner_table::<u32>(&impossible_count) }.unwrap_err();
+        assert!(invalid.message.contains("invalid TCP owner table length"));
+    }
+
+    #[test]
+    fn native_owner_table_query_rejects_sizing_and_read_errors() {
+        let sizing = query_tcp_owner_table_with(|_, _| 5).unwrap_err();
+        assert!(sizing.message.contains("size the Windows TCP owner table"));
+
+        let mut calls = 0;
+        let reading = query_tcp_owner_table_with(|buffer, size| {
+            calls += 1;
+            if buffer.is_none() {
+                *size = 4;
+                ERROR_INSUFFICIENT_BUFFER.0
+            } else {
+                5
+            }
+        })
+        .unwrap_err();
+        assert_eq!(calls, 2);
+        assert!(reading.message.contains("read the Windows TCP owner table"));
+    }
+
+    #[test]
+    fn native_owner_table_query_bounds_growth_and_retry_churn() {
+        let oversized = query_tcp_owner_table_with(|buffer, size| {
+            assert!(buffer.is_none());
+            *size = (MAX_TCP_OWNER_TABLE_BYTES as u32) + 1;
+            ERROR_INSUFFICIENT_BUFFER.0
+        })
+        .unwrap_err();
+        assert!(oversized
+            .message
+            .contains("TCP owner table exceeded 67108864 bytes"));
+
+        let mut calls = 0;
+        let churn = query_tcp_owner_table_with(|buffer, size| {
+            calls += 1;
+            *size = if buffer.is_none() { 4 } else { *size + 4 };
+            ERROR_INSUFFICIENT_BUFFER.0
+        })
+        .unwrap_err();
+        assert_eq!(calls, TCP_OWNER_TABLE_READ_ATTEMPTS + 1);
+        assert!(churn.message.contains("changed during 3 consecutive reads"));
+    }
+
+    #[test]
+    fn native_owner_table_query_rejects_oversized_success_length() {
+        let oversized = query_tcp_owner_table_with(|buffer, size| {
+            if buffer.is_none() {
+                *size = 4;
+                ERROR_INSUFFICIENT_BUFFER.0
+            } else {
+                *size = 8;
+                NO_ERROR.0
+            }
+        })
+        .unwrap_err();
+        assert!(oversized.message.contains("oversized TCP owner table"));
+    }
+
+    #[test]
+    fn native_owner_table_observes_a_real_loopback_listener() {
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let pid = std::process::id();
+
+        let listeners = windows_loopback_listeners(&[pid]).unwrap();
+        assert!(
+            listeners.contains(&(port, pid)),
+            "native owner table did not report current-process listener {port}: {listeners:?}"
+        );
     }
 
     #[test]

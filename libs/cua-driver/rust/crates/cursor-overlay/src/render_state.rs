@@ -824,8 +824,8 @@ pub fn paint_cursor(
         let (cr, cg, cb) = (0x5Eu8, 0xC0u8, 0xE8u8);
 
         if let Some(rect) = tiny_skia::Rect::from_xywh(
-            (fx * s) as f32,
-            (fy * s) as f32,
+            ((fx - origin_x) * s) as f32,
+            ((fy - origin_y) * s) as f32,
             (fw * s) as f32,
             (fh * s) as f32,
         ) {
@@ -960,6 +960,28 @@ mod placement_tests {
         paint_cursor(&mut pixmap, &core, -1000.0, 0.0, None, 1.0);
 
         assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn focus_rect_uses_the_same_display_origin_as_the_cursor() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = Some((-10.0, 80.0));
+        let mut pixmap = tiny_skia::Pixmap::new(120, 120).unwrap();
+
+        paint_cursor(
+            &mut pixmap,
+            &core,
+            -100.0,
+            0.0,
+            Some(FocusRect {
+                rect: [-90.0, 10.0, 20.0, 20.0],
+                t: 0.0,
+            }),
+            1.0,
+        );
+
+        let alpha_at_focus = pixmap.data()[((15 * 120 + 15) * 4 + 3) as usize];
+        assert!(alpha_at_focus > 0);
     }
 }
 

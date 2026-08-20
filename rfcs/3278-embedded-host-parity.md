@@ -5,9 +5,9 @@ authors:
   - injaneity
 created: 2026-08-20
 last_updated: 2026-08-20
-status: review
+status: accepted
 discussion: https://github.com/trycua/cua/issues/3278
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/3279
 implementation: []
 supersedes:
 superseded_by:
@@ -167,18 +167,16 @@ The record must be available after `start()` fails and include only:
 - whether output was truncated; and
 - a bounded stderr tail.
 
-The final language shape may use a `last_diagnostics()` accessor or enrich a
-new lifecycle error without changing released error variants. Review must
-choose one shape before acceptance.
+Expose the record through `last_diagnostics()` so released lifecycle error
+variants remain unchanged.
 
 Capture is disabled by default. Existing stderr inheritance behavior remains
 unchanged. When both inheritance and capture are requested, the implementation
-may tee stderr to the parent while retaining only the bounded tail. Capture
-must never block child shutdown, retain unbounded output, or enter telemetry.
+tees stderr to the parent while retaining only the bounded tail. Capture must
+never block child shutdown, retain unbounded output, or enter telemetry.
 
-The bound is measured in bytes after lossy UTF-8 conversion or by another rule
-that produces the same deterministic cap on every platform. The accepted RFC
-must record the exact limit and truncation direction.
+The tail retains the final 65,536 stderr bytes and then uses lossy UTF-8
+conversion. The record marks truncation when earlier bytes were discarded.
 
 ### 3. Keep exact compatibility for external executables
 
@@ -197,9 +195,8 @@ and observed values for:
 - MCP protocol version.
 
 The daemon metadata handshake remains authoritative because semantic version
-alone does not prove generated-contract parity. Review will decide whether a
-cheap semantic-version preflight before spawn materially improves errors or
-merely duplicates the authenticated readiness handshake.
+alone does not prove generated-contract parity. The implementation does not add a semantic-version preflight; the daemon
+metadata handshake remains the single compatibility authority.
 
 A host-only package and external executable are supported only when they come
 from the same Cua Driver component release. Applications that update the
@@ -218,9 +215,10 @@ They omit the driver executable and require the application to pass an
 absolute matching executable path. Existing distributions keep their bundled
 executables and remain the default for ordinary SDK installation.
 
-The final package names are decided during review. They must not shadow the
-existing command entry point, claim to be pure Python or JavaScript, or make a
-host-only installation appear runnable without an external executable.
+Publish the artifacts as `cua-driver-host` on PyPI and
+`@trycua/cua-driver-host` on npm. They must not shadow the existing command
+entry point, claim to be pure Python or JavaScript, or make a host-only
+installation appear runnable without an external executable.
 
 Package tests must inspect built wheels and npm archives rather than source
 directories. Release automation publishes host-only and bundled artifacts from
@@ -397,17 +395,16 @@ canonical lane must run on the exact candidate SHA.
 
 ## Unresolved questions
 
-- Should diagnostics use `last_diagnostics()` or a new structured lifecycle
-  error surface?
-- What exact byte limit and encoding rule should stderr capture use?
-- Should capture plus inheritance tee output, or should those modes be mutually
-  exclusive?
-- What package names communicate that the executable is intentionally absent?
-- Is semantic-version preflight useful when exact daemon metadata remains
-  authoritative?
-- Which package-signature fixtures prove additive record fields for every
+- Which package-signature fixtures best prove additive record fields for every
   supported language version?
 
 ## Decision record
 
-Pending review in [#3278](https://github.com/trycua/cua/issues/3278).
+Accepted by maintainer direction on 2026-08-20. Review selected a
+`last_diagnostics()` accessor, a final 65,536-byte stderr tail with lossy UTF-8
+conversion, tee behavior when inheritance and capture are both enabled,
+`cua-driver-host` and `@trycua/cua-driver-host` package names, and the existing
+daemon metadata handshake as the sole compatibility authority. Exact contract
+matching, typed options, current defaults, and host-owned platform identity
+remain mandatory. Implementation will proceed as linked draft pull requests;
+the RFC must merge before or with the first implementation pull request.

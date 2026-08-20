@@ -575,17 +575,12 @@ function Get-JunctionTarget([string]$linkPath) {
 
         $output = & $env:ComSpec /d /c "fsutil reparsepoint query `"$linkPath`"" 2>&1
         if ($LASTEXITCODE -ne 0) { return $null }
-        $marker = '\??\'
         foreach ($line in @($output)) {
             $text = [string]$line
-            $markerIndex = $text.IndexOf($marker, [System.StringComparison]::Ordinal)
-            if ($markerIndex -ge 0) {
-                $target = $text.Substring($markerIndex + $marker.Length).Trim()
-                if ($target.StartsWith('UNC\', [System.StringComparison]::OrdinalIgnoreCase)) {
-                    return '\\' + $target.Substring(4)
-                }
-                return $target
-            }
+            $driveTarget = [regex]::Match($text, '[A-Za-z]:\\[^\r\n]+$')
+            if ($driveTarget.Success) { return $driveTarget.Value.Trim() }
+            $uncTarget = [regex]::Match($text, '\\\\[^\r\n]+$')
+            if ($uncTarget.Success) { return $uncTarget.Value.Trim() }
         }
         return $null
     } catch {

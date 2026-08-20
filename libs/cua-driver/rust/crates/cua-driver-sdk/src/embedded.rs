@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -21,6 +21,7 @@ use uuid::Uuid;
 const DEFAULT_STARTUP_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS: u64 = 2_000;
 const HANDSHAKE_ATTEMPT_TIMEOUT_MS: u64 = 500;
+const STDERR_TAIL_LIMIT_BYTES: usize = 65_536;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum EmbeddedPermissionMode {
@@ -55,6 +56,8 @@ pub struct EmbeddedDriverHostOptions {
     pub inherit_stderr: bool,
     #[uniffi(default = false)]
     pub no_overlay: bool,
+    #[uniffi(default = false)]
+    pub capture_stderr: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -88,6 +91,14 @@ pub struct EmbeddedDriverExit {
     pub generation: String,
     pub code: Option<i32>,
     pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmbeddedDriverDiagnostics {
+    pub lifecycle_phase: String,
+    pub exit_code: Option<i32>,
+    pub stderr_tail: String,
+    pub stderr_truncated: bool,
 }
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -124,6 +135,7 @@ struct ValidatedOptions {
     environment: Vec<EmbeddedEnvironmentVariable>,
     inherit_stderr: bool,
     no_overlay: bool,
+    capture_stderr: bool,
 }
 
 #[cfg(unix)]
@@ -161,10 +173,49 @@ struct HostInner {
     last_exit: Option<EmbeddedDriverExit>,
 }
 
+#[derive(Default)]
+struct DiagnosticCapture {
+    exit_code: Option<i32>,
+    stderr: Vec<u8>,
+    truncated: bool,
+}
+
+impl DiagnosticCapture {
+    fn append(&mut self, bytes: &[u8]) {
+        if bytes.len() >= STDERR_TAIL_LIMIT_BYTES {
+            self.stderr.clear();
+            self.stderr
+                .extend_from_slice(&bytes[bytes.len() - STDERR_TAIL_LIMIT_BYTES..]);
+            self.truncated = true;
+            return;
+        }
+        let overflow = self
+            .stderr
+            .len()
+            .saturating_add(bytes.len())
+            .saturating_sub(STDERR_TAIL_LIMIT_BYTES);
+        if overflow > 0 {
+            self.stderr.drain(..overflow);
+            self.truncated = true;
+        }
+        self.stderr.extend_from_slice(bytes);
+    }
+
+    fn snapshot(&self) -> EmbeddedDriverDiagnostics {
+        EmbeddedDriverDiagnostics {
+            lifecycle_phase: "startup".into(),
+            exit_code: self.exit_code,
+            stderr_tail: String::from_utf8_lossy(&self.stderr).into_owned(),
+            stderr_truncated: self.truncated,
+        }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct EmbeddedCuaDriverHost {
     options: ValidatedOptions,
     inner: Mutex<HostInner>,
+    diagnostics: Arc<Mutex<Option<DiagnosticCapture>>>,
     changed: Notify,
 }
 
@@ -267,6 +318,7 @@ impl EmbeddedCuaDriverHost {
             environment: Vec::new(),
             inherit_stderr: true,
             no_overlay: false,
+            capture_stderr: false,
         })
     }
 
@@ -280,6 +332,7 @@ impl EmbeddedCuaDriverHost {
                 phase: HostPhase::Stopped,
                 last_exit: None,
             }),
+            diagnostics: Arc::new(Mutex::new(None)),
             changed: Notify::new(),
         }))
     }
@@ -304,6 +357,14 @@ impl EmbeddedCuaDriverHost {
         }
     }
 
+    pub fn last_diagnostics(&self) -> Option<EmbeddedDriverDiagnostics> {
+        self.diagnostics
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(DiagnosticCapture::snapshot)
+    }
+
     pub async fn start(self: Arc<Self>) -> Result<EmbeddedDriverConnection, EmbeddedDriverError> {
         loop {
             let notified = self.changed.notified();
@@ -313,6 +374,8 @@ impl EmbeddedCuaDriverHost {
                 match &inner.phase {
                     HostPhase::Ready(running) => return Ok(running.connection.clone()),
                     HostPhase::Stopped => {
+                        *self.diagnostics.lock().unwrap() =
+                            self.options.capture_stderr.then(DiagnosticCapture::default);
                         let generation = Uuid::new_v4().to_string();
                         let cancel = Arc::new(AtomicBool::new(false));
                         inner.phase = HostPhase::Starting {
@@ -433,7 +496,9 @@ impl EmbeddedCuaDriverHost {
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(if self.options.inherit_stderr {
+            .stderr(if self.options.capture_stderr {
+                Stdio::piped()
+            } else if self.options.inherit_stderr {
                 Stdio::inherit()
             } else {
                 Stdio::null()
@@ -453,6 +518,35 @@ impl EmbeddedCuaDriverHost {
                 binary_path: self.options.binary_path.clone(),
                 reason: error.to_string(),
             })?;
+        if self.options.capture_stderr {
+            let mut stderr = child
+                .stderr
+                .take()
+                .ok_or_else(|| EmbeddedDriverError::Spawn {
+                    binary_path: self.options.binary_path.clone(),
+                    reason: "failed to capture embedded daemon stderr".into(),
+                })?;
+            let diagnostics = self.diagnostics.clone();
+            let inherit_stderr = self.options.inherit_stderr;
+            tokio::spawn(async move {
+                let mut buffer = [0_u8; 8192];
+                let mut inherited = tokio::io::stderr();
+                loop {
+                    let Ok(count) = stderr.read(&mut buffer).await else {
+                        break;
+                    };
+                    if count == 0 {
+                        break;
+                    }
+                    if let Some(capture) = diagnostics.lock().unwrap().as_mut() {
+                        capture.append(&buffer[..count]);
+                    }
+                    if inherit_stderr {
+                        let _ = inherited.write_all(&buffer[..count]).await;
+                    }
+                }
+            });
+        }
         let pid = child.id().ok_or_else(|| EmbeddedDriverError::Spawn {
             binary_path: self.options.binary_path.clone(),
             reason: "spawned process has no pid".into(),
@@ -478,6 +572,9 @@ impl EmbeddedCuaDriverHost {
                         reason: format!("inspect startup child: {error}"),
                     })?
             {
+                if let Some(capture) = self.diagnostics.lock().unwrap().as_mut() {
+                    capture.exit_code = status.code();
+                }
                 return Err(EmbeddedDriverError::ExitedBeforeReady {
                     code: status.code(),
                 });
@@ -570,6 +667,7 @@ impl EmbeddedCuaDriverHost {
             return Err(EmbeddedDriverError::StartupCancelled);
         }
         transition_guard.disarm();
+        *self.diagnostics.lock().unwrap() = None;
         self.changed.notify_waiters();
         Ok(connection)
     }
@@ -823,6 +921,7 @@ fn validate_options(
         environment: options.environment,
         inherit_stderr: options.inherit_stderr,
         no_overlay: options.no_overlay,
+        capture_stderr: options.capture_stderr,
     })
 }
 
@@ -1157,6 +1256,7 @@ mod tests {
             environment: Vec::new(),
             inherit_stderr: false,
             no_overlay: false,
+            capture_stderr: false,
         }
     }
 
@@ -1221,6 +1321,18 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+    }
+
+    #[test]
+    fn diagnostic_capture_retains_a_bounded_stderr_tail() {
+        let mut capture = DiagnosticCapture::default();
+        capture.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES]);
+        capture.append(b"final-error");
+
+        let diagnostics = capture.snapshot();
+        assert!(diagnostics.stderr_truncated);
+        assert_eq!(diagnostics.stderr_tail.len(), STDERR_TAIL_LIMIT_BYTES);
+        assert!(diagnostics.stderr_tail.ends_with("final-error"));
     }
 
     #[test]

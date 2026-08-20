@@ -9,12 +9,6 @@ use objc2_foundation::{NSPoint, NSRect, NSSize};
 pub(crate) type DisplayId = u32;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct GlobalPoint {
-    pub x: f64,
-    pub y: f64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DisplayGeometry {
     pub id: DisplayId,
     pub x: f64,
@@ -26,18 +20,8 @@ pub(crate) struct DisplayGeometry {
 }
 
 impl DisplayGeometry {
-    pub(crate) fn contains(self, point: GlobalPoint) -> bool {
-        point.x >= self.x
-            && point.x < self.x + self.width
-            && point.y >= self.y
-            && point.y < self.y + self.height
-    }
-
-    pub(crate) fn local_point(self, point: GlobalPoint) -> GlobalPoint {
-        GlobalPoint {
-            x: point.x - self.x,
-            y: point.y - self.y,
-        }
+    pub(crate) fn contains(self, x: f64, y: f64) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
     }
 
     pub(crate) fn pixel_size(self) -> (u32, u32) {
@@ -64,26 +48,15 @@ pub(crate) struct DisplayLayout {
 }
 
 impl DisplayLayout {
-    pub(crate) fn route(&self, point: GlobalPoint) -> Option<(DisplayId, GlobalPoint)> {
-        self.displays
-            .iter()
-            .find(|display| display.contains(point))
-            .map(|display| (display.id, display.local_point(point)))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn display(&self, id: DisplayId) -> Option<DisplayGeometry> {
+    pub(crate) fn display_at(&self, x: f64, y: f64) -> Option<DisplayGeometry> {
         self.displays
             .iter()
             .copied()
-            .find(|display| display.id == id)
+            .find(|display| display.contains(x, y))
     }
 
-    pub(crate) fn display_for_or_primary(&self, point: GlobalPoint) -> Option<DisplayGeometry> {
-        self.displays
-            .iter()
-            .copied()
-            .find(|display| display.contains(point))
+    pub(crate) fn display_for_or_primary(&self, x: f64, y: f64) -> Option<DisplayGeometry> {
+        self.display_at(x, y)
             .or_else(|| {
                 self.displays
                     .iter()
@@ -185,57 +158,36 @@ mod tests {
     }
 
     #[test]
-    fn routes_negative_axes_into_display_local_points() {
+    fn routes_negative_axes_to_their_displays() {
         let layout = layout();
-        assert_eq!(
-            layout.route(GlobalPoint {
-                x: -867.0,
-                y: 400.0
-            }),
-            Some((
-                2,
-                GlobalPoint {
-                    x: 1053.0,
-                    y: 580.0
-                }
-            ))
-        );
-        assert_eq!(
-            layout.route(GlobalPoint {
-                x: 300.0,
-                y: -867.0
-            }),
-            Some((3, GlobalPoint { x: 300.0, y: 333.0 }))
-        );
+        assert_eq!(layout.display_at(-867.0, 400.0).unwrap().id, 2);
+        assert_eq!(layout.display_at(300.0, -867.0).unwrap().id, 3);
     }
 
     #[test]
     fn seams_are_half_open_and_owned_once() {
         let layout = layout();
-        assert_eq!(
-            layout
-                .route(GlobalPoint {
-                    x: -0.001,
-                    y: 100.0
-                })
-                .unwrap()
-                .0,
-            2
-        );
-        assert_eq!(layout.route(GlobalPoint { x: 0.0, y: 100.0 }).unwrap().0, 1);
+        assert_eq!(layout.display_at(-0.001, 100.0).unwrap().id, 2);
+        assert_eq!(layout.display_at(0.0, 100.0).unwrap().id, 1);
     }
 
     #[test]
     fn each_display_keeps_its_own_pixel_scale() {
         let layout = layout();
-        assert_eq!(layout.display(1).unwrap().pixel_size(), (2880, 1800));
-        assert_eq!(layout.display(2).unwrap().pixel_size(), (1920, 1080));
-        assert_eq!(layout.display(3).unwrap().pixel_size(), (1800, 1800));
+        let pixel_sizes = layout
+            .displays
+            .iter()
+            .map(|display| (display.id, display.pixel_size()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pixel_sizes,
+            vec![(1, (2880, 1800)), (2, (1920, 1080)), (3, (1800, 1800))]
+        );
     }
 
     #[test]
     fn appkit_frame_flips_global_y_around_the_primary_display() {
-        let display = layout().display(3).unwrap();
+        let display = layout().displays[2];
         let frame = display.appkit_frame(900.0);
         assert_eq!(frame.origin.x, 0.0);
         assert_eq!(frame.origin.y, 900.0);

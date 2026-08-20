@@ -120,61 +120,40 @@ impl CompiledTheme {
     /// is selected lets platform renderers allocate bounded cursor-local tiles.
     pub fn paint_radius(&self) -> f64 {
         let mut radius = 1.0f64;
-        for animation in self.actions.values() {
-            for frame in &animation.frames {
-                for command in &frame.commands {
-                    let transform = command.transform;
-                    let radians = f64::from(transform.rotation_degrees).to_radians();
-                    let (sin, cos) = radians.sin_cos();
-                    let mut command_radius = 0.0f64;
-                    let mut include = |point: [f32; 2]| {
-                        let sx = f64::from(point[0] - transform.anchor[0])
-                            * f64::from(transform.scale[0]);
-                        let sy = f64::from(point[1] - transform.anchor[1])
-                            * f64::from(transform.scale[1]);
-                        let x = sx * cos - sy * sin + f64::from(transform.position[0]);
-                        let y = sx * sin + sy * cos + f64::from(transform.position[1]);
-                        command_radius = command_radius.max((x - 64.0).hypot(y - 64.0));
-                    };
-                    for geometry in &command.geometries {
-                        match geometry {
-                            CompiledGeometry::Path {
-                                vertices,
-                                in_tangents,
-                                out_tangents,
-                                ..
-                            } => {
-                                for (index, vertex) in vertices.iter().copied().enumerate() {
-                                    include(vertex);
-                                    if let Some(tangent) = in_tangents.get(index) {
-                                        include([vertex[0] + tangent[0], vertex[1] + tangent[1]]);
-                                    }
-                                    if let Some(tangent) = out_tangents.get(index) {
-                                        include([vertex[0] + tangent[0], vertex[1] + tangent[1]]);
-                                    }
-                                }
-                            }
-                            CompiledGeometry::Ellipse { center, size }
-                            | CompiledGeometry::Rectangle { center, size, .. } => {
-                                let rx = size[0] * 0.5;
-                                let ry = size[1] * 0.5;
-                                for x in [center[0] - rx, center[0] + rx] {
-                                    for y in [center[1] - ry, center[1] + ry] {
-                                        include([x, y]);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let stroke = command.stroke.map_or(0.0, |stroke| {
-                        let scale = transform.scale[0].abs().max(transform.scale[1].abs());
-                        // tiny-skia's default miter limit can extend a join to
-                        // four half-widths beyond the path.
-                        f64::from(stroke.width * scale * 2.0)
-                    });
-                    radius = radius.max(command_radius + stroke);
-                }
+        for command in self
+            .actions
+            .values()
+            .flat_map(|animation| &animation.frames)
+            .flat_map(|frame| &frame.commands)
+        {
+            let mut builder = PathBuilder::new();
+            for geometry in &command.geometries {
+                append_geometry(&mut builder, geometry);
             }
+            let Some(path) = builder
+                .finish()
+                .and_then(|path| path.transform(compiled_transform(command.transform)))
+            else {
+                continue;
+            };
+            let bounds = path.bounds();
+            let geometry_radius = [
+                (bounds.left(), bounds.top()),
+                (bounds.right(), bounds.top()),
+                (bounds.left(), bounds.bottom()),
+                (bounds.right(), bounds.bottom()),
+            ]
+            .into_iter()
+            .map(|(x, y)| f64::from(x - 64.0).hypot(f64::from(y - 64.0)))
+            .fold(0.0, f64::max);
+            let stroke_radius = command.stroke.map_or(0.0, |stroke| {
+                let scale = command.transform.scale[0]
+                    .abs()
+                    .max(command.transform.scale[1].abs());
+                // tiny-skia's default miter limit is four half-widths.
+                f64::from(stroke.width * scale * 2.0)
+            });
+            radius = radius.max(geometry_radius + stroke_radius);
         }
         // Include anti-aliasing and the default theme's shared float motion.
         (radius * f64::from(crate::theme::DISPLAY_SIZE / crate::theme::CANVAS_SIZE) + 8.0).max(8.0)

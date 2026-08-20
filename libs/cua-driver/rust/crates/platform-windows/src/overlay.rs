@@ -343,7 +343,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| rs.core.cfg.enabled && rs.core.cursor_is_revealed())
+                .map(|rs| rs.core.cursor_is_revealed())
         })
         .unwrap_or(false)
 }
@@ -424,7 +424,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.is_none()) {
+    if !(rs.core.visible && rs.core.pos.is_none()) {
         return false;
     }
     let mut sx = target_x - SEED_OFFSET;
@@ -466,7 +466,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     let should_animate = {
         let guard = RENDER.lock().unwrap();
         match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.is_some() => true,
+            Some(rs) if rs.core.visible && rs.core.pos.is_some() => true,
             _ => false,
         }
     };
@@ -1767,15 +1767,18 @@ mod tests {
     }
 
     #[test]
-    fn seed_places_cursor_on_screen_for_first_action() {
+    fn seed_places_cursor_inside_the_virtual_desktop() {
         let mut map = empty_map(); // 100x100 frame at origin
                                    // No "sessA" cursor exists yet — the seed must get-or-create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(seeded, "unplaced cursor must be seeded");
         let pos = map.cursors["sessA"].core.pos.expect("seeded position");
         assert!(
-            pos.0 > -50.0 && pos.1 > -50.0,
-            "seed must be on-screen, got {pos:?}"
+            pos.0 >= f64::from(map.virt_x)
+                && pos.0 < f64::from(map.virt_x + map.virt_w)
+                && pos.1 >= f64::from(map.virt_y)
+                && pos.1 < f64::from(map.virt_y + map.virt_h),
+            "seed must be inside the virtual desktop, got {pos:?}"
         );
         assert!(
             (pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
@@ -1784,12 +1787,12 @@ mod tests {
     }
 
     #[test]
-    fn seed_is_noop_when_cursor_already_on_screen() {
+    fn seed_is_noop_when_cursor_is_already_placed() {
         let mut map = empty_map();
         seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         map.cursors.get_mut("sessA").unwrap().core.pos = Some((30.0, 30.0));
         let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
-        assert!(!seeded_again, "on-screen cursor must not be re-seeded");
+        assert!(!seeded_again, "placed cursor must not be re-seeded");
         assert_eq!(
             map.cursors["sessA"].core.pos,
             Some((30.0, 30.0)),

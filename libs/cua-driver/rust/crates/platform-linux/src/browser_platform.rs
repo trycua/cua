@@ -142,20 +142,25 @@ fn has_process_type(arguments: &[String]) -> bool {
 /// Recover argv from the single space-joined `/proc/<pid>/cmdline` record
 /// observed for Helium, which does not use the usual NUL delimiter.
 ///
-/// This is deliberately narrow: it applies only to a one-record command line
-/// whose first word is the exact Helium executable, and it splits only at a
-/// ` --` switch boundary so a value containing spaces
-/// (`--user-data-dir=/tmp/helium profile`) survives intact. Every other
-/// process keeps ordinary NUL semantics.
+/// This is deliberately narrow. It applies only to a one-record command line,
+/// and every caller gates it on the product already resolved from
+/// `/proc/<pid>/exe`, so no non-Helium process reaches it. Splitting happens
+/// only at a ` --` switch boundary, so a value containing spaces
+/// (`--user-data-dir=/tmp/helium profile`) survives intact, and leading
+/// positional arguments (`helium https://example.test --flag`) do not defeat
+/// recovery. Every other process keeps ordinary NUL semantics.
+///
+/// The packed encoding is inherently ambiguous: it carries no quoting or
+/// length information, so a value that itself contains ` --` is
+/// indistinguishable from a following switch. Where that ambiguity bites,
+/// this parser prefers the reading that refuses rather than the one that
+/// grants access.
 fn packed_helium_arguments(bytes: &[u8]) -> Option<Vec<String>> {
     let arguments = command_line_arguments(bytes);
     let [packed] = arguments.as_slice() else {
         return None;
     };
-    let (executable, switches) = packed.split_once(" --")?;
-    if !is_helium(executable) {
-        return None;
-    }
+    let (_leading, switches) = packed.split_once(" --")?;
     let mut recovered = Vec::new();
     for switch in switches.split(" --") {
         // Inside one switch record the boundary is already known, so a
@@ -173,15 +178,13 @@ fn packed_helium_arguments(bytes: &[u8]) -> Option<Vec<String>> {
 }
 
 fn packed_helium_process_type(bytes: &[u8]) -> bool {
-    // Chromium helpers place `--type=` first, so only that position counts.
-    // A `--type=` later in a packed record can be text inside another value,
-    // and honoring it would misclassify the main browser process as a helper.
-    packed_helium_arguments(bytes).is_some_and(|arguments| {
-        arguments
-            .first()
-            .and_then(|argument| argument.strip_prefix("--type="))
-            .is_some_and(|kind| !kind.is_empty())
-    })
+    // Any recovered `--type=` marks this as a helper, not just a leading one.
+    // Chromium emits it first in every helper observed here, but relying on
+    // that position would let an unexpected ordering promote a renderer, GPU,
+    // or utility process to the main-browser role. Reading a spurious
+    // `--type=` out of an exotic value only costs a refusal, so this
+    // deliberately errs toward Helper.
+    packed_helium_arguments(bytes).is_some_and(|arguments| has_process_type(&arguments))
 }
 
 fn user_data_dir_arguments(arguments: &[String]) -> Vec<PathBuf> {
@@ -1355,18 +1358,20 @@ mod tests {
         assert!(!has_process_type(&command_line_arguments(
             b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0"
         )));
-        // A `--type=` that is not the first switch is not a helper marker.
-        assert!(!packed_helium_process_type(
+        // A helper is a helper wherever `--type=` appears. Position is not a
+        // load-bearing assumption: an unexpected ordering must not promote a
+        // renderer, GPU, or utility process to the main-browser role.
+        assert!(packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium --enable-logging --type=renderer\0"
+        ));
+        assert!(packed_helium_process_type(
             b"/opt/helium-browser-bin/helium --load-extension=/tmp/example --type=renderer\0"
         ));
+        // A real main process carries no `--type=` at all.
         assert!(!packed_helium_process_type(
-            b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --type=renderer\0"
+            b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --no-first-run\0"
         ));
         assert!(!packed_helium_process_type(b"helium --type=\0"));
-        // The packed fallback is Helium-only and single-record only.
-        assert!(!packed_helium_process_type(
-            b"/opt/google/chrome/chrome --type=renderer\0"
-        ));
         assert!(!packed_helium_process_type(
             b"/opt/helium-browser-bin/helium\0--type=renderer\0"
         ));
@@ -1419,15 +1424,36 @@ mod tests {
             ),
             [PathBuf::from("/tmp/helium profile")]
         );
-        // Non-Helium executables and NUL-delimited records are not recovered.
-        assert!(
-            packed_helium_arguments(b"/opt/google/chrome/chrome --user-data-dir=/tmp/x\0")
-                .is_none()
-        );
+        // NUL-delimited records are handled by the ordinary parser instead.
         assert!(
             packed_helium_arguments(b"/opt/helium-browser-bin/helium\0--no-first-run\0").is_none()
         );
         assert!(packed_helium_arguments(b"/opt/helium-browser-bin/helium\0").is_none());
+    }
+
+    #[test]
+    fn packed_recovery_survives_leading_positional_arguments() {
+        // Opening a URL or file puts a positional argument before the first
+        // switch. Recovery must still find the profile rather than silently
+        // falling back to the default directory.
+        assert_eq!(
+            user_data_dir_arguments(
+                &packed_helium_arguments(
+                    b"/opt/helium-browser-bin/helium https://example.test --user-data-dir=/tmp/p\0"
+                )
+                .expect("packed Helium argv with a leading positional")
+            ),
+            [PathBuf::from("/tmp/p")]
+        );
+        assert_eq!(
+            user_data_dir_arguments(
+                &packed_helium_arguments(
+                    b"/opt/helium-browser-bin/helium /home/u/a.html --user-data-dir=/tmp/spaced dir\0"
+                )
+                .expect("packed Helium argv with a leading file positional")
+            ),
+            [PathBuf::from("/tmp/spaced dir")]
+        );
     }
 
     #[test]

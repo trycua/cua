@@ -59,6 +59,9 @@ windows = { version = "0.58", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_Media",
     "Win32_System_Registry",
+    # Locale-independent TCP listener ownership for browser endpoint proof.
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
     # `cua-driver doctor` interactive-session probe:
     # - Win32_System_RemoteDesktop → ProcessIdToSessionId
     # - Win32_System_StationsAndDesktops → OpenWindowStationW

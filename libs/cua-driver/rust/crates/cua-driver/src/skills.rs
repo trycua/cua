@@ -49,9 +49,10 @@
 //! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
 //!   (`agy`) and Antigravity IDE; same dir Google Gemini CLI used before the
 //!   May-2026 transition, so existing installs migrate forward unchanged.
-//! - Hermes: `~/.hermes/skills/` — NousResearch/hermes-agent. The user-level
-//!   skill space Hermes resolves at agent load time (separate from the
-//!   repo-bundled `hermes-agent/skills/` tree, which is read-only and
+//! - Hermes: `$HERMES_HOME/skills/` when set, otherwise `~/.hermes/skills/` on
+//!   macOS/Linux or `%LOCALAPPDATA%\hermes\skills\` on Windows. This is the
+//!   user-level skill space Hermes resolves at agent load time (separate from
+//!   the repo-bundled `hermes-agent/skills/` tree, which is read-only and
 //!   version-controlled). Hermes' own `computer-use` skill teaches its wrapper
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
@@ -263,7 +264,16 @@ fn resolve_hermes_skills_dir(
 
 #[cfg(not(windows))]
 fn default_hermes_home() -> Result<PathBuf> {
-    Ok(PathBuf::from(std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?).join(".hermes"))
+    unix_hermes_home(std::env::var("HOME").ok().as_deref())
+}
+
+#[cfg(any(not(windows), test))]
+fn unix_hermes_home(home: Option<&str>) -> Result<PathBuf> {
+    let home = home
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| anyhow!("HOME not set"))?;
+    Ok(PathBuf::from(home).join(".hermes"))
 }
 
 #[cfg(windows)]
@@ -858,8 +868,8 @@ fn print_path() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_tar_gz, resolve_hermes_skills_dir, skill_release_url, windows_hermes_home,
-        AgentParent, AGENTS, SKILL_FILES,
+        extract_tar_gz, resolve_hermes_skills_dir, skill_release_url, unix_hermes_home,
+        windows_hermes_home, AgentParent, AGENTS, SKILL_FILES,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -887,9 +897,64 @@ mod tests {
     }
 
     #[test]
-    fn hermes_target_uses_native_windows_home() {
+    fn hermes_target_ignores_empty_or_whitespace_override() {
+        for override_home in [None, Some(""), Some("  \t  ")] {
+            let path =
+                resolve_hermes_skills_dir(override_home, || Ok(PathBuf::from("/fallback/hermes")))
+                    .unwrap();
+            assert_eq!(path, PathBuf::from("/fallback/hermes/skills"));
+        }
+    }
+
+    #[test]
+    fn hermes_target_uses_unix_default_home() {
+        assert_eq!(
+            unix_hermes_home(Some("/home/test")).unwrap(),
+            PathBuf::from("/home/test/.hermes")
+        );
+    }
+
+    #[test]
+    fn hermes_target_uses_native_windows_local_appdata() {
         let home = windows_hermes_home(Some("C:/Users/test/AppData/Local"), None).unwrap();
         assert_eq!(home, PathBuf::from("C:/Users/test/AppData/Local/hermes"));
+    }
+
+    #[test]
+    fn hermes_target_uses_windows_userprofile_fallback() {
+        let expected = PathBuf::from("C:/Users/test")
+            .join("AppData")
+            .join("Local")
+            .join("hermes");
+        for local_appdata in [None, Some(""), Some("  \t  ")] {
+            assert_eq!(
+                windows_hermes_home(local_appdata, Some("C:/Users/test")).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn hermes_defaults_report_missing_required_environment() {
+        for home in [None, Some(""), Some("  \t  ")] {
+            assert_eq!(
+                unix_hermes_home(home).unwrap_err().to_string(),
+                "HOME not set"
+            );
+        }
+        for (local_appdata, userprofile) in [
+            (None, None),
+            (Some(""), None),
+            (None, Some("  \t  ")),
+            (Some("  "), Some("")),
+        ] {
+            assert_eq!(
+                windows_hermes_home(local_appdata, userprofile)
+                    .unwrap_err()
+                    .to_string(),
+                "LOCALAPPDATA and USERPROFILE not set"
+            );
+        }
     }
 
     #[test]

@@ -648,6 +648,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection() != 44467:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics() != 57979:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart() != 27248:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_start() != 16011:
@@ -1444,6 +1446,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection.argt
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_restart.argtypes = (
     ctypes.c_uint64,
 )
@@ -1721,6 +1728,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_with
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart.restype = ctypes.c_uint16
@@ -2852,6 +2862,54 @@ class _UniffiFfiConverterOptionalInt32(_UniffiConverterRustBuffer):
             raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
+class EmbeddedDriverDiagnostics:
+    def __init__(self, *, lifecycle_phase:str, exit_code:typing.Optional[int], stderr_tail:str, stderr_truncated:bool):
+        self.lifecycle_phase = lifecycle_phase
+        self.exit_code = exit_code
+        self.stderr_tail = stderr_tail
+        self.stderr_truncated = stderr_truncated
+
+
+
+
+    def __str__(self):
+        return "EmbeddedDriverDiagnostics(lifecycle_phase={}, exit_code={}, stderr_tail={}, stderr_truncated={})".format(self.lifecycle_phase, self.exit_code, self.stderr_tail, self.stderr_truncated)
+    def __eq__(self, other):
+        if self.lifecycle_phase != other.lifecycle_phase:
+            return False
+        if self.exit_code != other.exit_code:
+            return False
+        if self.stderr_tail != other.stderr_tail:
+            return False
+        if self.stderr_truncated != other.stderr_truncated:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeEmbeddedDriverDiagnostics(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return EmbeddedDriverDiagnostics(
+            lifecycle_phase=_UniffiFfiConverterString.read(buf),
+            exit_code=_UniffiFfiConverterOptionalInt32.read(buf),
+            stderr_tail=_UniffiFfiConverterString.read(buf),
+            stderr_truncated=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.lifecycle_phase)
+        _UniffiFfiConverterOptionalInt32.check_lower(value.exit_code)
+        _UniffiFfiConverterString.check_lower(value.stderr_tail)
+        _UniffiFfiConverterBoolean.check_lower(value.stderr_truncated)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.lifecycle_phase, buf)
+        _UniffiFfiConverterOptionalInt32.write(value.exit_code, buf)
+        _UniffiFfiConverterString.write(value.stderr_tail, buf)
+        _UniffiFfiConverterBoolean.write(value.stderr_truncated, buf)
+
+@dataclass
 class EmbeddedDriverExit:
     def __init__(self, *, generation:str, code:typing.Optional[int], success:bool):
         self.generation = generation
@@ -2993,7 +3051,7 @@ class _UniffiFfiConverterOptionalTypeEmbeddedPermissionMode(_UniffiConverterRust
 
 @dataclass
 class EmbeddedDriverHostOptions:
-    def __init__(self, *, binary_path:str, host_bundle_id:str, socket_path:typing.Optional[str], startup_timeout_ms:typing.Optional[int], shutdown_timeout_ms:typing.Optional[int], permission_mode:typing.Optional[EmbeddedPermissionMode], capability_manifest_path:typing.Optional[str] = _DEFAULT, approve_capability_manifest:bool = False, session_policy_path:typing.Optional[str], approve_session_policy:bool, dangerously_bypass_approvals:bool, environment:typing.List[EmbeddedEnvironmentVariable], inherit_stderr:bool, no_overlay:bool = False):
+    def __init__(self, *, binary_path:str, host_bundle_id:str, socket_path:typing.Optional[str], startup_timeout_ms:typing.Optional[int], shutdown_timeout_ms:typing.Optional[int], permission_mode:typing.Optional[EmbeddedPermissionMode], capability_manifest_path:typing.Optional[str] = _DEFAULT, approve_capability_manifest:bool = False, session_policy_path:typing.Optional[str], approve_session_policy:bool, dangerously_bypass_approvals:bool, environment:typing.List[EmbeddedEnvironmentVariable], inherit_stderr:bool, no_overlay:bool = False, capture_stderr:bool = False):
         self.binary_path = binary_path
         self.host_bundle_id = host_bundle_id
         self.socket_path = socket_path
@@ -3011,12 +3069,13 @@ class EmbeddedDriverHostOptions:
         self.environment = environment
         self.inherit_stderr = inherit_stderr
         self.no_overlay = no_overlay
+        self.capture_stderr = capture_stderr
 
 
 
 
     def __str__(self):
-        return "EmbeddedDriverHostOptions(binary_path={}, host_bundle_id={}, socket_path={}, startup_timeout_ms={}, shutdown_timeout_ms={}, permission_mode={}, capability_manifest_path={}, approve_capability_manifest={}, session_policy_path={}, approve_session_policy={}, dangerously_bypass_approvals={}, environment={}, inherit_stderr={}, no_overlay={})".format(self.binary_path, self.host_bundle_id, self.socket_path, self.startup_timeout_ms, self.shutdown_timeout_ms, self.permission_mode, self.capability_manifest_path, self.approve_capability_manifest, self.session_policy_path, self.approve_session_policy, self.dangerously_bypass_approvals, self.environment, self.inherit_stderr, self.no_overlay)
+        return "EmbeddedDriverHostOptions(binary_path={}, host_bundle_id={}, socket_path={}, startup_timeout_ms={}, shutdown_timeout_ms={}, permission_mode={}, capability_manifest_path={}, approve_capability_manifest={}, session_policy_path={}, approve_session_policy={}, dangerously_bypass_approvals={}, environment={}, inherit_stderr={}, no_overlay={}, capture_stderr={})".format(self.binary_path, self.host_bundle_id, self.socket_path, self.startup_timeout_ms, self.shutdown_timeout_ms, self.permission_mode, self.capability_manifest_path, self.approve_capability_manifest, self.session_policy_path, self.approve_session_policy, self.dangerously_bypass_approvals, self.environment, self.inherit_stderr, self.no_overlay, self.capture_stderr)
     def __eq__(self, other):
         if self.binary_path != other.binary_path:
             return False
@@ -3046,6 +3105,8 @@ class EmbeddedDriverHostOptions:
             return False
         if self.no_overlay != other.no_overlay:
             return False
+        if self.capture_stderr != other.capture_stderr:
+            return False
         return True
 
 class _UniffiFfiConverterTypeEmbeddedDriverHostOptions(_UniffiConverterRustBuffer):
@@ -3066,6 +3127,7 @@ class _UniffiFfiConverterTypeEmbeddedDriverHostOptions(_UniffiConverterRustBuffe
             environment=_UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.read(buf),
             inherit_stderr=_UniffiFfiConverterBoolean.read(buf),
             no_overlay=_UniffiFfiConverterBoolean.read(buf),
+            capture_stderr=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -3084,6 +3146,7 @@ class _UniffiFfiConverterTypeEmbeddedDriverHostOptions(_UniffiConverterRustBuffe
         _UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.check_lower(value.environment)
         _UniffiFfiConverterBoolean.check_lower(value.inherit_stderr)
         _UniffiFfiConverterBoolean.check_lower(value.no_overlay)
+        _UniffiFfiConverterBoolean.check_lower(value.capture_stderr)
 
     @staticmethod
     def write(value, buf):
@@ -3101,6 +3164,7 @@ class _UniffiFfiConverterTypeEmbeddedDriverHostOptions(_UniffiConverterRustBuffe
         _UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.write(value.environment, buf)
         _UniffiFfiConverterBoolean.write(value.inherit_stderr, buf)
         _UniffiFfiConverterBoolean.write(value.no_overlay, buf)
+        _UniffiFfiConverterBoolean.write(value.capture_stderr, buf)
 
 @dataclass
 class ImageContent:
@@ -6198,10 +6262,37 @@ class _UniffiFfiConverterOptionalTypeEmbeddedDriverConnection(_UniffiConverterRu
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeEmbeddedDriverDiagnostics(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeEmbeddedDriverDiagnostics.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeEmbeddedDriverDiagnostics.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeEmbeddedDriverDiagnostics.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 
 class EmbeddedCuaDriverHostProtocol(typing.Protocol):
 
     def connection(self, ) -> typing.Optional[EmbeddedDriverConnection]:
+        raise NotImplementedError
+    def last_diagnostics(self, ) -> typing.Optional[EmbeddedDriverDiagnostics]:
         raise NotImplementedError
     async def restart(self, ) -> EmbeddedDriverConnection:
         raise NotImplementedError
@@ -6276,6 +6367,18 @@ class EmbeddedCuaDriverHost(EmbeddedCuaDriverHostProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def last_diagnostics(self, ) -> typing.Optional[EmbeddedDriverDiagnostics]:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterOptionalTypeEmbeddedDriverDiagnostics.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -6498,6 +6601,7 @@ __all__ = [
     "EmbeddedEnvironmentVariable",
     "EmbeddedMcpConfiguration",
     "EmbeddedDriverConnection",
+    "EmbeddedDriverDiagnostics",
     "EmbeddedDriverExit",
     "EmbeddedDriverHostOptions",
     "ImageContent",

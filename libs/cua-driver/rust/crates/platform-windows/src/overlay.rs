@@ -86,7 +86,7 @@ fn arrival_fire(key: &CursorKey) {
 struct RenderMap {
     cursors: IndexMap<CursorKey, RenderState>,
     /// Virtual screen dimensions set after window creation (Win32 DIPs).
-    /// `virt_x/y` are subtracted from each placed cursor when rendering
+    /// `virt_x/y` are subtracted from each cursor's `core.pos` when rendering
     /// so the pixmap is laid out in window-local coordinates.
     virt_x: i32,
     virt_y: i32,
@@ -343,7 +343,12 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| rs.core.cfg.enabled && rs.core.cursor_is_revealed())
+                .map(|rs| {
+                    rs.core.cfg.enabled
+                        && rs.core.visible
+                        && rs.core.idle_alpha >= 0.004
+                        && rs.core.pos.0 >= -100.0
+                })
         })
         .unwrap_or(false)
 }
@@ -384,21 +389,27 @@ pub fn current_theme_state(
     Some((id, version, profile, fallback, state.core.visual.clone()))
 }
 
-/// Current screen position of the cursor for `key`, if it has been placed.
-pub fn current_position(key: &str) -> Option<(f64, f64)> {
-    RENDER.lock().ok().and_then(|g| {
-        g.as_ref()
-            .and_then(|m| m.cursors.get(key))
-            .and_then(|rs| rs.core.pos)
-    })
+/// Current screen position of the cursor for `key` (the off-screen sentinel
+/// `(-200, -200)` if it has never been placed). A session with no own cursor
+/// yet reports the sentinel so the click path treats it as first-placement.
+pub fn current_position(key: &str) -> (f64, f64) {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|m| m.cursors.get(key))
+                .map(|rs| rs.core.pos)
+        })
+        .unwrap_or((-200.0, -200.0))
 }
 
-/// Seed a brand-new cursor at an on-screen start point
+/// Seed a brand-new (sentinel-positioned) cursor at an on-screen start point
 /// offset up-left of `(target_x, target_y)` so the immediately-following
 /// `MoveTo` glides INTO the target instead of silently snapping. No-op when the
 /// cursor is already on-screen or its session already ended. Returns true if a
 /// seed was applied. Mirrors `platform_macos::cursor::overlay::seed_start_*`.
-fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
         return false;
@@ -424,7 +435,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.is_none()) {
+    if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
         return false;
     }
     let mut sx = target_x - SEED_OFFSET;
@@ -440,7 +451,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
             sy = (target_y + SEED_OFFSET).min(virt_y + virt_h - 2.0);
         }
     }
-    rs.core.pos = Some((sx, sy));
+    rs.core.pos = (sx, sy);
     true
 }
 
@@ -452,21 +463,21 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
 /// - the key is empty (anonymous run → no cursor), or
 /// - the cursor for `key` is disabled.
 ///
-/// A brand-new cursor is first seeded on-screen via [`seed_start_if_unplaced`]
-/// so its first action glides in.
+/// A brand-new cursor still at the off-screen sentinel is first seeded
+/// on-screen via [`seed_start_if_sentinel`] so its FIRST action glides in.
 /// Mirrors `platform_macos::cursor::overlay::animate_cursor_to`.
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     if key.is_empty() {
         return;
     }
-    // Seed an unplaced cursor on-screen so the MoveTo below glides instead of
+    // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
     // being short-circuited.
-    seed_start_if_unplaced(&key, x, y);
+    seed_start_if_sentinel(&key, x, y);
 
     let should_animate = {
         let guard = RENDER.lock().unwrap();
         match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.is_some() => true,
+            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0 => true,
             _ => false,
         }
     };
@@ -548,16 +559,18 @@ impl RenderState {
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) {
-        // Windows click pulses update the cursor position unconditionally.
+        // Windows uses the non-sentinel-snap behaviour for both MoveTo and
+        // ClickPulse: every command updates `self.pos` unconditionally.
         // `ShowFocusRect` is not rendered on Windows — `apply_command_base`
         // returns `false` for it and we silently drop it here.
-        let _ = self.core.apply_command_base(cmd, true);
+        let _ = self.core.apply_command_base(cmd, false, false);
     }
 
     /// True while the render loop must keep ticking at frame cadence because
     /// the next tick can still change pixels: an in-flight glide path, a
     /// spring-settle, a click pulse, or an idle-fade actively fading
-    /// (`0.004 <= idle_alpha < 1.0`). A brand-new unplaced cursor, one that has already faded to
+    /// (`0.004 <= idle_alpha < 1.0`). A brand-new sentinel cursor (off-screen
+    /// at `(-200, -200)`), a cursor that has already faded to
     /// `idle_alpha ≈ 0`, AND a cursor resting at constant `idle_alpha == 1.0`
     /// waiting out the idle-hide countdown are all non-rendering states: the
     /// countdown phase leaves every frame pixel-identical, so compositing a
@@ -572,7 +585,9 @@ impl RenderState {
             || self.core.click_t.is_some()
             || self.core.session_badge_needs_frame_tick()
             || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.cursor_is_revealed()
+                && self.core.visible
+                && self.core.pos.0 >= -100.0
+                && self.core.idle_alpha >= 0.004
                 && self.core.idle_alpha < 1.0)
     }
 
@@ -587,7 +602,8 @@ impl RenderState {
             && self.core.spring.is_none()
             && self.core.click_t.is_none()
             && self.core.motion.idle_hide_ms > 0.0
-            && self.core.cursor_is_revealed()
+            && self.core.visible
+            && self.core.pos.0 >= -100.0
             && self.core.idle_alpha >= 1.0
     }
 }
@@ -970,14 +986,11 @@ fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
         // (mirrors paint_cursor's own visibility early-return).
         let mut current: Option<DirtyRect> = None;
         for rs in map.cursors.values() {
-            if !rs.core.cursor_is_revealed() {
+            if !rs.core.visible || rs.core.pos.0 < -100.0 || rs.core.idle_alpha < 0.004 {
                 continue;
             }
-            let Some((cursor_x, cursor_y)) = rs.core.pos else {
-                continue;
-            };
-            let cx = (cursor_x - map.virt_x as f64).round() as i32;
-            let cy = (cursor_y - map.virt_y as f64).round() as i32;
+            let cx = (rs.core.pos.0 - map.virt_x as f64).round() as i32;
+            let cy = (rs.core.pos.1 - map.virt_y as f64).round() as i32;
             let custom_theme = rs
                 .core
                 .theme
@@ -1526,7 +1539,7 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 //
 // These prove the per-session ownership data model, the session_end removal
 // lifecycle, the "default" guard, the resurrection tombstone, and the
-// first-placement seed WITHOUT any Win32 window. The on-screen rendering
+// sentinel seed WITHOUT any Win32 window. The on-screen rendering
 // (UpdateLayeredWindow) still needs a real display and is verified separately.
 
 #[cfg(test)]
@@ -1767,18 +1780,15 @@ mod tests {
     }
 
     #[test]
-    fn seed_places_cursor_inside_the_virtual_desktop() {
+    fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
         let mut map = empty_map(); // 100x100 frame at origin
                                    // No "sessA" cursor exists yet — the seed must get-or-create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        assert!(seeded, "unplaced cursor must be seeded");
-        let pos = map.cursors["sessA"].core.pos.expect("seeded position");
+        assert!(seeded, "sentinel cursor must be seeded");
+        let pos = map.cursors["sessA"].core.pos;
         assert!(
-            pos.0 >= f64::from(map.virt_x)
-                && pos.0 < f64::from(map.virt_x + map.virt_w)
-                && pos.1 >= f64::from(map.virt_y)
-                && pos.1 < f64::from(map.virt_y + map.virt_h),
-            "seed must be inside the virtual desktop, got {pos:?}"
+            pos.0 > -50.0 && pos.1 > -50.0,
+            "seed must be on-screen, got {pos:?}"
         );
         assert!(
             (pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
@@ -1787,32 +1797,17 @@ mod tests {
     }
 
     #[test]
-    fn seed_is_noop_when_cursor_is_already_placed() {
+    fn seed_is_noop_when_cursor_already_on_screen() {
         let mut map = empty_map();
         seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((30.0, 30.0));
+        map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
         let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
-        assert!(!seeded_again, "placed cursor must not be re-seeded");
+        assert!(!seeded_again, "on-screen cursor must not be re-seeded");
         assert_eq!(
             map.cursors["sessA"].core.pos,
-            Some((30.0, 30.0)),
+            (30.0, 30.0),
             "pos must be untouched"
         );
-    }
-
-    #[test]
-    fn negative_virtual_screen_coordinates_are_not_reseeded() {
-        let mut map = empty_map();
-        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = Some((-867.0, 400.0));
-
-        assert!(!seed_start_in_map(
-            &mut map,
-            &"sessA".to_owned(),
-            80.0,
-            80.0
-        ));
-        assert_eq!(map.cursors["sessA"].core.pos, Some((-867.0, 400.0)));
     }
 
     #[test]
@@ -1828,16 +1823,16 @@ mod tests {
     }
 
     #[test]
-    fn unplaced_cursor_is_quiescent_no_frame_tick() {
+    fn sentinel_cursor_is_quiescent_no_frame_tick() {
         // A brand-new `mcp`/`serve` with no agent activity holds only the
-        // unplaced "default" cursor. It must NOT
+        // "default" cursor at the off-screen sentinel (-200, -200). It must NOT
         // request frame ticks, so the render timer can drop to the slow idle
         // cadence instead of compositing a full-screen pixmap at ~125 Hz
         // (issue #1808 idle-CPU burn).
         let map = empty_map();
         assert!(
             !render_map_needs_frame_tick(&map),
-            "an untouched unplaced overlay must be quiescent"
+            "an untouched sentinel-only overlay must be quiescent"
         );
     }
 

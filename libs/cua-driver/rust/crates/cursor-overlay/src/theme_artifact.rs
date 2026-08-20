@@ -115,50 +115,6 @@ pub struct CompiledTheme {
 }
 
 impl CompiledTheme {
-    /// Conservative logical-point radius around the cursor anchor that can be
-    /// touched by any frame in this artifact. Computing this once when a theme
-    /// is selected lets platform renderers allocate bounded cursor-local tiles.
-    pub fn paint_radius(&self) -> f64 {
-        let mut radius = 1.0f64;
-        for command in self
-            .actions
-            .values()
-            .flat_map(|animation| &animation.frames)
-            .flat_map(|frame| &frame.commands)
-        {
-            let mut builder = PathBuilder::new();
-            for geometry in &command.geometries {
-                append_geometry(&mut builder, geometry);
-            }
-            let Some(path) = builder
-                .finish()
-                .and_then(|path| path.transform(compiled_transform(command.transform)))
-            else {
-                continue;
-            };
-            let bounds = path.bounds();
-            let geometry_radius = [
-                (bounds.left(), bounds.top()),
-                (bounds.right(), bounds.top()),
-                (bounds.left(), bounds.bottom()),
-                (bounds.right(), bounds.bottom()),
-            ]
-            .into_iter()
-            .map(|(x, y)| f64::from(x - 64.0).hypot(f64::from(y - 64.0)))
-            .fold(0.0, f64::max);
-            let stroke_radius = command.stroke.map_or(0.0, |stroke| {
-                let scale = command.transform.scale[0]
-                    .abs()
-                    .max(command.transform.scale[1].abs());
-                // tiny-skia's default miter limit is four half-widths.
-                f64::from(stroke.width * scale * 2.0)
-            });
-            radius = radius.max(geometry_radius + stroke_radius);
-        }
-        // Include anti-aliasing and the default theme's shared float motion.
-        (radius * f64::from(crate::theme::DISPLAY_SIZE / crate::theme::CANVAS_SIZE) + 8.0).max(8.0)
-    }
-
     pub fn content_hash(&self) -> String {
         let mut hasher = Sha256::new();
         if let Ok(bytes) = postcard::to_allocvec(self) {
@@ -906,16 +862,6 @@ mod tests {
         let bytes = encode_theme(&theme).unwrap();
         assert_eq!(decode_theme(&bytes).unwrap(), theme);
         assert!(decode_theme(&bytes[..20]).is_err());
-    }
-
-    #[test]
-    fn paint_radius_includes_authored_transforms() {
-        let mut theme = minimal_theme();
-        for animation in theme.actions.values_mut() {
-            animation.frames[0].commands[0].transform.position = [400.0, 64.0];
-        }
-        assert!(theme.paint_radius() > 100.0);
-        assert!(theme.paint_radius() < 150.0);
     }
 
     #[test]

@@ -314,8 +314,13 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     break;
                 }
                 Ok(WlOverlayCmd::Cmd { cmd }) => {
-                    // Seed an unplaced cursor near the target so its first
-                    // spring animation starts on-screen, matching X11.
+                    // Seed: if the cursor is still at the off-screen sentinel
+                    // `(-200, -200)` from `RenderStateCore::new`, snap to a
+                    // point near the MoveTo / SnapTo target so the spring
+                    // animation starts on-screen. Mirrors X11 overlay.rs's
+                    // `seed_start_if_sentinel` helper — without it, the
+                    // spring oscillates around the sentinel and the cursor
+                    // never reaches the screen.
                     let seed_target = match &cmd {
                         OverlayCommand::MoveTo { x, y, .. }
                         | OverlayCommand::SnapTo { x, y, .. }
@@ -323,16 +328,18 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                         _ => None,
                     };
                     if let Some((tx, ty)) = seed_target {
-                        if state.core.pos.is_none() {
+                        if state.core.pos.0 < -50.0 {
                             const SEED_OFFSET: f64 = 16.0;
                             let sx = (tx - SEED_OFFSET).max(2.0);
                             let sy = (ty - SEED_OFFSET).max(2.0);
-                            state.core.pos = Some((sx, sy));
+                            state.core.pos = (sx, sy);
                         }
                     }
-                    // apply_command_base consumes every variant X11 handles.
+                    // apply_command_base consumes every variant the X11
+                    // path handles. `move_to_snap_sentinel` / `click_pulse
+                    // _sentinel_only` are both `false` here — same as X11.
                     let disabling = matches!(&cmd, OverlayCommand::SetEnabled(false));
-                    dirty |= state.core.apply_command_base(cmd, true);
+                    dirty |= state.core.apply_command_base(cmd, false, false);
                     if disabling {
                         quiesce_hidden(&mut state.core);
                     }
@@ -341,7 +348,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     // Single-cursor overlay: removing the active cursor
                     // hides it. Multi-cursor wlroots support can layer on
                     // top of this in a follow-up if needed.
-                    dirty |= state.core.visible || state.core.pos.is_some();
+                    dirty |= state.core.visible || state.core.pos.0 >= -100.0;
                     state.core.visible = false;
                     quiesce_hidden(&mut state.core);
                 }
@@ -431,7 +438,7 @@ fn next_wait(core: &RenderStateCore, frame_tick_needed: bool) -> WlWait {
 }
 
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    if !core.cursor_is_revealed() {
+    if !core.visible || core.pos.0 < -100.0 {
         return false;
     }
     let fade_start = core.motion.idle_hide_ms / 1000.0;
@@ -446,7 +453,7 @@ fn needs_frame_tick(core: &RenderStateCore) -> bool {
 
 fn idle_fade_wait(core: &RenderStateCore) -> Option<Duration> {
     if !core.visible
-        || core.pos.is_none()
+        || core.pos.0 < -100.0
         || core.motion.idle_hide_ms <= 0.0
         || core.path.is_some()
         || core.spring.is_some()
@@ -479,7 +486,7 @@ fn quiesce_hidden(core: &mut RenderStateCore) {
 /// 4. Attach + damage + commit on the layer surface.
 ///
 /// When the cursor is hidden (`core.visible == false`, idle-faded, or
-/// unplaced) the pixmap is all zeros — the surface remains
+/// off-screen sentinel) the pixmap is all zeros — the surface remains
 /// transparent and click-through.
 fn redraw(
     state: &mut OverlayState,
@@ -528,7 +535,8 @@ fn redraw(
     // layer-shell visibility on a new compositor — the gradient arrow is
     // small at native scale and easy to miss in a screenshot, while the
     // magenta block is impossible to miss.
-    if let (Some((cx, cy)), Some(_)) = (state.core.pos, std::env::var_os("CUA_OVERLAY_DEBUG")) {
+    if std::env::var_os("CUA_OVERLAY_DEBUG").is_some() {
+        let (cx, cy) = state.core.pos;
         let cx = cx as i32;
         let cy = cy as i32;
         let half = 30i32;
@@ -580,8 +588,8 @@ fn redraw(
     state.pending_buffers.insert(buffer_id, (ptr, size, fd));
 
     dbg(&format!(
-        "redraw w={w} h={h} stride={stride} buf_id={buffer_id} pos={:?} visible={}",
-        state.core.pos, state.core.visible
+        "redraw w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) visible={}",
+        state.core.pos.0, state.core.pos.1, state.core.visible
     ));
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
@@ -785,13 +793,13 @@ mod tests {
 
     fn positioned_core() -> RenderStateCore {
         let mut core = RenderStateCore::new(CursorConfig::default());
-        core.pos = Some((100.0, 100.0));
+        core.pos = (100.0, 100.0);
         core.motion.idle_hide_ms = 1_000.0;
         core
     }
 
     #[test]
-    fn fresh_unplaced_overlay_blocks_without_frame_polling() {
+    fn fresh_sentinel_overlay_blocks_without_frame_polling() {
         let core = RenderStateCore::new(CursorConfig::default());
         assert_eq!(next_wait(&core, false), WlWait::Block);
         assert!(!needs_frame_tick(&core));

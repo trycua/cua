@@ -796,6 +796,48 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
+    paint_cursor_impl(
+        pm,
+        core,
+        origin_x,
+        origin_y,
+        focus_rect,
+        backing_scale,
+        true,
+    );
+}
+
+/// Paint cursor artwork on a neighboring display without duplicating the
+/// display-clamped session badge owned by the cursor's anchor display.
+pub fn paint_cursor_art(
+    pm: &mut tiny_skia::Pixmap,
+    core: &RenderStateCore,
+    origin_x: f64,
+    origin_y: f64,
+    focus_rect: Option<FocusRect>,
+    backing_scale: f32,
+) {
+    paint_cursor_impl(
+        pm,
+        core,
+        origin_x,
+        origin_y,
+        focus_rect,
+        backing_scale,
+        false,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_cursor_impl(
+    pm: &mut tiny_skia::Pixmap,
+    core: &RenderStateCore,
+    origin_x: f64,
+    origin_y: f64,
+    focus_rect: Option<FocusRect>,
+    backing_scale: f32,
+    paint_badge: bool,
+) {
     if !core.cursor_is_revealed() {
         return;
     }
@@ -894,23 +936,25 @@ pub fn paint_cursor(
         );
     }
 
-    let (delivery, target) = core.badge_modifiers.unwrap_or((None, None));
-    if let Some(layout) = crate::session_badge_layout(crate::SessionBadgeInput {
-        label: core.session_label.as_deref(),
-        delivery,
-        target,
-        cursor: (px as f32, py as f32),
-        backing_scale: backing_scale.max(1.0),
-        label_alpha: core.session_badge_alpha(),
-        chip_alpha: core.session_badge_chip_alpha(),
-        clip: Some((pm.width() as f32, pm.height() as f32)),
-    }) {
-        crate::paint_session_badge(
-            pm,
-            &layout,
-            crate::session_fill_rgba(&core.cfg.cursor_id),
-            alpha_scale,
-        );
+    if paint_badge {
+        let (delivery, target) = core.badge_modifiers.unwrap_or((None, None));
+        if let Some(layout) = crate::session_badge_layout(crate::SessionBadgeInput {
+            label: core.session_label.as_deref(),
+            delivery,
+            target,
+            cursor: (px as f32, py as f32),
+            backing_scale: backing_scale.max(1.0),
+            label_alpha: core.session_badge_alpha(),
+            chip_alpha: core.session_badge_chip_alpha(),
+            clip: Some((pm.width() as f32, pm.height() as f32)),
+        }) {
+            crate::paint_session_badge(
+                pm,
+                &layout,
+                crate::session_fill_rgba(&core.cfg.cursor_id),
+                alpha_scale,
+            );
+        }
     }
 }
 

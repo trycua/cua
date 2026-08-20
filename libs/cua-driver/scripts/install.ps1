@@ -575,9 +575,17 @@ function Get-JunctionTarget([string]$linkPath) {
 
         $output = & $env:ComSpec /d /c "fsutil reparsepoint query `"$linkPath`"" 2>&1
         if ($LASTEXITCODE -ne 0) { return $null }
+        $marker = '\??\'
         foreach ($line in @($output)) {
-            $match = [regex]::Match([string]$line, '\\\?\?\\(.+)$')
-            if ($match.Success) { return $match.Groups[1].Value.Trim() }
+            $text = [string]$line
+            $markerIndex = $text.IndexOf($marker, [System.StringComparison]::Ordinal)
+            if ($markerIndex -ge 0) {
+                $target = $text.Substring($markerIndex + $marker.Length).Trim()
+                if ($target.StartsWith('UNC\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    return '\\' + $target.Substring(4)
+                }
+                return $target
+            }
         }
         return $null
     } catch {

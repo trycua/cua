@@ -76,6 +76,10 @@ try {
         throw "working junction was lost after staged replacement failure"
     }
     $actual = Get-JunctionTarget $link
+    if ([string]::IsNullOrWhiteSpace($actual)) {
+        $diagnostic = & $env:ComSpec /d /c "fsutil reparsepoint query `"$link`"" 2>&1
+        throw "PowerShell 5.1 fallback could not read the preserved target: $($diagnostic -join ' | ')"
+    }
     if ([System.IO.Path]::GetFullPath($actual) -ne [System.IO.Path]::GetFullPath($oldTarget)) {
         throw "junction target changed after staged replacement failure: expected '$oldTarget', got '$actual'"
     }

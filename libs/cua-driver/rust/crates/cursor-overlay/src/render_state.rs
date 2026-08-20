@@ -18,18 +18,16 @@
 //!   SetEnabled / SetMotion / SetTheme / semantic action events / PinAbove).
 //!   Returns `false` for variants the core doesn't handle so platforms can
 //!   layer their own behaviour on top (e.g. macOS ShowFocusRect).
-//! - [`render_frame`] — the tiny-skia paint of the selected cursor theme.
-//!   Parametrised by pixmap dimensions and an origin offset so Windows can
-//!   pass `(virt_x, virt_y)` while macOS / Linux pass `(0, 0)`.
+//! - [`render_frame`] — the tiny-skia paint of the selected cursor theme,
+//!   parameterized by pixmap dimensions and a global origin offset.
 //!
 //! ## What stays per-platform
 //!
 //! - The OS window / surface (NSWindow / HWND / X11 Window) and its message
 //!   loop or run-loop.
-//! - The paint dispatch: `dispatch_set_layer_contents` (CGImage),
-//!   `UpdateLayeredWindow` (BGRA DIB), `XPutImage` (BGRA ZPixmap).
-//! - Origin/coordinate translation (Windows uses virtual-screen offset;
-//!   macOS uses NSScreen coordinates; Linux uses display coordinates).
+//! - The paint dispatch: Core Animation child layers on macOS,
+//!   `UpdateLayeredWindow` (BGRA DIB), and `XPutImage` (BGRA ZPixmap).
+//! - Origin/coordinate translation from global points into native surfaces.
 //! - Platform-specific extras like macOS's `focus_rect` (post-arrival
 //!   element highlight — drawn inside [`render_frame`] when the caller
 //!   supplies one via the optional argument).
@@ -105,6 +103,7 @@ impl RenderStateCore {
     /// `pos` starts empty so the first placement can snap rather than animate.
     pub fn new(cfg: CursorConfig) -> Self {
         let motion = cfg.motion.clone();
+        let visible = cfg.enabled;
         let visual = CursorVisualState {
             reduced_motion: cfg.reduced_motion,
             ..CursorVisualState::default()
@@ -136,7 +135,7 @@ impl RenderStateCore {
             spring_tgt: None,
             click_t: None,
             pressed: false,
-            visible: true,
+            visible,
             idle_secs: 0.0,
             idle_alpha: 1.0,
             pinned_wid: None,
@@ -973,6 +972,18 @@ fn paint_cursor_impl(
 mod placement_tests {
     use super::*;
     use crate::CursorConfig;
+
+    #[test]
+    fn launch_visibility_has_one_source_of_truth() {
+        let mut config = CursorConfig::default();
+        config.enabled = false;
+        let mut core = RenderStateCore::new(config);
+        assert!(!core.visible);
+        assert!(!core.cursor_is_revealed());
+
+        core.apply_command_base(OverlayCommand::SetEnabled(true), true);
+        assert!(core.visible);
+    }
 
     #[test]
     fn only_unplaced_cursors_are_unrevealed() {

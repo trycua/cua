@@ -399,7 +399,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| rs.core.cfg.enabled && rs.core.cursor_is_revealed())
+                .map(|rs| rs.core.cursor_is_revealed())
         })
         .unwrap_or(false)
 }
@@ -465,7 +465,7 @@ fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.is_none()) {
+    if !(rs.core.visible && rs.core.pos.is_none()) {
         return false;
     }
     let max_x = map.scr_w.max(2) as f64 - 2.0;
@@ -492,7 +492,7 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
     let should_animate = {
         let guard = RENDER.lock().unwrap();
         match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.is_some() => true,
+            Some(rs) if rs.core.visible && rs.core.pos.is_some() => true,
             _ => false,
         }
     };

@@ -71,6 +71,7 @@ impl DisplayLayout {
             .map(|display| (display.id, display.local_point(point)))
     }
 
+    #[cfg(test)]
     pub(crate) fn display(&self, id: DisplayId) -> Option<DisplayGeometry> {
         self.displays
             .iter()

@@ -236,12 +236,6 @@ pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
     }
 }
 
-/// Convenience for callsites not yet threaded with a session key: drives the
-/// seeded `"default"` cursor (the anonymous / one-shot identity).
-pub fn send_command_default(cmd: OverlayCommand) {
-    send_command("default".to_owned(), cmd);
-}
-
 /// Truthful render acknowledgement for lifecycle inspection. This never falls
 /// back to the default cursor: an absent, unplaced, disabled, or idle-faded
 /// session cursor is not reported as visible.
@@ -455,15 +449,13 @@ pub fn run_on_main_thread() {
         }
     };
 
-    let cfg = {
-        let guard = RENDER.lock().unwrap();
-        match guard.as_ref() {
-            Some(m) => m.template.clone(),
-            None => return,
-        }
-    };
+    let enabled = RENDER
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|map| map.template.enabled);
 
-    if !cfg.enabled {
+    if !enabled {
         loop {
             std::thread::park();
         }
@@ -489,7 +481,7 @@ pub fn run_on_main_thread() {
     // ------------------------------------------------------------------
     // AppKit setup (all on the main thread).
     // ------------------------------------------------------------------
-    unsafe { run_appkit(cfg, rx) };
+    unsafe { run_appkit(rx) };
 }
 
 // ── Animation / render state ──────────────────────────────────────────────
@@ -602,6 +594,16 @@ struct NativeSurface {
     layer_ptr: usize,
 }
 
+impl NativeSurface {
+    unsafe fn close(self) {
+        use objc2::runtime::AnyObject;
+        let win = self.win_ptr as *mut AnyObject;
+        let _: () = objc2::msg_send![win, orderOut: std::ptr::null_mut::<AnyObject>()];
+        let _: () = objc2::msg_send![win, setReleasedWhenClosed: true];
+        let _: () = objc2::msg_send![win, close];
+    }
+}
+
 struct AppKitOverlayHost {
     generation: u64,
     surfaces: HashMap<DisplayId, NativeSurface>,
@@ -610,14 +612,12 @@ struct AppKitOverlayHost {
 impl AppKitOverlayHost {
     unsafe fn create(layout: &DisplayLayout) -> Option<Self> {
         let primary_height = layout.primary_height()?;
-        let mut surfaces = HashMap::new();
+        let mut surfaces = HashMap::<DisplayId, NativeSurface>::new();
         for geometry in &layout.displays {
             let Some(surface) = create_native_surface(*geometry, primary_height) else {
-                Self {
-                    generation: layout.generation,
-                    surfaces,
+                for surface in surfaces.into_values() {
+                    surface.close();
                 }
-                .close();
                 return None;
             };
             surfaces.insert(geometry.id, surface);
@@ -629,12 +629,8 @@ impl AppKitOverlayHost {
     }
 
     unsafe fn close(self) {
-        use objc2::runtime::AnyObject;
         for surface in self.surfaces.into_values() {
-            let win = surface.win_ptr as *mut AnyObject;
-            let _: () = objc2::msg_send![win, orderOut: std::ptr::null_mut::<AnyObject>()];
-            let _: () = objc2::msg_send![win, setReleasedWhenClosed: true];
-            let _: () = objc2::msg_send![win, close];
+            surface.close();
         }
     }
 }
@@ -713,7 +709,7 @@ unsafe fn rebuild_appkit_host() -> bool {
     true
 }
 
-unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
+unsafe fn run_appkit(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
@@ -803,7 +799,6 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
             arrived,
             had_msg,
             cursor_commanded,
-            layout_changed,
             hover_changed,
             next_frame_tick_needed,
             next_hover_poll_needed,
@@ -814,7 +809,6 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
             };
             let mut had_msg = false;
             let mut cursor_commanded = false;
-            let mut layout_changed = false;
 
             let mut apply = |message: MacOverlayMsg| {
                 had_msg = true;
@@ -826,7 +820,7 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                         };
                         apply_msg(map, message);
                     }
-                    MacOverlayMsg::LayoutChanged => layout_changed = true,
+                    MacOverlayMsg::LayoutChanged => {}
                 }
             };
             if let Some(message) = first_msg {
@@ -874,7 +868,6 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                 arrived,
                 had_msg,
                 cursor_commanded,
-                layout_changed,
                 hover_changed,
                 next_frame_tick_needed,
                 next_hover_poll_needed,
@@ -918,14 +911,10 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                     break;
                 };
                 let painted = painted_display_ids(map);
-                let mut displays_to_present = presented_displays
+                let displays_to_present = presented_displays
                     .union(&painted)
                     .copied()
                     .collect::<HashSet<_>>();
-                if layout_changed {
-                    displays_to_present
-                        .extend(map.layout.displays.iter().map(|display| display.id));
-                }
                 let frames = displays_to_present
                     .into_iter()
                     .filter_map(|display_id| {
@@ -935,7 +924,11 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                             .copied()
                             .find(|display| display.id == display_id)
                             .map(|display| {
-                                (map.layout.generation, display, render_display(map, display))
+                                (
+                                    map.layout.generation,
+                                    display.id,
+                                    render_display(map, display),
+                                )
                             })
                     })
                     .collect::<Vec<_>>();
@@ -943,8 +936,8 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                 frames
             };
 
-            for (generation, display, pixmap) in frames {
-                dispatch_present(generation, display.id, pixmap);
+            for (generation, display_id, pixmap) in frames {
+                dispatch_present(generation, display_id, pixmap);
             }
         }
 
@@ -1049,10 +1042,7 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 }
 
 fn cursor_is_visible(state: &RenderState) -> bool {
-    state.core.placed
-        && state.core.cfg.enabled
-        && state.core.visible
-        && state.core.idle_alpha >= 0.004
+    state.core.cfg.enabled && state.core.cursor_is_revealed()
 }
 
 type MainWork = Box<dyn FnOnce() + Send>;

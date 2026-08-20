@@ -78,18 +78,40 @@ where
     }
 }
 
+async fn claim_with_delayed_consent<T, Claim, Consent>(
+    claim: Claim,
+    consent: Consent,
+) -> Result<(anyhow::Result<T>, bool), BrowserRefusal>
+where
+    Claim: Future<Output = anyhow::Result<T>>,
+    Consent: Future<Output = Result<BrowserConsentOutcome, BrowserRefusal>>,
+{
+    let mut claim = Box::pin(claim);
+    let initial = tokio::select! {
+        result = &mut claim => Some(result),
+        _ = tokio::time::sleep(Duration::from_millis(500)) => None,
+    };
+    match initial {
+        Some(result) => Ok((result, false)),
+        None => claim_with_optional_consent(&mut claim, consent).await,
+    }
+}
+
 async fn retry_claim_after_accepted_consent<T, Retry>(
     initial: anyhow::Result<T>,
     accepted_consent: bool,
     retry: Retry,
-) -> (anyhow::Result<T>, Option<anyhow::Error>)
+) -> Result<(anyhow::Result<T>, Option<anyhow::Error>, bool), BrowserRefusal>
 where
-    Retry: Future<Output = anyhow::Result<T>>,
+    Retry: Future<Output = Result<(anyhow::Result<T>, bool), BrowserRefusal>>,
 {
     match initial {
-        Ok(value) => (Ok(value), None),
-        Err(initial_error) if accepted_consent => (retry.await, Some(initial_error)),
-        Err(error) => (Err(error), None),
+        Ok(value) => Ok((Ok(value), None, false)),
+        Err(initial_error) if accepted_consent => {
+            let (result, displayed_consent_prompt) = retry.await?;
+            Ok((result, Some(initial_error), displayed_consent_prompt))
+        }
+        Err(error) => Ok((Err(error), None, false)),
     }
 }
 
@@ -1076,64 +1098,78 @@ impl BrowserEngine {
                 self.pool.release_claim_marker(&previous.endpoint_ws_url);
             }
         }
-        let (claimed, displayed_consent_prompt) = {
-            let ws_url = endpoint.ws_url.clone();
-            let mut claim = Box::pin(self.pool.claim_existing(&ws_url, grant.generation));
-            let initial = tokio::select! {
-                result = &mut claim => Some(result),
-                _ = tokio::time::sleep(Duration::from_millis(500)) => None,
-            };
-            if let Some(result) = initial {
-                (result, false)
-            } else {
-                match claim_with_optional_consent(
-                    &mut claim,
-                    self.platform
-                        .handle_existing_profile_consent(BrowserConsentRequest {
-                            pid,
-                            window_id,
-                            attempt: 1,
-                        }),
+        let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
+            self.pool.claim_existing(&endpoint.ws_url, grant.generation),
+            self.platform
+                .handle_existing_profile_consent(BrowserConsentRequest {
+                    pid,
+                    window_id,
+                    attempt: 1,
+                }),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                // The helper owns and cancels the connection future before it
+                // returns a consent error. Grant revocation can therefore take
+                // the same socket-pool mutex without deadlocking.
+                self.revoke_existing_profile_grant(
+                    &request.session,
+                    request.transport_session.as_deref(),
+                    pid,
                 )
-                .await
-                {
-                    Ok(result) => result,
-                    Err(error) => {
-                        // The connection future may hold the pool mutex while
-                        // awaiting its WebSocket handshake. Cancel it before
-                        // revoking the grant, which also needs that mutex.
-                        drop(claim);
-                        self.revoke_existing_profile_grant(
-                            &request.session,
-                            request.transport_session.as_deref(),
-                            pid,
-                        )
-                        .await;
-                        let error = with_setup_side_effects(error, &setup);
-                        if setup_pending {
-                            return Err(setup_guard
-                                .as_mut()
-                                .expect("setup guard exists while setup is pending")
-                                .abort(error)
-                                .await);
-                        }
-                        return Err(error);
-                    }
+                .await;
+                let error = with_setup_side_effects(error, &setup);
+                if setup_pending {
+                    return Err(setup_guard
+                        .as_mut()
+                        .expect("setup guard exists while setup is pending")
+                        .abort(error)
+                        .await);
                 }
+                return Err(error);
             }
         };
         // Chrome on Windows can reject the WebSocket handshake that was
         // pending while its native remote-debugging consent prompt was open.
         // After an explicit acceptance, make one fresh, bounded dial to the
         // same attested endpoint under the same grant. The driver does not
-        // request consent again or broaden the approved target; the browser
-        // still owns any transport-level UI for the fresh connection.
-        let (claimed, initial_claim_error) = retry_claim_after_accepted_consent(
-            claimed,
-            displayed_consent_prompt,
+        // broaden the approved target. Because Chrome can require consent for
+        // each genuinely new browser-level socket, the one fresh dial handles
+        // one exact browser-owned prompt against the same PID and window.
+        let retry = claim_with_delayed_consent(
             self.pool.claim_existing(&endpoint.ws_url, grant.generation),
-        )
-        .await;
+            self.platform
+                .handle_existing_profile_consent(BrowserConsentRequest {
+                    pid,
+                    window_id,
+                    attempt: 2,
+                }),
+        );
+        let (claimed, initial_claim_error, fresh_consent_prompt) =
+            match retry_claim_after_accepted_consent(claimed, displayed_consent_prompt, retry).await
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    self.revoke_existing_profile_grant(
+                        &request.session,
+                        request.transport_session.as_deref(),
+                        pid,
+                    )
+                    .await;
+                    let error = with_prepare_side_effects(error, &setup, displayed_consent_prompt);
+                    if setup_pending {
+                        return Err(setup_guard
+                            .as_mut()
+                            .expect("setup guard exists while setup is pending")
+                            .abort(error)
+                            .await);
+                    }
+                    return Err(error);
+                }
+            };
+        let displayed_consent_prompt = displayed_consent_prompt || fresh_consent_prompt;
         if let Err(_final_claim_error) = claimed {
             self.revoke_existing_profile_grant(
                 &request.session,
@@ -1219,6 +1255,14 @@ impl BrowserEngine {
 mod tests {
     use super::*;
 
+    struct DropSignal(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     #[tokio::test]
     async fn completed_claim_wins_while_optional_consent_is_absent() {
         let mut claim = Box::pin(async {
@@ -1254,35 +1298,138 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_initial_claim_handles_consent_for_the_one_fresh_dial() {
+        let attempts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (first_approved, first_waiting) = tokio::sync::oneshot::channel();
+        let first_attempts = attempts.clone();
+        let (initial, displayed) = claim_with_delayed_consent(
+            async move {
+                first_waiting.await.expect("first consent should complete");
+                Err::<u8, _>(anyhow::anyhow!("first handshake rejected"))
+            },
+            async move {
+                first_attempts.lock().unwrap().push(1_u8);
+                first_approved.send(()).unwrap();
+                Ok(BrowserConsentOutcome::Accepted)
+            },
+        )
+        .await
+        .expect("first consent should remain bound to the initial claim");
+
+        let (second_approved, second_waiting) = tokio::sync::oneshot::channel();
+        let second_attempts = attempts.clone();
+        let retry = claim_with_delayed_consent(
+            async move {
+                second_waiting
+                    .await
+                    .expect("second consent should complete");
+                Ok::<_, anyhow::Error>(11_u8)
+            },
+            async move {
+                second_attempts.lock().unwrap().push(2_u8);
+                second_approved.send(()).unwrap();
+                Ok(BrowserConsentOutcome::Accepted)
+            },
+        );
+        let (result, initial_error, fresh_displayed) =
+            retry_claim_after_accepted_consent(initial, displayed, retry)
+                .await
+                .expect("the bounded fresh claim should handle its own consent");
+
+        assert_eq!(result.unwrap(), 11);
+        assert_eq!(
+            initial_error.expect("initial error").to_string(),
+            "first handshake rejected"
+        );
+        assert!(fresh_displayed);
+        assert_eq!(*attempts.lock().unwrap(), vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn immediately_completed_fresh_claim_does_not_poll_second_consent() {
+        let consent_polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let consent_marker = consent_polled.clone();
+        let retry =
+            claim_with_delayed_consent(async { Ok::<_, anyhow::Error>(17_u8) }, async move {
+                consent_marker.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(BrowserConsentOutcome::Accepted)
+            });
+        let (result, initial_error, fresh_displayed) = retry_claim_after_accepted_consent(
+            Err(anyhow::anyhow!("first handshake rejected")),
+            true,
+            retry,
+        )
+        .await
+        .expect("the immediate fresh claim should win before consent");
+
+        assert_eq!(result.unwrap(), 17);
+        assert!(initial_error.is_some());
+        assert!(!fresh_displayed);
+        assert!(!consent_polled.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn rejected_second_consent_cancels_the_fresh_claim_before_returning() {
+        let claim_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let drop_signal = DropSignal(claim_dropped.clone());
+        let retry = claim_with_delayed_consent(
+            async move {
+                let _drop_signal = drop_signal;
+                std::future::pending::<anyhow::Result<u8>>().await
+            },
+            async {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserConsentRevoked,
+                    "second consent was revoked",
+                ))
+            },
+        );
+        let error = retry_claim_after_accepted_consent(
+            Err(anyhow::anyhow!("first handshake rejected")),
+            true,
+            retry,
+        )
+        .await
+        .expect_err("the second consent refusal must fail closed");
+
+        assert_eq!(error.code, BrowserRefusalCode::BrowserConsentRevoked);
+        assert!(claim_dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
     async fn accepted_consent_retries_one_failed_claim_with_a_fresh_dial() {
-        let (result, initial_error) = retry_claim_after_accepted_consent(
+        let (result, initial_error, fresh_displayed) = retry_claim_after_accepted_consent(
             Err(anyhow::anyhow!("pre-consent handshake rejected")),
             true,
-            async { Ok::<_, anyhow::Error>(11_u8) },
+            async { Ok((Ok::<_, anyhow::Error>(11_u8), false)) },
         )
-        .await;
+        .await
+        .expect("the fresh claim should succeed");
         assert_eq!(result.unwrap(), 11);
         assert_eq!(
             initial_error.expect("initial error").to_string(),
             "pre-consent handshake rejected"
         );
+        assert!(!fresh_displayed);
     }
 
     #[tokio::test]
     async fn claim_failure_without_accepted_consent_is_not_retried() {
         let retry_polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let retry_marker = retry_polled.clone();
-        let (result, initial_error) = retry_claim_after_accepted_consent(
+        let (result, initial_error, fresh_displayed) = retry_claim_after_accepted_consent(
             Err::<u8, _>(anyhow::anyhow!("connection refused")),
             false,
             async move {
                 retry_marker.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok::<_, anyhow::Error>(12_u8)
+                Ok((Ok::<_, anyhow::Error>(12_u8), false))
             },
         )
-        .await;
+        .await
+        .expect("a claim without accepted consent should not retry");
         assert_eq!(result.unwrap_err().to_string(), "connection refused");
         assert!(initial_error.is_none());
+        assert!(!fresh_displayed);
         assert!(!retry_polled.load(std::sync::atomic::Ordering::SeqCst));
     }
 
@@ -1290,14 +1437,16 @@ mod tests {
     async fn successful_claim_does_not_retry_after_accepted_consent() {
         let retry_polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let retry_marker = retry_polled.clone();
-        let (result, initial_error) =
+        let (result, initial_error, fresh_displayed) =
             retry_claim_after_accepted_consent(Ok::<_, anyhow::Error>(13_u8), true, async move {
                 retry_marker.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok::<_, anyhow::Error>(14_u8)
+                Ok((Ok::<_, anyhow::Error>(14_u8), false))
             })
-            .await;
+            .await
+            .expect("a successful claim should not retry");
         assert_eq!(result.unwrap(), 13);
         assert!(initial_error.is_none());
+        assert!(!fresh_displayed);
         assert!(!retry_polled.load(std::sync::atomic::Ordering::SeqCst));
     }
 
@@ -1305,20 +1454,25 @@ mod tests {
     async fn accepted_consent_limits_a_failed_fresh_dial_to_one_retry() {
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let attempt_counter = attempts.clone();
-        let (result, initial_error) = retry_claim_after_accepted_consent(
+        let (result, initial_error, fresh_displayed) = retry_claim_after_accepted_consent(
             Err::<u8, _>(anyhow::anyhow!("pre-consent handshake rejected")),
             true,
             async move {
                 attempt_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Err::<u8, _>(anyhow::anyhow!("fresh handshake rejected"))
+                Ok((
+                    Err::<u8, _>(anyhow::anyhow!("fresh handshake rejected")),
+                    true,
+                ))
             },
         )
-        .await;
+        .await
+        .expect("the bounded fresh claim should return its connection result");
         assert_eq!(result.unwrap_err().to_string(), "fresh handshake rejected");
         assert_eq!(
             initial_error.expect("initial error").to_string(),
             "pre-consent handshake rejected"
         );
+        assert!(fresh_displayed);
         assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 

@@ -8,7 +8,11 @@ last_updated: 2026-08-20
 status: accepted
 discussion: https://github.com/trycua/cua/issues/3278
 rfc_pr: https://github.com/trycua/cua/pull/3279
-implementation: []
+implementation:
+  - https://github.com/trycua/cua/pull/3280
+  - https://github.com/trycua/cua/pull/3281
+  - https://github.com/trycua/cua/pull/3282
+  - https://github.com/trycua/cua/pull/3283
 supersedes:
 superseded_by:
 ---
@@ -41,11 +45,12 @@ private daemon lifecycle:
 A downstream integration can still need a parallel process manager because the
 adapter cannot express all released host policy or diagnostics. In particular,
 serve-side overlay policy is not represented, and startup stderr can only be
-inherited or discarded. The Python and Node packages also include an exact
-driver executable even when a managed application already distributes one.
-Using the separately installed executable avoids running the duplicate, but it
-leaves package size and independently updated versions as an undocumented
-integration boundary.
+inherited or discarded. The Python package also includes an exact driver
+executable even when a managed application already distributes one. Using the
+separately installed executable avoids running the duplicate, but it leaves
+package size and independently updated versions as an undocumented integration
+boundary. The Node package already separates its native SDK payload and does
+not bundle the driver executable, so it needs no parallel host-only package.
 
 This prevents downstream applications such as Hermes Agent from replacing
 their private-daemon lifecycle code with a thin policy adapter. Cua should own
@@ -64,8 +69,7 @@ private-worker topology.
   overlay.
 - Let a host retrieve bounded, structured evidence after embedded startup
   fails.
-- Offer host-only Python and Node artifacts without a bundled driver
-  executable.
+- Offer a host-only Python artifact without a bundled driver executable.
 - Preserve exact contract validation for externally supplied executables.
 - Make version mismatches deterministic and actionable before a host exposes an
   MCP connection.
@@ -84,7 +88,9 @@ private-worker topology.
   `CuaDriver.app`.
 - Define a downstream product's permission modes, manifests, approval UX, or
   update policy.
-- Remove the executable from existing Cua Driver Python or Node packages.
+- Remove the executable from the existing Cua Driver Python package.
+- Rename or duplicate the existing Node package, which already omits the driver
+  executable.
 - Promise that two independently updated component releases remain compatible.
 
 ## Terminology
@@ -94,12 +100,12 @@ private-worker topology.
   `cua-driver serve --embedded` child and returns a validated MCP connection.
 
 **Bundled artifact**
-: An existing Python or Node Cua Driver package containing generated bindings,
-  its native SDK library, and the matching driver executable.
+: The existing Python Cua Driver package containing generated bindings, its
+  native SDK library, and the matching driver executable.
 
 **Host-only artifact**
-: A proposed package containing generated bindings and the native SDK library,
-  but no driver executable.
+: A proposed Python package containing generated bindings and the native SDK
+  library, but no driver executable.
 
 **External executable**
 : An absolute driver path supplied by trusted host code rather than resolved
@@ -129,10 +135,11 @@ startup explanation to its own structured diagnostics.
 
 The Python package build in
 [`pyproject.toml`](../libs/cua-driver/python/pyproject.toml) publishes both the
-native SDK library and executable. The Node package follows the same
-package-owned binary model. This guarantees that package helpers can select a
-matching executable, but managed applications that already distribute Cua
-Driver carry another copy.
+native SDK library and executable. This guarantees that package helpers can
+select a matching executable, but managed applications that already distribute
+Cua Driver carry another copy. Node release packaging already publishes only
+the native SDK and runtime in platform packages, so no Node packaging change is
+required.
 
 The embedded readiness handshake already rejects exact contract mismatches.
 When a caller supplies an independently updated executable, that refusal occurs
@@ -205,7 +212,7 @@ their current lifecycle implementation.
 
 ### 4. Publish host-only SDK artifacts
 
-Publish additional Python and Node distributions containing:
+Publish an additional Python distribution containing:
 
 - generated language bindings;
 - the native SDK library needed by those bindings; and
@@ -215,14 +222,13 @@ They omit the driver executable and require the application to pass an
 absolute matching executable path. Existing distributions keep their bundled
 executables and remain the default for ordinary SDK installation.
 
-Publish the artifacts as `cua-driver-host` on PyPI and
-`@trycua/cua-driver-host` on npm. They must not shadow the existing command
-entry point, claim to be pure Python or JavaScript, or make a host-only
+Publish the artifact as `cua-driver-host` on PyPI. It must not shadow the
+existing command entry point, claim to be pure Python, or make a host-only
 installation appear runnable without an external executable.
 
-Package tests must inspect built wheels and npm archives rather than source
-directories. Release automation publishes host-only and bundled artifacts from
-the same candidate SHA and component version.
+Package tests must inspect built wheels rather than source directories. Release
+automation publishes host-only and bundled artifacts from the same candidate
+SHA and component version.
 
 ### 5. Preserve platform ownership
 
@@ -295,8 +301,8 @@ Delivery is additive:
    unless they opt into diagnostics.
 3. Mismatch errors become more structured without accepting combinations that
    are currently refused.
-4. New host-only package names ship alongside, not instead of, bundled
-   packages.
+4. The new host-only package ships alongside, not instead of, the bundled
+   Python package.
 
 Downstream applications can migrate behind their current lifecycle interface:
 construct options, start the SDK host, consume the returned MCP command,
@@ -353,13 +359,13 @@ macOS TCC identity.
 ### PR 3: External executable mismatch evidence
 
 - Return accepted structured expected and observed contract fields.
-- Add any accepted semantic-version preflight without weakening the metadata
-  handshake.
+- Keep the metadata handshake authoritative without adding semantic-version
+  preflight.
 - Test matching, mismatching, early-exit, and endpoint-substitution cases.
 
-### PR 4: Host-only packages
+### PR 4: Host-only Python package
 
-- Add the accepted Python and Node distribution names.
+- Add the accepted Python distribution name.
 - Exclude executables while retaining the native SDK library and generated
   bindings.
 - Publish from the same release candidate as bundled artifacts.
@@ -381,8 +387,7 @@ The RFC is complete when:
 - diagnostics are absent from Cua telemetry fixtures;
 - mismatch tests expose expected and observed contract fields and never return
   an MCP connection;
-- host-only wheels and npm archives contain the native SDK and omit the driver
-  executable;
+- host-only wheels contain the native SDK and omit the driver executable;
 - host-only package smoke tests launch a matching explicit fixture and reject a
   mismatching fixture;
 - macOS, Windows, and Linux compile and portable contract lanes pass; and
@@ -403,8 +408,10 @@ canonical lane must run on the exact candidate SHA.
 Accepted by maintainer direction on 2026-08-20. Review selected a
 `last_diagnostics()` accessor, a final 65,536-byte stderr tail with lossy UTF-8
 conversion, tee behavior when inheritance and capture are both enabled,
-`cua-driver-host` and `@trycua/cua-driver-host` package names, and the existing
-daemon metadata handshake as the sole compatibility authority. Exact contract
+the `cua-driver-host` package name, and the existing daemon metadata handshake
+as the sole compatibility authority. Repository inspection during
+implementation confirmed that Node already omits the driver executable, so no
+new npm package is needed. Exact contract
 matching, typed options, current defaults, and host-owned platform identity
 remain mandatory. Implementation will proceed as linked draft pull requests;
 the RFC must merge before or with the first implementation pull request.

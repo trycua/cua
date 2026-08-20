@@ -39,6 +39,29 @@ def test_release_archives_include_cli_and_uniffi_library():
     ]
 
 
+def test_host_only_staging_omits_the_executable_and_cli_exports(tmp_path):
+    build_wheel = load_build_wheel_module()
+    package = Path(__file__).resolve().parents[1]
+
+    staged = build_wheel.stage_host_only_package(package, tmp_path / "host")
+
+    pyproject = (staged / "pyproject.toml").read_text()
+    package_init = (staged / "src" / "cua_driver" / "__init__.py").read_text()
+    assert 'name = "cua-driver-host"' in pyproject
+    assert "[project.scripts]" not in pyproject
+    assert not (staged / "src" / "cua_driver" / "bin").exists()
+    assert "get_binary_path" not in package_init
+    assert "run_cua_driver" not in package_init
+
+
+def test_host_only_release_payload_keeps_only_the_sdk_library():
+    build_wheel = load_build_wheel_module()
+
+    assert build_wheel.host_only_binary_names(
+        ["cua-driver.exe", "cua-driver-uia.exe", "cua_driver_sdk.dll"]
+    ) == ["cua_driver_sdk.dll"]
+
+
 def test_license_metadata_stays_legacy_upload_compatible():
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     pyproject_text = pyproject.read_text()

@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -118,6 +119,43 @@ def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, l
         raise ValueError(f"Unknown platform: {platform_name}")
 
     return f"{base_url}/{filename}", binary_names
+
+
+def host_only_binary_names(binary_names: list[str]) -> list[str]:
+    """Keep the native SDK library while omitting executable payloads."""
+    return [name for name in binary_names if Path(name).suffix in {".dylib", ".so", ".dll"}]
+
+
+def stage_host_only_package(source: Path, destination: Path) -> Path:
+    """Stage the existing Python SDK as the cua-driver-host distribution."""
+    shutil.copytree(
+        source,
+        destination,
+        ignore=shutil.ignore_patterns("dist", "downloads", "__pycache__", "*.pyc"),
+    )
+    shutil.rmtree(destination / "src" / "cua_driver" / "bin", ignore_errors=True)
+    pyproject = destination / "pyproject.toml"
+    contents = pyproject.read_text()
+    contents = contents.replace('name = "cua-driver"', 'name = "cua-driver-host"', 1)
+    contents = contents.replace(
+        'description = "Rust-backed Cua Driver SDK and bundled executable for client applications"',
+        'description = "Rust-backed Cua Driver SDK for applications that supply a matching executable"',
+        1,
+    )
+    contents = contents.replace(
+        '\n[project.scripts]\ncua-driver = "cua_driver.__main__:main"\n', "\n"
+    )
+    pyproject.write_text(contents)
+
+    package_init = destination / "src" / "cua_driver" / "__init__.py"
+    init_contents = package_init.read_text()
+    init_contents = init_contents.replace(
+        "from .wrapper import get_binary_path, run_cua_driver\n", ""
+    )
+    init_contents = init_contents.replace('    "get_binary_path",\n', "")
+    init_contents = init_contents.replace('    "run_cua_driver",\n', "")
+    package_init.write_text(init_contents)
+    return destination
 
 
 def verify_sha256(file_path: Path, expected_sha256: str) -> None:
@@ -285,6 +323,11 @@ def main():
         help="Architecture override (e.g., 'arm64', 'x86_64', 'universal')",
     )
     parser.add_argument(
+        "--host-only",
+        action="store_true",
+        help="Build cua-driver-host without a bundled executable",
+    )
+    parser.add_argument(
         "--skip-download",
         action="store_true",
         help="Skip download and use existing binary in bin/ (for local testing)",
@@ -305,6 +348,8 @@ def main():
         print(f"Building for {platform_name}-{arch}")
 
         url, binary_names = get_release_url(version, platform_name, arch)
+        if args.host_only:
+            binary_names = host_only_binary_names(binary_names)
         archive_name = url.split("/")[-1]
         archive_path = download_dir / archive_name
 
@@ -330,10 +375,10 @@ def main():
     else:
         print("Skipping download (using existing binary)")
 
-    # Verify main binary exists
+    # Verify the CLI only for the bundled distribution.
     expected_binary = "cua-driver.exe" if sys.platform == "win32" else "cua-driver"
     binary_path = bin_dir / expected_binary
-    if not binary_path.exists():
+    if not args.host_only and not binary_path.exists():
         raise FileNotFoundError(
             f"Binary not found at {binary_path}. "
             f"Run without --skip-download or place binary manually."
@@ -351,17 +396,28 @@ def main():
             "Use a current release asset or stage a local release build."
         )
 
-    print(f"\nBinary ready at: {binary_path}")
-    print(f"Binary size: {binary_path.stat().st_size / 1024 / 1024:.2f} MB")
+    if not args.host_only:
+        print(f"\nBinary ready at: {binary_path}")
+        print(f"Binary size: {binary_path.stat().st_size / 1024 / 1024:.2f} MB")
 
     # List all binaries in bin directory
-    print(f"\nAll binaries in {bin_dir}:")
-    for binary in bin_dir.iterdir():
-        if binary.is_file():
-            print(f"  - {binary.name} ({binary.stat().st_size / 1024 / 1024:.2f} MB)")
+    if bin_dir.exists():
+        print(f"\nAll binaries in {bin_dir}:")
+        for binary in bin_dir.iterdir():
+            if binary.is_file():
+                print(f"  - {binary.name} ({binary.stat().st_size / 1024 / 1024:.2f} MB)")
 
-    # Build the wheel (pass target arch for cross-compilation)
-    build_wheel(script_dir, wheel_tag, target_arch=arch)
+    # Build the wheel (pass target arch for cross-compilation).
+    if args.host_only:
+        with tempfile.TemporaryDirectory(prefix="cua-driver-host-") as temporary:
+            staged = stage_host_only_package(script_dir, Path(temporary) / "package")
+            build_wheel(staged, wheel_tag, target_arch=arch)
+            output = script_dir / "dist"
+            output.mkdir(exist_ok=True)
+            for wheel in (staged / "dist").glob("*.whl"):
+                shutil.copy2(wheel, output / wheel.name)
+    else:
+        build_wheel(script_dir, wheel_tag, target_arch=arch)
 
 
 if __name__ == "__main__":

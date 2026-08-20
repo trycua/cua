@@ -3767,6 +3767,10 @@ impl Tool for ClickTool {
 
             // UIA did not land. Known dropped surfaces other than direct
             // Chromium (handled above) get one targeted injection attempt.
+            // See ADR-0001 for why this ladder does not add packaged
+            // InputInjector / sparse-package global input injection. The
+            // synthetic-pointer attempt below keeps the unpackaged Win32
+            // distribution and refuses occluded targets instead of raising them.
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {

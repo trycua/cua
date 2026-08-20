@@ -53,6 +53,8 @@ pub struct EmbeddedDriverHostOptions {
     pub dangerously_bypass_approvals: bool,
     pub environment: Vec<EmbeddedEnvironmentVariable>,
     pub inherit_stderr: bool,
+    #[uniffi(default = false)]
+    pub no_overlay: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -121,6 +123,7 @@ struct ValidatedOptions {
     dangerously_bypass_approvals: bool,
     environment: Vec<EmbeddedEnvironmentVariable>,
     inherit_stderr: bool,
+    no_overlay: bool,
 }
 
 #[cfg(unix)]
@@ -263,6 +266,7 @@ impl EmbeddedCuaDriverHost {
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: true,
+            no_overlay: false,
         })
     }
 
@@ -648,6 +652,9 @@ impl EmbeddedCuaDriverHost {
         if self.options.dangerously_bypass_approvals {
             args.push("--dangerously-bypass-approvals".into());
         }
+        if self.options.no_overlay {
+            args.push("--no-overlay".into());
+        }
         args
     }
 
@@ -815,6 +822,7 @@ fn validate_options(
         dangerously_bypass_approvals: options.dangerously_bypass_approvals,
         environment: options.environment,
         inherit_stderr: options.inherit_stderr,
+        no_overlay: options.no_overlay,
     })
 }
 
@@ -1148,6 +1156,7 @@ mod tests {
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: false,
+            no_overlay: false,
         }
     }
 
@@ -1178,6 +1187,22 @@ mod tests {
         unrestricted_manifest.capability_manifest_path = Some("capabilities.yaml".into());
         unrestricted_manifest.approve_capability_manifest = true;
         assert!(validate_options(unrestricted_manifest).is_ok());
+    }
+
+    #[test]
+    fn no_overlay_is_opt_in_on_the_owned_daemon() {
+        let default_host =
+            EmbeddedCuaDriverHost::with_options(options(EmbeddedPermissionMode::Standard)).unwrap();
+        assert!(!default_host
+            .serve_args("/tmp/cua-default.sock")
+            .contains(&"--no-overlay".into()));
+
+        let mut configured = options(EmbeddedPermissionMode::Standard);
+        configured.no_overlay = true;
+        let configured_host = EmbeddedCuaDriverHost::with_options(configured).unwrap();
+        assert!(configured_host
+            .serve_args("/tmp/cua-no-overlay.sock")
+            .contains(&"--no-overlay".into()));
     }
 
     #[test]

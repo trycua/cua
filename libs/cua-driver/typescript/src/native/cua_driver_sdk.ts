@@ -917,7 +917,8 @@ export type EmbeddedDriverHostOptions = {
     approveSessionPolicy: boolean,
     dangerouslyBypassApprovals: boolean,
     environment: Array<EmbeddedEnvironmentVariable>,
-    inheritStderr: boolean
+    inheritStderr: boolean,
+    noOverlay: boolean
 }
 
 /**
@@ -927,6 +928,7 @@ export const EmbeddedDriverHostOptions = (() => {
     const defaults = () => ({
         capabilityManifestPath: undefined,
         approveCapabilityManifest: false,
+        noOverlay: false
     });
     const create = (() => {
         return uniffiCreateRecord<EmbeddedDriverHostOptions, ReturnType<typeof defaults>>(defaults);
@@ -955,7 +957,8 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
                 approveSessionPolicy: FfiConverterBool.read(from),
                 dangerouslyBypassApprovals: FfiConverterBool.read(from),
                 environment: FfiConverterSequenceTypeEmbeddedEnvironmentVariable.read(from),
-                inheritStderr: FfiConverterBool.read(from)
+                inheritStderr: FfiConverterBool.read(from),
+                noOverlay: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -972,6 +975,7 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
             FfiConverterBool.write(value.dangerouslyBypassApprovals, into);
             FfiConverterSequenceTypeEmbeddedEnvironmentVariable.write(value.environment, into);
             FfiConverterBool.write(value.inheritStderr, into);
+            FfiConverterBool.write(value.noOverlay, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.binaryPath) +
@@ -986,7 +990,8 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
              FfiConverterBool.allocationSize(value.approveSessionPolicy) +
              FfiConverterBool.allocationSize(value.dangerouslyBypassApprovals) +
              FfiConverterSequenceTypeEmbeddedEnvironmentVariable.allocationSize(value.environment) +
-             FfiConverterBool.allocationSize(value.inheritStderr);
+             FfiConverterBool.allocationSize(value.inheritStderr) +
+             FfiConverterBool.allocationSize(value.noOverlay);
 
         }
     };

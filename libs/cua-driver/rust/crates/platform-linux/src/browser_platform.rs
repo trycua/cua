@@ -123,29 +123,76 @@ fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
 }
 
-fn command_line_arguments(bytes: &[u8], allow_packed: bool) -> Vec<String> {
+fn command_line_arguments(bytes: &[u8]) -> Vec<String> {
     bytes
-        .split(|byte| *byte == 0 || (allow_packed && byte.is_ascii_whitespace()))
+        .split(|byte| *byte == 0)
         .filter(|arg| !arg.is_empty())
         .map(|arg| String::from_utf8_lossy(arg).into_owned())
         .collect()
 }
 
-fn command_line_has_process_type(bytes: &[u8], allow_packed: bool) -> bool {
-    command_line_arguments(bytes, allow_packed)
-        .iter()
-        .any(|arg| {
-            arg.as_bytes()
-                .strip_prefix(b"--type=")
-                .is_some_and(|kind| !kind.is_empty())
-        })
+fn command_line_has_process_type(bytes: &[u8]) -> bool {
+    command_line_arguments(bytes).iter().any(|arg| {
+        arg.as_bytes()
+            .strip_prefix(b"--type=")
+            .is_some_and(|kind| !kind.is_empty())
+    })
+}
+
+fn packed_helium_process_type(bytes: &[u8]) -> bool {
+    let arguments = command_line_arguments(bytes);
+    let [packed] = arguments.as_slice() else {
+        return false;
+    };
+    let mut words = packed.split_ascii_whitespace();
+    let executable = words.next().unwrap_or_default();
+    let process_type = words.next().unwrap_or_default();
+    is_helium(executable)
+        && process_type
+            .strip_prefix("--type=")
+            .is_some_and(|kind| !kind.is_empty())
+}
+
+fn packed_helium_user_data_dir(bytes: &[u8]) -> Result<Option<PathBuf>, BrowserRefusal> {
+    let arguments = command_line_arguments(bytes);
+    let [packed] = arguments.as_slice() else {
+        return Ok(None);
+    };
+    let executable = packed.split_ascii_whitespace().next().unwrap_or_default();
+    if !is_helium(executable) {
+        return Ok(None);
+    }
+    let marker = "--user-data-dir=";
+    let mut matches = packed.match_indices(marker);
+    let Some((marker_start, _)) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "packed Helium command line has multiple --user-data-dir arguments",
+        ));
+    }
+    if marker_start == 0 || !packed[..marker_start].ends_with(' ') {
+        return Ok(None);
+    }
+    let value = &packed[marker_start + marker.len()..];
+    let value = value.split_once(" --").map_or(value, |(value, _)| value);
+    if value.is_empty() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "packed Helium command line has an empty --user-data-dir value",
+        ));
+    }
+    Ok(Some(PathBuf::from(value)))
 }
 
 fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole {
     let helper = std::fs::read(format!("/proc/{pid}/cmdline"))
         .ok()
         .is_some_and(|bytes| {
-            command_line_has_process_type(&bytes, product == BrowserProduct::Helium)
+            command_line_has_process_type(&bytes)
+                || (product == BrowserProduct::Helium && packed_helium_process_type(&bytes))
         });
     if helper {
         BrowserProcessRole::Helper
@@ -329,7 +376,7 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
         .as_deref()
         .map(browser_product)
         .unwrap_or(BrowserProduct::Other);
-    let args = command_line_arguments(&bytes, product == BrowserProduct::Helium);
+    let args = command_line_arguments(&bytes);
     let mut directories = Vec::new();
     for (index, arg) in args.iter().enumerate() {
         if let Some(path) = arg.strip_prefix("--user-data-dir=") {
@@ -340,6 +387,11 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
             if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
                 directories.push(PathBuf::from(path));
             }
+        }
+    }
+    if directories.is_empty() && product == BrowserProduct::Helium {
+        if let Some(path) = packed_helium_user_data_dir(&bytes)? {
+            directories.push(path);
         }
     }
     directories.sort();
@@ -778,8 +830,12 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let classification = self.classify_browser(pid).await?;
         if let Some(endpoint) = active_port_endpoint(pid)? {
             return Ok(Some(endpoint));
+        }
+        if classification.product_kind == BrowserProduct::Helium {
+            return Ok(None);
         }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
@@ -834,6 +890,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 ));
             }
             return Ok(Some(endpoint));
+        }
+        if self.classify_browser(pid).await?.product_kind == BrowserProduct::Helium {
+            return Ok(None);
         }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
@@ -1281,48 +1340,46 @@ mod tests {
 
     #[test]
     fn process_type_detection_handles_nul_and_packed_command_lines() {
-        assert!(command_line_has_process_type(
-            b"helium\0--type=renderer\0",
-            false
-        ));
-        assert!(command_line_has_process_type(
-            b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0",
-            true
+        assert!(command_line_has_process_type(b"helium\0--type=renderer\0"));
+        assert!(packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0"
         ));
         assert!(!command_line_has_process_type(
-            b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0",
-            false
+            b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0"
         ));
-        assert!(!command_line_has_process_type(
-            b"/opt/helium-browser-bin/helium --load-extension=/tmp/example\0",
-            true
+        assert!(!packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium --load-extension=/tmp/example --type=renderer\0"
         ));
-        assert!(!command_line_has_process_type(b"helium --type=\0", true));
+        assert!(!packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --type=renderer\0"
+        ));
+        assert!(!packed_helium_process_type(b"helium --type=\0"));
     }
 
     #[test]
     fn packed_helium_command_line_preserves_profile_arguments() {
         assert_eq!(
             command_line_arguments(
-                b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium-profile --remote-debugging-port=0\0",
-                true
+                b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile\0"
             ),
-            [
-                "/opt/helium-browser-bin/helium",
-                "--user-data-dir=/tmp/helium-profile",
-                "--remote-debugging-port=0"
-            ]
+            ["/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile"]
         );
         assert_eq!(
             command_line_arguments(
-                b"/opt/helium-browser-bin/helium\0--user-data-dir\0/tmp/helium-profile\0",
-                false
+                b"/opt/helium-browser-bin/helium\0--user-data-dir\0/tmp/helium-profile\0"
             ),
             [
                 "/opt/helium-browser-bin/helium",
                 "--user-data-dir",
                 "/tmp/helium-profile"
             ]
+        );
+        assert_eq!(
+            packed_helium_user_data_dir(
+                b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --remote-debugging-port=0\0"
+            )
+            .expect("packed profile argument"),
+            Some(PathBuf::from("/tmp/helium profile"))
         );
     }
 

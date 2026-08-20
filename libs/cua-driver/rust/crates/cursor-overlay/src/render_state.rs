@@ -153,7 +153,7 @@ impl RenderStateCore {
         self.theme_paint_radius.max(64.0)
     }
 
-    fn cursor_is_revealed(&self) -> bool {
+    pub fn cursor_is_revealed(&self) -> bool {
         self.visible && self.placed && self.idle_alpha >= 0.004
     }
 

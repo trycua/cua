@@ -177,8 +177,10 @@ pub enum Command {
     /// `cua-driver skills {install|update|uninstall|status|path}` —
     /// agent skill-pack management. The verb is the ONLY way a user
     /// installs or updates the cua-driver skill pack into their agent
-    /// dirs (Claude Code / Codex / Prime Agent / OpenClaw / OpenCode); the install
-    /// scripts never touch ~/.claude/skills/ etc. directly. `install`
+    /// dirs (Claude Code / Codex / Prime Agent / OpenClaw / OpenCode /
+    /// Antigravity / Hermes). Grok Bot is a host but is not auto-linked
+    /// (no agent skills dir). The install scripts never touch
+    /// ~/.claude/skills/ etc. directly. `install`
     /// fetches the matching versioned release asset
     /// (`cua-driver-rs-v<v>-skills.tar.gz` — the asset filename keeps
     /// the legacy `-rs` for backward-compat with pinned URLs) from
@@ -525,7 +527,10 @@ pub fn parse_command() -> Command {
         println!("skills options (agent skill-pack management, opt-in):");
         println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
         println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, Prime Agent,");
-        println!("                                  OpenClaw, OpenCode). Idempotent. Never overwrites existing user links.");
+        println!("                                  OpenClaw, OpenCode, Antigravity, Hermes). Grok Bot is not auto-linked.");
+        println!(
+            "                                  Idempotent. Never overwrites existing user links."
+        );
         println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
         println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");

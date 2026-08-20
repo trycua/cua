@@ -90,7 +90,7 @@ cua-driver call list_apps '{}'
 
 If `doctor` warns that AT-SPI is unreachable, `get_window_state` will not work until the accessibility bus is available. See [Install Cua Driver](/how-to-guides/driver/install) for Linux libraries and display-server details.
 
-`cua-driver skills install` writes the pack to `~/.cua-driver/skills/cua-driver`. It auto-links only Claude Code, Codex, Prime Agent, OpenClaw, OpenCode, Antigravity, and Hermes. Grok Bot is not in that list. On Grok Bot, save a private skill or workflow that points at that pack and keeps snapshot-before-action, element tokens, and post-action verification.
+`cua-driver skills install` writes the pack to `~/.cua-driver/skills/cua-driver`. It auto-links only Claude Code, Codex, Prime Agent, OpenClaw, OpenCode, Antigravity, and Hermes. Grok Bot is not in that list. On Grok Bot, save a private skill or workflow that points at that pack and keeps snapshot-before-action, element tokens, and post-action verification. Headless Xvfb, missing `/dev/uinput`, AT-SPI, and overlay-session caveats for this class of machine are in the skill pack's `LINUX.md`.
 
 Then give the Bot a narrow UI task on that computer. Cua Driver actions should follow the same loop as the local path: find the window, call `get_window_state`, act through an `element_token` from the latest state, then verify.
 

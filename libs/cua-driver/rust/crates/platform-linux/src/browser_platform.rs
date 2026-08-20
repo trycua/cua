@@ -378,6 +378,25 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
     Some(home.join(relative))
 }
 
+/// Corroborate a candidate profile directory against the kernel's own view of
+/// the process.
+///
+/// A Chromium profile is not merely named on the command line; the running
+/// browser keeps files inside it open. Those descriptors, and the process
+/// working directory, are recorded by the kernel and cannot be forged by the
+/// contents of an argument value, which makes them independent evidence that a
+/// directory really is this process's profile.
+fn process_uses_directory(pid: i64, directory: &std::path::Path) -> bool {
+    if std::fs::read_link(format!("/proc/{pid}/cwd")).is_ok_and(|cwd| cwd.starts_with(directory)) {
+        return true;
+    }
+    std::fs::read_dir(format!("/proc/{pid}/fd")).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            std::fs::read_link(entry.path()).is_ok_and(|target| target.starts_with(directory))
+        })
+    })
+}
+
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).map_err(|_| {
         refusal(
@@ -393,14 +412,21 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
         .map(browser_product)
         .unwrap_or(BrowserProduct::Other);
     let mut directories = user_data_dir_arguments(&command_line_arguments(&bytes));
+    // A NUL-delimited command line carries the kernel's own argument
+    // separators, so its switches are authoritative. A packed record has lost
+    // them: ordinary text inside a file name or URL is then indistinguishable
+    // from a real switch, so anything recovered from it is a candidate to be
+    // corroborated rather than a fact to be trusted.
+    let mut candidate_is_unseparated = false;
     if directories.is_empty() && product == BrowserProduct::Helium {
         if let Some(packed) = packed_helium_arguments(&bytes) {
             directories = user_data_dir_arguments(&packed);
+            candidate_is_unseparated = !directories.is_empty();
         }
     }
     directories.sort();
     directories.dedup();
-    match directories.as_slice() {
+    let resolved = match directories.as_slice() {
         [] => Ok(default_user_data_dir(product)),
         [path] if path.is_absolute() => Ok(Some(path.clone())),
         [path] => {
@@ -416,7 +442,19 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "browser process has multiple distinct --user-data-dir arguments",
         )),
+    }?;
+    if candidate_is_unseparated {
+        let Some(directory) = resolved.as_deref() else {
+            return Ok(None);
+        };
+        if !process_uses_directory(pid, directory) {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "the browser's command line has no argument separators, so a --user-data-dir value read from it could not be distinguished from ordinary argument text and the process does not hold that directory open",
+            ));
+        }
     }
+    Ok(resolved)
 }
 
 fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
@@ -1429,6 +1467,38 @@ mod tests {
             packed_helium_arguments(b"/opt/helium-browser-bin/helium\0--no-first-run\0").is_none()
         );
         assert!(packed_helium_arguments(b"/opt/helium-browser-bin/helium\0").is_none());
+    }
+
+    #[test]
+    fn ordinary_argument_text_cannot_select_the_profile_directory() {
+        // Helium replaces the kernel's argument separators with spaces, so an
+        // ordinary file name or URL containing " --user-data-dir=" is textually
+        // identical to a real switch. This process supplied no profile option
+        // at all, and does not hold the forged directory open, so the value
+        // must be refused rather than accepted as the profile.
+        let attack = b"/opt/helium-browser-bin/helium /tmp/report --user-data-dir=/tmp/forged\0";
+        let recovered =
+            user_data_dir_arguments(&packed_helium_arguments(attack).expect("packed argv"));
+        assert_eq!(recovered, [PathBuf::from("/tmp/forged")]);
+
+        // The raw parse is deliberately credulous; the corroboration step is
+        // what makes it safe. This process holds no descriptor under the
+        // forged directory, so it is rejected.
+        let pid = i64::from(std::process::id());
+        assert!(!process_uses_directory(
+            pid,
+            std::path::Path::new("/tmp/forged")
+        ));
+        assert!(!process_uses_directory(
+            pid,
+            std::path::Path::new("/definitely/not/open")
+        ));
+
+        // A directory the process genuinely uses is corroborated. The test
+        // process holds its own working directory, which is evidence of
+        // exactly the kind user_data_dir_for_pid relies on.
+        let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).expect("test process cwd");
+        assert!(process_uses_directory(pid, &cwd));
     }
 
     #[test]

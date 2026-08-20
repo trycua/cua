@@ -164,35 +164,11 @@ same claim identity. Names must be lowercase DNS labels.
 ## Pool names are globally unique
 
 A pool's name is also its namespace, and that namespace is shared across all
-Cua accounts. `Pool.apply()` therefore requires an explicit `name=`, and
-`Sandbox.create(image, ...)` refuses Fleet registry images without a pool —
-apply a named pool first and pass it as `pool=`:
-
-```python
-pool = await Pool.apply(image, name="my-team-windows-pool")
-sandbox = await Sandbox.create(pool=pool, name="my-claim")
-```
-
-If the name you pick already belongs to another account, the SDK raises
-`PoolAccessDeniedError` explaining that the name is taken:
-
-```text
-PoolAccessDeniedError: Fleet denied create pool on pool namespace
-'my-team-windows-pool' (HTTP 403: k8s request is not allowed). Pool names
-are globally unique across accounts, so this name may already be taken —
-try a new pool name. If that does not work, contact support on Discord:
-https://discord.gg/mVnXXpdE85
-```
-
-Retrying does not help, and neither does claiming with fresh claim names: the
-conflict is on the pool and its namespace, not the claim. Choose a different
-pool name. Claim names never have this problem — they only need to be unique
-inside your own pool's namespace, which is why the SDK generates random
-`claim-<petname>` claims for you but never generates pool names.
-
-`Sandbox.ephemeral(image)` remains a one-liner: it creates a disposable pool
-under a random `cua-eph-<hex>` name and deletes it on exit. Passing
-`keep_pool=True` requires `name=` so later runs can find the kept pool.
+Cua accounts, so `Pool.apply()` requires an explicit `name=` and a name another
+account already owns fails with `PoolAccessDeniedError` no matter how many
+times you retry. Claim names are only unique inside your own pool, which is why
+the SDK generates them for you but never generates pool names. See
+[How pool names work](/concepts/how-pool-names-work).
 
 ## Delete the pool
 

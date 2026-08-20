@@ -577,10 +577,10 @@ function Get-JunctionTarget([string]$linkPath) {
         if ($LASTEXITCODE -ne 0) { return $null }
         foreach ($line in @($output)) {
             $text = [string]$line
-            $driveTarget = [regex]::Match($text, '[A-Za-z]:\\[^\r\n]+$')
-            if ($driveTarget.Success) { return $driveTarget.Value.Trim() }
-            $uncTarget = [regex]::Match($text, '\\\\[^\r\n]+$')
-            if ($uncTarget.Success) { return $uncTarget.Value.Trim() }
+            $driveSeparator = $text.IndexOf(':\', [System.StringComparison]::Ordinal)
+            if ($driveSeparator -gt 0 -and [char]::IsLetter($text[$driveSeparator - 1])) {
+                return $text.Substring($driveSeparator - 1).Trim()
+            }
         }
         return $null
     } catch {

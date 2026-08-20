@@ -494,24 +494,7 @@ function Test-IsJunction([string]$path) {
     return (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
 }
 
-function Set-JunctionTarget([string]$linkPath, [string]$targetPath) {
-    Add-JunctionSupportType
-    if (-not $script:JunctionTypeUnavailable) {
-        [CuaDriverInstaller.Junction]::SetTarget($linkPath, $targetPath)
-        return
-    }
-
-    # Fallback trades atomic retarget for locale robustness when Add-Type is broken.
-    if (Test-Path -LiteralPath $linkPath) {
-        if (-not (Test-IsJunction $linkPath)) {
-            throw "found existing non-junction directory at $linkPath; refusing to replace"
-        }
-        [System.IO.Directory]::Delete($linkPath, $false)
-    }
-    $parent = Split-Path -Parent $linkPath
-    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
-        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    }
+function Invoke-MklinkJunction([string]$linkPath, [string]$targetPath) {
     $cmd = "mklink /J `"$linkPath`" `"$targetPath`""
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -523,6 +506,46 @@ function Set-JunctionTarget([string]$linkPath, [string]$targetPath) {
     }
     if ($exitCode -ne 0) {
         throw "mklink /J failed for $linkPath -> $targetPath (exit $exitCode): $($output -join ' ')"
+    }
+}
+
+function Set-JunctionTarget([string]$linkPath, [string]$targetPath) {
+    Add-JunctionSupportType
+    if (-not $script:JunctionTypeUnavailable) {
+        [CuaDriverInstaller.Junction]::SetTarget($linkPath, $targetPath)
+        return
+    }
+
+    # The fallback cannot retarget a junction in place. Preserve the prior
+    # target so a failed replacement never destroys a working install path.
+    $oldTarget = $null
+    if (Test-Path -LiteralPath $linkPath) {
+        if (-not (Test-IsJunction $linkPath)) {
+            throw "found existing non-junction directory at $linkPath; refusing to replace"
+        }
+        $oldTarget = Get-JunctionTarget $linkPath
+        if ([string]::IsNullOrWhiteSpace($oldTarget)) {
+            throw "could not read existing junction target at $linkPath; refusing unsafe replacement"
+        }
+        [System.IO.Directory]::Delete($linkPath, $false)
+    }
+    $parent = Split-Path -Parent $linkPath
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    try {
+        Invoke-MklinkJunction $linkPath $targetPath
+    } catch {
+        $replaceError = $_.Exception.Message
+        if ($oldTarget) {
+            try {
+                Invoke-MklinkJunction $linkPath $oldTarget
+            } catch {
+                throw "$replaceError; restoring previous target '$oldTarget' also failed: $($_.Exception.Message)"
+            }
+            throw "$replaceError; restored previous target '$oldTarget'"
+        }
+        throw
     }
 }
 

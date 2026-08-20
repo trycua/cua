@@ -18,18 +18,16 @@
 //!   SetEnabled / SetMotion / SetTheme / semantic action events / PinAbove).
 //!   Returns `false` for variants the core doesn't handle so platforms can
 //!   layer their own behaviour on top (e.g. macOS ShowFocusRect).
-//! - [`render_frame`] — the tiny-skia paint of the selected cursor theme.
-//!   Parametrised by pixmap dimensions and an origin offset so Windows can
-//!   pass `(virt_x, virt_y)` while macOS / Linux pass `(0, 0)`.
+//! - [`render_frame`] — the tiny-skia paint of the selected cursor theme,
+//!   parameterized by pixmap dimensions and a global origin offset.
 //!
 //! ## What stays per-platform
 //!
 //! - The OS window / surface (NSWindow / HWND / X11 Window) and its message
 //!   loop or run-loop.
-//! - The paint dispatch: `dispatch_set_layer_contents` (CGImage),
-//!   `UpdateLayeredWindow` (BGRA DIB), `XPutImage` (BGRA ZPixmap).
-//! - Origin/coordinate translation (Windows uses virtual-screen offset;
-//!   macOS uses NSScreen coordinates; Linux uses display coordinates).
+//! - Native surface presentation through Core Animation, `UpdateLayeredWindow`,
+//!   or `XPutImage`.
+//! - Translation from global coordinates into native surfaces.
 //! - Platform-specific extras like macOS's `focus_rect` (post-arrival
 //!   element highlight — drawn inside [`render_frame`] when the caller
 //!   supplies one via the optional argument).
@@ -54,6 +52,8 @@ pub struct RenderStateCore {
     pub motion: MotionConfig,
     /// Current rendered position in screen / overlay-window coordinates.
     pub pos: (f64, f64),
+    /// Whether the cursor has received its first real placement.
+    pub placed: bool,
     /// Visual heading in radians (tip direction = motion_dir + π).
     pub heading: f64,
     /// In-flight planned path; `None` = at rest.
@@ -72,6 +72,8 @@ pub struct RenderStateCore {
     pub visual: CursorVisualState,
     /// Decoded installed or embedded theme.
     pub theme: Option<Arc<CompiledTheme>>,
+    /// Conservative logical radius touched by any frame of the active theme.
+    theme_paint_radius: f64,
     /// Non-fatal launch-time fallback reason, if an installed theme failed.
     pub theme_fallback: Option<String>,
     /// User-controlled visibility.
@@ -100,9 +102,6 @@ pub struct RenderStateCore {
 
 impl RenderStateCore {
     /// Build the core from a launch-time CursorConfig.
-    /// `pos` starts at the off-screen sentinel `(-200, -200)` to indicate
-    /// "never placed on screen yet" — the click path uses this to detect
-    /// first-placement and snap rather than animate.
     pub fn new(cfg: CursorConfig) -> Self {
         let motion = cfg.motion.clone();
         let visual = CursorVisualState {
@@ -120,13 +119,16 @@ impl RenderStateCore {
                 )),
             ),
         };
+        let theme_paint_radius = theme.as_deref().map_or(64.0, CompiledTheme::paint_radius);
         Self {
             cfg,
             motion,
             visual,
             theme,
+            theme_paint_radius,
             theme_fallback,
             pos: (-200.0, -200.0),
+            placed: false,
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
             dist: 0.0,
@@ -146,8 +148,13 @@ impl RenderStateCore {
         }
     }
 
+    pub fn paint_radius(&self) -> f64 {
+        // Cover host-owned bloom and click-pulse effects as well as theme art.
+        self.theme_paint_radius.max(64.0)
+    }
+
     fn cursor_is_revealed(&self) -> bool {
-        self.visible && self.idle_alpha >= 0.004
+        self.visible && self.placed && self.idle_alpha >= 0.004
     }
 
     fn reveal_session_badge(&mut self) {
@@ -533,21 +540,13 @@ impl RenderStateCore {
     /// for variants the platform must handle itself (e.g. macOS's
     /// `ShowFocusRect`).
     ///
-    /// `move_to_snap_sentinel` controls macOS-only behaviour: when `true`,
-    /// `MoveTo` snaps `self.pos` to the offset target if the cursor is
-    /// still at the off-screen sentinel (`pos.0 < -50.0`).  Windows/Linux
-    /// pass `false` here.
-    ///
-    /// `click_pulse_sentinel_only` likewise controls macOS-only behaviour:
-    /// when `true`, `ClickPulse` only updates `self.pos` if the cursor is
-    /// still at the sentinel (the animation already landed it there
-    /// otherwise).  Windows/Linux pass `false`, which always snaps
-    /// `self.pos` to the click point.
+    /// The placement flags preserve each platform's existing first-move and
+    /// click behavior without reserving any coordinate as a sentinel.
     pub fn apply_command_base(
         &mut self,
         cmd: OverlayCommand,
-        move_to_snap_sentinel: bool,
-        click_pulse_sentinel_only: bool,
+        move_to_places_unplaced: bool,
+        click_pulse_unplaced_only: bool,
     ) -> bool {
         match cmd {
             OverlayCommand::MoveTo {
@@ -565,12 +564,11 @@ impl RenderStateCore {
                 let tx = x + end_heading_radians.cos() * CLICK_OFFSET;
                 let ty = y + end_heading_radians.sin() * CLICK_OFFSET;
 
-                // macOS-only: if the cursor is still at the initial off-screen
-                // sentinel, snap it to the offset target so the path starts on-screen.
-                if move_to_snap_sentinel && self.pos.0 < -50.0 {
+                if move_to_places_unplaced && !self.placed {
                     self.pos = (tx, ty);
                 }
                 let (x0, y0) = self.pos;
+                self.placed = true;
                 let th0 = self.heading + std::f64::consts::PI;
                 let th1 = end_heading_radians + std::f64::consts::PI;
                 let plan =
@@ -601,6 +599,7 @@ impl RenderStateCore {
             } => {
                 let reveal_badge = !self.cursor_is_revealed();
                 self.pos = (x, y);
+                self.placed = true;
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
                 }
@@ -625,21 +624,19 @@ impl RenderStateCore {
             }
             OverlayCommand::ClickPulse { x, y } => {
                 let reveal_badge = !self.cursor_is_revealed();
-                if click_pulse_sentinel_only {
-                    // macOS: only snap position on first placement (sentinel state).
-                    // After that the cursor stays where the animation landed.
-                    if self.pos.0 < -50.0 {
-                        // Apply same click offset so tip lands at click point.
+                if !click_pulse_unplaced_only || !self.placed {
+                    self.pos = if click_pulse_unplaced_only {
                         const CLICK_OFFSET: f64 = 16.0;
                         let angle = std::f64::consts::FRAC_PI_4;
-                        self.pos = (
+                        (
                             x + angle.cos() * CLICK_OFFSET,
                             y + angle.sin() * CLICK_OFFSET,
-                        );
-                    }
-                } else {
-                    self.pos = (x, y);
+                        )
+                    } else {
+                        (x, y)
+                    };
                 }
+                self.placed = true;
                 self.click_t = Some(0.0);
                 if matches!(
                     self.visual.resolved_action,
@@ -709,6 +706,8 @@ impl RenderStateCore {
             } => {
                 match crate::resolve_theme_selection(&theme_id) {
                     Ok(theme) => {
+                        self.theme_paint_radius =
+                            theme.as_deref().map_or(64.0, CompiledTheme::paint_radius);
                         self.theme = theme;
                         self.theme_fallback = None;
                         self.cfg.theme_id = theme_id;
@@ -983,6 +982,7 @@ mod glide_duration_tests {
         core.motion.glide_duration_ms = glide_ms;
         core.motion.idle_hide_ms = 0.0;
         core.pos = (0.0, 0.0);
+        core.placed = true;
         // Aligned headings → an effectively straight path of length ~dist_pts.
         core.path = Some(PathPlanner::plan(
             0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0,
@@ -1123,6 +1123,7 @@ mod session_badge_and_action_tests {
     fn hardware_pointer_hover_reveals_only_while_over_cursor() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (300.0, 240.0);
+        core.placed = true;
         core.apply_command_base(
             OverlayCommand::SetSessionLabel("Research".into()),
             false,
@@ -1145,6 +1146,7 @@ mod session_badge_and_action_tests {
     fn movement_preserves_the_active_semantic_action() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (20.0, 20.0);
+        core.placed = true;
         core.apply_command_base(
             OverlayCommand::BeginAction {
                 action: CursorAction::Text,
@@ -1178,6 +1180,7 @@ mod session_badge_and_action_tests {
     fn modifiers_live_in_the_badge_then_fade_after_action_completion() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (200.0, 200.0);
+        core.placed = true;
         core.apply_command_base(
             OverlayCommand::BeginAction {
                 action: CursorAction::Click,
@@ -1308,6 +1311,7 @@ mod backing_scale_tests {
         // idle-fade so the arrow paints at full alpha regardless of timing.
         let centre = logical_size as f64 / 2.0;
         core.pos = (centre, centre);
+        core.placed = true;
         core.idle_alpha = 1.0;
         core.visible = true;
 

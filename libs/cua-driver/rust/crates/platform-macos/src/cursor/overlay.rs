@@ -4,7 +4,7 @@
 //!
 //! The MCP/tokio server runs on a **background thread** (spawned in
 //! `cua-driver/src/main.rs`).  AppKit MUST run on the **main thread**.
-//! The two sides communicate through a global lock-free channel:
+//! The two sides communicate through a bounded process-global channel:
 //!
 //! - MCP tool calls → `send_command(OverlayCommand)` → `CMD_TX` (SyncSender)
 //! - render worker → per-display pixmaps → main-thread `AppKitOverlayHost`
@@ -32,13 +32,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use cursor_overlay::{
     CursorConfig, CursorKey, FocusRect, KeyedOverlayCommand, MotionConfig, OverlayCommand,
-    OverlayMsg, RenderStateCore, ZOrderEnforcer,
+    OverlayMsg, RenderStateCore,
 };
 use indexmap::IndexMap;
 
@@ -76,7 +76,7 @@ fn arrival_fire(key: &CursorKey) {
 
 enum MacOverlayMsg {
     Cursor(OverlayMsg),
-    DisplaysChanged,
+    LayoutChanged,
 }
 
 static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<MacOverlayMsg>> = OnceLock::new();
@@ -85,7 +85,6 @@ static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<MacOverlayMsg>>> = Mu
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
 static HOST: Mutex<Option<AppKitOverlayHost>> = Mutex::new(None);
 static DISPLAY_GENERATION: AtomicU64 = AtomicU64::new(0);
-static REBUILD_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// The keyed, insertion-ordered collection of owned cursors that the render
 /// loop composites every frame. Insertion order = stable z-order (later keys
@@ -106,7 +105,7 @@ struct RenderMap {
     /// resurrection race). An explicit owner-checked `start_session` revival
     /// clears this tombstone before the cursor is reused. "default" is never
     /// tombstoned.
-    ended: std::collections::HashSet<CursorKey>,
+    ended: HashSet<CursorKey>,
 }
 
 /// Build the `RenderState` for a lazily-created session cursor from the
@@ -182,7 +181,7 @@ pub fn init(cfg: CursorConfig) {
             layout: DisplayLayout::default(),
             active_key: None,
             template: cfg,
-            ended: std::collections::HashSet::new(),
+            ended: HashSet::new(),
         });
     });
     cua_driver_core::cursor_events::install_cursor_event_sink(std::sync::Arc::new(
@@ -225,7 +224,7 @@ pub fn init(cfg: CursorConfig) {
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    // Empty key is the explicit no-cursor sentinel for direct platform calls
+    // An empty key disables cursors for direct platform calls
     // that bypass lifecycle dispatch.
     if key.is_empty() {
         return;
@@ -244,8 +243,8 @@ pub fn send_command_default(cmd: OverlayCommand) {
 }
 
 /// Truthful render acknowledgement for lifecycle inspection. This never falls
-/// back to the seeded default cursor: an absent, off-screen, disabled, or
-/// idle-faded session cursor is not reported as visible.
+/// back to the default cursor: an absent, unplaced, disabled, or idle-faded
+/// session cursor is not reported as visible.
 pub fn is_visible_for_session(key: &str) -> bool {
     RENDER
         .lock()
@@ -254,7 +253,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(cursor_is_externally_visible)
+                .map(cursor_is_visible)
         })
         .unwrap_or(false)
 }
@@ -363,7 +362,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && !rs.placed) {
+    if !(rs.core.cfg.enabled && !rs.core.placed) {
         return false;
     }
     let mut sx = target_x - SEED_OFFSET;
@@ -383,7 +382,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         }
     }
     rs.core.pos = (sx, sy);
-    rs.placed = true;
+    rs.core.placed = true;
     true
 }
 
@@ -397,7 +396,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
 /// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
 /// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
-    // Empty key is the explicit no-cursor sentinel → nothing to animate.
+    // An empty key disables cursors for direct platform calls.
     if key.is_empty() {
         return;
     }
@@ -412,7 +411,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.placed
+            Some(rs) if rs.core.cfg.enabled && rs.core.placed
         )
     };
     if !should_animate {
@@ -497,12 +496,10 @@ pub fn run_on_main_thread() {
 //
 // The platform-agnostic fields + tick + apply_command + render pipeline live
 // in `cursor_overlay::render_state` (2026-05 dedup audit). What stays here
-// is the macOS-specific NSScreen window dimensions and the focus-rect
-// overlay (a macOS-only post-arrival element highlight).
+// is macOS display presentation and the focus-rect overlay.
 
 struct RenderState {
     core: RenderStateCore,
-    placed: bool,
     /// Focus-highlight rectangle `[x, y, w, h]` in screen coords; None = not shown.
     focus_rect: Option<[f64; 4]>,
     /// Fade progress for the focus rect: 0.0 = fully visible, 1.0 = gone.
@@ -513,7 +510,6 @@ impl RenderState {
     fn new(cfg: CursorConfig) -> Self {
         RenderState {
             core: RenderStateCore::new(cfg),
-            placed: false,
             focus_rect: None,
             focus_rect_t: 1.0,
         }
@@ -548,14 +544,7 @@ impl RenderState {
                 self.focus_rect_t = 0.0; // reset fade to fully visible
             }
             other => {
-                let places = matches!(
-                    other,
-                    OverlayCommand::MoveTo { .. }
-                        | OverlayCommand::SnapTo { .. }
-                        | OverlayCommand::ClickPulse { .. }
-                );
                 let _ = self.core.apply_command_base(other, true, true);
-                self.placed |= places;
             }
         }
     }
@@ -563,14 +552,14 @@ impl RenderState {
     /// True while the render loop must wake at frame cadence because the next
     /// tick can change pixels. A brand-new unplaced cursor is deliberately
     /// quiescent, so `serve` with no agent activity can block on the command
-    /// channel instead of compositing an empty fullscreen pixmap at 60fps.
+    /// channel instead of compositing empty display pixmaps at 60fps.
     fn needs_frame_tick(&self) -> bool {
         self.core.path.is_some()
             || self.core.spring.is_some()
             || self.core.click_t.is_some()
             || self.focus_rect.is_some()
             || self.core.session_badge_needs_frame_tick()
-            || (self.core.motion.idle_hide_ms > 0.0 && cursor_is_externally_visible(self))
+            || (self.core.motion.idle_hide_ms > 0.0 && cursor_is_visible(self))
     }
 }
 
@@ -578,10 +567,10 @@ fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
     map.cursors.values().any(RenderState::needs_frame_tick)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ZOrderRoute {
     generation: u64,
-    display_id: DisplayId,
+    display_ids: Vec<DisplayId>,
     target_wid: Option<u64>,
 }
 
@@ -590,12 +579,18 @@ fn z_order_route(map: &RenderMap) -> Option<ZOrderRoute> {
         .active_key
         .as_ref()
         .and_then(|key| map.cursors.get(key))
-        .filter(|state| cursor_is_externally_visible(state))?;
-    let (x, y) = state.core.pos;
-    let display_id = map.layout.display_at(x, y)?.id;
-    Some(ZOrderRoute {
+        .filter(|state| cursor_is_visible(state))?;
+    let display_ids = map
+        .layout
+        .displays
+        .iter()
+        .copied()
+        .filter(|display| state_paints_display(state, *display))
+        .map(|display| display.id)
+        .collect::<Vec<_>>();
+    (!display_ids.is_empty()).then_some(ZOrderRoute {
         generation: map.layout.generation,
-        display_id,
+        display_ids,
         target_wid: state.core.pinned_wid,
     })
 }
@@ -759,15 +754,10 @@ fn register_display_reconfiguration_callback() {
 }
 
 fn dispatch_rebuild_appkit_host() {
-    if REBUILD_PENDING.swap(true, Ordering::AcqRel) {
-        return;
-    }
     dispatch_on_main(Box::new(|| unsafe {
-        let rebuilt = rebuild_appkit_host();
-        REBUILD_PENDING.store(false, Ordering::Release);
-        if rebuilt {
+        if rebuild_appkit_host() {
             if let Some(tx) = CMD_TX.get() {
-                let _ = tx.try_send(MacOverlayMsg::DisplaysChanged);
+                let _ = tx.try_send(MacOverlayMsg::LayoutChanged);
             }
         }
     }));
@@ -836,7 +826,7 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
                         };
                         apply_msg(map, message);
                     }
-                    MacOverlayMsg::DisplaysChanged => layout_changed = true,
+                    MacOverlayMsg::LayoutChanged => layout_changed = true,
                 }
             };
             if let Some(message) = first_msg {
@@ -898,16 +888,21 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
         if frame_tick_needed || had_msg {
             repin_frames += 1;
             let route_changed = z_order != presented_z_order;
-            if let Some(route) = z_order {
-                if route.target_wid.is_some() && (route_changed || repin_frames >= 60) {
-                    MacZOrderEnforcer {
-                        display_id: route.display_id,
+            if let Some(route) = z_order.as_ref() {
+                match route.target_wid {
+                    Some(target_wid) if route_changed || repin_frames >= 60 => {
+                        for display_id in &route.display_ids {
+                            dispatch_pin_above(*display_id, target_wid);
+                        }
+                        repin_frames = 0;
                     }
-                    .reassert(route.target_wid);
-                    repin_frames = 0;
-                } else if route.target_wid.is_none() && (route_changed || cursor_commanded) {
-                    dispatch_order_front(route.display_id);
-                    repin_frames = 0;
+                    None if route_changed || cursor_commanded => {
+                        for display_id in &route.display_ids {
+                            dispatch_order_front(*display_id);
+                        }
+                        repin_frames = 0;
+                    }
+                    _ => {}
                 }
             }
             presented_z_order = z_order;
@@ -964,46 +959,36 @@ fn render_loop(rx: std::sync::mpsc::Receiver<MacOverlayMsg>) {
     }
 }
 
-// Matches the established default-theme envelope used by the X11 tile path.
-const DEFAULT_CURSOR_PAINT_RADIUS: f64 = 64.0;
-
 /// Displays whose buffers can contain pixels in the current frame. This is
 /// based on painted bounds, not cursor ownership: artwork may span a seam.
 fn painted_display_ids(map: &RenderMap) -> HashSet<DisplayId> {
-    let mut painted = HashSet::new();
-    for state in map.cursors.values() {
-        if cursor_is_externally_visible(state) {
-            let (x, y) = state.core.pos;
-            let custom_theme = state
-                .core
-                .theme
-                .as_deref()
-                .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
-            for display in &map.layout.displays {
-                if custom_theme
-                    || rectangles_intersect(
-                        (
-                            x - DEFAULT_CURSOR_PAINT_RADIUS,
-                            y - DEFAULT_CURSOR_PAINT_RADIUS,
-                            DEFAULT_CURSOR_PAINT_RADIUS * 2.0,
-                            DEFAULT_CURSOR_PAINT_RADIUS * 2.0,
-                        ),
-                        *display,
-                    )
-                {
-                    painted.insert(display.id);
-                }
-            }
-        }
-        if let Some([x, y, width, height]) = state.focus_rect {
-            for display in &map.layout.displays {
-                if rectangles_intersect((x, y, width, height), *display) {
-                    painted.insert(display.id);
-                }
-            }
-        }
+    map.cursors
+        .values()
+        .flat_map(|state| {
+            map.layout
+                .displays
+                .iter()
+                .copied()
+                .filter(|display| state_paints_display(state, *display))
+                .map(|display| display.id)
+        })
+        .collect()
+}
+
+fn state_paints_display(state: &RenderState, display: DisplayGeometry) -> bool {
+    if !cursor_is_visible(state) {
+        return false;
     }
-    painted
+    let (x, y) = state.core.pos;
+    let radius = state.core.paint_radius();
+    let cursor_intersects = rectangles_intersect(
+        (x - radius, y - radius, radius * 2.0, radius * 2.0),
+        display,
+    );
+    let focus_intersects = state
+        .focus_rect
+        .is_some_and(|[x, y, width, height]| rectangles_intersect((x, y, width, height), display));
+    cursor_intersects || focus_intersects
 }
 
 fn rectangles_intersect(rect: (f64, f64, f64, f64), display: DisplayGeometry) -> bool {
@@ -1021,7 +1006,7 @@ fn render_display(map: &RenderMap, display: DisplayGeometry) -> tiny_skia::Pixma
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
     for state in map.cursors.values() {
-        if !cursor_is_externally_visible(state) {
+        if !state_paints_display(state, display) {
             continue;
         }
         let focus = state.focus_rect.map(|rect| FocusRect {
@@ -1029,6 +1014,7 @@ fn render_display(map: &RenderMap, display: DisplayGeometry) -> tiny_skia::Pixma
             t: state.focus_rect_t,
         });
         let anchor_display = state
+            .core
             .placed
             .then_some(state.core.pos)
             .and_then(|(x, y)| map.layout.display_at(x, y))
@@ -1062,8 +1048,11 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
     Some((location.x, location.y))
 }
 
-fn cursor_is_externally_visible(state: &RenderState) -> bool {
-    state.placed && state.core.cfg.enabled && state.core.visible && state.core.idle_alpha >= 0.004
+fn cursor_is_visible(state: &RenderState) -> bool {
+    state.core.placed
+        && state.core.cfg.enabled
+        && state.core.visible
+        && state.core.idle_alpha >= 0.004
 }
 
 type MainWork = Box<dyn FnOnce() + Send>;
@@ -1182,29 +1171,6 @@ fn dispatch_pin_above(display_id: DisplayId, target_wid: u64) {
             }
         }
     }));
-}
-
-// ── Z-order enforcer (macOS impl of cursor_overlay::ZOrderEnforcer) ──────
-
-/// macOS implementation of [`cursor_overlay::ZOrderEnforcer`].
-///
-/// Identifies the display surface and dispatches target-relative ordering to
-/// the main-thread AppKit host.
-///
-/// `target = None` is treated as a no-op here. Direct unpinned cursor commands
-/// raise the overlay once in the render loop, while this enforcer remains
-/// responsible only for target-relative ordering.
-struct MacZOrderEnforcer {
-    display_id: DisplayId,
-}
-
-impl ZOrderEnforcer for MacZOrderEnforcer {
-    fn reassert(&self, target: Option<u64>) {
-        if let Some(wid) = target {
-            dispatch_pin_above(self.display_id, wid);
-        }
-        // target = None → no-op; see struct doc comment.
-    }
 }
 
 /// Create a `CGImage` from a `tiny_skia::Pixmap` (premultiplied RGBA).
@@ -1364,7 +1330,7 @@ mod tests {
             },
             active_key: None,
             template: CursorConfig::default(),
-            ended: std::collections::HashSet::new(),
+            ended: HashSet::new(),
         }
     }
 
@@ -1535,20 +1501,18 @@ mod tests {
     }
 
     #[test]
-    fn seed_places_cursor_on_screen_for_first_action() {
-        // BUG 2 regression: a brand-new session cursor without a position must be
-        // seeded on-screen (pos.0 > -50) so the immediately-following MoveTo
-        // glides instead of silently snapping via ClickPulse.
+    fn seed_places_cursor_inside_a_display_for_first_action() {
+        // The first MoveTo needs a display-valid start to produce a visible glide.
         let mut map = empty_map(); // 100x100 frame
                                    // No "sessA" cursor exists yet — the seed must get-or-create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(seeded, "unplaced cursor must be seeded");
         let pos = map.cursors["sessA"].core.pos;
         assert!(
-            pos.0 > -50.0 && pos.1 > -50.0,
-            "seed must be on-screen, got {pos:?}"
+            map.layout.display_at(pos.0, pos.1).is_some(),
+            "seed must be inside a display, got {pos:?}"
         );
-        // And it must be a DIFFERENT point from the target so there is a glide.
+        // It must differ from the target so there is a glide.
         assert!(
             (pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
             "seed must differ from target to produce a visible glide, got {pos:?}"
@@ -1556,16 +1520,13 @@ mod tests {
     }
 
     #[test]
-    fn seed_is_noop_when_cursor_already_on_screen() {
-        // A second action: the cursor already landed somewhere on-screen, so the
-        // seed must NOT move it (the MoveTo path should start from where it is).
+    fn seed_is_noop_when_cursor_is_already_placed() {
         let mut map = empty_map();
-        // Put sessA on-screen first.
         seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
-        map.cursors.get_mut("sessA").unwrap().placed = true;
+        map.cursors.get_mut("sessA").unwrap().core.placed = true;
         let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
-        assert!(!seeded_again, "on-screen cursor must not be re-seeded");
+        assert!(!seeded_again, "placed cursor must not be re-seeded");
         assert_eq!(
             map.cursors["sessA"].core.pos,
             (30.0, 30.0),
@@ -1578,7 +1539,7 @@ mod tests {
         let mut map = empty_map();
         seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         map.cursors.get_mut("sessA").unwrap().core.pos = (-867.0, 400.0);
-        map.cursors.get_mut("sessA").unwrap().placed = true;
+        map.cursors.get_mut("sessA").unwrap().core.placed = true;
 
         assert!(!seed_start_in_map(
             &mut map,
@@ -1587,7 +1548,14 @@ mod tests {
             80.0
         ));
         assert_eq!(map.cursors["sessA"].core.pos, (-867.0, 400.0));
-        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+        assert!(cursor_is_visible(&map.cursors["sessA"]));
+
+        apply_msg(&mut map, move_msg("sessA", -500.0, 400.0));
+        assert_eq!(
+            map.cursors["sessA"].core.pos,
+            (-867.0, 400.0),
+            "negative placement must remain the path start"
+        );
     }
 
     #[test]
@@ -1605,7 +1573,7 @@ mod tests {
         map.layout.displays.push(secondary);
         seed_start_in_map(&mut map, &"sessA".to_owned(), -867.0, 400.0);
         map.cursors.get_mut("sessA").unwrap().core.pos = (-867.0, 400.0);
-        map.cursors.get_mut("sessA").unwrap().placed = true;
+        map.cursors.get_mut("sessA").unwrap().core.placed = true;
 
         assert_eq!(painted_display_ids(&map), HashSet::from([2]));
         let pixmap = render_display(&map, secondary);
@@ -1630,7 +1598,7 @@ mod tests {
         seed_start_in_map(&mut map, &"sessA".to_owned(), -867.0, 400.0);
 
         map.cursors.get_mut("sessA").unwrap().core.pos = (-1.0, 400.0);
-        map.cursors.get_mut("sessA").unwrap().placed = true;
+        map.cursors.get_mut("sessA").unwrap().core.placed = true;
         assert_eq!(painted_display_ids(&map), HashSet::from([1, 2]));
         let primary = map.layout.displays[0];
         let primary_art = render_display(&map, primary);
@@ -1651,7 +1619,7 @@ mod tests {
         assert_ne!(render_display(&map, secondary).data(), secondary_art.data());
 
         map.cursors.get_mut("sessA").unwrap().core.pos = (400.0, 400.0);
-        map.cursors.get_mut("sessA").unwrap().placed = true;
+        map.cursors.get_mut("sessA").unwrap().core.placed = true;
         assert_eq!(painted_display_ids(&map), HashSet::from([1]));
         assert!(render_display(&map, secondary)
             .data()
@@ -1686,14 +1654,16 @@ mod tests {
             z_order_route(&map),
             Some(ZOrderRoute {
                 generation: 1,
-                display_id: 1,
+                display_ids: vec![1],
                 target_wid: Some(77),
             })
         );
 
+        map.cursors.get_mut("sessA").unwrap().core.pos = (-1.0, 400.0);
+        assert_eq!(z_order_route(&map).unwrap().display_ids, vec![1, 2]);
+
         map.cursors.get_mut("sessA").unwrap().core.pos = (-400.0, 400.0);
-        map.cursors.get_mut("sessA").unwrap().placed = true;
-        assert_eq!(z_order_route(&map).unwrap().display_id, 2);
+        assert_eq!(z_order_route(&map).unwrap().display_ids, vec![2]);
 
         map.layout.generation = 2;
         assert_eq!(z_order_route(&map).unwrap().generation, 2);
@@ -1715,23 +1685,22 @@ mod tests {
 
     #[test]
     fn unplaced_default_cursor_does_not_require_frame_ticks() {
-        // Regression for idle CPU: a freshly-started serve daemon seeds only the
-        // off-screen default cursor. With no commands in flight, the render loop
-        // should be able to block on rx.recv() instead of repainting at 60fps.
+        // An untouched cursor must let the render loop block instead of
+        // repainting at 60 fps.
         let map = empty_map();
         assert!(!render_map_needs_frame_tick(&map));
     }
 
     #[test]
-    fn only_enabled_on_screen_cursor_is_externally_visible() {
+    fn only_enabled_placed_cursor_is_visible() {
         let mut map = empty_map();
-        assert!(!cursor_is_externally_visible(&map.cursors["default"]));
+        assert!(!cursor_is_visible(&map.cursors["default"]));
 
         seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+        assert!(cursor_is_visible(&map.cursors["sessA"]));
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
-        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+        assert!(!cursor_is_visible(&map.cursors["sessA"]));
     }
 
     #[test]

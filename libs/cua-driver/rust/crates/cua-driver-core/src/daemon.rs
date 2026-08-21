@@ -85,6 +85,10 @@ pub struct DaemonResponse {
     pub result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
 }
@@ -95,6 +99,8 @@ impl DaemonResponse {
             ok: true,
             result: Some(result),
             error: None,
+            error_code: None,
+            retryable: None,
             exit_code: None,
         }
     }
@@ -104,6 +110,23 @@ impl DaemonResponse {
             ok: false,
             result: None,
             error: Some(message.into()),
+            error_code: None,
+            retryable: None,
+            exit_code: Some(exit_code),
+        }
+    }
+
+    pub fn retryable_err(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        exit_code: i32,
+    ) -> Self {
+        Self {
+            ok: false,
+            result: None,
+            error: Some(message.into()),
+            error_code: Some(code.into()),
+            retryable: Some(true),
             exit_code: Some(exit_code),
         }
     }
@@ -315,6 +338,27 @@ mod tests {
         assert_eq!(request.session_id, None);
         assert_eq!(request.observation_origin, None);
         assert_eq!(request.client_kind, None);
+    }
+
+    #[test]
+    fn legacy_response_without_typed_error_fields_deserializes() {
+        let response: DaemonResponse = serde_json::from_value(serde_json::json!({
+            "ok": false,
+            "error": "legacy failure",
+            "exit_code": 1
+        }))
+        .unwrap();
+        assert_eq!(response.error_code, None);
+        assert_eq!(response.retryable, None);
+    }
+
+    #[test]
+    fn retryable_error_has_additive_machine_readable_fields() {
+        let response = DaemonResponse::retryable_err("permissions_pending", "retry later", 75);
+        let value = serde_json::to_value(response).unwrap();
+        assert_eq!(value["error_code"], "permissions_pending");
+        assert_eq!(value["retryable"], true);
+        assert_eq!(value["exit_code"], 75);
     }
 
     #[test]

@@ -582,6 +582,8 @@ fn main() {
                     );
                 }
             }
+            let gate_context = platform_macos::permissions::gate::telemetry_context();
+            serve::set_permission_gate_pending(!gate_opts.opt_out && gate_context.engaged);
             if !platform_macos::permissions::gate::is_gate_reexec() {
                 telemetry::capture_start(
                     telemetry::event::SERVE_START_LEGACY,
@@ -682,6 +684,7 @@ fn main() {
                     }
                 },
             );
+            serve::set_permission_gate_pending(false);
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(

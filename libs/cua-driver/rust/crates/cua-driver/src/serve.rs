@@ -460,6 +460,9 @@ async fn invoke_daemon_tool(
     sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
+    if let Some(response) = permission_gate_pending_response(&req) {
+        return response;
+    }
     let observation_transport = daemon_observation_transport(&req);
     let direct_client_kind = req.client_kind;
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
@@ -632,6 +635,37 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
     }
+}
+
+static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Mark whether the macOS first-launch gate is still waiting for TCC grants.
+/// The daemon remains reachable for diagnostics, but desktop tool calls are
+/// rejected before execution so a cache-refresh re-exec cannot interrupt them.
+pub fn set_permission_gate_pending(pending: bool) {
+    PERMISSION_GATE_PENDING.store(pending, std::sync::atomic::Ordering::Release);
+}
+
+fn permission_gate_pending_response(request: &DaemonRequest) -> Option<DaemonResponse> {
+    permission_gate_response_for_state(
+        request,
+        PERMISSION_GATE_PENDING.load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
+fn permission_gate_response_for_state(
+    request: &DaemonRequest,
+    pending: bool,
+) -> Option<DaemonResponse> {
+    if !pending || request.name.as_deref() == Some("check_permissions") {
+        return None;
+    }
+    Some(DaemonResponse::retryable_err(
+        "permissions_pending",
+        "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; retry after the permission gate completes",
+        75,
+    ))
 }
 
 fn daemon_metadata_response() -> DaemonResponse {
@@ -2607,6 +2641,38 @@ mod gate_tests {
         let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
+    }
+}
+
+#[cfg(test)]
+mod permission_gate_routing_tests {
+    use super::{permission_gate_response_for_state, DaemonRequest};
+
+    fn call(name: &str) -> DaemonRequest {
+        DaemonRequest {
+            method: "call".into(),
+            name: Some(name.into()),
+            args: Some(serde_json::json!({})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    fn pending_gate_rejects_desktop_calls_with_typed_retry() {
+        let response = permission_gate_response_for_state(&call("list_windows"), true)
+            .expect("pending gate must reject desktop calls");
+        assert!(!response.ok);
+        assert_eq!(response.error_code.as_deref(), Some("permissions_pending"));
+        assert_eq!(response.retryable, Some(true));
+        assert_eq!(response.exit_code, Some(75));
+    }
+
+    #[test]
+    fn permission_probe_remains_available_while_gate_is_pending() {
+        assert!(permission_gate_response_for_state(&call("check_permissions"), true).is_none());
+        assert!(permission_gate_response_for_state(&call("list_windows"), false).is_none());
     }
 }
 

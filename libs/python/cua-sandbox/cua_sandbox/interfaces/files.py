@@ -18,7 +18,6 @@ from typing import Any, Optional, Union
 
 from cua_sandbox.transport.base import Transport
 
-
 # Fleet service requests pass through a gateway with a 1 MiB body limit. Binary
 # payloads expand by one third when base64 encoded, so leave room for the JSON
 # command envelope instead of relying on the gateway's exact implementation.

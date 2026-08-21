@@ -4,8 +4,7 @@ import base64
 from typing import Any
 
 import pytest
-
-from cua_sandbox.interfaces.files import Files, _TRANSFER_CHUNK_BYTES
+from cua_sandbox.interfaces.files import _TRANSFER_CHUNK_BYTES, Files
 
 
 class RecordingTransport:

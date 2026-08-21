@@ -280,7 +280,14 @@ MACOS_APP_BACKUP=""
 
 restore_macos_app_backup_on_exit() {
     [[ "$MACOS_APP_SWAP_STARTED" == "1" ]] || return 0
-    [[ "$MACOS_APP_INSTALL_COMMITTED" != "1" ]] || return 0
+
+    if [[ "$MACOS_APP_INSTALL_COMMITTED" == "1" ]]; then
+        if [[ -e "$MACOS_APP_BACKUP" ]] && ! rm -rf "$MACOS_APP_BACKUP"; then
+            printf 'warning: could not remove macOS install backup at %s\n' \
+                "$MACOS_APP_BACKUP" >&2
+        fi
+        return 0
+    fi
 
     if [[ "$MACOS_APP_HAD_PREVIOUS" == "1" ]]; then
         # If the backup does not exist, the atomic move never completed or an
@@ -1072,7 +1079,7 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         err "downloaded app has unexpected bundle id ${STAGED_BUNDLE_ID:-<missing>}; the installed app was not changed"
         exit 1
     fi
-    STAGED_REQUIREMENT="$(macos_designated_requirement "$SRC_APP")"
+    STAGED_REQUIREMENT="$(macos_designated_requirement "$SRC_APP" || true)"
     if [[ -z "$STAGED_REQUIREMENT" ]]; then
         err "could not read the downloaded app's designated requirement; the installed app was not changed"
         exit 1
@@ -1094,9 +1101,13 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         fi
         if [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]] \
            && codesign --verify --deep --strict "$APP_DEST" 2>/dev/null; then
-            PREVIOUS_REQUIREMENT="$(macos_designated_requirement "$APP_DEST")"
-            REQUIREMENT_COMPATIBILITY="$(macos_requirement_compatibility \
-                "$PREVIOUS_REQUIREMENT" "$SRC_APP")"
+            PREVIOUS_REQUIREMENT="$(macos_designated_requirement "$APP_DEST" || true)"
+            if [[ -n "$PREVIOUS_REQUIREMENT" ]]; then
+                REQUIREMENT_COMPATIBILITY="$(macos_requirement_compatibility \
+                    "$PREVIOUS_REQUIREMENT" "$SRC_APP")"
+            else
+                log "warning: could not read the existing app's designated requirement; preserving TCC rows because compatibility is unknown"
+            fi
         elif [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]]; then
             log "warning: existing CuaDriver.app signature could not be verified; preserving TCC rows because compatibility is unknown"
         else
@@ -1143,7 +1154,7 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         if [[ -e "$MACOS_APP_BACKUP" ]]; then
             mv "$MACOS_APP_BACKUP" "$APP_DEST"
         fi
-        err "installed CuaDriver.app did not preserve its verified signing identity; restored the previous app"
+        err "installed CuaDriver.app did not preserve its verified signing identity; the replacement was rolled back"
         exit 1
     fi
     APP_BINARY="$APP_DEST/Contents/MacOS/$BINARY_NAME"
@@ -1152,7 +1163,7 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         if [[ -e "$MACOS_APP_BACKUP" ]]; then
             mv "$MACOS_APP_BACKUP" "$APP_DEST"
         fi
-        err "binary missing at $APP_BINARY; restored the previous app"
+        err "binary missing at $APP_BINARY; the replacement was rolled back"
         exit 1
     fi
 
@@ -1168,7 +1179,7 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
             mv "$MACOS_APP_BACKUP" "$APP_DEST"
             "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1 || true
         fi
-        err "could not register the replacement app with LaunchServices; restored the previous app"
+        err "could not register the replacement app with LaunchServices; the replacement was rolled back"
         exit 1
     fi
 
@@ -1184,16 +1195,16 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
                 mv "$MACOS_APP_BACKUP" "$APP_DEST"
             fi
             if [[ "$INSTALLED_COMPATIBILITY" == "unknown" ]]; then
-                err "could not re-verify the installed app's signing compatibility; restored the previous app"
+                err "could not re-verify the installed app's signing compatibility; the replacement was rolled back"
             else
-                err "installed app's signing compatibility changed during copy; restored the previous app"
+                err "installed app's signing compatibility changed during copy; the replacement was rolled back"
             fi
             exit 1
         fi
     fi
 
     MACOS_APP_INSTALL_COMMITTED=1
-    rm -rf "$MACOS_APP_BACKUP"
+    rm -rf "$MACOS_APP_BACKUP" || true
     ln -sf "$APP_BINARY" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $APP_BINARY"
     if ! macos_reset_tcc_after_requirement_change "$REQUIREMENT_COMPATIBILITY"; then

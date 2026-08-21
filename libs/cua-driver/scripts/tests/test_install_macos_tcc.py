@@ -218,14 +218,17 @@ def test_exit_cleanup_removes_a_partial_first_install(tmp_path: Path) -> None:
 
 def test_exit_cleanup_leaves_a_committed_install_untouched(tmp_path: Path) -> None:
     app = tmp_path / "CuaDriver.app"
+    backup = tmp_path / "CuaDriver.app.install-backup"
     app.mkdir()
     (app / "candidate").write_text("valid")
+    backup.mkdir()
+    (backup / "previous").write_text("old")
 
     result = run_rollback_policy(
         "restore_macos_app_backup_on_exit",
         {
             "APP_DEST": str(app),
-            "MACOS_APP_BACKUP": str(tmp_path / "missing-backup"),
+            "MACOS_APP_BACKUP": str(backup),
             "MACOS_APP_SWAP_STARTED": "1",
             "MACOS_APP_HAD_PREVIOUS": "0",
             "MACOS_APP_INSTALL_COMMITTED": "1",
@@ -234,3 +237,4 @@ def test_exit_cleanup_leaves_a_committed_install_untouched(tmp_path: Path) -> No
 
     assert result.returncode == 0, result.stderr
     assert (app / "candidate").read_text() == "valid"
+    assert not backup.exists()

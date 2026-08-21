@@ -34,6 +34,7 @@ from cua_core.telemetry import is_telemetry_enabled, record_event
 from PIL import Image
 
 from . import helpers
+from .interface.base import ApiHeaders
 from .interface.factory import InterfaceFactory, OSType
 from .logger import Logger, LogLevel
 from .models import Computer as ComputerConfig
@@ -629,9 +630,45 @@ class Computer:
             self.logger.info(f"Initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
+            # What the interface should use as its header source. A dict for
+            # every provider but Fleet, whose bearer expires mid-session.
+            api_headers: ApiHeaders = self.api_headers
+
+            # A Fleet sandbox has no routable address: it is reached through an
+            # authenticated proxy on the control plane, so the provider reports
+            # a URL and this overrides whatever host get_ip() returned.
+            if self.provider_type == VMProviderType.FLEET:
+                provider = self.config.vm_provider
+                if hasattr(provider, "get_api_base_url"):
+                    self.api_base_url = await provider.get_api_base_url(self.config.name)
+                    self.logger.info(f"Fleet sandbox reachable at {self.api_base_url}")
+                if hasattr(provider, "api_headers"):
+                    # Called, not read: the Fleet bearer is a Keycloak access
+                    # token the provider mints on demand, not a stored key.
+                    static_headers = dict(self.api_headers or {})
+
+                    async def resolve_fleet_headers() -> Dict[str, str]:
+                        """Re-mint the bearer for each connection attempt.
+
+                        Passed as a callable rather than as its result: those
+                        tokens live 900 seconds and a bench run lives hours, so
+                        an interface holding one dict reconnects with a bearer
+                        that expired and fails from then on. The provider
+                        caches, so this only reaches the token endpoint when
+                        the cached token is near expiry.
+                        """
+                        return {**static_headers, **(await provider.api_headers())}
+
+                    api_headers = resolve_fleet_headers
+                    # Resolved once here as well, so missing or rejected
+                    # credentials fail loudly while connecting instead of
+                    # surfacing as an opaque WebSocket timeout.
+                    self.api_headers = await resolve_fleet_headers()
+
             # Pass authentication credentials if using cloud provider
             if (
-                self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
+                self.provider_type
+                in (VMProviderType.CLOUD, VMProviderType.CLOUDV2, VMProviderType.FLEET)
                 and self.api_key
                 and self.config.name
             ):
@@ -644,7 +681,7 @@ class Computer:
                         vm_name=self.config.name,
                         api_port=self.api_port,
                         api_base_url=self.api_base_url,
-                        api_headers=self.api_headers,
+                        api_headers=api_headers,
                     ),
                 )
             else:
@@ -655,7 +692,7 @@ class Computer:
                         ip_address=ip_address,
                         api_port=self.api_port,
                         api_base_url=self.api_base_url,
-                        api_headers=self.api_headers,
+                        api_headers=api_headers,
                     ),
                 )
 

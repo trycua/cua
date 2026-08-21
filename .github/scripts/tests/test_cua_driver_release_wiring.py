@@ -576,6 +576,54 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             1,
         )
 
+    def test_driver_windows_release_signs_every_pe_binary_before_packaging(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        windows = workflow.index("  build-windows:")
+        next_job = workflow.index("  verify-windows-node-runtime:", windows)
+        block = workflow[windows:next_job]
+
+        self.assertIn("  id-token: write\n", workflow)
+        self.assertIn("    environment: cua-driver-release-signing\n", block)
+        self.assertIn(
+            "azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca",
+            block,
+        )
+        self.assertIn(
+            "azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82",
+            block,
+        )
+        self.assertIn("${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}", block)
+        self.assertIn("${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}", block)
+        self.assertIn(
+            "${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}",
+            block,
+        )
+        for binary in (
+            "cua-driver.exe",
+            "cua-cursor-theme.exe",
+            "cua-driver-uia.exe",
+            "cua_driver_sdk.dll",
+            "cua_driver_node_runtime.node",
+        ):
+            self.assertIn(binary, block)
+
+        login = block.index("- name: Azure login for Artifact Signing")
+        signing = block.index("- name: Sign Windows binaries", login)
+        verify = block.index("- name: Verify Authenticode signatures", signing)
+        package = block.index("- name: Package", verify)
+        self.assertLess(login, signing)
+        self.assertLess(signing, verify)
+        self.assertLess(verify, package)
+        self.assertIn("Get-AuthenticodeSignature", block)
+        self.assertIn("$signature.Status -ne 'Valid'", block)
+        self.assertIn("Cua AI, Inc", block)
+        self.assertNotIn("currently shipped UNSIGNED", block)
+
+    def test_driver_nightly_grants_oidc_to_reusable_signing_workflow(self) -> None:
+        workflow = self.read(".github/workflows/nightly-cua-driver.yml")
+        self.assertIn("  id-token: write\n", workflow)
+        self.assertIn("uses: ./.github/workflows/cd-rust-cua-driver.yml", workflow)
+
     def test_driver_tag_build_cannot_publish_before_manual_e2e_gate(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
         self.assertIn(

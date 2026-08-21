@@ -53,6 +53,7 @@ func (h Handlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 		slog.WarnContext(ctx, "usage access eval failed; defaulting off", "err", err)
 		usageEnabled = false
 	}
+	usageEnabled = usageEnabled && h.Usage != nil
 
 	chatEnabled, err := h.chatEnabled(ctx, user)
 	if err != nil {

@@ -277,41 +277,72 @@ func TestLoadConfig_ChatDisabledDoesNotRequireCredentials(t *testing.T) {
 
 func TestLoadConfig_UsageConfiguration(t *testing.T) {
 	validDatabaseURL := "postgres://cyclops_usage_reader:secret@db.example/cyclops?sslmode=require"
-	validOpenCostURL := "https://opencost.example/api"
+	defaults := UsageConfiguration{
+		QueryWebhookURL:   "http://cua-temporal-webhook.temporal.svc.cluster.local/hooks/opencost-query",
+		QueryResultBucket: "nanoclaw-telemetry-files",
+		QueryResultPrefix: "cyclops/usage-query",
+		QueryCluster:      "kopf-k3s",
+		QueryEnvironment:  "production",
+		QueryTimeout:      45 * time.Second,
+		QueryPollInterval: time.Second,
+		MaxResponseBytes:  8388608,
+	}
 	tests := []struct {
 		name      string
 		env       map[string]string
 		wantError string
 		want      UsageConfiguration
 	}{
-		{name: "absent disables usage", want: UsageConfiguration{QueryTimeout: 20 * time.Second, MaxResponseBytes: 8388608}},
-		{name: "database only is rejected", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL}, wantError: "USAGE_DATABASE_URL requires OPENCOST_BASE_URL"},
-		{name: "OpenCost only disables usage", env: map[string]string{"OPENCOST_BASE_URL": validOpenCostURL}, want: UsageConfiguration{OpenCostBaseURL: validOpenCostURL, QueryTimeout: 20 * time.Second, MaxResponseBytes: 8388608}},
+		{name: "absent disables usage", want: defaults},
+		{name: "query settings only disable usage", env: map[string]string{"USAGE_QUERY_HMAC_SECRET": "secret"}, want: func() UsageConfiguration { value := defaults; value.QueryHMACSecret = "secret"; return value }()},
+		{name: "database requires HMAC secret", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL}, wantError: "USAGE_DATABASE_URL requires USAGE_QUERY_HMAC_SECRET"},
 		{
 			name: "valid values",
 			env: map[string]string{
-				"USAGE_DATABASE_URL": validDatabaseURL, "OPENCOST_BASE_URL": validOpenCostURL,
-				"USAGE_QUERY_TIMEOUT": "45s", "USAGE_MAX_RESPONSE_BYTES": "1048576",
+				"USAGE_DATABASE_URL": validDatabaseURL, "USAGE_QUERY_HMAC_SECRET": "secret",
+				"USAGE_QUERY_TIMEOUT": "60s", "USAGE_QUERY_POLL_INTERVAL": "500ms", "USAGE_MAX_RESPONSE_BYTES": "1048576",
 			},
-			want: UsageConfiguration{DatabaseURL: validDatabaseURL, OpenCostBaseURL: validOpenCostURL, QueryTimeout: 45 * time.Second, MaxResponseBytes: 1048576},
+			want: func() UsageConfiguration {
+				value := defaults
+				value.DatabaseURL = validDatabaseURL
+				value.QueryHMACSecret = "secret"
+				value.QueryTimeout = time.Minute
+				value.QueryPollInterval = 500 * time.Millisecond
+				value.MaxResponseBytes = 1048576
+				return value
+			}(),
 		},
-		{name: "libpq database DSN is rejected", env: map[string]string{"USAGE_DATABASE_URL": "user=cyclops_usage_reader host=db.example dbname=cyclops", "OPENCOST_BASE_URL": validOpenCostURL}, wantError: "invalid usage database URL"},
-		{name: "database reader role is required", env: map[string]string{"USAGE_DATABASE_URL": "postgres://application@db.example/cyclops", "OPENCOST_BASE_URL": validOpenCostURL}, wantError: "usage database URL must use cyclops_usage_reader"},
-		{name: "OpenCost URL cannot have a query", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "OPENCOST_BASE_URL": "https://opencost.example?token=secret"}, wantError: "invalid OpenCost URL"},
+		{name: "libpq database DSN is rejected", env: map[string]string{"USAGE_DATABASE_URL": "user=cyclops_usage_reader host=db.example dbname=cyclops", "USAGE_QUERY_HMAC_SECRET": "secret"}, wantError: "invalid usage database URL"},
+		{name: "database reader role is required", env: map[string]string{"USAGE_DATABASE_URL": "postgres://application@db.example/cyclops", "USAGE_QUERY_HMAC_SECRET": "secret"}, wantError: "usage database URL must use cyclops_usage_reader"},
+		{name: "external webhook remains allowed", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "USAGE_QUERY_HMAC_SECRET": "secret", "USAGE_QUERY_WEBHOOK_URL": externalUsageQueryWebhookURL}, want: func() UsageConfiguration {
+			value := defaults
+			value.DatabaseURL = validDatabaseURL
+			value.QueryHMACSecret = "secret"
+			value.QueryWebhookURL = externalUsageQueryWebhookURL
+			return value
+		}()},
+		{name: "webhook is allow-listed", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "USAGE_QUERY_HMAC_SECRET": "secret", "USAGE_QUERY_WEBHOOK_URL": "https://example.test/hooks/opencost-query"}, wantError: "invalid allocation query webhook URL"},
+		{name: "result bucket is allow-listed", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "USAGE_QUERY_HMAC_SECRET": "secret", "USAGE_QUERY_RESULT_BUCKET": "other"}, wantError: "invalid allocation query result bucket"},
 		{name: "malformed timeout is rejected while disabled", env: map[string]string{"USAGE_QUERY_TIMEOUT": "not-a-duration"}, wantError: "invalid USAGE_QUERY_TIMEOUT"},
+		{name: "malformed poll interval is rejected while disabled", env: map[string]string{"USAGE_QUERY_POLL_INTERVAL": "not-a-duration"}, wantError: "invalid USAGE_QUERY_POLL_INTERVAL"},
 		{name: "malformed response limit is rejected while disabled", env: map[string]string{"USAGE_MAX_RESPONSE_BYTES": "not-a-number"}, wantError: "invalid USAGE_MAX_RESPONSE_BYTES"},
 		{name: "short timeout is rejected while disabled", env: map[string]string{"USAGE_QUERY_TIMEOUT": "500ms"}, wantError: "USAGE_QUERY_TIMEOUT must be between 1s and 2m"},
+		{name: "short poll interval is rejected while disabled", env: map[string]string{"USAGE_QUERY_POLL_INTERVAL": "10ms"}, wantError: "USAGE_QUERY_POLL_INTERVAL must be between 250ms and 5s"},
 		{name: "small response limit is rejected while disabled", env: map[string]string{"USAGE_MAX_RESPONSE_BYTES": "1"}, wantError: "USAGE_MAX_RESPONSE_BYTES must be between 65536 and 33554432"},
-		{name: "timeout is bounded", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "OPENCOST_BASE_URL": validOpenCostURL, "USAGE_QUERY_TIMEOUT": "500ms"}, wantError: "USAGE_QUERY_TIMEOUT must be between 1s and 2m"},
-		{name: "response limit is bounded", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "OPENCOST_BASE_URL": validOpenCostURL, "USAGE_MAX_RESPONSE_BYTES": "1"}, wantError: "USAGE_MAX_RESPONSE_BYTES must be between 65536 and 33554432"},
 	}
 
+	keys := []string{
+		"USAGE_DATABASE_URL", "USAGE_QUERY_WEBHOOK_URL", "USAGE_QUERY_HMAC_SECRET",
+		"USAGE_QUERY_RESULT_BUCKET", "USAGE_QUERY_RESULT_PREFIX", "USAGE_QUERY_CLUSTER",
+		"USAGE_QUERY_ENVIRONMENT", "USAGE_QUERY_TIMEOUT", "USAGE_QUERY_POLL_INTERVAL",
+		"USAGE_MAX_RESPONSE_BYTES",
+	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			viper.Reset()
 			t.Cleanup(viper.Reset)
 			t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
-			for _, key := range []string{"USAGE_DATABASE_URL", "OPENCOST_BASE_URL", "USAGE_QUERY_TIMEOUT", "USAGE_MAX_RESPONSE_BYTES"} {
+			for _, key := range keys {
 				t.Setenv(key, "")
 			}
 			for key, value := range test.env {

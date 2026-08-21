@@ -586,22 +586,30 @@ func retryDatabaseFeatures(ctx context.Context, cfg config.DatabaseConfiguration
 
 func initializeUsageProvider(ctx context.Context, cfg config.UsageConfiguration) (usage.Provider, func(), error) {
 	noop := func() {}
-	// OpenCost is deployed independently from the usage credential. Keep the
-	// provider disabled until the database URL arrives so serving stays ready.
+	// Query transport settings are deployed independently from the read-only
+	// usage credential. Keep the provider disabled until the database URL arrives.
 	if cfg.DatabaseURL == "" {
 		return nil, noop, nil
-	}
-	if cfg.OpenCostBaseURL == "" {
-		return nil, noop, fmt.Errorf("usage provider requires OpenCost when the database URL is configured")
 	}
 	events, err := usage.NewPostgresEventStore(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, noop, fmt.Errorf("create usage event store: %w", err)
 	}
-	allocations, err := usage.NewOpenCostClient(cfg.OpenCostBaseURL, cfg.QueryTimeout, cfg.MaxResponseBytes)
+	allocations, err := usage.NewDataFusionAllocationClient(
+		cfg.QueryWebhookURL,
+		cfg.QueryHMACSecret,
+		cfg.QueryResultBucket,
+		cfg.QueryResultPrefix,
+		cfg.QueryCluster,
+		cfg.QueryEnvironment,
+		cfg.QueryTimeout,
+		cfg.QueryPollInterval,
+		cfg.MaxResponseBytes,
+		usage.NewS3QueryObjectStore(),
+	)
 	if err != nil {
 		events.Close()
-		return nil, noop, fmt.Errorf("create OpenCost client: %w", err)
+		return nil, noop, fmt.Errorf("create DataFusion allocation client: %w", err)
 	}
 	return usage.NewProvider(events, allocations, nil), events.Close, nil
 }

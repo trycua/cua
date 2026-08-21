@@ -53,15 +53,36 @@ func TestGetConfigReturnsEffectiveChatAccess(t *testing.T) {
 }
 
 func TestGetConfigReturnsEffectiveUsageAccess(t *testing.T) {
-	h := Handlers{usageAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return true, nil }, adminAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return false, nil }}
-	w := httptest.NewRecorder()
-	h.GetConfig(w, withUser(httptest.NewRequest(http.MethodGet, "/api/config", nil), &auth.User{ID: "user", AZP: "cyclops-cs-spa"}))
-	var response ConfigResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name     string
+		provider UsageProvider
+		allowed  bool
+		want     bool
+	}{
+		{name: "available and allowed", provider: &fakeUsageProvider{}, allowed: true, want: true},
+		{name: "unavailable", allowed: true, want: false},
+		{name: "not allowed", provider: &fakeUsageProvider{}, allowed: false, want: false},
 	}
-	if !response.Usage {
-		t.Fatal("usage false")
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := Handlers{
+				Usage: test.provider,
+				usageAccessEvaluator: func(context.Context, *auth.User) (bool, error) {
+					return test.allowed, nil
+				},
+				adminAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return false, nil },
+			}
+			w := httptest.NewRecorder()
+			h.GetConfig(w, withUser(httptest.NewRequest(http.MethodGet, "/api/config", nil), &auth.User{ID: "user", AZP: "cyclops-cs-spa"}))
+			var response ConfigResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Usage != test.want {
+				t.Fatalf("usage = %v, want %v", response.Usage, test.want)
+			}
+		})
 	}
 }
 

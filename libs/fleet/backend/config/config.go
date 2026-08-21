@@ -14,6 +14,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -124,20 +125,30 @@ type ChatConfiguration struct {
 }
 
 // UsageConfiguration enables the usage provider only when DatabaseURL is set.
-// OpenCostBaseURL may be configured before the usage credential arrives; in
-// that state the provider remains disabled so serving readiness is unaffected.
+// Query transport settings may be present before the usage credential arrives;
+// in that state the provider remains disabled so serving readiness is unaffected.
 type UsageConfiguration struct {
-	DatabaseURL      string
-	OpenCostBaseURL  string
-	QueryTimeout     time.Duration
-	MaxResponseBytes int64
+	DatabaseURL       string
+	QueryWebhookURL   string
+	QueryHMACSecret   string
+	QueryResultBucket string
+	QueryResultPrefix string
+	QueryCluster      string
+	QueryEnvironment  string
+	QueryTimeout      time.Duration
+	QueryPollInterval time.Duration
+	MaxResponseBytes  int64
 }
 
+var usageQueryPartitionValue = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 const (
-	minUsageQueryTimeout = time.Second
-	maxUsageQueryTimeout = 2 * time.Minute
-	minUsageResponseSize = 64 * 1024
-	maxUsageResponseSize = 32 * 1024 * 1024
+	clusterUsageQueryWebhookURL  = "http://cua-temporal-webhook.temporal.svc.cluster.local/hooks/opencost-query"
+	externalUsageQueryWebhookURL = "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query"
+	minUsageQueryTimeout         = time.Second
+	maxUsageQueryTimeout         = 2 * time.Minute
+	minUsageResponseSize         = 64 * 1024
+	maxUsageResponseSize         = 32 * 1024 * 1024
 )
 
 type MetricsConfiguration struct {
@@ -185,9 +196,15 @@ var specs = []flagSpec{
 	{"database.state-query-dsn", "state-query-database-dsn", "STATE_QUERY_DATABASE_DSN", "", "Postgres connection options for tenant state queries"},
 	{"database.state-query-tenant-password", "state-query-tenant-password", "STATE_QUERY_TENANT_PASSWORD", "", "Shared password for tenant query login roles"},
 	{"usage.database-url", "usage-database-url", "USAGE_DATABASE_URL", "", "Postgres URL for usage events"},
-	{"usage.opencost-base-url", "opencost-base-url", "OPENCOST_BASE_URL", "", "OpenCost base URL for usage allocations"},
-	{"usage.query-timeout", "usage-query-timeout", "USAGE_QUERY_TIMEOUT", "20s", "Usage provider query timeout"},
-	{"usage.max-response-bytes", "usage-max-response-bytes", "USAGE_MAX_RESPONSE_BYTES", "8388608", "Maximum OpenCost response bytes"},
+	{"usage.query-webhook-url", "usage-query-webhook-url", "USAGE_QUERY_WEBHOOK_URL", clusterUsageQueryWebhookURL, "DataFusion allocation query webhook URL"},
+	{"usage.query-hmac-secret", "usage-query-hmac-secret", "USAGE_QUERY_HMAC_SECRET", "", "DataFusion allocation query webhook HMAC secret"},
+	{"usage.query-result-bucket", "usage-query-result-bucket", "USAGE_QUERY_RESULT_BUCKET", "nanoclaw-telemetry-files", "S3 bucket for transient allocation query results"},
+	{"usage.query-result-prefix", "usage-query-result-prefix", "USAGE_QUERY_RESULT_PREFIX", "cyclops/usage-query", "S3 prefix for transient allocation query results"},
+	{"usage.query-cluster", "usage-query-cluster", "USAGE_QUERY_CLUSTER", "kopf-k3s", "OpenCost allocation cluster partition"},
+	{"usage.query-environment", "usage-query-environment", "USAGE_QUERY_ENVIRONMENT", "production", "OpenCost allocation environment partition"},
+	{"usage.query-timeout", "usage-query-timeout", "USAGE_QUERY_TIMEOUT", "45s", "Usage provider query timeout"},
+	{"usage.query-poll-interval", "usage-query-poll-interval", "USAGE_QUERY_POLL_INTERVAL", "1s", "Allocation query status poll interval"},
+	{"usage.max-response-bytes", "usage-max-response-bytes", "USAGE_MAX_RESPONSE_BYTES", "8388608", "Maximum allocation query response bytes"},
 	{"stripe.secret-key", "stripe-secret-key", "STRIPE_SECRET_KEY", "", "Stripe secret key (server-only)"},
 	{"stripe.webhook-secret", "stripe-webhook-secret", "STRIPE_WEBHOOK_SECRET", "", "Stripe webhook signing secret"},
 	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
@@ -232,6 +249,10 @@ func splitCommaSeparated(value string) []string {
 
 func LoadConfig() (*Configuration, error) {
 	usageQueryTimeout, err := parseUsageQueryTimeout(viper.GetString("usage.query-timeout"))
+	if err != nil {
+		return nil, err
+	}
+	usagePollInterval, err := parseUsagePollInterval(viper.GetString("usage.query-poll-interval"))
 	if err != nil {
 		return nil, err
 	}
@@ -306,10 +327,16 @@ func LoadConfig() (*Configuration, error) {
 			Model:   viper.GetString("chat.model"),
 		},
 		Usage: UsageConfiguration{
-			DatabaseURL:      strings.TrimSpace(viper.GetString("usage.database-url")),
-			OpenCostBaseURL:  strings.TrimSpace(viper.GetString("usage.opencost-base-url")),
-			QueryTimeout:     usageQueryTimeout,
-			MaxResponseBytes: usageMaxResponseBytes,
+			DatabaseURL:       strings.TrimSpace(viper.GetString("usage.database-url")),
+			QueryWebhookURL:   strings.TrimSpace(viper.GetString("usage.query-webhook-url")),
+			QueryHMACSecret:   strings.TrimSpace(viper.GetString("usage.query-hmac-secret")),
+			QueryResultBucket: strings.TrimSpace(viper.GetString("usage.query-result-bucket")),
+			QueryResultPrefix: strings.Trim(strings.TrimSpace(viper.GetString("usage.query-result-prefix")), "/"),
+			QueryCluster:      strings.TrimSpace(viper.GetString("usage.query-cluster")),
+			QueryEnvironment:  strings.TrimSpace(viper.GetString("usage.query-environment")),
+			QueryTimeout:      usageQueryTimeout,
+			QueryPollInterval: usagePollInterval,
+			MaxResponseBytes:  usageMaxResponseBytes,
 		},
 		Metrics: MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
 		Telemetry: TelemetryConfiguration{
@@ -353,17 +380,25 @@ func validateUsageConfiguration(cfg UsageConfiguration) error {
 	if cfg.QueryTimeout < minUsageQueryTimeout || cfg.QueryTimeout > maxUsageQueryTimeout {
 		return fmt.Errorf("USAGE_QUERY_TIMEOUT must be between 1s and 2m")
 	}
+	if cfg.QueryPollInterval < 250*time.Millisecond || cfg.QueryPollInterval > 5*time.Second {
+		return fmt.Errorf("USAGE_QUERY_POLL_INTERVAL must be between 250ms and 5s")
+	}
 	if cfg.MaxResponseBytes < minUsageResponseSize || cfg.MaxResponseBytes > maxUsageResponseSize {
 		return fmt.Errorf("USAGE_MAX_RESPONSE_BYTES must be between 65536 and 33554432")
 	}
-	// Deployments set OPENCOST_BASE_URL before the usage ExternalSecret is
-	// available. An absent database URL therefore disables usage, while a
-	// database URL without OpenCost remains an unsafe configuration error.
 	if cfg.DatabaseURL == "" {
 		return nil
 	}
-	if cfg.OpenCostBaseURL == "" {
-		return fmt.Errorf("USAGE_DATABASE_URL requires OPENCOST_BASE_URL")
+	for name, value := range map[string]string{
+		"USAGE_QUERY_HMAC_SECRET":   cfg.QueryHMACSecret,
+		"USAGE_QUERY_RESULT_BUCKET": cfg.QueryResultBucket,
+		"USAGE_QUERY_RESULT_PREFIX": cfg.QueryResultPrefix,
+		"USAGE_QUERY_CLUSTER":       cfg.QueryCluster,
+		"USAGE_QUERY_ENVIRONMENT":   cfg.QueryEnvironment,
+	} {
+		if value == "" {
+			return fmt.Errorf("USAGE_DATABASE_URL requires %s", name)
+		}
 	}
 	databaseURL, err := url.Parse(cfg.DatabaseURL)
 	if err != nil {
@@ -379,12 +414,19 @@ func validateUsageConfiguration(cfg UsageConfiguration) error {
 	if postgresConfig.ConnConfig.User != "cyclops_usage_reader" {
 		return fmt.Errorf("usage database URL must use cyclops_usage_reader")
 	}
-	openCostURL, err := url.Parse(cfg.OpenCostBaseURL)
-	if err != nil {
-		return newSanitizedError("invalid OpenCost URL", err)
+	if cfg.QueryWebhookURL != clusterUsageQueryWebhookURL && cfg.QueryWebhookURL != externalUsageQueryWebhookURL {
+		return fmt.Errorf("invalid allocation query webhook URL")
 	}
-	if (openCostURL.Scheme != "http" && openCostURL.Scheme != "https") || openCostURL.Host == "" || openCostURL.RawQuery != "" || openCostURL.Fragment != "" || openCostURL.User != nil {
-		return fmt.Errorf("invalid OpenCost URL")
+	if cfg.QueryResultBucket != "nanoclaw-telemetry-files" {
+		return fmt.Errorf("invalid allocation query result bucket")
+	}
+	if cfg.QueryResultPrefix != "cyclops/usage-query" {
+		return fmt.Errorf("invalid allocation query result prefix")
+	}
+	for _, value := range []string{cfg.QueryCluster, cfg.QueryEnvironment} {
+		if !usageQueryPartitionValue.MatchString(value) {
+			return fmt.Errorf("invalid allocation query partition")
+		}
 	}
 	return nil
 }
@@ -393,6 +435,14 @@ func parseUsageQueryTimeout(raw string) (time.Duration, error) {
 	value, err := time.ParseDuration(strings.TrimSpace(raw))
 	if err != nil {
 		return 0, fmt.Errorf("invalid USAGE_QUERY_TIMEOUT: %w", err)
+	}
+	return value, nil
+}
+
+func parseUsagePollInterval(raw string) (time.Duration, error) {
+	value, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("invalid USAGE_QUERY_POLL_INTERVAL: %w", err)
 	}
 	return value, nil
 }

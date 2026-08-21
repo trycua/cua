@@ -7,8 +7,8 @@ import (
 
 func TestNewSanitizedErrorRedactsAndPreservesCause(t *testing.T) {
 	cause := errors.New("secret upstream detail")
-	err := newSanitizedError("invalid OpenCost URL", cause)
-	if err.Error() != "invalid OpenCost URL" {
+	err := newSanitizedError("invalid allocation query webhook URL", cause)
+	if err.Error() != "invalid allocation query webhook URL" {
 		t.Fatalf("Error() = %q", err.Error())
 	}
 	if !errors.Is(err, cause) {

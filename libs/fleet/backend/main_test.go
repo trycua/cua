@@ -1170,10 +1170,16 @@ func TestRetryDatabaseFeaturesStopsOnceReady(t *testing.T) {
 
 func TestInitializeUsageProviderDoesNotGateReadiness(t *testing.T) {
 	provider, closeProvider, err := initializeUsageProvider(context.Background(), config.UsageConfiguration{
-		DatabaseURL:      "postgres://cyclops_usage_reader:secret@127.0.0.1:1/cyclops?sslmode=disable",
-		OpenCostBaseURL:  "http://127.0.0.1:1",
-		QueryTimeout:     time.Second,
-		MaxResponseBytes: 64 * 1024,
+		DatabaseURL:       "postgres://cyclops_usage_reader:secret@127.0.0.1:1/cyclops?sslmode=disable",
+		QueryWebhookURL:   "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query",
+		QueryHMACSecret:   "secret",
+		QueryResultBucket: "nanoclaw-telemetry-files",
+		QueryResultPrefix: "cyclops/usage-query",
+		QueryCluster:      "kopf-k3s",
+		QueryEnvironment:  "production",
+		QueryTimeout:      time.Second,
+		QueryPollInterval: time.Second,
+		MaxResponseBytes:  64 * 1024,
 	})
 	if err != nil {
 		t.Fatalf("initializeUsageProvider() error = %v", err)
@@ -1196,11 +1202,17 @@ func TestInitializeUsageProviderDoesNotGateReadiness(t *testing.T) {
 	}
 }
 
-func TestInitializeUsageProviderOpenCostOnlyIsDisabled(t *testing.T) {
+func TestInitializeUsageProviderQueryTransportOnlyIsDisabled(t *testing.T) {
 	provider, closeProvider, err := initializeUsageProvider(context.Background(), config.UsageConfiguration{
-		OpenCostBaseURL:  "http://127.0.0.1:1",
-		QueryTimeout:     time.Second,
-		MaxResponseBytes: 64 * 1024,
+		QueryWebhookURL:   "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query",
+		QueryHMACSecret:   "secret",
+		QueryResultBucket: "nanoclaw-telemetry-files",
+		QueryResultPrefix: "cyclops/usage-query",
+		QueryCluster:      "kopf-k3s",
+		QueryEnvironment:  "production",
+		QueryTimeout:      time.Second,
+		QueryPollInterval: time.Second,
+		MaxResponseBytes:  64 * 1024,
 	})
 	if err != nil {
 		t.Fatalf("initializeUsageProvider() error = %v", err)

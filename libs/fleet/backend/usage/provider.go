@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -13,7 +14,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var ErrPoolNotFound = errors.New("usage pool not found")
+var (
+	ErrPoolNotFound = errors.New("usage pool not found")
+	dns1123Label    = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`)
+)
 
 type provider struct {
 	events      EventStore
@@ -163,10 +167,10 @@ func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
 	))
 	allocations, asOf, sourcePartial, err := p.allocations.Allocations(allocationsCtx, start, end, step, namespaces)
 	if err != nil {
-		markUsageSpanError(allocationsSpan, "OpenCost allocation query failed")
+		markUsageSpanError(allocationsSpan, "allocation query failed")
 		allocationsSpan.End()
-		markUsageSpanError(span, "OpenCost allocation query failed")
-		return usageData{}, fmt.Errorf("read OpenCost allocations: %w", err)
+		markUsageSpanError(span, "allocation query failed")
+		return usageData{}, fmt.Errorf("read allocation data: %w", err)
 	}
 	allocationsSpan.SetAttributes(
 		attribute.Int("usage.allocation_count", len(allocations)),

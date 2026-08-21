@@ -661,8 +661,7 @@ fn permission_gate_response_for_state(
     if !pending {
         return None;
     }
-    Some(DaemonResponse::retryable_err(
-        "permissions_pending",
+    Some(DaemonResponse::err(
         "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes",
         75,
     ))
@@ -2664,8 +2663,10 @@ mod permission_gate_routing_tests {
         let response = permission_gate_response_for_state(&call("list_windows"), true)
             .expect("pending gate must reject desktop calls");
         assert!(!response.ok);
-        assert_eq!(response.error_code.as_deref(), Some("permissions_pending"));
-        assert_eq!(response.retryable, Some(true));
+        assert!(response
+            .error
+            .as_deref()
+            .is_some_and(|message| message.starts_with("permissions_pending:")));
         assert_eq!(response.exit_code, Some(75));
     }
 

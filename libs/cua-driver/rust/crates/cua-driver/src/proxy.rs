@@ -793,19 +793,10 @@ async fn forward_tool_call(
             .error
             .unwrap_or_else(|| "daemon reported failure".into());
         let exit_code = resp.exit_code.unwrap_or(1);
-        let mut structured = serde_json::json!({ "exit_code": exit_code });
-        if let Some(object) = structured.as_object_mut() {
-            if let Some(error_code) = resp.error_code {
-                object.insert("error_code".into(), error_code.into());
-            }
-            if let Some(retryable) = resp.retryable {
-                object.insert("retryable".into(), retryable.into());
-            }
-        }
         let result = serde_json::json!({
             "content": [{ "type": "text", "text": msg }],
             "isError": true,
-            "structuredContent": structured
+            "structuredContent": { "exit_code": exit_code }
         });
         return Response::ok(id, result);
     }
@@ -893,19 +884,10 @@ mod tests {
             .error
             .unwrap_or_else(|| "daemon reported failure".into());
         let exit_code = resp.exit_code.unwrap_or(1);
-        let mut structured = serde_json::json!({ "exit_code": exit_code });
-        if let Some(object) = structured.as_object_mut() {
-            if let Some(error_code) = resp.error_code {
-                object.insert("error_code".into(), error_code.into());
-            }
-            if let Some(retryable) = resp.retryable {
-                object.insert("retryable".into(), retryable.into());
-            }
-        }
         let result = serde_json::json!({
             "content": [{ "type": "text", "text": msg }],
             "isError": true,
-            "structuredContent": structured
+            "structuredContent": { "exit_code": exit_code }
         });
         Response::ok(id, result)
     }
@@ -916,8 +898,6 @@ mod tests {
             ok: false,
             result: None,
             error: Some("missing required field `pid`".into()),
-            error_code: None,
-            retryable: None,
             exit_code: Some(64),
         };
         let resp = build_tool_error_response(serde_json::json!(7), daemon_resp);
@@ -944,27 +924,11 @@ mod tests {
     }
 
     #[test]
-    fn retryable_daemon_failure_preserves_machine_readable_fields() {
-        let daemon_resp =
-            DaemonResponse::retryable_err("permissions_pending", "retry after grant", 75);
-        let resp = build_tool_error_response(serde_json::json!(8), daemon_resp);
-        let value = serde_json::to_value(&resp).expect("serialize");
-        assert_eq!(
-            value["result"]["structuredContent"]["error_code"],
-            "permissions_pending"
-        );
-        assert_eq!(value["result"]["structuredContent"]["retryable"], true);
-        assert_eq!(value["result"]["structuredContent"]["exit_code"], 75);
-    }
-
-    #[test]
     fn daemon_failure_with_no_error_message_uses_fallback_text() {
         let daemon_resp = DaemonResponse {
             ok: false,
             result: None,
             error: None,
-            error_code: None,
-            retryable: None,
             exit_code: None,
         };
         let resp = build_tool_error_response(serde_json::json!("abc"), daemon_resp);

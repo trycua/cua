@@ -560,7 +560,142 @@ mod list_windows_tests {
     }
 }
 
+#[cfg(test)]
+mod get_window_state_tests {
+    use super::*;
+    use crate::atspi::AtspiNode;
+
+    fn node_with_actions(actions: Vec<String>) -> AtspiNode {
+        AtspiNode {
+            element_index: Some(7),
+            role: "list item".to_owned(),
+            name: Some("system-disk".to_owned()),
+            value: None,
+            checked: None,
+            enabled: Some(true),
+            selected: None,
+            description: None,
+            actions,
+            element_key: 7,
+            depth: 2,
+            parent_element_index: Some(3),
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn element_entry_includes_actions_when_present() {
+        let node = node_with_actions(vec!["Toggle".to_owned(), "Open".to_owned()]);
+        let entry = build_element_entry(&node, None, None).expect("node is addressable");
+
+        assert_eq!(entry["element_index"], json!(7));
+        assert_eq!(entry["role"], json!("list item"));
+        assert_eq!(entry["label"], json!("system-disk"));
+        assert_eq!(entry["enabled"], json!(true));
+        assert_eq!(entry["parent_index"], json!(3));
+        assert_eq!(entry["actions"], json!(["Toggle", "Open"]));
+    }
+
+    #[test]
+    fn element_entry_omits_actions_when_empty() {
+        let node = node_with_actions(Vec::new());
+        let entry = build_element_entry(&node, None, None).expect("node is addressable");
+
+        assert!(
+            entry.get("actions").is_none(),
+            "empty actions must be omitted"
+        );
+    }
+
+    #[test]
+    fn element_entry_includes_frame_when_present() {
+        let node = node_with_actions(Vec::new());
+        let entry = build_element_entry(&node, Some((10, 20, 100, 200)), None)
+            .expect("node is addressable");
+
+        let frame = entry.get("frame").expect("frame must be present");
+        assert_eq!(frame["x"], json!(10));
+        assert_eq!(frame["y"], json!(20));
+        assert_eq!(frame["w"], json!(100));
+        assert_eq!(frame["h"], json!(200));
+    }
+
+    #[test]
+    fn element_entry_includes_token_when_snapshot_registered() {
+        let node = node_with_actions(Vec::new());
+        let entry = build_element_entry(&node, None, Some(42)).expect("node is addressable");
+
+        let token = entry
+            .get("element_token")
+            .and_then(|v| v.as_str())
+            .expect("element_token must be present");
+        assert!(
+            token.contains(":7"),
+            "token should encode snapshot and index"
+        );
+    }
+}
+
 // ── get_window_state ─────────────────────────────────────────────────────────
+
+/// Build a single structured element entry for `get_window_state`.
+///
+/// Returns `None` when the node has no `element_index` (it is not addressable
+/// through the integer index surface). Optional `bounds` is the node's
+/// AT-SPI Component extents, and `snapshot_id` produces the per-snapshot
+/// opaque token when registered.
+fn build_element_entry(
+    n: &crate::atspi::AtspiNode,
+    bounds: Option<(i32, i32, u32, u32)>,
+    snapshot_id: Option<u32>,
+) -> Option<serde_json::Value> {
+    let idx = n.element_index?;
+    // `label` mirrors what a human reading the markdown row would call this
+    // element: name first, then value, then description.
+    let label = n
+        .name
+        .clone()
+        .or_else(|| n.value.clone())
+        .or_else(|| n.description.clone());
+    let mut entry = json!({
+        "element_index": idx,
+        "role": n.role,
+        "depth": n.depth,
+    });
+    if let Some(snapshot_id) = snapshot_id {
+        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+    }
+    if n.in_web_content {
+        entry["in_web_content"] = json!(true);
+    }
+    if let Some(label) = label {
+        entry["label"] = json!(label);
+    }
+    // Surface the element's value separately from `label` (which collapses
+    // name→value→description): a field with both a name AND typed text would
+    // otherwise hide the text from a caller reading the structured side,
+    // leaving it only in tree_markdown. See the macOS get_window_state builder
+    // for the rationale.
+    if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
+        entry["value"] = json!(value);
+    }
+    if let Some(enabled) = n.enabled {
+        entry["enabled"] = json!(enabled);
+    }
+    if let Some(selected) = n.selected {
+        entry["selected"] = json!(selected);
+    }
+    if !n.actions.is_empty() {
+        entry["actions"] = json!(n.actions);
+    }
+    if let Some(parent) = n.parent_element_index {
+        entry["parent_index"] = json!(parent);
+    }
+    if let Some((x, y, w, h)) = bounds {
+        entry["frame"] = json!({ "x": x, "y": y, "w": w, "h": h });
+    }
+    Some(entry)
+}
 
 pub struct GetWindowStateTool {
     state: Arc<ToolState>,
@@ -580,7 +715,7 @@ impl Tool for GetWindowStateTool {
                 the structured array.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry \
                 per indexed row with `element_index`, `role`, `label`, `value`, \
-                `enabled`, `selected`, \
+                `enabled`, `selected`, `actions`, \
                 `frame: {x,y,w,h}` when AT-SPI reports usable bounds, \
                 `parent_index`, `depth`). The markdown `tree_markdown` stays \
                 available and unchanged in shape for existing text-parsing \
@@ -790,7 +925,7 @@ impl Tool for GetWindowStateTool {
 
                     // Structured `elements` array: one entry per actionable node.
                     // Shape: `{element_index, element_token, role, label,
-                    // depth, parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // depth, parent_index?, frame?: {x,y,w,h}, actions?: [...]}`. Frame is
                     // included whenever AT-SPI Component.GetExtents(Screen)
                     // reported usable bounds; omitted otherwise (some
                     // toolkits leave bounds unset on hidden / virtual
@@ -804,53 +939,11 @@ impl Tool for GetWindowStateTool {
                         .nodes
                         .iter()
                         .filter_map(|n| {
-                            let idx = n.element_index?;
-                            // `label` mirrors what a human reading the markdown row
-                            // would call this element: name first, then value,
-                            // then description.
-                            let label = n
-                                .name
-                                .clone()
-                                .or_else(|| n.value.clone())
-                                .or_else(|| n.description.clone());
-                            let mut entry = json!({
-                                "element_index": idx,
-                                "role": n.role,
-                                "depth": n.depth,
-                            });
-                            if let Some(snapshot_id) = snapshot_id {
-                                entry["element_token"] = json!(
-                                    cua_driver_core::element_token::token_for(snapshot_id, idx)
-                                );
-                            }
-                            if n.in_web_content {
-                                entry["in_web_content"] = json!(true);
-                            }
-                            if let Some(label) = label {
-                                entry["label"] = json!(label);
-                            }
-                            // Surface the element's value separately from `label`
-                            // (which collapses name→value→description): a field
-                            // with both a name AND typed text would otherwise hide
-                            // the text from a caller reading the structured side,
-                            // leaving it only in tree_markdown. See the macOS
-                            // get_window_state builder for the rationale.
-                            if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
-                                entry["value"] = json!(value);
-                            }
-                            if let Some(enabled) = n.enabled {
-                                entry["enabled"] = json!(enabled);
-                            }
-                            if let Some(selected) = n.selected {
-                                entry["selected"] = json!(selected);
-                            }
-                            if let Some(parent) = n.parent_element_index {
-                                entry["parent_index"] = json!(parent);
-                            }
-                            if let Some((x, y, w, h)) = bounds_by_idx.get(&idx).copied() {
-                                entry["frame"] = json!({ "x": x, "y": y, "w": w, "h": h });
-                            }
-                            Some(entry)
+                            build_element_entry(
+                                n,
+                                bounds_by_idx.get(&n.element_index?).copied(),
+                                snapshot_id,
+                            )
                         })
                         .collect();
                     let elements = cua_driver_core::element_query::project_elements_for_query(

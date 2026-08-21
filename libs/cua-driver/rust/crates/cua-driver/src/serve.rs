@@ -25,8 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 pub use cua_driver_core::daemon::{
-    daemon_readiness, is_daemon_listening, send_request, set_daemon_readiness,
-    socket_path_for_namespace, DaemonReadiness, DaemonRequest, DaemonResponse,
+    is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
     ToolObservationOrigin,
 };
 
@@ -461,7 +460,7 @@ async fn invoke_daemon_tool(
     sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
-    if let Some(response) = readiness_blocking_response(&req) {
+    if let Some(response) = permission_gate_pending_response(&req) {
         return response;
     }
     let observation_transport = daemon_observation_transport(&req);
@@ -638,15 +637,28 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
     }
 }
 
-fn readiness_blocking_response(request: &DaemonRequest) -> Option<DaemonResponse> {
-    readiness_response_for_state(request, daemon_readiness())
+static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Mark whether the macOS first-launch gate is still waiting for TCC grants.
+/// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
+/// are rejected before execution until fresh child-process probes confirm grants.
+pub fn set_permission_gate_pending(pending: bool) {
+    PERMISSION_GATE_PENDING.store(pending, std::sync::atomic::Ordering::Release);
 }
 
-fn readiness_response_for_state(
+fn permission_gate_pending_response(request: &DaemonRequest) -> Option<DaemonResponse> {
+    permission_gate_response_for_state(
+        request,
+        PERMISSION_GATE_PENDING.load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
+fn permission_gate_response_for_state(
     _request: &DaemonRequest,
-    readiness: DaemonReadiness,
+    pending: bool,
 ) -> Option<DaemonResponse> {
-    if readiness == DaemonReadiness::Ready {
+    if !pending {
         return None;
     }
     Some(DaemonResponse::retryable_err(
@@ -2634,7 +2646,7 @@ mod gate_tests {
 
 #[cfg(test)]
 mod permission_gate_routing_tests {
-    use super::{readiness_response_for_state, DaemonReadiness, DaemonRequest};
+    use super::{permission_gate_response_for_state, DaemonRequest};
 
     fn call(name: &str) -> DaemonRequest {
         DaemonRequest {
@@ -2649,11 +2661,8 @@ mod permission_gate_routing_tests {
 
     #[test]
     fn pending_gate_rejects_desktop_calls_with_typed_retry() {
-        let response = readiness_response_for_state(
-            &call("list_windows"),
-            DaemonReadiness::WaitingForOsPermissions,
-        )
-        .expect("pending gate must reject desktop calls");
+        let response = permission_gate_response_for_state(&call("list_windows"), true)
+            .expect("pending gate must reject desktop calls");
         assert!(!response.ok);
         assert_eq!(response.error_code.as_deref(), Some("permissions_pending"));
         assert_eq!(response.retryable, Some(true));
@@ -2662,14 +2671,8 @@ mod permission_gate_routing_tests {
 
     #[test]
     fn calls_resume_only_after_the_gate_completes() {
-        assert!(readiness_response_for_state(
-            &call("check_permissions"),
-            DaemonReadiness::WaitingForOsPermissions,
-        )
-        .is_some());
-        assert!(
-            readiness_response_for_state(&call("list_windows"), DaemonReadiness::Ready).is_none()
-        );
+        assert!(permission_gate_response_for_state(&call("check_permissions"), true).is_some());
+        assert!(permission_gate_response_for_state(&call("list_windows"), false).is_none());
     }
 }
 

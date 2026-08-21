@@ -588,11 +588,7 @@ fn main() {
             // Fail closed until a fresh helper-process probe completes. This
             // also covers a probe launch failure without letting the serving
             // process perform and cache its own negative TCC preflight.
-            serve::set_daemon_readiness(if gate_opts.opt_out {
-                serve::DaemonReadiness::Ready
-            } else {
-                serve::DaemonReadiness::WaitingForOsPermissions
-            });
+            serve::set_permission_gate_pending(!gate_opts.opt_out);
             telemetry::capture_start(
                 telemetry::event::SERVE_START_LEGACY,
                 telemetry::Transport::Daemon,
@@ -689,7 +685,7 @@ fn main() {
                     }
                 },
             );
-            serve::set_daemon_readiness(serve::DaemonReadiness::Ready);
+            serve::set_permission_gate_pending(false);
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(

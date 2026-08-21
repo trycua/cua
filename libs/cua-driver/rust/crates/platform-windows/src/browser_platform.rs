@@ -698,7 +698,8 @@ fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     }
     .ok()
     .filter(|_| path_len > 0)
-    .map(|_| String::from_utf16_lossy(&path_buf[..path_len as usize]));
+    .map(|_| String::from_utf16_lossy(&path_buf[..path_len as usize]))
+    .map(canonical_process_executable);
     let _ = unsafe { CloseHandle(handle) };
     times.map_err(|error| {
         refusal(
@@ -708,6 +709,14 @@ fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     })?;
     let started = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
     Ok((started, path))
+}
+
+fn canonical_process_executable(path: String) -> String {
+    // Manifest executable grants use `canonicalize` too. Normalize the Windows
+    // process evidence at collection time so shared authorization stays exact.
+    std::fs::canonicalize(&path)
+        .map(|canonical| canonical.to_string_lossy().into_owned())
+        .unwrap_or(path)
 }
 
 fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> {
@@ -1919,6 +1928,18 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_fingerprint_uses_manifest_canonical_executable_path() {
+        let (_started, executable) =
+            process_identity(std::process::id()).expect("current process fingerprint");
+        let expected = std::fs::canonicalize(std::env::current_exe().expect("current executable"))
+            .expect("canonical current executable")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(executable.as_deref(), Some(expected.as_str()));
+    }
 
     #[test]
     fn isolated_browser_candidates_are_vendor_attested_protected_installs() {

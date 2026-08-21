@@ -205,6 +205,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
     let action = match name {
         "get_desktop_state"
         | "get_window_state"
+        | "get_menu_extra_state"
         | "get_accessibility_tree"
         | "get_ax_tree"
         | "get_screen_size"
@@ -244,9 +245,9 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
         }
 
         "start_session" | "escalate_session" | "get_session_state" | "end_session"
-        | "check_permissions" | "get_config" | "set_config" | "health_report"
-        | "browser_prepare" | "browser_close" | "browser_release" | "browser_activate"
-        | "install_ffmpeg" | "check_update" | "update" => CursorAction::System,
+        | "invoke_menu_extra" | "check_permissions" | "get_config" | "set_config"
+        | "health_report" | "browser_prepare" | "browser_close" | "browser_release"
+        | "browser_activate" | "install_ffmpeg" | "check_update" | "update" => CursorAction::System,
 
         "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"
@@ -257,7 +258,10 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
 
     let target = if name.starts_with("browser_") {
         Some(CursorTarget::Browser)
-    } else if matches!(name, "set_window_frame" | "invoke_menu") {
+    } else if matches!(
+        name,
+        "set_window_frame" | "invoke_menu" | "invoke_menu_extra"
+    ) {
         Some(CursorTarget::Desktop)
     } else if args
         .get("element_index")

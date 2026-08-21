@@ -4700,6 +4700,15 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
                     }
                 }
             }
+            "invoke_menu_extra" => {
+                if let Some(count) = arguments
+                    .get("path")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                {
+                    arguments.insert("path".to_owned(), serde_json::json!({ "count": count }));
+                }
+            }
             "browser_set_input_files" => {
                 if let Some(count) = arguments
                     .get("files")
@@ -4867,6 +4876,25 @@ mod capability_tests {
         ] {
             assert!(!serialized.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn menu_extra_recording_args_are_account_label_free() {
+        let recorded = recording_args_for(
+            "invoke_menu_extra",
+            &serde_json::json!({
+                "application": {"kind": "bundle_id", "bundle_id": "com.apple.controlcenter"},
+                "path": ["User Switcher", "Private Account Name"],
+                "session": "public-session",
+            }),
+        );
+        assert_eq!(recorded["path"], serde_json::json!({"count": 2}));
+        assert_eq!(
+            recorded["application"]["bundle_id"],
+            "com.apple.controlcenter"
+        );
+        assert_eq!(recorded["session"], "public-session");
+        assert!(!recorded.to_string().contains("Private Account Name"));
     }
 
     #[test]

@@ -384,6 +384,50 @@ pub struct ClipboardWriteOutput {
     pub content_redacted_from_telemetry: bool,
 }
 
+/// One accessibility node in a bounded, depth-first menu-extra snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct MenuExtraNodeOutput {
+    pub depth: u32,
+    pub role: String,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub label: Option<String>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub title: Option<String>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub description: Option<String>,
+    #[schemars(required, schema_with = "nullable_boolean_schema")]
+    pub enabled: Option<bool>,
+    pub actions: Vec<String>,
+}
+
+/// Successful bounded observation of a macOS accessibility extras menu bar.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct MenuExtraStateOutput {
+    pub pid: u32,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub bundle_id: Option<String>,
+    pub nodes: Vec<MenuExtraNodeOutput>,
+    pub node_count: u32,
+    pub truncated: bool,
+    pub privacy_sensitive: bool,
+    pub content_redacted_from_telemetry: bool,
+}
+
+impl ToolOutput for MenuExtraStateOutput {
+    fn validate(&self) -> Result<(), String> {
+        if self.pid == 0 {
+            return Err("pid must be positive".into());
+        }
+        if usize::try_from(self.node_count).ok() != Some(self.nodes.len()) {
+            return Err("node_count must equal nodes.len()".into());
+        }
+        if !self.privacy_sensitive || !self.content_redacted_from_telemetry {
+            return Err("menu-extra privacy metadata must remain enabled".into());
+        }
+        Ok(())
+    }
+}
+
 impl ToolOutput for ClipboardWriteOutput {
     fn validate(&self) -> Result<(), String> {
         if !self.supported {
@@ -577,6 +621,10 @@ fn platform_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 
 fn nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({ "anyOf": [{ "type": "string" }, { "type": "null" }] })
+}
+
+fn nullable_boolean_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "anyOf": [{ "type": "boolean" }, { "type": "null" }] })
 }
 
 fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {

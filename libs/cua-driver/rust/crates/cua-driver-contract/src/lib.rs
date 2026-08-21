@@ -53,9 +53,10 @@ pub use cursor::{
 pub use inputs::{
     ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition, ClipboardReadInput,
     ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput, EndSessionInput,
-    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
-    GetSessionInput, HotkeyInput, InputDeliveryMode, InvokeMenuInput, LegacyClickInput,
-    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
+    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetMenuExtraStateInput, GetScreenSizeInput, GetSessionInput, HotkeyInput, InputDeliveryMode,
+    InvokeMenuExtraInput, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MenuExtraTarget,
+    MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
     SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
     SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
     MULTI_CALL_SESSION_DESCRIPTION,
@@ -68,10 +69,11 @@ pub use outputs::{
     AgentOverlayCapture, AgentOverlayCaptureStatus, ClipboardReadOutput, ClipboardWriteOutput,
     CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
     CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
-    GetAgentCursorStateOutput, ListSessionsOutput, ScreenSizeOutput, SessionClientKindOutput,
-    SessionLifecycleState, SessionOutput, SessionStateOutput, SessionTransportOutput,
-    SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput, SetAgentCursorThemeOutput,
-    StartSessionOutput, ToolOutput, TOOL_INVOCATION_FAILED_CODE,
+    GetAgentCursorStateOutput, ListSessionsOutput, MenuExtraNodeOutput, MenuExtraStateOutput,
+    ScreenSizeOutput, SessionClientKindOutput, SessionLifecycleState, SessionOutput,
+    SessionStateOutput, SessionTransportOutput, SetAgentCursorEnabledOutput,
+    SetAgentCursorMotionOutput, SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
+    TOOL_INVOCATION_FAILED_CODE,
 };
 pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
@@ -122,6 +124,7 @@ pub const ACTION_RESULT_TOOLS: &[&str] = &[
     "set_value",
     "set_window_frame",
     "invoke_menu",
+    "invoke_menu_extra",
     "browser_click",
     "browser_pointer",
     "browser_type",
@@ -558,7 +561,9 @@ mod tests {
             "get_desktop_state",
             "get_screen_size",
             "hotkey",
+            "get_menu_extra_state",
             "invoke_menu",
+            "invoke_menu_extra",
             "move_cursor",
             "press_key",
             "scroll",
@@ -716,6 +721,48 @@ mod tests {
             contract.input_schema["properties"]["delivery_mode"]["enum"],
             serde_json::json!(["background", "foreground"])
         );
+    }
+
+    #[test]
+    fn menu_extra_tools_are_macos_only_bounded_and_separately_capable() {
+        let observe = tool_contract("get_menu_extra_state").expect("menu extra state contract");
+        assert_eq!(observe.platforms, vec![Platform::Macos]);
+        assert_eq!(observe.schema_mode, SchemaMode::CanonicalRuntime);
+        assert!(observe.annotations.read_only);
+        assert_eq!(
+            observe.input_schema["required"],
+            serde_json::json!(["application"])
+        );
+        assert!(observe.input_schema["properties"].get("target").is_none());
+        assert!(observe.input_schema["properties"]["application"]["oneOf"].is_array());
+        assert_eq!(
+            observe.capabilities,
+            vec!["accessibility.menu_extra.observe"]
+        );
+        assert_eq!(
+            observe.input_schema["properties"]["max_depth"]["maximum"],
+            serde_json::json!(25)
+        );
+        assert_eq!(
+            observe.input_schema["properties"]["max_elements"]["maximum"],
+            serde_json::json!(2000)
+        );
+
+        let invoke = tool_contract("invoke_menu_extra").expect("menu extra action contract");
+        assert_eq!(invoke.platforms, vec![Platform::Macos]);
+        assert_eq!(invoke.schema_mode, SchemaMode::CanonicalRuntime);
+        assert!(!invoke.annotations.read_only);
+        assert!(invoke.annotations.destructive);
+        assert_eq!(
+            invoke.input_schema["required"],
+            serde_json::json!(["application", "path"])
+        );
+        assert!(invoke.input_schema["properties"].get("target").is_none());
+        assert_eq!(invoke.capabilities, vec!["accessibility.menu_extra.invoke"]);
+        let path = &invoke.input_schema["properties"]["path"];
+        assert_eq!(path["minItems"], serde_json::json!(1));
+        assert_eq!(path["maxItems"], serde_json::json!(16));
+        assert!(is_action_result_tool("invoke_menu_extra"));
     }
 
     #[test]

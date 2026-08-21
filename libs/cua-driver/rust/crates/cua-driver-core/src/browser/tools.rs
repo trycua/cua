@@ -2868,21 +2868,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn existing_profile_still_requires_pid() {
+    async fn pid_remains_required_without_a_complete_isolated_launch_request() {
         let tool = BrowserPrepareTool::new(engine());
-        let result = tool
-            .invoke(json!({
+        for request in [
+            json!({
+                "allow_launch": true,
+                "session": "pid-free-without-profile"
+            }),
+            json!({
+                "profile": { "mode": "isolated_new" },
+                "session": "pid-free-without-allow-launch"
+            }),
+            json!({
                 "window_id": 7,
                 "strategy": { "kind": "existing_profile" },
                 "session": "existing-profile-without-pid"
-            }))
-            .await;
-        assert_eq!(result.is_error, Some(true));
-        let body = serde_json::to_string(&result.content).expect("serialize tool error");
-        assert!(
-            body.contains("Missing required integer field: pid"),
-            "{body}"
-        );
+            }),
+        ] {
+            let result = tool.invoke(request).await;
+            assert_eq!(result.is_error, Some(true));
+            let body = serde_json::to_string(&result.content).expect("serialize tool error");
+            assert!(
+                body.contains("Missing required integer field: pid"),
+                "{body}"
+            );
+        }
     }
 
     #[tokio::test]

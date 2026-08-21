@@ -2439,7 +2439,9 @@ impl Tool for ClickTool {
 
             // Chromium can execute a genuine AT-SPI action without focus. Try
             // that route before applying its background synthetic-input gate.
-            if modifiers.is_empty() {
+            // A multi-click request must land real pointer events, so skip the
+            // single-shot AX action path when count > 1.
+            if modifiers.is_empty() && count == 1 {
                 let ax_result =
                     tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
                         .await;

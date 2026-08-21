@@ -9,12 +9,13 @@ on:
 
 jobs:
   test:
-    name: Test ${{ matrix.package }}
+    name: Test ${{ matrix.package }} (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false # Test all packages even if one fails
       matrix:
+        python-version: ["3.11", "3.12", "3.13"]
         package:
           - core
           - agent
@@ -23,15 +24,26 @@ jobs:
           - mcp-server
           - som
           - cua-auto
+          - cua-sandbox
+        # Exclude packages that don't support Python 3.11
+        exclude:
+          - python-version: "3.11"
+            package: computer
+          - python-version: "3.11"
+            package: computer-server
+          - python-version: "3.11"
+            package: mcp-server
+          - python-version: "3.11"
+            package: som
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install uv
         run: |
@@ -72,8 +84,8 @@ jobs:
         if: always()
         with:
           file: ./libs/python/${{ matrix.package }}/coverage.xml
-          flags: ${{ matrix.package }}
-          name: codecov-${{ matrix.package }}
+          flags: ${{ matrix.package }}-py${{ matrix.python-version }}
+          name: codecov-${{ matrix.package }}-py${{ matrix.python-version }}
           fail_ci_if_error: false
         continue-on-error: true
 

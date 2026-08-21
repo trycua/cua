@@ -38,6 +38,41 @@ async def test_service_request_forwards_command_json():
 
 
 @pytest.mark.asyncio
+async def test_named_service_request_forwards_large_raw_body_unchanged():
+    sdk = FakeSDK([response(body=b"accepted")])
+    transport = FleetTransport(sdk=sdk, bound=sandbox())
+    await transport.connect()
+    payload = bytes(range(256)) * 5000
+
+    result = await transport.request_service(
+        "api",
+        method="POST",
+        path="/upload",
+        content=payload,
+        headers={"content-type": "application/octet-stream"},
+    )
+
+    assert result.content == b"accepted"
+    _, service, path, request = sdk.calls[0]
+    assert (service, path, request.method) == ("api", "/upload", "POST")
+    assert request.body == payload
+    assert [(header.name, header.value) for header in request.headers] == [
+        ("content-type", "application/octet-stream")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_named_service_request_rejects_json_and_raw_body_together():
+    transport = FleetTransport(sdk=FakeSDK([]), bound=sandbox())
+    await transport.connect()
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        await transport.request_service(
+            "api", method="POST", path="/upload", json_body={"ok": True}, content=b"raw"
+        )
+
+
+@pytest.mark.asyncio
 async def test_screenshot_and_pty_use_service_request():
     encoded = base64.b64encode(b"png-data").decode()
     sdk = FakeSDK(

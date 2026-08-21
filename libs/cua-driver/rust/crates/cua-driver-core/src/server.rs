@@ -17,6 +17,8 @@ use crate::tool::ToolRegistry;
 #[async_trait::async_trait]
 pub trait ToolProvider: Send + Sync {
     fn tools_list(&self) -> serde_json::Value;
+    fn is_known_tool(&self, name: &str) -> bool;
+
     async fn invoke_tool(
         &self,
         name: &str,
@@ -28,6 +30,10 @@ pub trait ToolProvider: Send + Sync {
 impl ToolProvider for ToolRegistry {
     fn tools_list(&self) -> serde_json::Value {
         ToolRegistry::tools_list(self)
+    }
+
+    fn is_known_tool(&self, name: &str) -> bool {
+        ToolRegistry::is_known_tool(self, name)
     }
 
     async fn invoke_tool(
@@ -888,6 +894,15 @@ async fn handle_request_inner(
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(mut call) => {
                 crate::tool_args::sanitize_reserved_args(&mut call.args);
+                if !provider.is_known_tool(&call.name) {
+                    return Response::ok(
+                        id,
+                        tool_error_result(
+                            format!("Unknown tool: {}", call.name),
+                            serde_json::json!({"code": "unknown_tool"}),
+                        ),
+                    );
+                }
                 if let Err(error) = authorize_tool_call(&call.name, &call.args) {
                     return Response::ok(
                         id,
@@ -965,6 +980,10 @@ mod observation_tests {
     impl ToolProvider for CapturingProvider {
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": []})
+        }
+
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
         }
 
         async fn invoke_tool(

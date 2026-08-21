@@ -1310,6 +1310,15 @@ impl NativeAbiDriver {
         }
     }
 
+    pub(crate) fn is_known_tool(&self, name: &str) -> bool {
+        unsafe {
+            self.raw_handle()
+                .cast::<CuaDriverHandle>()
+                .as_ref()
+                .is_some_and(|handle| handle.runtime.is_known_tool(name))
+        }
+    }
+
     pub(crate) fn is_available(&self) -> bool {
         let mut available = false;
         let mut error = CuaDriverBuffer::empty();

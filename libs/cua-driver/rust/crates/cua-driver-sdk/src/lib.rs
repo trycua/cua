@@ -278,6 +278,18 @@ enum DriverBackend {
 }
 
 impl CuaDriver {
+    /// Trusted Rust-host lookup against the embedded registry. Unlike
+    /// `list_tools_json`, policy filtering does not hide registered tools.
+    #[doc(hidden)]
+    pub fn local_is_known_tool(&self, name: &str) -> Option<bool> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => Some(runtime.is_known_tool(name)),
+            DriverBackend::Daemon(_)
+            | DriverBackend::PrivateWorker(_)
+            | DriverBackend::Remote(_) => None,
+        }
+    }
+
     /// Trusted Rust-host access to the daemon-owned local history controller.
     /// This is intentionally absent from UniFFI and public agent protocols.
     #[doc(hidden)]

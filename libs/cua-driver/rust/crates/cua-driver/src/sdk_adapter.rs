@@ -152,17 +152,8 @@ impl SdkAdapter {
     }
 
     pub fn is_known_tool(&self, name: &str) -> bool {
-        name == "type_text_chars"
-            || cua_driver_core::tool::renamed_tool(name).is_some()
-            || self
-                .tools_list
-                .get("tools")
-                .and_then(Value::as_array)
-                .is_some_and(|tools| {
-                    tools
-                        .iter()
-                        .any(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
-                })
+        cua_driver_core::tool::renamed_tool(name).is_some()
+            || self.driver.local_is_known_tool(name).unwrap_or(false)
     }
 
     pub fn describe(&self, name: &str) -> Option<Value> {

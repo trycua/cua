@@ -18,19 +18,7 @@ use crate::tool::ToolRegistry;
 #[async_trait::async_trait]
 pub trait ToolProvider: Send + Sync {
     fn tools_list(&self) -> serde_json::Value;
-
-    fn is_known_tool(&self, name: &str) -> bool {
-        name == "type_text_chars"
-            || self
-                .tools_list()
-                .get("tools")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|tools| {
-                    tools.iter().any(|tool| {
-                        tool.get("name").and_then(serde_json::Value::as_str) == Some(name)
-                    })
-                })
-    }
+    fn is_known_tool(&self, name: &str) -> bool;
 
     async fn invoke_tool(
         &self,
@@ -1024,6 +1012,10 @@ mod dispatch_contract_tests {
 
     #[async_trait::async_trait]
     impl ToolProvider for NeverInvokeProvider {
+        fn is_known_tool(&self, name: &str) -> bool {
+            name == "get_config"
+        }
+
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": [{"name": "get_config"}]})
         }
@@ -1087,6 +1079,10 @@ mod dispatch_contract_tests {
 
     #[async_trait::async_trait]
     impl ToolProvider for StubProvider {
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
+        }
+
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": []})
         }

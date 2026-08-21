@@ -641,8 +641,8 @@ static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Mark whether the macOS first-launch gate is still waiting for TCC grants.
-/// The daemon remains reachable for diagnostics, but desktop tool calls are
-/// rejected before execution so a cache-refresh re-exec cannot interrupt them.
+/// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
+/// are rejected before execution until fresh child-process probes confirm grants.
 pub fn set_permission_gate_pending(pending: bool) {
     PERMISSION_GATE_PENDING.store(pending, std::sync::atomic::Ordering::Release);
 }
@@ -655,15 +655,15 @@ fn permission_gate_pending_response(request: &DaemonRequest) -> Option<DaemonRes
 }
 
 fn permission_gate_response_for_state(
-    request: &DaemonRequest,
+    _request: &DaemonRequest,
     pending: bool,
 ) -> Option<DaemonResponse> {
-    if !pending || request.name.as_deref() == Some("check_permissions") {
+    if !pending {
         return None;
     }
     Some(DaemonResponse::retryable_err(
         "permissions_pending",
-        "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; retry after the permission gate completes",
+        "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes",
         75,
     ))
 }
@@ -2670,8 +2670,8 @@ mod permission_gate_routing_tests {
     }
 
     #[test]
-    fn permission_probe_remains_available_while_gate_is_pending() {
-        assert!(permission_gate_response_for_state(&call("check_permissions"), true).is_none());
+    fn calls_resume_only_after_the_gate_completes() {
+        assert!(permission_gate_response_for_state(&call("check_permissions"), true).is_some());
         assert!(permission_gate_response_for_state(&call("list_windows"), false).is_none());
     }
 }

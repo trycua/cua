@@ -19,6 +19,8 @@ import json
 import sys
 from pathlib import Path
 
+from dev_server import sanitize_motion_override
+
 OVERRIDE_SCHEMA = "cua.cursor-gallery-motion-override/1"
 SPEC_SCHEMA = "cua.cursor-motion/1"
 
@@ -64,11 +66,20 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-def load_override(path: Path) -> dict[str, float]:
+def load_override(path: Path, spec_shared: dict) -> dict[str, float]:
+    """Load and bound an override file exactly like the dev server does.
+
+    The fixed-path file can be hand-edited, so promotion re-validates
+    instead of trusting: unknown fields, non-numbers, and non-finite
+    values are rejected, and every value is clamped to the production
+    bounds before it can reach the spec.
+    """
     try:
-        payload = json.loads(path.read_text())
+        raw = path.read_bytes()
     except FileNotFoundError:
         fail(f"override file not found: {path}")
+    try:
+        payload = json.loads(raw)
     except json.JSONDecodeError as error:
         fail(f"override file is not valid JSON: {error}")
     if not isinstance(payload, dict):
@@ -78,16 +89,21 @@ def load_override(path: Path) -> dict[str, float]:
     unknown = set(payload) - {"schema"} - set(PROMOTABLE)
     if unknown:
         fail(f"override carries non-promotable fields: {sorted(unknown)}")
-    override: dict[str, float] = {}
-    for key, value in payload.items():
-        if key == "schema":
-            continue
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            fail(f"override field {key} must be a number")
-        number = float(value)
-        if number != number or number in (float("inf"), float("-inf")):
-            fail(f"override field {key} must be finite")
-        override[key] = number
+    # Reuse the dev-server sanitizer: whitelist, type, finiteness, and
+    # per-field production bounds in one place.
+    body = json.dumps({k: v for k, v in payload.items() if k != "schema"}).encode()
+    try:
+        override = sanitize_motion_override(body)
+    except ValueError as error:
+        fail(f"override rejected: {error}")
+    # Cross-field rule from the exporter: floors never exceed the
+    # effective peak speed (override peak, else the spec's peak).
+    effective_peak = override.get(
+        "peak_speed", float(spec_shared.get("peak_speed", 5000.0))
+    )
+    for floor_field in ("min_start_speed", "min_end_speed"):
+        if floor_field in override:
+            override[floor_field] = min(override[floor_field], effective_peak)
     if not override:
         fail("override has no movement values to promote")
     return override
@@ -143,8 +159,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    override = load_override(args.override)
     spec = load_spec(args.spec)
+    override = load_override(args.override, spec["shared"])
 
     before = canonicalize(spec)
     promoted = []

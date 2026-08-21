@@ -93,6 +93,29 @@ pub struct DaemonResponse {
     pub exit_code: Option<i32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DaemonReadiness {
+    Ready = 0,
+    WaitingForOsPermissions = 1,
+}
+
+static DAEMON_READINESS: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(DaemonReadiness::Ready as u8);
+
+pub fn set_daemon_readiness(readiness: DaemonReadiness) {
+    DAEMON_READINESS.store(readiness as u8, std::sync::atomic::Ordering::Release);
+}
+
+pub fn daemon_readiness() -> DaemonReadiness {
+    match DAEMON_READINESS.load(std::sync::atomic::Ordering::Acquire) {
+        value if value == DaemonReadiness::WaitingForOsPermissions as u8 => {
+            DaemonReadiness::WaitingForOsPermissions
+        }
+        _ => DaemonReadiness::Ready,
+    }
+}
+
 impl DaemonResponse {
     pub fn ok(result: serde_json::Value) -> Self {
         Self {
@@ -317,8 +340,8 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use super::{
-        current_daemon_metadata, socket_path_for_namespace, DaemonClientKind, DaemonRequest,
-        DaemonResponse, ToolObservationOrigin,
+        current_daemon_metadata, daemon_readiness, set_daemon_readiness, socket_path_for_namespace,
+        DaemonClientKind, DaemonReadiness, DaemonRequest, DaemonResponse, ToolObservationOrigin,
     };
 
     #[test]
@@ -338,6 +361,14 @@ mod tests {
         assert_eq!(request.session_id, None);
         assert_eq!(request.observation_origin, None);
         assert_eq!(request.client_kind, None);
+    }
+
+    #[test]
+    fn daemon_readiness_round_trips_through_the_shared_state() {
+        set_daemon_readiness(DaemonReadiness::WaitingForOsPermissions);
+        assert_eq!(daemon_readiness(), DaemonReadiness::WaitingForOsPermissions);
+        set_daemon_readiness(DaemonReadiness::Ready);
+        assert_eq!(daemon_readiness(), DaemonReadiness::Ready);
     }
 
     #[test]

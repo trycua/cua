@@ -124,6 +124,47 @@ export_docs() {
   echo "cursor-gallery: wrote documentation GIFs to $docs_dir"
 }
 
+promote_motion() {
+  require cargo
+  require python3
+
+  local override="$TARGET_DIR/motion-override.json"
+  local spec="$DRIVER_DIR/rust/crates/cursor-overlay/assets/motion.default.json"
+
+  if [[ ! -f "$override" ]]; then
+    echo "cursor-gallery: no movement override to promote ($override)." >&2
+    echo "cursor-gallery: tune values in the movement lab, then re-run." >&2
+    exit 1
+  fi
+
+  python3 "$GALLERY_DIR/promote_motion.py" \
+    --override "$override" \
+    --spec "$spec" \
+    --validate-only
+
+  python3 "$GALLERY_DIR/promote_motion.py" \
+    --override "$override" \
+    --spec "$spec"
+
+  # The Rust parity tests are the promotion gate: the embedded spec must
+  # still reproduce MotionConfig::default() exactly, including the
+  # documented macOS/Windows+Linux spring-settle divergence. A promoted
+  # value intentionally fails here until reference_defaults() in
+  # src/motion.rs is updated in the same commit — double-entry review.
+  echo "cursor-gallery: running the motion parity gate (expects failure until"
+  echo "cursor-gallery: reference_defaults() in src/motion.rs matches the new spec)."
+  if ! cargo test --quiet \
+      --manifest-path "$DRIVER_DIR/rust/Cargo.toml" \
+      -p cursor-overlay --lib -- motion; then
+    echo "cursor-gallery: parity gate FAILED — update reference_defaults() in" >&2
+    echo "cursor-gallery: rust/crates/cursor-overlay/src/motion.rs to match, then re-run." >&2
+    exit 1
+  fi
+
+  echo "cursor-gallery: promoted movement override into $spec"
+  echo "cursor-gallery: review the diff, then commit it as the new default."
+}
+
 case "${1:-help}" in
   assets)
     export_assets
@@ -134,11 +175,20 @@ case "${1:-help}" in
     echo "cursor-gallery: http://127.0.0.1:$PORT"
     exec python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$GALLERY_DIR"
     ;;
+  dev)
+    require cargo
+    require ffmpeg
+    require python3
+    exec python3 "$GALLERY_DIR/dev_server.py" --port "$PORT"
+    ;;
   export-docs)
     export_docs
     ;;
+  promote-motion)
+    promote_motion
+    ;;
   *)
-    echo "usage: $0 {assets|serve|export-docs}" >&2
+    echo "usage: $0 {assets|serve|dev|export-docs|promote-motion}" >&2
     exit 2
     ;;
 esac

@@ -1,7 +1,8 @@
 //! Pure `tools/list` schema-shape assertions.
 //!
 //! These never invoke a tool — they only inspect the advertised inputSchemas:
-//! that `type_text_chars` is hidden, the `list_windows.on_screen_only` knob, the
+//! that every tool keeps its top-level schema provider-compatible, that
+//! `type_text_chars` is hidden, the `list_windows.on_screen_only` knob, the
 //! `set_agent_cursor_motion` Bezier knobs, delivery and scope enums, and the
 //! `set_config.capture_mode` enum and the per-session capture-scope contract.
 
@@ -35,6 +36,20 @@ fn tools_list_schema_shape() {
             .unwrap_or_else(|| panic!("{name} not found in tools/list"))["inputSchema"]
             ["properties"]
     };
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let schema = &tool["inputSchema"];
+        assert_eq!(
+            schema["type"], "object",
+            "{name} must advertise a plain object input schema"
+        );
+        for unsupported in ["anyOf", "oneOf", "allOf"] {
+            assert!(
+                schema.get(unsupported).is_none(),
+                "{name} top-level {unsupported} is rejected by Bedrock: {schema}"
+            );
+        }
+    }
     let enum_contains = |schema: &serde_json::Value, expected: &str| {
         schema["enum"]
             .as_array()
@@ -109,28 +124,6 @@ fn tools_list_schema_shape() {
             );
         }
     }
-    let prepare = tools
-        .iter()
-        .find(|tool| tool["name"] == "browser_prepare")
-        .expect("browser_prepare not found in tools/list");
-    let prepare_schema = &prepare["inputSchema"];
-    assert_eq!(
-        prepare_schema["type"], "object",
-        "browser_prepare must advertise a plain object input schema"
-    );
-    for unsupported in ["anyOf", "oneOf", "allOf"] {
-        assert!(
-            prepare_schema.get(unsupported).is_none(),
-            "browser_prepare top-level {unsupported} is rejected by Bedrock: {prepare_schema}"
-        );
-    }
-    assert!(
-        prepare_schema["required"]
-            .as_array()
-            .is_some_and(|required| required.is_empty()),
-        "browser_prepare must leave conditionally required fields to runtime validation"
-    );
-
     const DELIVERY_MODE_TOOLS: &[&str] = &[
         "click",
         "double_click",

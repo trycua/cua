@@ -355,7 +355,9 @@ impl SessionManifest {
                         .executable
                         .as_deref()
                         .zip(executable)
-                        .is_some_and(|(allowed, actual)| allowed == actual))
+                        .is_some_and(|(allowed, actual)| {
+                            application_executables_match(allowed, actual)
+                        }))
         })
     }
 
@@ -1040,6 +1042,30 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
     }
 }
 
+fn application_executables_match(allowed: &str, actual: &str) -> bool {
+    comparable_windows_executable_path(allowed) == comparable_windows_executable_path(actual)
+}
+
+fn comparable_windows_executable_path(path: &str) -> std::borrow::Cow<'_, str> {
+    // `canonicalize` uses the verbatim namespace on Windows, while process
+    // fingerprints use Win32 spelling. Keep device namespaces distinct and
+    // normalize only the absolute drive and UNC forms that name the same file.
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        return std::borrow::Cow::Owned(format!(r"\\{unc}"));
+    }
+    if let Some(local) = path.strip_prefix(r"\\?\") {
+        let bytes = local.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\'
+        {
+            return std::borrow::Cow::Borrowed(local);
+        }
+    }
+    std::borrow::Cow::Borrowed(path)
+}
+
 #[cfg(feature = "yaml")]
 fn validate_tools(section: &str, tools: Vec<String>) -> Result<HashSet<String>, String> {
     let mut validated = HashSet::new();
@@ -1358,6 +1384,85 @@ fn now_unix_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_executable_paths_match_equivalent_spellings() {
+        assert!(application_executables_match(
+            r"\\?\C:\Program Files\Cua\cua-driver.exe",
+            r"C:\Program Files\Cua\cua-driver.exe"
+        ));
+        assert!(application_executables_match(
+            r"\\?\UNC\server\share\Cua\cua-driver.exe",
+            r"\\server\share\Cua\cua-driver.exe"
+        ));
+        assert!(application_executables_match(
+            r"C:\Program Files\Cua\cua-driver.exe",
+            r"C:\Program Files\Cua\cua-driver.exe"
+        ));
+    }
+
+    #[test]
+    fn windows_executable_paths_keep_distinct_files_separate() {
+        assert!(!application_executables_match(
+            r"\\?\C:\Program Files\Cua\cua-driver.exe",
+            r"C:\Program Files\Other\cua-driver.exe"
+        ));
+        assert!(!application_executables_match(
+            r"\\.\C:\Program Files\Cua\cua-driver.exe",
+            r"C:\Program Files\Cua\cua-driver.exe"
+        ));
+        assert!(!application_executables_match(
+            r"\\?\GLOBALROOT\Device\HarddiskVolume1\cua-driver.exe",
+            r"GLOBALROOT\Device\HarddiskVolume1\cua-driver.exe"
+        ));
+        assert!(!application_executables_match(
+            r"\\?\C:cua-driver.exe",
+            r"C:cua-driver.exe"
+        ));
+        assert!(!application_executables_match(
+            r"\\?\UNC\server\share\Cua\cua-driver.exe",
+            r"\\server\other\Cua\cua-driver.exe"
+        ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn application_grants_accept_equivalent_windows_runtime_paths() {
+        let executable = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let executable_yaml = serde_json::to_string(&executable.to_string_lossy()).unwrap();
+        let mut loaded = manifest(&format!(
+            r#"
+version: 2
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+resources:
+  apps:
+    - executable: {executable_yaml}
+      windows: all
+allow:
+  tools: [get_window_state]
+"#
+        ))
+        .unwrap();
+        loaded.applications[0].executable =
+            Some(r"\\?\C:\Program Files\Cua\cua-driver.exe".to_owned());
+
+        loaded
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({
+                    "kind": "window",
+                    "pid": 42,
+                    "window_id": 7,
+                    "fingerprint": {
+                        "pid": 42,
+                        "executable": r"C:\Program Files\Cua\cua-driver.exe"
+                    }
+                }),
+            )
+            .unwrap();
+    }
 
     #[cfg(feature = "yaml")]
     fn manifest(source: &str) -> Result<SessionManifest, String> {

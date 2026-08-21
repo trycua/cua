@@ -2600,6 +2600,7 @@ fn authoritative_wayland_origin(pid: u32, xid: u64, title: Option<&str>) -> Opti
                 })
                 .flatten()
         })
+        .or_else(|| crate::wayland::shell_helper::window_origin_for_pid_and_xid(pid, xid))
         .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
         .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title))
 }

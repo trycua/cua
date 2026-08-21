@@ -178,6 +178,70 @@ TMP_DIR=$(mktemp -d)
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
 
+# Return the source form of an app's designated code-signing requirement.
+macos_designated_requirement() {
+    codesign -d -r- "$1" 2>/dev/null \
+        | sed -n -e 's/^designated => //p' -e 's/^# designated => //p'
+}
+
+# TCC stores the previous app's requirement, not just its bundle identifier.
+# Ask Security.framework (through codesign) whether the replacement satisfies
+# that exact requirement instead of comparing requirement text or cdhashes.
+macos_requirement_compatibility() {
+    local previous_requirement="$1"
+    local candidate_app="$2"
+    local codesign_output
+    local codesign_status
+
+    if [[ -z "$previous_requirement" ]]; then
+        printf '%s' "unknown"
+    elif codesign_output="$(codesign --verify --deep --strict \
+            -R "=$previous_requirement" "$candidate_app" 2>&1)"; then
+        printf '%s' "compatible"
+    else
+        codesign_status=$?
+        if [[ "$codesign_status" == "3" ]]; then
+            printf '%s' "incompatible"
+        else
+            printf 'warning: could not evaluate the previous code-signing requirement (codesign status %s); preserving TCC rows\n' \
+                "$codesign_status" >&2
+            [[ -z "$codesign_output" ]] \
+                || printf 'warning: codesign: %s\n' "$codesign_output" >&2
+            printf '%s' "unknown"
+        fi
+    fi
+}
+
+# Reset only the permissions Cua Driver itself consumes, and only after the
+# newly installed bundle has been verified and registered with LaunchServices.
+macos_reset_tcc_after_requirement_change() {
+    local compatibility="$1"
+    local bundle_id="com.trycua.driver"
+    local failed_services=""
+    local service
+
+    [[ "$compatibility" == "incompatible" ]] || return 0
+    if ! command -v tccutil >/dev/null 2>&1; then
+        err "tccutil is required to clear stale Cua Driver permission rows after its signing requirement changed"
+        return 1
+    fi
+    for service in Accessibility ScreenCapture; do
+        if ! tccutil reset "$service" "$bundle_id" >/dev/null 2>&1; then
+            failed_services="$failed_services $service"
+        fi
+    done
+    if [[ -n "$failed_services" ]]; then
+        err "could not reset these TCC services for $bundle_id:$failed_services"
+        err "the new app is installed, but stale permission rows may remain; run:"
+        err "  tccutil reset Accessibility $bundle_id"
+        err "  tccutil reset ScreenCapture $bundle_id"
+        return 1
+    fi
+
+    log "the app signing requirement changed; cleared stale Accessibility and Screen Recording rows"
+    log "macOS authorization is required again: cua-driver permissions grant"
+}
+
 # --- Concurrent-install lockfile ---------------------------------------
 #
 # A second install kicked off while a first is still running can race
@@ -209,6 +273,36 @@ LOCK_POLL_INTERVAL_SECONDS=1
 LOCK_STALE_AFTER_SECONDS=600
 
 LOCK_HELD=0
+MACOS_APP_SWAP_STARTED=0
+MACOS_APP_HAD_PREVIOUS=0
+MACOS_APP_INSTALL_COMMITTED=0
+MACOS_APP_BACKUP=""
+
+restore_macos_app_backup_on_exit() {
+    [[ "$MACOS_APP_SWAP_STARTED" == "1" ]] || return 0
+
+    if [[ "$MACOS_APP_INSTALL_COMMITTED" == "1" ]]; then
+        if [[ -e "$MACOS_APP_BACKUP" ]] && ! rm -rf "$MACOS_APP_BACKUP"; then
+            printf 'warning: could not remove macOS install backup at %s\n' \
+                "$MACOS_APP_BACKUP" >&2
+        fi
+        return 0
+    fi
+
+    if [[ "$MACOS_APP_HAD_PREVIOUS" == "1" ]]; then
+        # If the backup does not exist, the atomic move never completed or an
+        # explicit rollback already restored it. Leave the live path alone.
+        if [[ -e "$MACOS_APP_BACKUP" ]]; then
+            rm -rf "$APP_DEST"
+            mv "$MACOS_APP_BACKUP" "$APP_DEST"
+            printf 'warning: interrupted macOS install restored the previous CuaDriver.app\n' >&2
+        fi
+    else
+        # A first install has no app to restore; remove only its partial copy.
+        rm -rf "$APP_DEST"
+    fi
+}
+
 release_install_lock() {
     if (( LOCK_HELD == 1 )); then
         rm -rf "$LOCK_DIR" 2>/dev/null || true
@@ -220,6 +314,7 @@ release_install_lock() {
 # clobbers the other. INT/TERM also re-raise via $? so the user-visible
 # exit code reflects the signal.
 cleanup_on_exit() {
+    restore_macos_app_backup_on_exit
     rm -rf "$TMP_DIR" 2>/dev/null || true
     release_install_lock
 }
@@ -402,12 +497,9 @@ prune_old_releases() {
 # under the home. Every step is best-effort + idempotent; a machine with no
 # prior local install is a clean no-op.
 #
-# TCC is preserved deliberately: we do NOT `tccutil reset` here. The bundle at
-# /Applications/CuaDriver.app is shared (bundle id com.trycua.driver) and the
-# subsequent release `ditto` re-points the binary in place; grants keyed on the
-# bundle id survive (macOS may re-prompt once on the cdhash change, same as any
-# upgrade). Churning the signing identity would gratuitously invalidate
-# cert-pinned grants, so we leave it alone.
+# The release install below verifies the previous and replacement designated
+# requirements. Compatible releases preserve grants; a proven mismatch resets
+# only the stale Cua Driver rows after the replacement is registered.
 cleanup_prior_local_install() {
     local releases_dir="$HOME_DIR/packages/releases"
     local tcc_marker="$HOME_DIR/.tcc-signing-identity"
@@ -936,11 +1028,9 @@ fi
 # `realpath` walk in `is_executable_inside_cuadriver_app()` keys on
 # that resolved path to know whether the auto-relaunch heuristic
 # should fire. Same path and same bundle id as the Swift `cua-driver`
-# install (`/Applications/CuaDriver.app`, `com.trycua.driver`), so an
-# install over an existing Swift bundle is an in-place takeover —
-# TCC grants attributed to the shared bundle id survive the swap and
-# the new binary inherits them (macOS may re-prompt once on first
-# action because the cdhash differs; after that the grants persist).
+# install (`/Applications/CuaDriver.app`, `com.trycua.driver`). The installer
+# also proves whether the replacement satisfies the previous app's designated
+# requirement; the bundle identifier alone is not enough to preserve TCC.
 #
 # The macOS path intentionally does NOT use the
 # $HOME_DIR/packages/releases/<v>/ + current symlink layout used on
@@ -968,22 +1058,36 @@ if [[ "$OS" == "Darwin" ]]; then
         exit 1
     fi
 fi
+DAEMONS_STOPPED_BEFORE_SWAP=0
 if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     if [[ ! -w "/Applications" ]]; then
         err "/Applications is not writable. Re-run this installer in a shell where it is, or grant write access."
         err "  Without the .app bundle, \`cua-driver-rs mcp\` from an IDE terminal will not auto-relaunch into a TCC-correct daemon."
         exit 1
     fi
-    # The Rust port and the legacy Swift driver both live at
-    # /Applications/CuaDriver.app with bundle id `com.trycua.driver` —
-    # bundle-id-identical so TCC grants survive the upgrade. When we
-    # detect a prior Swift bundle at the install path we log it for
-    # transparency, but no `tccutil reset` is needed; grants transfer
-    # automatically because they're keyed on bundle id. macOS may
-    # surface a one-time re-prompt on first action because the cdhash
-    # of the new binary doesn't match the old one — that's a TCC
-    # cdhash-pairing detail, not a grant loss.
+    if ! command -v codesign >/dev/null 2>&1; then
+        err "codesign is required to verify the macOS release app safely"
+        exit 1
+    fi
+    if ! codesign --verify --deep --strict "$SRC_APP" 2>/dev/null; then
+        err "downloaded CuaDriver.app failed signature verification; the installed app was not changed"
+        exit 1
+    fi
+    STAGED_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+        "$SRC_APP/Contents/Info.plist" 2>/dev/null || true)
+    if [[ "$STAGED_BUNDLE_ID" != "com.trycua.driver" ]]; then
+        err "downloaded app has unexpected bundle id ${STAGED_BUNDLE_ID:-<missing>}; the installed app was not changed"
+        exit 1
+    fi
+    STAGED_REQUIREMENT="$(macos_designated_requirement "$SRC_APP" || true)"
+    if [[ -z "$STAGED_REQUIREMENT" ]]; then
+        err "could not read the downloaded app's designated requirement; the installed app was not changed"
+        exit 1
+    fi
+
     REPLACED_SWIFT=0
+    PREVIOUS_REQUIREMENT=""
+    REQUIREMENT_COMPATIBILITY="unknown"
     if [[ -e "$APP_DEST" ]]; then
         PREV_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)
         PREV_BUNDLE_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)
@@ -995,20 +1099,117 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         else
             log "removing existing $APP_DEST"
         fi
-        rm -rf "$APP_DEST"
+        if [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]] \
+           && codesign --verify --deep --strict "$APP_DEST" 2>/dev/null; then
+            PREVIOUS_REQUIREMENT="$(macos_designated_requirement "$APP_DEST" || true)"
+            if [[ -n "$PREVIOUS_REQUIREMENT" ]]; then
+                REQUIREMENT_COMPATIBILITY="$(macos_requirement_compatibility \
+                    "$PREVIOUS_REQUIREMENT" "$SRC_APP")"
+            else
+                log "warning: could not read the existing app's designated requirement; preserving TCC rows because compatibility is unknown"
+            fi
+        elif [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]]; then
+            log "warning: existing CuaDriver.app signature could not be verified; preserving TCC rows because compatibility is unknown"
+        else
+            log "warning: the existing app does not own com.trycua.driver; it will not be used to decide whether Cua Driver TCC rows are stale"
+        fi
+    fi
+
+    # Stop the old daemon while its verified bundle still exists. This avoids
+    # leaving a running process whose executable path disappears mid-upgrade.
+    stop_cua_driver_daemons
+    show_cua_driver_daemon_survivors
+    DAEMONS_STOPPED_BEFORE_SWAP=1
+
+    MACOS_APP_BACKUP="${APP_DEST}.install-backup.$$"
+    if [[ -e "$MACOS_APP_BACKUP" ]]; then
+        err "temporary backup path already exists: $MACOS_APP_BACKUP"
+        exit 1
+    fi
+    if [[ -e "$APP_DEST" ]]; then
+        MACOS_APP_HAD_PREVIOUS=1
+    fi
+    MACOS_APP_SWAP_STARTED=1
+    if [[ "$MACOS_APP_HAD_PREVIOUS" == "1" ]]; then
+        mv "$APP_DEST" "$MACOS_APP_BACKUP"
     fi
     log "installing $APP_DEST"
     # `ditto` preserves the bundle's metadata + nested symlinks the way
     # Apple's installer would. `cp -R` works but doesn't preserve as
     # much, and ditto is always present on macOS.
-    ditto "$SRC_APP" "$APP_DEST"
-    APP_BINARY="$APP_DEST/Contents/MacOS/$BINARY_NAME"
-    if [[ ! -x "$APP_BINARY" ]]; then
-        err "binary missing at $APP_BINARY (refusing to create broken symlink)"
+    INSTALL_VALID=0
+    if ditto "$SRC_APP" "$APP_DEST" \
+       && codesign --verify --deep --strict "$APP_DEST" 2>/dev/null; then
+        INSTALLED_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+            "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)
+        INSTALLED_REQUIREMENT="$(macos_designated_requirement "$APP_DEST" || true)"
+        if [[ "$INSTALLED_BUNDLE_ID" == "$STAGED_BUNDLE_ID" \
+           && -n "$INSTALLED_REQUIREMENT" \
+           && "$INSTALLED_REQUIREMENT" == "$STAGED_REQUIREMENT" ]]; then
+            INSTALL_VALID=1
+        fi
+    fi
+    if [[ "$INSTALL_VALID" != "1" ]]; then
+        rm -rf "$APP_DEST"
+        if [[ -e "$MACOS_APP_BACKUP" ]]; then
+            mv "$MACOS_APP_BACKUP" "$APP_DEST"
+        fi
+        err "installed CuaDriver.app did not preserve its verified signing identity; the replacement was rolled back"
         exit 1
     fi
+    APP_BINARY="$APP_DEST/Contents/MacOS/$BINARY_NAME"
+    if [[ ! -x "$APP_BINARY" ]]; then
+        rm -rf "$APP_DEST"
+        if [[ -e "$MACOS_APP_BACKUP" ]]; then
+            mv "$MACOS_APP_BACKUP" "$APP_DEST"
+        fi
+        err "binary missing at $APP_BINARY; the replacement was rolled back"
+        exit 1
+    fi
+
+    # Register synchronously so both `open -a CuaDriver` and `tccutil reset`
+    # resolve the replacement bundle rather than a stale LaunchServices entry.
+    LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+    if [[ -x "$LSREGISTER" ]] \
+       && "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1; then
+        :
+    else
+        rm -rf "$APP_DEST"
+        if [[ -e "$MACOS_APP_BACKUP" ]]; then
+            mv "$MACOS_APP_BACKUP" "$APP_DEST"
+            "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1 || true
+        fi
+        err "could not register the replacement app with LaunchServices; the replacement was rolled back"
+        exit 1
+    fi
+
+    # Re-check the installed copy against the old requirement. A disagreement
+    # with the staged result means the copy did not preserve the expected code
+    # identity and must not trigger a destructive permission reset.
+    if [[ -n "$PREVIOUS_REQUIREMENT" ]]; then
+        INSTALLED_COMPATIBILITY="$(macos_requirement_compatibility \
+            "$PREVIOUS_REQUIREMENT" "$APP_DEST")"
+        if [[ "$INSTALLED_COMPATIBILITY" != "$REQUIREMENT_COMPATIBILITY" ]]; then
+            rm -rf "$APP_DEST"
+            if [[ -e "$MACOS_APP_BACKUP" ]]; then
+                mv "$MACOS_APP_BACKUP" "$APP_DEST"
+            fi
+            if [[ "$INSTALLED_COMPATIBILITY" == "unknown" ]]; then
+                err "could not re-verify the installed app's signing compatibility; the replacement was rolled back"
+            else
+                err "installed app's signing compatibility changed during copy; the replacement was rolled back"
+            fi
+            exit 1
+        fi
+    fi
+
+    MACOS_APP_INSTALL_COMMITTED=1
+    rm -rf "$MACOS_APP_BACKUP" || true
     ln -sf "$APP_BINARY" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $APP_BINARY"
+    if ! macos_reset_tcc_after_requirement_change "$REQUIREMENT_COMPATIBILITY"; then
+        exit 1
+    fi
 else
     # Linux: versioned-dirs + atomic `current` symlink swap.
     #
@@ -1113,8 +1314,10 @@ fi
 # LaunchAgent / systemd user unit / manual `serve` shell keeps serving
 # pre-upgrade behaviour until logout, which is what surfaces to users
 # as "the bug I just fixed is still there".
-stop_cua_driver_daemons
-show_cua_driver_daemon_survivors
+if [[ "$DAEMONS_STOPPED_BEFORE_SWAP" != "1" ]]; then
+    stop_cua_driver_daemons
+    show_cua_driver_daemon_survivors
+fi
 
 # Agent skill pack: NOT auto-linked. The install script never touches
 # ~/.claude/skills/, ~/.agents/skills/, etc. Run `cua-driver skills
@@ -1166,11 +1369,22 @@ echo ""
 
 if [[ "${REPLACED_SWIFT:-0}" == "1" ]]; then
     echo "Upgraded the cua-driver bundle that was previously at $APP_DEST."
-    echo "TCC grants (Accessibility, Screen Recording) are keyed on the bundle id"
-    echo "(com.trycua.driver) — which is preserved — so they transfer to the new"
-    echo "binary automatically. macOS may surface a one-time re-grant prompt on"
-    echo "first action because the new binary's cdhash doesn't match the old"
-    echo "one's; approve once and the grants persist."
+    case "${REQUIREMENT_COMPATIBILITY:-unknown}" in
+        compatible)
+            echo "Verified that the replacement satisfies the previous code-signing"
+            echo "requirement, so existing Accessibility and Screen Recording grants"
+            echo "were preserved."
+            ;;
+        incompatible)
+            echo "The code-signing requirement changed, so stale Accessibility and"
+            echo "Screen Recording rows were cleared. Re-authorize the new app with:"
+            echo "  cua-driver permissions grant"
+            ;;
+        *)
+            echo "The previous code-signing requirement could not be verified. Existing"
+            echo "TCC rows were left unchanged to avoid destroying valid grants."
+            ;;
+    esac
     echo ""
 fi
 

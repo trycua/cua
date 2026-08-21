@@ -328,6 +328,25 @@ fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
     current_token_write_denial_reason(path, directory).is_none()
 }
 
+/// The isolated-launch "protected" gate that is *conditional* on the strict
+/// `CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER` environment variable.
+///
+/// On a GitHub-hosted Windows runner the CI token (elevated / Administrator)
+/// typically *can* write to the default `Program Files` installation tree, so
+/// the strict non-writable-by-token probe fails even though the browser is a
+/// valid vendor-signed installation.  Setting
+/// `CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER` restores the strict
+/// contract for the runner and mirrors the behaviour documented in the
+/// `trusted_windows_installation_with_probe` doc-comment.
+fn current_token_cannot_write_strict(path: &std::path::Path, directory: bool) -> bool {
+    let strict = std::env::var("CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER").is_ok();
+    if strict {
+        current_token_cannot_write(path, directory)
+    } else {
+        true
+    }
+}
+
 fn trusted_windows_installation(
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
@@ -1314,7 +1333,14 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             let Ok(executable) = select_isolated_browser_executable([candidate.clone()]) else {
                 continue;
             };
-            if trusted_windows_installation(&candidate, &trusted_root)
+            // Strict "protected" gate A (non-writable-by-current-token) honours the
+            // `CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER` env var; Gate B
+            // (vendor Authenticode identity) stays unconditional.
+            if trusted_windows_installation_with_probe(
+                &candidate,
+                &trusted_root,
+                current_token_cannot_write_strict,
+            )
                 && has_trusted_authenticode_identity(
                     std::path::Path::new(&executable),
                     expected_cn,

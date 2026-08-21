@@ -113,15 +113,22 @@ fn tools_list_schema_shape() {
         .iter()
         .find(|tool| tool["name"] == "browser_prepare")
         .expect("browser_prepare not found in tools/list");
+    let prepare_schema = &prepare["inputSchema"];
+    assert_eq!(
+        prepare_schema["type"], "object",
+        "browser_prepare must advertise a plain object input schema"
+    );
+    for unsupported in ["anyOf", "oneOf", "allOf"] {
+        assert!(
+            prepare_schema.get(unsupported).is_none(),
+            "browser_prepare top-level {unsupported} is rejected by Bedrock: {prepare_schema}"
+        );
+    }
     assert!(
-        prepare["inputSchema"]["anyOf"]
+        prepare_schema["required"]
             .as_array()
-            .is_some_and(|alternatives| alternatives.iter().any(|alternative| {
-                alternative["required"]
-                    .as_array()
-                    .is_some_and(|required| required.iter().any(|field| field == "pid"))
-            })),
-        "browser_prepare schema must retain a pid-required alternative"
+            .is_some_and(|required| required.is_empty()),
+        "browser_prepare must leave conditionally required fields to runtime validation"
     );
 
     const DELIVERY_MODE_TOOLS: &[&str] = &[

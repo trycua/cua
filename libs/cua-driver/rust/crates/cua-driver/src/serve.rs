@@ -2100,13 +2100,6 @@ pub fn run_stop_cmd(socket_path: &str) {
 /// `cua-driver status` implementation.
 pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
     if is_daemon_listening(socket_path) {
-        println!("Cua Driver daemon is running");
-        println!("  socket: {socket_path}");
-        if let Some(pid) = read_pid_file(pid_file_path) {
-            println!("  pid: {pid}");
-        } else {
-            println!("  pid: unknown (no pid file)");
-        }
         let request = DaemonRequest {
             method: "authorization_status".to_owned(),
             name: None,
@@ -2115,7 +2108,26 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             observation_origin: Some(ToolObservationOrigin::Direct),
             client_kind: None,
         };
-        if let Ok(response) = send_request(socket_path, &request) {
+        let response = send_request(socket_path, &request);
+        if let Err(error) = &response {
+            eprintln!("Cua Driver daemon endpoint exists but is not reachable");
+            eprintln!("  socket: {socket_path}");
+            eprintln!("  error: {error}");
+            #[cfg(target_os = "windows")]
+            eprintln!(
+                "  hint: the named pipe accepts only the Windows account that owns the daemon. \
+                 Run `whoami /user` in this shell and in the interactive desktop; the SIDs must match."
+            );
+            std::process::exit(1);
+        }
+        println!("Cua Driver daemon is running");
+        println!("  socket: {socket_path}");
+        if let Some(pid) = read_pid_file(pid_file_path) {
+            println!("  pid: {pid}");
+        } else {
+            println!("  pid: unknown (no pid file)");
+        }
+        if let Ok(response) = response {
             if let Some(status) = response.result {
                 println!(
                     "  permission mode: {} ({})",

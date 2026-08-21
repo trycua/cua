@@ -76,6 +76,7 @@ export interface MCPPropertyDoc {
   type?: string | string[];
   description?: string;
   items?: { type: string };
+  required?: string[];
   enum?: string[];
   const?: unknown;
   anyOf?: MCPPropertyDoc[];
@@ -855,8 +856,24 @@ function propertyDescription(prop: MCPPropertyDoc): string {
 }
 
 function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
+  if (prop.const !== undefined) {
+    return prop.const;
+  }
   if (prop.enum?.length) {
     return prop.enum[0];
+  }
+  const objectAlternative = (prop.oneOf ?? prop.anyOf)?.find(
+    (alternative) => alternative.type === 'object' && alternative.properties
+  );
+  if (objectAlternative?.properties) {
+    const example: Record<string, unknown> = {};
+    for (const propertyName of objectAlternative.required ?? []) {
+      const property = objectAlternative.properties[propertyName];
+      if (property) {
+        example[propertyName] = syntheticExampleValue(propertyName, property);
+      }
+    }
+    return example;
   }
   switch (prop.type) {
     case 'integer':

@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 56 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 58 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -844,6 +844,41 @@ accepts it. Omit it to use the authenticated transport's implicit lifecycle sess
 
 ```json
 {"path":["example"],"pid":844,"window_id":10725}
+```
+
+### `get_menu_extra_state`
+
+Read one exact running application's bounded macOS accessibility extras-menu hierarchy without screenshots, action-cache writes, or pixel fallback.
+
+**Arguments:**
+
+- `application` (pid target or bundle_id target, required): Exact running application whose macOS accessibility extras menu bar is
+observed or invoked. Bundle identifiers must resolve to exactly one running
+process; the driver never launches an application while resolving a target.
+- `max_depth` (integer, optional): range: 1–25
+- `max_elements` (integer, optional): range: 1–2000
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that
+accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+
+```json
+{"application":{"kind":"pid","pid":844}}
+```
+
+### `invoke_menu_extra`
+
+Resolve an exact macOS accessibility extras-menu path, including a same-process popup surface opened by the menu extra, and invoke it without activating an application window or falling back to pixels.
+
+**Arguments:**
+
+- `application` (pid target or bundle_id target, required): Exact running application whose macOS accessibility extras menu bar is
+observed or invoked. Bundle identifiers must resolve to exactly one running
+process; the driver never launches an application while resolving a target.
+- `path` (array of string, required): items: 1–16
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that
+accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+
+```json
+{"application":{"kind":"pid","pid":844},"path":["example"]}
 ```
 
 ### `set_agent_cursor_theme`

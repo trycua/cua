@@ -75,6 +75,18 @@ fn menu_path_schema(_: &mut SchemaGenerator) -> Schema {
     })
 }
 
+fn bundle_identifier_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "string", "minLength": 1, "maxLength": 255 })
+}
+
+fn menu_extra_max_depth_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 1, "maximum": 25 })
+}
+
+fn menu_extra_max_elements_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 1, "maximum": 2000 })
+}
+
 fn number_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "number" })
 }
@@ -554,6 +566,63 @@ pub struct InvokeMenuInput {
 
 impl ToolInput for InvokeMenuInput {
     const TOOL_NAME: &'static str = "invoke_menu";
+}
+
+/// Exact running application whose macOS accessibility extras menu bar is
+/// observed or invoked. Bundle identifiers must resolve to exactly one running
+/// process; the driver never launches an application while resolving a target.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MenuExtraTarget {
+    Pid {
+        #[schemars(schema_with = "positive_integer_schema")]
+        pid: u32,
+    },
+    BundleId {
+        #[schemars(schema_with = "bundle_identifier_schema")]
+        bundle_id: String,
+    },
+}
+
+/// Read one exact running application's macOS `AXExtrasMenuBar` hierarchy.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GetMenuExtraStateInput {
+    pub application: MenuExtraTarget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "menu_extra_max_depth_schema")]
+    pub max_depth: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "menu_extra_max_elements_schema")]
+    pub max_elements: Option<u32>,
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
+
+impl ToolInput for GetMenuExtraStateInput {
+    const TOOL_NAME: &'static str = "get_menu_extra_state";
+}
+
+/// Invoke an exact path through one running application's macOS
+/// `AXExtrasMenuBar` and any same-process popup surface it opens.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InvokeMenuExtraInput {
+    pub application: MenuExtraTarget,
+    #[schemars(schema_with = "menu_path_schema")]
+    pub path: Vec<String>,
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
+
+impl ToolInput for InvokeMenuExtraInput {
+    const TOOL_NAME: &'static str = "invoke_menu_extra";
 }
 
 impl ToolInput for MoveCursorInput {

@@ -1163,6 +1163,187 @@
       }
     },
     {
+      "name": "get_menu_extra_state",
+      "description": "Read one exact running application's bounded macOS accessibility extras-menu hierarchy without screenshots, action-cache writes, or pixel fallback.",
+      "platforms": [
+        "macos"
+      ],
+      "capabilities": [
+        "accessibility.menu_extra.observe"
+      ],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": false,
+        "open_world": false
+      },
+      "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "observe"
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "Read one exact running application's macOS `AXExtrasMenuBar` hierarchy.",
+        "properties": {
+          "application": {
+            "description": "Exact running application whose macOS accessibility extras menu bar is\nobserved or invoked. Bundle identifiers must resolve to exactly one running\nprocess; the driver never launches an application while resolving a target.",
+            "oneOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "kind": {
+                    "const": "pid",
+                    "type": "string"
+                  },
+                  "pid": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pid"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "bundle_id": {
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "bundle_id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "bundle_id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "max_depth": {
+            "maximum": 25,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_elements": {
+            "maximum": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session": {
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": true,
+        "properties": {
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content_redacted_from_telemetry": {
+            "type": "boolean"
+          },
+          "node_count": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nodes": {
+            "items": {
+              "properties": {
+                "actions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "depth": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "enabled": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "role": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "depth",
+                "role",
+                "label",
+                "title",
+                "description",
+                "enabled",
+                "actions"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "privacy_sensitive": {
+            "type": "boolean"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pid",
+          "bundle_id",
+          "nodes",
+          "node_count",
+          "truncated",
+          "privacy_sensitive",
+          "content_redacted_from_telemetry"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "get_screen_size",
       "description": "Return the primary display dimensions and scale factor in the platform's desktop coordinate space.",
       "platforms": [
@@ -1681,6 +1862,207 @@
         "required": [
           "pid",
           "window_id",
+          "path"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "additionalProperties": false,
+            "properties": {
+              "delivered_count": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "mode": {
+                "enum": [
+                  "background",
+                  "foreground",
+                  "not_applicable",
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "effect": {
+            "enum": [
+              "confirmed",
+              "partial",
+              "unverifiable",
+              "suspected_noop",
+              "refused"
+            ],
+            "type": "string"
+          },
+          "escalation": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "enum": [
+                  "route_unavailable",
+                  "delivery_failed",
+                  "effect_unconfirmed",
+                  "suspected_noop",
+                  "permission_required"
+                ],
+                "type": "string"
+              },
+              "target": {
+                "enum": [
+                  "pixel",
+                  "foreground",
+                  "page",
+                  "session"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "reason"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "value_readback",
+                    "window_change"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "route": {
+            "enum": [
+              "accessibility",
+              "synthetic_events",
+              "global_input",
+              "system_api",
+              "dom",
+              "trusted_input"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "effect",
+          "route"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "invoke_menu_extra",
+      "description": "Resolve an exact macOS accessibility extras-menu path, including a same-process popup surface opened by the menu extra, and invoke it without activating an application window or falling back to pixels.",
+      "platforms": [
+        "macos"
+      ],
+      "capabilities": [
+        "accessibility.menu_extra.invoke"
+      ],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "system"
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "Invoke an exact path through one running application's macOS\n`AXExtrasMenuBar` and any same-process popup surface it opens.",
+        "properties": {
+          "application": {
+            "description": "Exact running application whose macOS accessibility extras menu bar is\nobserved or invoked. Bundle identifiers must resolve to exactly one running\nprocess; the driver never launches an application while resolving a target.",
+            "oneOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "kind": {
+                    "const": "pid",
+                    "type": "string"
+                  },
+                  "pid": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pid"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "bundle_id": {
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "bundle_id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "bundle_id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "path": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "session": {
+            "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application",
           "path"
         ],
         "type": "object"

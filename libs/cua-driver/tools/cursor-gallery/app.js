@@ -38,6 +38,26 @@ let workbenchPlaying = true;
 let workbenchAction = 'observe';
 let devStatus = null;
 
+// Movement lab: slider state mirrors the dev-server override file. Values
+// are advisory only; Rust re-clamps everything before rendering.
+const MOTION_FIELD_BOUNDS = {
+  peak_speed: [50, 2000, 10],
+  min_start_speed: [1, 600, 1],
+  min_end_speed: [1, 600, 1],
+  turn_radius: [1, 400, 1],
+  spring: [0.3, 1, 0.01],
+  glide_duration_ms: [0, 1500, 10],
+};
+const MOTION_DEFAULTS = {
+  peak_speed: 900,
+  min_start_speed: 300,
+  min_end_speed: 200,
+  turn_radius: 80,
+  spring: 0.72,
+  glide_duration_ms: 0,
+};
+let motionOverride = {};
+
 const fallbackActionFacts = {
   idle: { authored_frames: 1, still_frame: 0, playback: 'resting' },
   click: { authored_frames: 20, still_frame: 8, playback: 'one_shot' },
@@ -292,7 +312,28 @@ function applyDevStatus(status) {
     ? `${status.build.manifest.theme_name} · ${status.build.manifest.content_hash.slice(0, 10)} · ${status.message}`
     : status.message;
   diagnostics.textContent = status.error || 'No build errors.';
+  // Echo the server-side override state so the UI never drifts from the file.
+  const echoed = status.build?.motion_override;
+  if (echoed && typeof echoed === 'object') {
+    motionOverride = { ...echoed };
+    syncMotionSliders();
+  }
+  updateMovementLab();
+  updateMovementEcho();
   if (nextBuildId !== priorBuildId || status.state === 'error') updateWorkbench();
+}
+
+function updateMovementEcho() {
+  const motion = devStatus?.build?.manifest?.motion;
+  const scene = document.querySelector('#workbench-scene')?.value;
+  const cadenceRow = document.querySelector('#inspector-cadence');
+  if (!motion || !cadenceRow) return;
+  if (scene === 'movement') {
+    const overridden = motion.overridden_fields ?? [];
+    cadenceRow.textContent = overridden.length
+      ? `62.5 fps · ${overridden.length} override${overridden.length === 1 ? '' : 's'}`
+      : '62.5 fps · spec defaults';
+  }
 }
 
 async function pollDevStatus() {
@@ -410,7 +451,10 @@ document.querySelector('#workbench-action').addEventListener('change', (event) =
   selectWorkbenchAction(event.currentTarget.value);
 });
 
-document.querySelector('#workbench-scene').addEventListener('change', updateWorkbench);
+document.querySelector('#workbench-scene').addEventListener('change', () => {
+  updateWorkbench();
+  updateMovementEcho();
+});
 document.querySelector('#reduced-motion').addEventListener('change', updateWorkbench);
 document.querySelector('#compare-build').addEventListener('change', updateWorkbench);
 
@@ -458,7 +502,84 @@ document.querySelector('#actions-grid').addEventListener('click', (event) => {
   if (card) selectWorkbenchAction(actions[Number(card.dataset.index)][0]);
 });
 
+function motionSlider(field) {
+  return document.querySelector(`#motion-${field.replace(/_/g, '-')}`);
+}
+
+function motionOutput(field) {
+  return document.querySelector(`#motion-${field.replace(/_/g, '-')}-out`);
+}
+
+function formatMotionValue(field, value) {
+  if (field === 'glide_duration_ms') return `${value} ms`;
+  if (field === 'spring') return value.toFixed(2);
+  return String(value);
+}
+
+function syncMotionSliders() {
+  const effective = { ...MOTION_DEFAULTS, ...motionOverride };
+  for (const field of Object.keys(MOTION_FIELD_BOUNDS)) {
+    const slider = motionSlider(field);
+    const output = motionOutput(field);
+    if (!slider || !output) continue;
+    slider.value = String(effective[field]);
+    output.textContent = formatMotionValue(field, effective[field]);
+  }
+}
+
+function updateMovementLab() {
+  const lab = document.querySelector('#movement-lab');
+  const badge = document.querySelector('#movement-override-badge');
+  if (!lab) return;
+  lab.hidden = !devMode;
+  if (!badge) return;
+  const overridden = Object.keys(motionOverride);
+  badge.hidden = overridden.length === 0;
+  badge.textContent = overridden.length > 0 ? '· overrides active' : '';
+}
+
+async function postMotionOverride(override) {
+  try {
+    const response = await fetch('/__cursor_dev/motion-override', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.keys(override).length ? override : null),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      console.warn('motion override rejected:', payload.error ?? response.status);
+    }
+  } catch (error) {
+    console.warn('motion override post failed:', error);
+  }
+}
+
+function wireMovementLab() {
+  if (!devMode) return;
+  for (const field of Object.keys(MOTION_FIELD_BOUNDS)) {
+    const slider = motionSlider(field);
+    if (!slider) continue;
+    slider.addEventListener('change', () => {
+      const value = Number(slider.value);
+      if (value === MOTION_DEFAULTS[field]) delete motionOverride[field];
+      else motionOverride[field] = value;
+      syncMotionSliders();
+      void postMotionOverride(motionOverride);
+    });
+  }
+  const reset = document.querySelector('#motion-reset');
+  if (reset) {
+    reset.addEventListener('click', () => {
+      motionOverride = {};
+      syncMotionSliders();
+      void postMotionOverride(motionOverride);
+    });
+  }
+}
+
 render();
+syncMotionSliders();
+wireMovementLab();
 if (devMode) {
   void pollDevStatus();
   setInterval(() => { void pollDevStatus(); }, 900);

@@ -861,6 +861,63 @@ html[data-dev-state="error"] .diagnostics-block pre {
   color: #ffb8c0;
 }
 
+.movement-lab {
+  display: grid;
+  gap: 12px;
+}
+
+.movement-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.movement-controls label {
+  display: grid;
+  grid-template-columns: 88px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.movement-controls span {
+  color: var(--ink-muted);
+}
+
+.movement-controls output {
+  min-width: 52px;
+  text-align: right;
+  font: 500 11px/1.2 var(--font-mono);
+  color: var(--ink-strong);
+}
+
+.movement-controls input[type="range"] {
+  width: 100%;
+  accent-color: #6c8cff;
+}
+
+.movement-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.movement-note button {
+  margin-left: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-strong);
+  font: inherit;
+  cursor: pointer;
+}
+
+#movement-override-badge {
+  color: #e8a34a;
+  font-weight: 600;
+}
+
 @media (max-width: 1160px) {
   .state-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));

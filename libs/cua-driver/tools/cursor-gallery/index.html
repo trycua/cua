@@ -121,6 +121,52 @@
                 <div><dt>Renderer</dt><dd>Production Rust</dd></div>
               </dl>
             </div>
+            <div id="movement-lab" class="movement-lab" hidden>
+              <p class="section-count">Movement lab <span id="movement-override-badge" hidden></span></p>
+              <div class="movement-controls" aria-label="Movement physics overrides">
+                <label>
+                  <span>Peak speed</span>
+                  <input id="motion-peak-speed" data-field="peak_speed" type="range"
+                    min="50" max="2000" step="10" />
+                  <output id="motion-peak-speed-out" for="motion-peak-speed"></output>
+                </label>
+                <label>
+                  <span>Start floor</span>
+                  <input id="motion-min-start-speed" data-field="min_start_speed" type="range"
+                    min="1" max="600" step="1" />
+                  <output id="motion-min-start-speed-out" for="motion-min-start-speed"></output>
+                </label>
+                <label>
+                  <span>End floor</span>
+                  <input id="motion-min-end-speed" data-field="min_end_speed" type="range"
+                    min="1" max="600" step="1" />
+                  <output id="motion-min-end-speed-out" for="motion-min-end-speed"></output>
+                </label>
+                <label>
+                  <span>Turn radius</span>
+                  <input id="motion-turn-radius" data-field="turn_radius" type="range"
+                    min="1" max="400" step="1" />
+                  <output id="motion-turn-radius-out" for="motion-turn-radius"></output>
+                </label>
+                <label>
+                  <span>Spring</span>
+                  <input id="motion-spring" data-field="spring" type="range"
+                    min="0.3" max="1" step="0.01" />
+                  <output id="motion-spring-out" for="motion-spring"></output>
+                </label>
+                <label>
+                  <span>Glide hold</span>
+                  <input id="motion-glide-duration-ms" data-field="glide_duration_ms" type="range"
+                    min="0" max="1500" step="10" />
+                  <output id="motion-glide-duration-ms-out" for="motion-glide-duration-ms"></output>
+                </label>
+              </div>
+              <p class="movement-note">
+                Dev-only. Sliders rebuild the preview through the production
+                renderer; values are clamped to the spec bounds and never
+                persist into the repository. <button id="motion-reset" type="button">Reset</button>
+              </p>
+            </div>
             <div class="diagnostics-block">
               <p class="section-count">Diagnostics</p>
               <pre id="build-diagnostics">No build errors.</pre>

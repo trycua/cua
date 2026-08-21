@@ -46,6 +46,26 @@ func rewriteLocation(loc, basePath string) string {
 	return basePath + "/" + loc
 }
 
+func newSvcReverseProxy(target *url.URL, upstreamPath, basePath string) *httputil.ReverseProxy {
+	rp := httputil.NewSingleHostReverseProxy(target)
+	origDirector := rp.Director
+	rp.Director = func(req *http.Request) {
+		origDirector(req)
+		req.URL.Path = upstreamPath
+		req.URL.RawPath = ""
+		req.Header.Del("Authorization")
+		req.Host = target.Host
+	}
+	rp.ModifyResponse = func(resp *http.Response) error {
+		loc := resp.Header.Get("Location")
+		if rewritten := rewriteLocation(loc, basePath); rewritten != loc {
+			resp.Header.Set("Location", rewritten)
+		}
+		return nil
+	}
+	return rp
+}
+
 // Svc godoc
 //
 //	@Summary		Authenticated reverse proxy to a K8s Service in a namespace the caller owns
@@ -106,23 +126,11 @@ func (h Handlers) Svc(w http.ResponseWriter, r *http.Request) {
 	// prepend this prefix so the browser stays within /api/svc.
 	basePath := fmt.Sprintf("/api/svc/%s/%s", ns, service)
 
-	rp := httputil.NewSingleHostReverseProxy(target)
+	rp := newSvcReverseProxy(target, upstreamPath, basePath)
 	origDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		origDirector(req)
-		req.URL.Path = upstreamPath
-		req.URL.RawPath = ""
 		req.URL.RawQuery = r.URL.RawQuery
-		req.Header.Del("Authorization")
-		req.Host = target.Host
-	}
-	// Rewrite upstream Location headers to include the base path.
-	rp.ModifyResponse = func(resp *http.Response) error {
-		loc := resp.Header.Get("Location")
-		if rewritten := rewriteLocation(loc, basePath); rewritten != loc {
-			resp.Header.Set("Location", rewritten)
-		}
-		return nil
 	}
 
 	rw := &statusCapture{ResponseWriter: w}

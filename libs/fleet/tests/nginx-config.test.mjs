@@ -50,3 +50,14 @@ test("oauth2-proxy accepts Fleets GitHub WIF bearer tokens", async () => {
     "expected oauth2-proxy to verify GitHub OIDC tokens with the Fleets audience",
   )
 })
+
+test("sandbox service proxy streams bodies without a size cap", async () => {
+  const conf = await readFile(nginxConf, "utf8")
+  const route = conf.match(/location ~ \^\/api\/svc\(\/\|\$\) \{([\s\S]*?)\n    \}/)
+  assert.ok(route)
+  assert.match(route[1], /client_max_body_size\s+0\s*;/)
+  assert.match(route[1], /proxy_request_buffering\s+off\s*;/)
+  assert.match(route[1], /proxy_buffering\s+off\s*;/)
+  assert.match(route[1], /proxy_read_timeout\s+1h\s*;/)
+  assert.match(route[1], /proxy_send_timeout\s+1h\s*;/)
+})

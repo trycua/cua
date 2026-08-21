@@ -13,7 +13,7 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::ax::bindings::{
     copy_action_names, copy_bool_attr, copy_children_bounded, copy_element_attr_result,
@@ -503,6 +503,111 @@ unsafe fn resolve_exact_prefix(
     current.ok_or_else(|| MenuExtraError::new("invalid_path", "path is empty"))
 }
 
+unsafe fn resolve_exact_popup_descendant(
+    app: AXUIElementRef,
+    expected_pid: i32,
+    segment: &str,
+    depth: usize,
+) -> Result<OwnedAxElement, MenuExtraError> {
+    let (children, total_count) =
+        copy_children_bounded(app, MAX_SEMANTIC_CHILDREN + 1).map_err(|error| {
+            MenuExtraError::new(
+                "menu_extra_query_failed",
+                format!("reading application popup children failed with AX error {error}"),
+            )
+        })?;
+    if total_count > MAX_SEMANTIC_CHILDREN {
+        for child in children {
+            drop(OwnedAxElement::new(child));
+        }
+        return Err(MenuExtraError::new(
+            "menu_extra_query_limit",
+            format!("popup hierarchy exceeds {MAX_SEMANTIC_CHILDREN} native elements"),
+        ));
+    }
+
+    let mut discovered = children.len();
+    let mut pending = children
+        .into_iter()
+        .map(|child| OwnedAxElement::new(child))
+        .collect::<Vec<_>>();
+    let mut matches = Vec::new();
+
+    while let Some(element) = pending.pop() {
+        let owner_pid = pid_of_element(element.as_ptr()).map_err(|error| {
+            MenuExtraError::new(
+                "menu_extra_query_failed",
+                format!("reading popup element owner failed with AX error {error}"),
+            )
+        })?;
+        if owner_pid != expected_pid {
+            return Err(MenuExtraError::new(
+                "menu_extra_foreign_owner",
+                format!("popup element belongs to pid {owner_pid}, expected {expected_pid}"),
+            ));
+        }
+
+        let remaining = MAX_SEMANTIC_CHILDREN.saturating_sub(discovered);
+        let query_limit = remaining.saturating_add(1);
+        let (descendants, descendant_count) = copy_children_bounded(element.as_ptr(), query_limit)
+            .map_err(|error| {
+                MenuExtraError::new(
+                    "menu_extra_query_failed",
+                    format!("reading popup descendants failed with AX error {error}"),
+                )
+            })?;
+        if descendant_count > remaining {
+            for descendant in descendants {
+                drop(OwnedAxElement::new(descendant));
+            }
+            return Err(MenuExtraError::new(
+                "menu_extra_query_limit",
+                format!("popup hierarchy exceeds {MAX_SEMANTIC_CHILDREN} native elements"),
+            ));
+        }
+        discovered += descendant_count;
+        pending.extend(
+            descendants
+                .into_iter()
+                .map(|descendant| OwnedAxElement::new(descendant)),
+        );
+
+        if semantic_label(element.as_ptr()).as_deref() == Some(segment) {
+            matches.push(element);
+        }
+    }
+
+    match matches.len() {
+        1 => Ok(matches.pop().expect("one exact popup match")),
+        0 => Err(MenuExtraError::new(
+            "menu_path_not_found",
+            format!("path segment {depth} was not found"),
+        )),
+        count => Err(MenuExtraError::new(
+            "menu_path_ambiguous",
+            format!("path segment {depth} matched {count} elements"),
+        )),
+    }
+}
+
+unsafe fn resolve_exact_popup_descendant_with_retry(
+    app: AXUIElementRef,
+    expected_pid: i32,
+    segment: &str,
+    depth: usize,
+) -> Result<OwnedAxElement, MenuExtraError> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match resolve_exact_popup_descendant(app, expected_pid, segment, depth) {
+            Ok(element) => return Ok(element),
+            Err(error) if error.code == "menu_path_not_found" && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn choose_action(actions: &[String], final_segment: bool) -> Option<&'static str> {
     let supports = |name: &str| actions.iter().any(|action| action == name);
     let order: &[&str] = if final_segment {
@@ -519,8 +624,20 @@ fn invoke_path(target: ResolvedTarget, path: &[String]) -> Result<bool, MenuExtr
         prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
     unsafe {
         for depth in 0..path.len() {
-            let (_app, menu_bar) = extras_menu_bar(target.pid)?;
-            let element = resolve_exact_prefix(menu_bar.as_ptr(), target.pid, &path[..=depth])?;
+            let (app, menu_bar) = extras_menu_bar(target.pid)?;
+            let element = match resolve_exact_prefix(menu_bar.as_ptr(), target.pid, &path[..=depth])
+            {
+                Ok(element) => element,
+                Err(error) if depth > 0 && error.code == "menu_path_not_found" => {
+                    resolve_exact_popup_descendant_with_retry(
+                        app.as_ptr(),
+                        target.pid,
+                        &path[depth],
+                        depth,
+                    )?
+                }
+                Err(error) => return Err(error),
+            };
             if copy_bool_attr(element.as_ptr(), "AXEnabled") == Some(false) {
                 return Err(MenuExtraError::new(
                     "menu_path_disabled",

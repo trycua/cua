@@ -606,8 +606,8 @@ impl ToolInput for GetMenuExtraStateInput {
     const TOOL_NAME: &'static str = "get_menu_extra_state";
 }
 
-/// Invoke an exact, immediate-child path under one running application's
-/// macOS `AXExtrasMenuBar` hierarchy.
+/// Invoke an exact path through one running application's macOS
+/// `AXExtrasMenuBar` and any same-process popup surface it opens.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct InvokeMenuExtraInput {

@@ -266,7 +266,7 @@ fn get_menu_extra_state() -> ToolContract {
 fn invoke_menu_extra() -> ToolContract {
     macos_contract::<InvokeMenuExtraInput, ActionResult>(
         "invoke_menu_extra",
-        "Resolve an exact macOS accessibility extras-menu path from live native state and invoke it without activating an application window or falling back to pixels.",
+        "Resolve an exact macOS accessibility extras-menu path, including a same-process popup surface opened by the menu extra, and invoke it without activating an application window or falling back to pixels.",
         &["accessibility.menu_extra.invoke"],
         ToolAnnotations {
             read_only: false,

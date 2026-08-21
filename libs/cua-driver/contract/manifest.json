@@ -1983,7 +1983,7 @@
     },
     {
       "name": "invoke_menu_extra",
-      "description": "Resolve an exact macOS accessibility extras-menu path from live native state and invoke it without activating an application window or falling back to pixels.",
+      "description": "Resolve an exact macOS accessibility extras-menu path, including a same-process popup surface opened by the menu extra, and invoke it without activating an application window or falling back to pixels.",
       "platforms": [
         "macos"
       ],
@@ -2002,7 +2002,7 @@
       },
       "input_schema": {
         "additionalProperties": false,
-        "description": "Invoke an exact, immediate-child path under one running application's\nmacOS `AXExtrasMenuBar` hierarchy.",
+        "description": "Invoke an exact path through one running application's macOS\n`AXExtrasMenuBar` and any same-process popup surface it opens.",
         "properties": {
           "application": {
             "description": "Exact running application whose macOS accessibility extras menu bar is\nobserved or invoked. Bundle identifiers must resolve to exactly one running\nprocess; the driver never launches an application while resolving a target.",

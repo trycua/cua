@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -31,6 +32,17 @@ def run_policy(body: str) -> subprocess.CompletedProcess[str]:
         check=False,
         capture_output=True,
         text=True,
+    )
+
+
+def run_rollback_policy(body: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    function = extract_shell_function("restore_macos_app_backup_on_exit")
+    return subprocess.run(
+        ["/bin/bash", "-c", f"set -euo pipefail\n{function}\n{body}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **env},
     )
 
 
@@ -140,13 +152,15 @@ def test_installer_verifies_then_registers_before_any_tcc_reset() -> None:
     install = source.index('if [[ "$OS" == "Darwin" && -n "$SRC_APP"')
     staged_verify = source.index('codesign --verify --deep --strict "$SRC_APP"', install)
     stop_daemon = source.index("stop_cua_driver_daemons", staged_verify)
-    backup = source.index('mv "$APP_DEST" "$APP_BACKUP"', staged_verify)
+    backup = source.index('mv "$APP_DEST" "$MACOS_APP_BACKUP"', staged_verify)
     copy = source.index('ditto "$SRC_APP" "$APP_DEST"', backup)
     installed_verify = source.index('codesign --verify --deep --strict "$APP_DEST"', copy)
     register = source.index('"$LSREGISTER" -f "$APP_DEST"', installed_verify)
-    reset = source.index("macos_reset_tcc_after_requirement_change", register)
+    commit = source.index("MACOS_APP_INSTALL_COMMITTED=1", register)
+    link = source.index('ln -sf "$APP_BINARY" "$BIN_LINK"', commit)
+    reset = source.index("macos_reset_tcc_after_requirement_change", link)
 
-    assert staged_verify < stop_daemon < backup < copy < installed_verify < register < reset
+    assert staged_verify < stop_daemon < backup < copy < installed_verify < register < commit < link < reset
 
 
 def test_only_the_release_bundle_identity_can_trigger_a_tcc_reset() -> None:
@@ -156,3 +170,67 @@ def test_only_the_release_bundle_identity_can_trigger_a_tcc_reset() -> None:
     assert 'STAGED_BUNDLE_ID" != "com.trycua.driver"' in source
     assert '[[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]]' in source
     assert 'INSTALLED_BUNDLE_ID" == "$STAGED_BUNDLE_ID"' in source
+
+
+def test_exit_cleanup_restores_the_previous_app(tmp_path: Path) -> None:
+    app = tmp_path / "CuaDriver.app"
+    backup = tmp_path / "CuaDriver.app.install-backup"
+    app.mkdir()
+    (app / "candidate").write_text("partial")
+    backup.mkdir()
+    (backup / "previous").write_text("valid")
+
+    result = run_rollback_policy(
+        "restore_macos_app_backup_on_exit",
+        {
+            "APP_DEST": str(app),
+            "MACOS_APP_BACKUP": str(backup),
+            "MACOS_APP_SWAP_STARTED": "1",
+            "MACOS_APP_HAD_PREVIOUS": "1",
+            "MACOS_APP_INSTALL_COMMITTED": "0",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (app / "previous").read_text() == "valid"
+    assert not backup.exists()
+
+
+def test_exit_cleanup_removes_a_partial_first_install(tmp_path: Path) -> None:
+    app = tmp_path / "CuaDriver.app"
+    app.mkdir()
+    (app / "candidate").write_text("partial")
+
+    result = run_rollback_policy(
+        "restore_macos_app_backup_on_exit",
+        {
+            "APP_DEST": str(app),
+            "MACOS_APP_BACKUP": str(tmp_path / "missing-backup"),
+            "MACOS_APP_SWAP_STARTED": "1",
+            "MACOS_APP_HAD_PREVIOUS": "0",
+            "MACOS_APP_INSTALL_COMMITTED": "0",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not app.exists()
+
+
+def test_exit_cleanup_leaves_a_committed_install_untouched(tmp_path: Path) -> None:
+    app = tmp_path / "CuaDriver.app"
+    app.mkdir()
+    (app / "candidate").write_text("valid")
+
+    result = run_rollback_policy(
+        "restore_macos_app_backup_on_exit",
+        {
+            "APP_DEST": str(app),
+            "MACOS_APP_BACKUP": str(tmp_path / "missing-backup"),
+            "MACOS_APP_SWAP_STARTED": "1",
+            "MACOS_APP_HAD_PREVIOUS": "0",
+            "MACOS_APP_INSTALL_COMMITTED": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (app / "candidate").read_text() == "valid"

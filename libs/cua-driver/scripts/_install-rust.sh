@@ -179,7 +179,6 @@ log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
 
 # Return the source form of an app's designated code-signing requirement.
-# The requirement is emitted on stdout; routine executable details go to stderr.
 macos_designated_requirement() {
     codesign -d -r- "$1" 2>/dev/null \
         | sed -n -e 's/^designated => //p' -e 's/^# designated => //p'
@@ -274,6 +273,29 @@ LOCK_POLL_INTERVAL_SECONDS=1
 LOCK_STALE_AFTER_SECONDS=600
 
 LOCK_HELD=0
+MACOS_APP_SWAP_STARTED=0
+MACOS_APP_HAD_PREVIOUS=0
+MACOS_APP_INSTALL_COMMITTED=0
+MACOS_APP_BACKUP=""
+
+restore_macos_app_backup_on_exit() {
+    [[ "$MACOS_APP_SWAP_STARTED" == "1" ]] || return 0
+    [[ "$MACOS_APP_INSTALL_COMMITTED" != "1" ]] || return 0
+
+    if [[ "$MACOS_APP_HAD_PREVIOUS" == "1" ]]; then
+        # If the backup does not exist, the atomic move never completed or an
+        # explicit rollback already restored it. Leave the live path alone.
+        if [[ -e "$MACOS_APP_BACKUP" ]]; then
+            rm -rf "$APP_DEST"
+            mv "$MACOS_APP_BACKUP" "$APP_DEST"
+            printf 'warning: interrupted macOS install restored the previous CuaDriver.app\n' >&2
+        fi
+    else
+        # A first install has no app to restore; remove only its partial copy.
+        rm -rf "$APP_DEST"
+    fi
+}
+
 release_install_lock() {
     if (( LOCK_HELD == 1 )); then
         rm -rf "$LOCK_DIR" 2>/dev/null || true
@@ -285,6 +307,7 @@ release_install_lock() {
 # clobbers the other. INT/TERM also re-raise via $? so the user-visible
 # exit code reflects the signal.
 cleanup_on_exit() {
+    restore_macos_app_backup_on_exit
     rm -rf "$TMP_DIR" 2>/dev/null || true
     release_install_lock
 }
@@ -1087,13 +1110,17 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     show_cua_driver_daemon_survivors
     DAEMONS_STOPPED_BEFORE_SWAP=1
 
-    APP_BACKUP="${APP_DEST}.install-backup.$$"
-    if [[ -e "$APP_BACKUP" ]]; then
-        err "temporary backup path already exists: $APP_BACKUP"
+    MACOS_APP_BACKUP="${APP_DEST}.install-backup.$$"
+    if [[ -e "$MACOS_APP_BACKUP" ]]; then
+        err "temporary backup path already exists: $MACOS_APP_BACKUP"
         exit 1
     fi
     if [[ -e "$APP_DEST" ]]; then
-        mv "$APP_DEST" "$APP_BACKUP"
+        MACOS_APP_HAD_PREVIOUS=1
+    fi
+    MACOS_APP_SWAP_STARTED=1
+    if [[ "$MACOS_APP_HAD_PREVIOUS" == "1" ]]; then
+        mv "$APP_DEST" "$MACOS_APP_BACKUP"
     fi
     log "installing $APP_DEST"
     # `ditto` preserves the bundle's metadata + nested symlinks the way
@@ -1104,7 +1131,7 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
        && codesign --verify --deep --strict "$APP_DEST" 2>/dev/null; then
         INSTALLED_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
             "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)
-        INSTALLED_REQUIREMENT="$(macos_designated_requirement "$APP_DEST")"
+        INSTALLED_REQUIREMENT="$(macos_designated_requirement "$APP_DEST" || true)"
         if [[ "$INSTALLED_BUNDLE_ID" == "$STAGED_BUNDLE_ID" \
            && -n "$INSTALLED_REQUIREMENT" \
            && "$INSTALLED_REQUIREMENT" == "$STAGED_REQUIREMENT" ]]; then
@@ -1113,8 +1140,8 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     fi
     if [[ "$INSTALL_VALID" != "1" ]]; then
         rm -rf "$APP_DEST"
-        if [[ -e "$APP_BACKUP" ]]; then
-            mv "$APP_BACKUP" "$APP_DEST"
+        if [[ -e "$MACOS_APP_BACKUP" ]]; then
+            mv "$MACOS_APP_BACKUP" "$APP_DEST"
         fi
         err "installed CuaDriver.app did not preserve its verified signing identity; restored the previous app"
         exit 1
@@ -1122,8 +1149,8 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     APP_BINARY="$APP_DEST/Contents/MacOS/$BINARY_NAME"
     if [[ ! -x "$APP_BINARY" ]]; then
         rm -rf "$APP_DEST"
-        if [[ -e "$APP_BACKUP" ]]; then
-            mv "$APP_BACKUP" "$APP_DEST"
+        if [[ -e "$MACOS_APP_BACKUP" ]]; then
+            mv "$MACOS_APP_BACKUP" "$APP_DEST"
         fi
         err "binary missing at $APP_BINARY; restored the previous app"
         exit 1
@@ -1137,8 +1164,8 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         :
     else
         rm -rf "$APP_DEST"
-        if [[ -e "$APP_BACKUP" ]]; then
-            mv "$APP_BACKUP" "$APP_DEST"
+        if [[ -e "$MACOS_APP_BACKUP" ]]; then
+            mv "$MACOS_APP_BACKUP" "$APP_DEST"
             "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1 || true
         fi
         err "could not register the replacement app with LaunchServices; restored the previous app"
@@ -1153,20 +1180,25 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
             "$PREVIOUS_REQUIREMENT" "$APP_DEST")"
         if [[ "$INSTALLED_COMPATIBILITY" != "$REQUIREMENT_COMPATIBILITY" ]]; then
             rm -rf "$APP_DEST"
-            if [[ -e "$APP_BACKUP" ]]; then
-                mv "$APP_BACKUP" "$APP_DEST"
+            if [[ -e "$MACOS_APP_BACKUP" ]]; then
+                mv "$MACOS_APP_BACKUP" "$APP_DEST"
             fi
-            err "installed app's signing compatibility changed during copy; restored the previous app"
+            if [[ "$INSTALLED_COMPATIBILITY" == "unknown" ]]; then
+                err "could not re-verify the installed app's signing compatibility; restored the previous app"
+            else
+                err "installed app's signing compatibility changed during copy; restored the previous app"
+            fi
             exit 1
         fi
     fi
 
-    rm -rf "$APP_BACKUP"
+    MACOS_APP_INSTALL_COMMITTED=1
+    rm -rf "$MACOS_APP_BACKUP"
+    ln -sf "$APP_BINARY" "$BIN_LINK"
+    log "symlinked $BIN_LINK -> $APP_BINARY"
     if ! macos_reset_tcc_after_requirement_change "$REQUIREMENT_COMPATIBILITY"; then
         exit 1
     fi
-    ln -sf "$APP_BINARY" "$BIN_LINK"
-    log "symlinked $BIN_LINK -> $APP_BINARY"
 else
     # Linux: versioned-dirs + atomic `current` symlink swap.
     #

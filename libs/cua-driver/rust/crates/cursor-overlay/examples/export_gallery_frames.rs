@@ -1,8 +1,8 @@
 use cursor_overlay::{
-    inspect_artifact, render_frame, CompiledTheme, CursorAction, CursorConfig, DeliveryModifier,
-    OverlayCommand, ReducedMotion, RenderStateCore, TargetModifier,
+    inspect_artifact, motion_spec, render_frame, CompiledTheme, CursorAction, CursorConfig,
+    DeliveryModifier, MotionConfig, OverlayCommand, ReducedMotion, RenderStateCore, TargetModifier,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -32,6 +32,7 @@ struct Args {
     output: PathBuf,
     theme: Option<PathBuf>,
     dev: bool,
+    motion_overrides: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -45,7 +46,157 @@ struct GalleryManifest<'a> {
     movement_fps: f64,
     movement_tick_ms: u32,
     duration_secs: u32,
+    motion: MotionManifest,
     actions: Vec<ActionManifest>,
+}
+
+/// Movement-contract echo in the gallery manifest. The values are what the
+/// renderer actually used, so a recording can never be mistaken for the
+/// production defaults when overrides were active.
+#[derive(Serialize)]
+struct MotionManifest {
+    /// Repository spec revision the render was based on.
+    spec_schema: String,
+    /// Platform tick path that produced the movement frames:
+    /// `swift_constants` (macOS) or `motion` (Windows/Linux).
+    tick_path: &'static str,
+    /// Effective `MotionConfig` used by the movement scenes.
+    effective: MotionConfigEcho,
+    /// Spring-settle constants the tick path used.
+    spring_settle: SpringSettleEcho,
+    /// Movement fields overridden for this render (empty for defaults).
+    overridden_fields: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct MotionConfigEcho {
+    peak_speed: f64,
+    min_start_speed: f64,
+    min_end_speed: f64,
+    turn_radius: f64,
+    spring: f64,
+    glide_duration_ms: f64,
+}
+
+#[derive(Serialize)]
+struct SpringSettleEcho {
+    mode: &'static str,
+    k: f64,
+    c: f64,
+    overshoot: f64,
+}
+
+/// Playground override file (`cua.cursor-gallery-motion-override/1`).
+///
+/// Only fields that affect the current production movement path are
+/// accepted; every value is re-clamped in Rust before use, so the file is
+/// advisory input, never authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MotionOverrideFile {
+    schema: String,
+    #[serde(default)]
+    peak_speed: Option<f64>,
+    #[serde(default)]
+    min_start_speed: Option<f64>,
+    #[serde(default)]
+    min_end_speed: Option<f64>,
+    #[serde(default)]
+    turn_radius: Option<f64>,
+    #[serde(default)]
+    spring: Option<f64>,
+    #[serde(default)]
+    glide_duration_ms: Option<f64>,
+}
+
+const MOTION_OVERRIDE_SCHEMA: &str = "cua.cursor-gallery-motion-override/1";
+
+impl MotionOverrideFile {
+    /// Parse and validate an override file. Unknown fields are rejected by
+    /// `deny_unknown_fields`; values are clamped to the same production
+    /// bounds the runtime uses.
+    fn load(path: &Path) -> Self {
+        let raw = fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read motion overrides {path:?}: {error}"));
+        let file: MotionOverrideFile = serde_json::from_str(&raw)
+            .unwrap_or_else(|error| panic!("parse motion overrides {path:?}: {error}"));
+        if file.schema != MOTION_OVERRIDE_SCHEMA {
+            panic!(
+                "motion overrides {path:?}: expected schema {MOTION_OVERRIDE_SCHEMA}, found {}",
+                file.schema
+            );
+        }
+        file.clamped()
+    }
+
+    fn clamped(&self) -> Self {
+        fn finite(v: f64) -> f64 {
+            if v.is_finite() {
+                v
+            } else {
+                panic!("motion override values must be finite numbers")
+            }
+        }
+        let peak_speed = self.peak_speed.map(|v| finite(v).clamp(50.0, 5000.0));
+        let effective_peak = peak_speed.unwrap_or_else(|| motion_spec().shared.peak_speed);
+        // The end floor keeps the arrival impulse positive: a 0 floor would
+        // stall the glide exactly at u = 1 (speed → 0 before arrival).
+        Self {
+            schema: self.schema.clone(),
+            peak_speed,
+            min_start_speed: self
+                .min_start_speed
+                .map(|v| finite(v).clamp(1.0, effective_peak)),
+            min_end_speed: self
+                .min_end_speed
+                .map(|v| finite(v).clamp(1.0, effective_peak)),
+            turn_radius: self.turn_radius.map(|v| finite(v).clamp(1.0, 1000.0)),
+            spring: self.spring.map(|v| finite(v).clamp(0.3, 1.0)),
+            glide_duration_ms: self.glide_duration_ms.map(|v| finite(v).clamp(0.0, 5000.0)),
+        }
+    }
+
+    fn apply(&self, mut config: MotionConfig) -> (MotionConfig, Vec<&'static str>) {
+        let mut overridden = Vec::new();
+        if let Some(v) = self.peak_speed {
+            config.peak_speed = v;
+            overridden.push("peak_speed");
+        }
+        if let Some(v) = self.min_start_speed {
+            config.min_start_speed = v;
+            overridden.push("min_start_speed");
+        }
+        if let Some(v) = self.min_end_speed {
+            config.min_end_speed = v;
+            overridden.push("min_end_speed");
+        }
+        if let Some(v) = self.turn_radius {
+            config.turn_radius = v;
+            overridden.push("turn_radius");
+        }
+        if let Some(v) = self.spring {
+            config.spring = v;
+            overridden.push("spring");
+        }
+        if let Some(v) = self.glide_duration_ms {
+            config.glide_duration_ms = v;
+            overridden.push("glide_duration_ms");
+        }
+        (config, overridden)
+    }
+}
+
+/// The movement override applied to this render, if any. Held in an Option so
+/// the static (non-dev) export path provably never renders overridden physics.
+static MOTION_OVERRIDES: std::sync::OnceLock<Option<MotionOverrideFile>> =
+    std::sync::OnceLock::new();
+
+fn movement_motion_config() -> (MotionConfig, Vec<&'static str>) {
+    let defaults = MotionConfig::default();
+    match MOTION_OVERRIDES.get().and_then(|o| o.as_ref()) {
+        Some(file) => file.apply(defaults),
+        None => (defaults, Vec::new()),
+    }
 }
 
 #[derive(Serialize)]
@@ -138,9 +289,10 @@ fn parse_args() -> Args {
     let output = values
         .next()
         .map(PathBuf::from)
-        .expect("usage: export_gallery_frames <output-directory> [--theme <artifact>] [--dev]");
+        .expect("usage: export_gallery_frames <output-directory> [--theme <artifact>] [--dev] [--motion-overrides <file>]");
     let mut theme = None;
     let mut dev = false;
+    let mut motion_overrides = None;
     while let Some(value) = values.next() {
         match value.as_str() {
             "--theme" => {
@@ -152,15 +304,40 @@ fn parse_args() -> Args {
                 );
             }
             "--dev" => dev = true,
+            "--motion-overrides" => {
+                motion_overrides = Some(
+                    values
+                        .next()
+                        .map(PathBuf::from)
+                        .expect("--motion-overrides requires a JSON override file path"),
+                );
+            }
             other => panic!("unknown argument `{other}`"),
         }
     }
-    Args { output, theme, dev }
+    if !dev && motion_overrides.is_some() {
+        panic!(
+            "--motion-overrides requires --dev: overrides exist only in the repository playground"
+        );
+    }
+    Args {
+        output,
+        theme,
+        dev,
+        motion_overrides,
+    }
 }
 
 fn main() {
     let args = parse_args();
     let output = args.output.as_path();
+    MOTION_OVERRIDES
+        .set(
+            args.motion_overrides
+                .as_deref()
+                .map(MotionOverrideFile::load),
+        )
+        .expect("motion overrides are initialised exactly once");
     let theme = args
         .theme
         .as_deref()
@@ -277,6 +454,10 @@ fn export_state(output: &Path, state: GalleryState, theme: &Arc<CompiledTheme>) 
 
 fn movement_core(theme: &Arc<CompiledTheme>, action: CursorAction) -> RenderStateCore {
     let mut core = configured_core(theme);
+    let (motion, _) = movement_motion_config();
+    core.motion = motion;
+    // Previews never hide the cursor mid-glide (configured_core contract).
+    core.motion.idle_hide_ms = 0.0;
     core.pos = (
         MOVEMENT_TARGETS[0].0 - FIRST_ACTION_SEED_OFFSET,
         MOVEMENT_TARGETS[0].1 - FIRST_ACTION_SEED_OFFSET,
@@ -455,8 +636,10 @@ fn write_manifest(output: &Path, theme: &CompiledTheme) {
             }
         })
         .collect();
+    let spec = motion_spec();
+    let (effective, overridden_fields) = movement_motion_config();
     let manifest = GalleryManifest {
-        schema: "cua.cursor-gallery/1",
+        schema: "cua.cursor-gallery/2",
         theme_id: &theme.id,
         theme_name: &theme.name,
         theme_version: &theme.version,
@@ -465,6 +648,7 @@ fn write_manifest(output: &Path, theme: &CompiledTheme) {
         movement_fps: 1000.0 / f64::from(MOVEMENT_TICK_MS),
         movement_tick_ms: MOVEMENT_TICK_MS,
         duration_secs: DURATION_SECS,
+        motion: motion_manifest(spec, &effective, overridden_fields),
         actions,
     };
     fs::write(
@@ -472,6 +656,56 @@ fn write_manifest(output: &Path, theme: &CompiledTheme) {
         serde_json::to_vec_pretty(&manifest).expect("serialize gallery manifest"),
     )
     .expect("write gallery manifest");
+}
+
+/// Build the movement echo for the manifest. `swift_constants` keeps its
+/// fixed spec constants regardless of the runtime `spring` value — the
+/// documented macOS limitation — while `motion` derives them.
+fn motion_manifest(
+    spec: &cursor_overlay::MotionSpec,
+    effective: &MotionConfig,
+    overridden_fields: Vec<&'static str>,
+) -> MotionManifest {
+    #[cfg(target_os = "macos")]
+    let (tick_path, spring_settle): (&'static str, SpringSettleEcho) = {
+        let settle = &spec.spring_settle.macos;
+        (
+            "swift_constants",
+            SpringSettleEcho {
+                mode: "fixed",
+                k: settle.k,
+                c: settle.c,
+                overshoot: settle.overshoot,
+            },
+        )
+    };
+    #[cfg(not(target_os = "macos"))]
+    let (tick_path, spring_settle): (&'static str, SpringSettleEcho) = {
+        let settle = &spec.spring_settle.windows_linux;
+        (
+            "motion",
+            SpringSettleEcho {
+                mode: "derived",
+                k: settle.k_per_spring * effective.spring,
+                c: settle.c_per_spring * effective.spring,
+                overshoot: settle.overshoot,
+            },
+        )
+    };
+    MotionManifest {
+        spec_schema: spec.schema.clone(),
+        tick_path,
+        effective: MotionConfigEcho {
+            peak_speed: effective.peak_speed,
+            min_start_speed: effective.min_start_speed,
+            min_end_speed: effective.min_end_speed,
+            turn_radius: effective.turn_radius,
+            spring: effective.spring,
+            glide_duration_ms: effective.glide_duration_ms,
+        },
+        spring_settle,
+        overridden_fields,
+    }
 }
 
 #[cfg(test)]
@@ -529,6 +763,108 @@ mod tests {
         tick_production_motion(&mut core, f64::from(MOVEMENT_TICK_MS) / 1000.0);
         assert_ne!(core.pos, start);
         assert_eq!(core.visual.resolved_action, CursorAction::Navigate);
+    }
+
+    #[test]
+    fn movement_core_uses_spec_defaults_without_overrides() {
+        let theme = cursor_overlay::embedded_default_theme();
+        let core = movement_core(&theme, CursorAction::Observe);
+        let mut expected = MotionConfig::default();
+        // The exporter never hides the cursor mid-preview.
+        expected.idle_hide_ms = 0.0;
+        assert_eq!(core.motion, expected);
+    }
+
+    #[test]
+    fn motion_overrides_apply_clamp_and_stay_scoped_to_dev() {
+        let file = MotionOverrideFile {
+            schema: MOTION_OVERRIDE_SCHEMA.into(),
+            peak_speed: Some(99_999.0),
+            min_start_speed: Some(-5.0),
+            min_end_speed: Some(0.0),
+            turn_radius: Some(2_000.0),
+            spring: Some(0.05),
+            glide_duration_ms: Some(9_000.0),
+        };
+        let clamped = file.clamped();
+        assert_eq!(clamped.peak_speed, Some(5000.0));
+        assert_eq!(clamped.min_start_speed, Some(1.0));
+        assert_eq!(clamped.min_end_speed, Some(1.0));
+        assert_eq!(clamped.turn_radius, Some(1000.0));
+        assert_eq!(clamped.spring, Some(0.3));
+        assert_eq!(clamped.glide_duration_ms, Some(5000.0));
+
+        let (effective, overridden) = clamped.apply(MotionConfig::default());
+        assert_eq!(effective.peak_speed, 5000.0);
+        assert_eq!(effective.min_end_speed, 1.0);
+        assert_eq!(
+            overridden,
+            vec![
+                "peak_speed",
+                "min_start_speed",
+                "min_end_speed",
+                "turn_radius",
+                "spring",
+                "glide_duration_ms"
+            ]
+        );
+    }
+
+    #[test]
+    fn floors_cannot_exceed_the_effective_peak_speed() {
+        let file = MotionOverrideFile {
+            schema: MOTION_OVERRIDE_SCHEMA.into(),
+            peak_speed: Some(120.0),
+            min_start_speed: Some(400.0),
+            min_end_speed: Some(350.0),
+            turn_radius: None,
+            spring: None,
+            glide_duration_ms: None,
+        };
+        let clamped = file.clamped();
+        assert_eq!(clamped.min_start_speed, Some(120.0));
+        assert_eq!(clamped.min_end_speed, Some(120.0));
+    }
+
+    #[test]
+    fn motion_overrides_reject_unknown_fields() {
+        // Unknown fields are denied by the schema, so a stale or hostile
+        // override file cannot smuggle non-movement knobs into a render.
+        assert!(serde_json::from_str::<MotionOverrideFile>(
+            r#"{"schema": "cua.cursor-gallery-motion-override/1", "idle_hide_ms": 5.0}"#
+        )
+        .is_err());
+        // The schema string is a namespaced constant, never free-form.
+        assert_ne!(MOTION_OVERRIDE_SCHEMA, "cua.other/9");
+    }
+
+    #[test]
+    fn empty_overrides_render_exact_production_defaults() {
+        let file = MotionOverrideFile {
+            schema: MOTION_OVERRIDE_SCHEMA.into(),
+            peak_speed: None,
+            min_start_speed: None,
+            min_end_speed: None,
+            turn_radius: None,
+            spring: None,
+            glide_duration_ms: None,
+        };
+        let (effective, overridden) = file.apply(MotionConfig::default());
+        assert_eq!(effective, MotionConfig::default());
+        assert!(overridden.is_empty());
+    }
+
+    #[test]
+    fn manifest_motion_block_reports_the_spec_contract() {
+        let spec = motion_spec();
+        let (effective, overridden) = movement_motion_config();
+        let block = motion_manifest(spec, &effective, overridden);
+        assert_eq!(block.spec_schema, spec.schema);
+        assert!(matches!(block.tick_path, "swift_constants" | "motion"));
+        assert_eq!(block.effective.peak_speed, spec.shared.peak_speed);
+        assert_eq!(block.effective.turn_radius, spec.shared.turn_radius);
+        assert_eq!(block.effective.spring, spec.shared.spring);
+        assert!(block.overridden_fields.is_empty());
     }
 
     #[test]

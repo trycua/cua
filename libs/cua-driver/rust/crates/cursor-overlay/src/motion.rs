@@ -6,9 +6,16 @@
 //! and the cursor-gallery exporter cannot drift apart. Changing a default is a
 //! two-file review: edit the JSON, then update the independent Rust literal in
 //! [`self::spec_tests`] until the parity test passes again.
+//!
+//! The embedded asset is trusted repository input, not runtime configuration.
+//! Invalid JSON or values therefore fail fast on first access; there is
+//! deliberately no silent fallback to a second set of defaults.
 
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
+
+const MOTION_SPEC_SCHEMA: &str = "cua.cursor-motion/1";
 
 /// Click-point offset in points: the arrow artwork is centred this far
 /// down-right of the reported click coordinate so its tip lands on it.
@@ -49,7 +56,7 @@ pub struct MotionSpecShared {
     /// Post-arrival spring damping: 1.0 = critical, 0.3 = bouncy. [0.3, 1.0]
     pub spring: f64,
     /// Main glide duration in milliseconds — used only as a legacy override.
-    /// When <= 0 the render engine uses speed-based timing instead. [50, 5000]
+    /// When <= 0 the render engine uses speed-based timing instead. [0, 5000]
     pub glide_duration_ms: f64,
     /// Post-click dwell in milliseconds. [0, 5000]
     pub dwell_after_click_ms: f64,
@@ -83,11 +90,19 @@ pub struct MotionSpecSpringSettle {
     pub windows_linux: SpringSettleWindowsLinux,
 }
 
+/// How a platform obtains its post-arrival spring constants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpringSettleMode {
+    Fixed,
+    Derived,
+}
+
 /// macOS `tick_swift_constants` settle: fixed constants.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpringSettleMacos {
-    pub mode: String,
+    pub mode: SpringSettleMode,
     pub k: f64,
     pub c: f64,
     pub overshoot: f64,
@@ -97,7 +112,7 @@ pub struct SpringSettleMacos {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpringSettleWindowsLinux {
-    pub mode: String,
+    pub mode: SpringSettleMode,
     pub k_per_spring: f64,
     pub c_per_spring: f64,
     pub overshoot: f64,
@@ -105,9 +120,16 @@ pub struct SpringSettleWindowsLinux {
 
 fn embedded_motion_spec() -> &'static MotionSpec {
     static SPEC: OnceLock<MotionSpec> = OnceLock::new();
-    SPEC.get_or_init(|| {
-        serde_json::from_str(MOTION_SPEC_JSON)
-            .expect("embedded assets/motion.default.json is valid at compile time")
+    SPEC.get_or_init(|| parse_embedded_motion_spec(MOTION_SPEC_JSON))
+}
+
+fn parse_embedded_motion_spec(raw: &str) -> MotionSpec {
+    parse_motion_spec(raw).unwrap_or_else(|error| {
+        panic!(
+            "embedded assets/motion.default.json failed validation: {error}; \
+             there is deliberately no fallback because the checked-in spec is the \
+             single source of movement defaults"
+        )
     })
 }
 
@@ -115,12 +137,124 @@ fn embedded_motion_spec() -> &'static MotionSpec {
 /// as the embedded default. Exporters and tests use this for override files;
 /// production always uses the embedded copy.
 pub fn parse_motion_spec(raw: &str) -> Result<MotionSpec, serde_json::Error> {
-    serde_json::from_str(raw)
+    let spec: MotionSpec = serde_json::from_str(raw)?;
+    spec.validate().map_err(serde_json::Error::custom)?;
+    Ok(spec)
 }
 
 /// The embedded repository-owned movement specification.
 pub fn motion_spec() -> &'static MotionSpec {
     embedded_motion_spec()
+}
+
+impl MotionSpec {
+    fn validate(&self) -> Result<(), String> {
+        if self.schema != MOTION_SPEC_SCHEMA {
+            return Err(format!(
+                "schema must be {MOTION_SPEC_SCHEMA:?}, got {:?}",
+                self.schema
+            ));
+        }
+
+        let shared = &self.shared;
+        validate_range("shared.start_handle", shared.start_handle, 0.0, 1.0)?;
+        validate_range("shared.end_handle", shared.end_handle, 0.0, 1.0)?;
+        validate_range("shared.arc_size", shared.arc_size, 0.0, 1.0)?;
+        validate_range("shared.arc_flow", shared.arc_flow, -1.0, 1.0)?;
+        validate_range("shared.spring", shared.spring, 0.3, 1.0)?;
+        validate_range(
+            "shared.glide_duration_ms",
+            shared.glide_duration_ms,
+            0.0,
+            5000.0,
+        )?;
+        validate_range(
+            "shared.dwell_after_click_ms",
+            shared.dwell_after_click_ms,
+            0.0,
+            5000.0,
+        )?;
+        validate_range("shared.idle_hide_ms", shared.idle_hide_ms, 0.0, 60_000.0)?;
+        validate_range(
+            "shared.press_duration_ms",
+            shared.press_duration_ms,
+            0.0,
+            5000.0,
+        )?;
+        validate_range("shared.peak_speed", shared.peak_speed, 50.0, 5000.0)?;
+        validate_range(
+            "shared.min_start_speed",
+            shared.min_start_speed,
+            1.0,
+            shared.peak_speed,
+        )?;
+        validate_range(
+            "shared.min_end_speed",
+            shared.min_end_speed,
+            1.0,
+            shared.peak_speed,
+        )?;
+        validate_range("shared.turn_radius", shared.turn_radius, 1.0, 1000.0)?;
+        validate_range(
+            "shared.click_offset",
+            shared.click_offset,
+            f64::EPSILON,
+            1000.0,
+        )?;
+
+        let macos = &self.spring_settle.macos;
+        if macos.mode != SpringSettleMode::Fixed {
+            return Err("spring_settle.macos.mode must be `fixed`".into());
+        }
+        validate_positive("spring_settle.macos.k", macos.k)?;
+        validate_non_negative("spring_settle.macos.c", macos.c)?;
+        validate_range("spring_settle.macos.overshoot", macos.overshoot, 0.0, 1.0)?;
+
+        let windows_linux = &self.spring_settle.windows_linux;
+        if windows_linux.mode != SpringSettleMode::Derived {
+            return Err("spring_settle.windows_linux.mode must be `derived`".into());
+        }
+        validate_positive(
+            "spring_settle.windows_linux.k_per_spring",
+            windows_linux.k_per_spring,
+        )?;
+        validate_non_negative(
+            "spring_settle.windows_linux.c_per_spring",
+            windows_linux.c_per_spring,
+        )?;
+        validate_range(
+            "spring_settle.windows_linux.overshoot",
+            windows_linux.overshoot,
+            0.0,
+            1.0,
+        )?;
+
+        Ok(())
+    }
+}
+
+fn validate_range(name: &str, value: f64, min: f64, max: f64) -> Result<(), String> {
+    if !value.is_finite() {
+        return Err(format!("{name} must be finite"));
+    }
+    if !(min..=max).contains(&value) {
+        return Err(format!("{name} must be in [{min}, {max}], got {value}"));
+    }
+    Ok(())
+}
+
+fn validate_positive(name: &str, value: f64) -> Result<(), String> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(format!("{name} must be finite and positive"));
+    }
+    Ok(())
+}
+
+fn validate_non_negative(name: &str, value: f64) -> Result<(), String> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(format!("{name} must be finite and non-negative"));
+    }
+    Ok(())
 }
 
 impl MotionSpecShared {
@@ -160,7 +294,7 @@ pub struct MotionConfig {
     /// Post-arrival spring damping: 1.0 = critical, 0.3 = bouncy. [0.3, 1.0]
     pub spring: f64,
     /// Main glide duration in milliseconds — used only as a legacy override.
-    /// When <= 0 the render engine uses speed-based timing instead. [50, 5000]
+    /// When <= 0 the render engine uses speed-based timing instead. [0, 5000]
     pub glide_duration_ms: f64,
     /// Post-click dwell in milliseconds. [0, 5000]
     pub dwell_after_click_ms: f64,
@@ -301,15 +435,59 @@ mod spec_tests {
     }
 
     #[test]
+    fn spec_rejects_foreign_schema_and_invalid_modes() {
+        let foreign_schema = MOTION_SPEC_JSON.replace(
+            "\"schema\": \"cua.cursor-motion/1\"",
+            "\"schema\": \"cua.cursor-motion/2\"",
+        );
+        let error = parse_motion_spec(&foreign_schema).unwrap_err();
+        assert!(error.to_string().contains("schema must be"), "{error}");
+
+        let wrong_platform_mode =
+            MOTION_SPEC_JSON.replacen("\"mode\": \"fixed\"", "\"mode\": \"derived\"", 1);
+        let error = parse_motion_spec(&wrong_platform_mode).unwrap_err();
+        assert!(error.to_string().contains("macos.mode"), "{error}");
+
+        let unknown_mode =
+            MOTION_SPEC_JSON.replacen("\"mode\": \"fixed\"", "\"mode\": \"wobbly\"", 1);
+        let error = parse_motion_spec(&unknown_mode).unwrap_err();
+        assert!(error.to_string().contains("unknown variant"), "{error}");
+    }
+
+    #[test]
+    fn spec_rejects_non_finite_out_of_range_and_inverted_speeds() {
+        let mut non_finite = motion_spec().clone();
+        non_finite.shared.peak_speed = f64::INFINITY;
+        let error = non_finite.validate().unwrap_err();
+        assert!(error.contains("finite"), "{error}");
+
+        let too_slow =
+            MOTION_SPEC_JSON.replacen("\"peak_speed\": 900.0", "\"peak_speed\": 10.0", 1);
+        let error = parse_motion_spec(&too_slow).unwrap_err();
+        assert!(error.to_string().contains("peak_speed"), "{error}");
+
+        let floor_above_peak =
+            MOTION_SPEC_JSON.replacen("\"min_end_speed\": 200.0", "\"min_end_speed\": 2000.0", 1);
+        let error = parse_motion_spec(&floor_above_peak).unwrap_err();
+        assert!(error.to_string().contains("min_end_speed"), "{error}");
+    }
+
+    #[test]
+    #[should_panic(expected = "there is deliberately no fallback")]
+    fn invalid_embedded_spec_fails_fast_instead_of_using_shadow_defaults() {
+        parse_embedded_motion_spec("{}");
+    }
+
+    #[test]
     fn spring_settle_platform_divergence_is_recorded_deliberately() {
         let settle = &motion_spec().spring_settle;
         // macOS runs the fixed Swift reference constants.
-        assert_eq!(settle.macos.mode, "fixed");
+        assert_eq!(settle.macos.mode, SpringSettleMode::Fixed);
         assert_eq!(settle.macos.k, 400.0);
         assert_eq!(settle.macos.c, 17.0);
         assert_eq!(settle.macos.overshoot, 0.8);
         // Windows/Linux derive from the runtime spring scalar.
-        assert_eq!(settle.windows_linux.mode, "derived");
+        assert_eq!(settle.windows_linux.mode, SpringSettleMode::Derived);
         assert_eq!(settle.windows_linux.k_per_spring, 400.0);
         assert_eq!(settle.windows_linux.c_per_spring, 20.0);
         assert_eq!(settle.windows_linux.overshoot, 0.5);

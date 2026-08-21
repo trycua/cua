@@ -631,22 +631,10 @@ impl BrowserPrepareTool {
                     },
                     "session": schema_session(),
                 },
+                // Keep the top-level input schema a plain object. Bedrock rejects
+                // anyOf/oneOf/allOf at this level, so the conditional pid/profile
+                // contract is described above and enforced by invoke instead.
                 "required": [],
-                "anyOf": [
-                    { "required": ["pid"] },
-                    {
-                        "required": ["allow_launch", "profile"],
-                        "properties": {
-                            "allow_launch": { "const": true },
-                            "profile": {
-                                "required": ["mode"],
-                                "properties": {
-                                    "mode": { "enum": ["isolated_new", "isolated_named"] }
-                                }
-                            }
-                        }
-                    }
-                ],
                 "additionalProperties": true
             }),
             read_only: false,

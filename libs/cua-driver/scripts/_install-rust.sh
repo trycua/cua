@@ -1043,6 +1043,12 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         err "downloaded CuaDriver.app failed signature verification; the installed app was not changed"
         exit 1
     fi
+    STAGED_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+        "$SRC_APP/Contents/Info.plist" 2>/dev/null || true)
+    if [[ "$STAGED_BUNDLE_ID" != "com.trycua.driver" ]]; then
+        err "downloaded app has unexpected bundle id ${STAGED_BUNDLE_ID:-<missing>}; the installed app was not changed"
+        exit 1
+    fi
     STAGED_REQUIREMENT="$(macos_designated_requirement "$SRC_APP")"
     if [[ -z "$STAGED_REQUIREMENT" ]]; then
         err "could not read the downloaded app's designated requirement; the installed app was not changed"
@@ -1063,12 +1069,15 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         else
             log "removing existing $APP_DEST"
         fi
-        if codesign --verify --deep --strict "$APP_DEST" 2>/dev/null; then
+        if [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]] \
+           && codesign --verify --deep --strict "$APP_DEST" 2>/dev/null; then
             PREVIOUS_REQUIREMENT="$(macos_designated_requirement "$APP_DEST")"
             REQUIREMENT_COMPATIBILITY="$(macos_requirement_compatibility \
                 "$PREVIOUS_REQUIREMENT" "$SRC_APP")"
-        else
+        elif [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]]; then
             log "warning: existing CuaDriver.app signature could not be verified; preserving TCC rows because compatibility is unknown"
+        else
+            log "warning: the existing app does not own com.trycua.driver; it will not be used to decide whether Cua Driver TCC rows are stale"
         fi
     fi
 
@@ -1093,8 +1102,11 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     INSTALL_VALID=0
     if ditto "$SRC_APP" "$APP_DEST" \
        && codesign --verify --deep --strict "$APP_DEST" 2>/dev/null; then
+        INSTALLED_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+            "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)
         INSTALLED_REQUIREMENT="$(macos_designated_requirement "$APP_DEST")"
-        if [[ -n "$INSTALLED_REQUIREMENT" \
+        if [[ "$INSTALLED_BUNDLE_ID" == "$STAGED_BUNDLE_ID" \
+           && -n "$INSTALLED_REQUIREMENT" \
            && "$INSTALLED_REQUIREMENT" == "$STAGED_REQUIREMENT" ]]; then
             INSTALL_VALID=1
         fi
@@ -1120,12 +1132,17 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     # Register synchronously so both `open -a CuaDriver` and `tccutil reset`
     # resolve the replacement bundle rather than a stale LaunchServices entry.
     LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
-    LSREGISTERED=0
     if [[ -x "$LSREGISTER" ]] \
        && "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1; then
-        LSREGISTERED=1
+        :
     else
-        log "warning: could not register the replacement app with LaunchServices"
+        rm -rf "$APP_DEST"
+        if [[ -e "$APP_BACKUP" ]]; then
+            mv "$APP_BACKUP" "$APP_DEST"
+            "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1 || true
+        fi
+        err "could not register the replacement app with LaunchServices; restored the previous app"
+        exit 1
     fi
 
     # Re-check the installed copy against the old requirement. A disagreement
@@ -1145,13 +1162,6 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     fi
 
     rm -rf "$APP_BACKUP"
-    if [[ "$REQUIREMENT_COMPATIBILITY" == "incompatible" \
-       && "$LSREGISTERED" != "1" ]]; then
-        err "the new app is installed, but its signing requirement changed and LaunchServices registration failed"
-        err "run: $LSREGISTER -f $APP_DEST"
-        err "then reset Accessibility and ScreenCapture for com.trycua.driver and grant them again"
-        exit 1
-    fi
     if ! macos_reset_tcc_after_requirement_change "$REQUIREMENT_COMPATIBILITY"; then
         exit 1
     fi

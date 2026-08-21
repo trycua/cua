@@ -147,3 +147,12 @@ def test_installer_verifies_then_registers_before_any_tcc_reset() -> None:
     reset = source.index("macos_reset_tcc_after_requirement_change", register)
 
     assert staged_verify < stop_daemon < backup < copy < installed_verify < register < reset
+
+
+def test_only_the_release_bundle_identity_can_trigger_a_tcc_reset() -> None:
+    source = INSTALLER.read_text()
+
+    assert 'STAGED_BUNDLE_ID' in source
+    assert 'STAGED_BUNDLE_ID" != "com.trycua.driver"' in source
+    assert '[[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]]' in source
+    assert 'INSTALLED_BUNDLE_ID" == "$STAGED_BUNDLE_ID"' in source

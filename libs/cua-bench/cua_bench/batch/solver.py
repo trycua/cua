@@ -326,8 +326,11 @@ async def main():
 
                         if agent_result.failure_mode not in (FailureMode.UNSET, FailureMode.NONE):
                             print(f"✗ Agent failed with failure mode: {agent_result.failure_mode}")
-                            await session.close()
-                            sys.exit(1)
+                            if agent_result.failure_mode != FailureMode.MAX_STEPS_EXCEEDED:
+                                await session.close()
+                                sys.exit(1)
+                            # Max-steps reached: still evaluate whatever partial
+                            # work the agent produced (e.g. saved schematic).
                     except Exception as e:
                         print(f"Agent execution failed: {e}")
                         import traceback

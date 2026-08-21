@@ -5,6 +5,7 @@ Anthropic hosted tools agent loop implementation using liteLLM
 import asyncio
 import json
 import logging
+import os
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import litellm
@@ -52,9 +53,9 @@ def _scale_coordinate(coord: int, scale: float) -> int:
 
 # Model version mapping to tool version and beta flag
 MODEL_TOOL_MAPPING = [
-    # Claude Opus 4.6/4.5 and Sonnet 4.6 require the 2025-11-24 computer-use beta
+    # Claude 5 family (Fable 5, Sonnet 5) and Opus 4.5+ use the 2025-11-24 computer-use beta
     {
-        "pattern": r"claude-opus-4-6|claude-opus-4-5|claude-sonnet-4-6",
+        "pattern": r"claude-fable-5|claude-mythos-5|claude-sonnet-5|claude-opus-4-8|claude-opus-4-7|claude-opus-4-6|claude-opus-4-5|claude-sonnet-4-6",
         "tool_version": "computer_20251124",
         "beta_flag": "computer-use-2025-11-24",
     },
@@ -89,6 +90,138 @@ def _get_tool_config_for_model(model: str) -> Dict[str, str]:
 
     # Default to Claude 3.5 configuration
     return {"tool_version": "computer_20241022", "beta_flag": "computer-use-2024-10-22"}
+
+
+# Models that do not expose Anthropic's hosted computer_* tool type
+# (e.g. Claude Fable 5 / Mythos 5, Meta Muse Spark). For these we register the
+# computer as a regular function tool whose schema mirrors the hosted tool's
+# action format, so the response-parsing paths below work unchanged.
+_NO_HOSTED_COMPUTER_TOOL = r"claude-fable|claude-mythos|muse-spark"
+
+
+def _supports_hosted_computer_tool(model: str) -> bool:
+    import re
+
+    return re.search(_NO_HOSTED_COMPUTER_TOOL, model, re.IGNORECASE) is None
+
+
+# Models on a strict OpenAI-Chat-Completions endpoint that reject image content
+# inside a `role: "tool"` message (Meta Model API / Muse Spark). For these the
+# screenshot must be delivered as a separate following `role: "user"` message.
+_IMAGE_IN_USER_MESSAGE = r"muse-spark"
+
+
+def _needs_image_in_user_message(model: str) -> bool:
+    import re
+
+    return re.search(_IMAGE_IN_USER_MESSAGE, model, re.IGNORECASE) is not None
+
+
+# Some VLM-style computer-use models emit click coordinates in a fixed square
+# normalized space rather than raw screen pixels. Meta Muse Spark (like Qwen-VL)
+# grounds in a 1000x1000 space: a click at screen (x, y) on a W×H screen is
+# reported as (x*1000/W, y*1000/H). We tell such models the screen is
+# coord_space×coord_space and scale their output back by (W/space, H/space).
+_MODEL_COORD_SPACE = {r"muse-spark": 1000}
+
+
+def _coord_space(model: str) -> Optional[int]:
+    import re
+
+    for pat, space in _MODEL_COORD_SPACE.items():
+        if re.search(pat, model, re.IGNORECASE):
+            return space
+    return None
+
+
+async def _map_computer_tool_to_function_schema(
+    computer_tool: Any, coord_space: Optional[int] = None
+) -> Dict[str, Any]:
+    """Map a computer tool to a plain function tool mirroring the hosted schema.
+
+    If coord_space is set, the schema advertises a square coord_space×coord_space
+    coordinate grid (the model's native grounding space, e.g. Muse Spark 1000×1000)
+    instead of raw pixels; the loop scales the returned coordinates back.
+    """
+    try:
+        width, height = await computer_tool.get_dimensions()
+    except Exception:
+        width, height = 1024, 768
+
+    if width > RECOMMENDED_MAX_WIDTH or height > RECOMMENDED_MAX_HEIGHT:
+        scale = min(RECOMMENDED_MAX_WIDTH / width, RECOMMENDED_MAX_HEIGHT / height)
+        width = int(width * scale)
+        height = int(height * scale)
+
+    if coord_space:
+        width = height = coord_space
+
+    return {
+        "type": "function",
+        "function": {
+            "name": "computer",
+            "description": (
+                f"Control the computer with mouse, keyboard, and screenshots. "
+                f"The screen is {width}x{height} pixels; coordinates are [x, y] pixels "
+                f"with the origin at the top-left. Always take a screenshot first to see "
+                f"the current state, and take one after acting to verify the result."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "screenshot",
+                            "left_click",
+                            "right_click",
+                            "middle_click",
+                            "double_click",
+                            "type",
+                            "key",
+                            "mouse_move",
+                            "left_click_drag",
+                            "scroll",
+                            "wait",
+                        ],
+                        "description": (
+                            "The action to perform. 'key' presses a key or combo "
+                            "(e.g. 'Return', 'ctrl+s'); 'type' types literal text; "
+                            "'left_click_drag' drags from start_coordinate to coordinate."
+                        ),
+                    },
+                    "coordinate": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "[x, y] target pixel coordinate for click/move/scroll/drag-end actions",
+                    },
+                    "start_coordinate": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "[x, y] starting coordinate for left_click_drag",
+                    },
+                    "end_coordinate": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "[x, y] ending coordinate for left_click_drag",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type (action='type') or key combo to press (action='key')",
+                    },
+                    "scroll_direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "left", "right"],
+                    },
+                    "scroll_amount": {
+                        "type": "integer",
+                        "description": "Number of scroll clicks (default 3)",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    }
 
 
 async def _map_computer_tool_to_anthropic(computer_tool: Any, tool_version: str) -> Dict[str, Any]:
@@ -131,6 +264,59 @@ async def _map_computer_tool_to_anthropic(computer_tool: Any, tool_version: str)
     }
 
 
+def _debug_dump_payload(completion_messages: List[Dict[str, Any]], anthropic_tools: Any) -> None:
+    """Print a compact per-turn summary of the outgoing payload for image debugging.
+
+    Enabled via CUA_DEBUG_IMAGES. Reports, for the messages actually being sent
+    to the API, how many image blocks are present and their base64 sizes, plus a
+    per-message role/type breakdown — so we can see whether screenshots reach the
+    model in the live loop.
+    """
+
+    def _img_len(url: Any) -> int:
+        if isinstance(url, dict):
+            url = url.get("url", "")
+        if isinstance(url, str) and url.startswith("data:"):
+            return len(url)
+        return -1  # non-data URL (e.g. "[omitted]" or a file path) — a red flag
+
+    total_imgs = 0
+    bad_imgs = 0
+    lines = []
+    for i, m in enumerate(completion_messages):
+        role = m.get("role") or m.get("type")
+        content = m.get("content")
+        imgs = []
+        if isinstance(content, list):
+            for c in content:
+                if isinstance(c, dict) and c.get("type") == "image_url":
+                    n = _img_len(c.get("image_url"))
+                    imgs.append(n)
+                    total_imgs += 1
+                    if n < 0:
+                        bad_imgs += 1
+        # responses-items shape (should already be converted, but check anyway)
+        if m.get("type") == "computer_call_output":
+            out = m.get("output", {})
+            if isinstance(out, dict) and out.get("type") == "input_image":
+                n = _img_len(out.get("image_url"))
+                imgs.append(n)
+                total_imgs += 1
+                if n < 0:
+                    bad_imgs += 1
+        if imgs:
+            lines.append(f"    [{i}] {role}: images={imgs}")
+        else:
+            lines.append(f"    [{i}] {role}")
+    print(
+        f"[CUA_DEBUG_IMAGES] outgoing msgs={len(completion_messages)} "
+        f"image_blocks={total_imgs} non_data_images={bad_imgs}",
+        flush=True,
+    )
+    for ln in lines[-8:]:  # tail — the recent turns are what matters
+        print(ln, flush=True)
+
+
 async def _prepare_tools_for_anthropic(tool_schemas: List[Dict[str, Any]], model: str) -> Tools:
     """Prepare tools for Anthropic API format."""
     tool_config = _get_tool_config_for_model(model)
@@ -139,11 +325,20 @@ async def _prepare_tools_for_anthropic(tool_schemas: List[Dict[str, Any]], model
     for schema in tool_schemas:
         if schema["type"] == "computer":
             # Map computer tool to Anthropic format
-            anthropic_tools.append(
-                await _map_computer_tool_to_anthropic(
-                    schema["computer"], tool_config["tool_version"]
+            if _supports_hosted_computer_tool(model):
+                anthropic_tools.append(
+                    await _map_computer_tool_to_anthropic(
+                        schema["computer"], tool_config["tool_version"]
+                    )
                 )
-            )
+            else:
+                # Model lacks the hosted computer_* tool type (e.g. Fable 5):
+                # fall back to an equivalent custom function tool.
+                anthropic_tools.append(
+                    await _map_computer_tool_to_function_schema(
+                        schema["computer"], coord_space=_coord_space(model)
+                    )
+                )
         elif schema["type"] == "function":
             # Function tools - convert to Anthropic format
             function_schema = schema["function"]
@@ -160,8 +355,18 @@ async def _prepare_tools_for_anthropic(tool_schemas: List[Dict[str, Any]], model
 
 def _convert_responses_items_to_completion_messages(
     messages: Messages,
+    image_in_user_message: bool = False,
+    coord_space: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], Tuple[float, float]]:
     """Convert responses_items message format to liteLLM completion format.
+
+    Args:
+        image_in_user_message: If True, screenshot results are delivered as a
+            text `role: "tool"` acknowledgement followed by a separate
+            `role: "user"` message carrying the image. Required for strict
+            OpenAI-Chat endpoints (e.g. Meta Muse Spark) that reject image
+            content inside a tool message. If False (default, Anthropic/Bedrock),
+            the image is embedded directly in the tool message.
 
     Returns:
         A tuple of (completion_messages, scale_factors) where scale_factors is
@@ -261,7 +466,7 @@ def _convert_responses_items_to_completion_messages(
 
             completion_messages.append(
                 {
-                    "role": "function",
+                    "role": "tool",
                     "name": fn_name,
                     "tool_call_id": call_id,
                     "content": str(fn_output),
@@ -718,22 +923,48 @@ def _convert_responses_items_to_completion_messages(
                                 scale_factors[0],
                                 scale_factors[1],
                             )
+                        # Models that ground in a fixed square coordinate space
+                        # (e.g. Muse Spark: 1000x1000) report coords relative to
+                        # that space, not the pixel dims. Convert straight back to
+                        # original screen pixels: real = out * (orig_dim / space).
+                        # This overrides any downscale-based factor above.
+                        if coord_space:
+                            scale_factors = (orig_w / coord_space, orig_h / coord_space)
                     except Exception:
                         pass  # If downscaling fails, send original image
 
-                completion_messages.append(
-                    {
-                        "role": "function",
-                        "name": "computer",
-                        "tool_call_id": call_id,
-                        "content": [{"type": "image_url", "image_url": {"url": image_url}}],
-                    }
-                )
+                if image_in_user_message:
+                    # Strict OpenAI-Chat endpoints (Meta Muse Spark) reject image
+                    # content in a tool message: acknowledge the tool call with
+                    # text, then deliver the screenshot as a following user turn.
+                    completion_messages.append(
+                        {
+                            "role": "tool",
+                            "name": "computer",
+                            "tool_call_id": call_id,
+                            "content": "screenshot taken",
+                        }
+                    )
+                    completion_messages.append(
+                        {
+                            "role": "user",
+                            "content": [{"type": "image_url", "image_url": {"url": image_url}}],
+                        }
+                    )
+                else:
+                    completion_messages.append(
+                        {
+                            "role": "tool",
+                            "name": "computer",
+                            "tool_call_id": call_id,
+                            "content": [{"type": "image_url", "image_url": {"url": image_url}}],
+                        }
+                    )
             else:
                 # Text result - convert to OpenAI format
                 completion_messages.append(
                     {
-                        "role": "function",
+                        "role": "tool",
                         "name": "computer",
                         "tool_call_id": call_id,
                         "content": str(output),
@@ -1068,7 +1299,22 @@ def _convert_completion_to_responses_items(
 
     # Handle tool calls (alternative format)
     if hasattr(message, "tool_calls") and message.tool_calls:
-        for tool_call in message.tool_calls:
+        # Computer use is sequential: act, observe, act. If the model emits
+        # multiple tool_calls in one turn (parallel tool use), we only execute
+        # the first — otherwise the reconstructed assistant turn carries N
+        # tool_use ids while the history supplies fewer tool results, which
+        # Bedrock rejects with "Expected toolResult blocks ... for the
+        # following Ids". `parallel_tool_calls=False` is also set on the
+        # request, but this guard makes the invariant hold regardless.
+        tool_calls_to_process = message.tool_calls
+        if len(tool_calls_to_process) > 1:
+            logger.warning(
+                "Model emitted %d parallel tool_calls; executing only the first "
+                "(computer use is sequential).",
+                len(tool_calls_to_process),
+            )
+            tool_calls_to_process = tool_calls_to_process[:1]
+        for tool_call in tool_calls_to_process:
             tool_name = tool_call.function.name
 
             # Handle custom function tools
@@ -1750,7 +1996,7 @@ def _merge_consecutive_text(content_list: List[Dict[str, Any]]) -> List[Dict[str
     return merged
 
 
-@register_agent(models=r".*claude-.*")
+@register_agent(models=r".*claude-.*|.*muse-spark.*")
 class AnthropicHostedToolsConfig(AsyncAgentConfig):
     """Anthropic hosted tools agent configuration implementing AsyncAgentConfig protocol."""
 
@@ -1784,7 +2030,9 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
 
         # Convert responses_items messages to completion format
         completion_messages, scale_factors = _convert_responses_items_to_completion_messages(
-            messages
+            messages,
+            image_in_user_message=_needs_image_in_user_message(model),
+            coord_space=_coord_space(model),
         )
         scale_x, scale_y = scale_factors
         if use_prompt_caching:
@@ -1806,16 +2054,60 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
             **kwargs,
         }
 
-        # Add beta header for computer use
-        if anthropic_tools:
+        # Add beta header for computer use (hosted tool models only)
+        if anthropic_tools and _supports_hosted_computer_tool(model):
             api_kwargs["headers"] = {"anthropic-beta": tool_config["beta_flag"]}
+
+        # Computer use is sequential — discourage parallel tool calls so the
+        # model returns one action per turn (see the dedup guard in
+        # _convert_completion_to_responses_items for the hard invariant).
+        if anthropic_tools and not _supports_hosted_computer_tool(model):
+            api_kwargs.setdefault("parallel_tool_calls", False)
+
+        # Optional instrumentation: dump the shape of the outgoing payload so we
+        # can confirm screenshots actually reach the model on each turn.
+        if os.environ.get("CUA_DEBUG_IMAGES"):
+            _debug_dump_payload(completion_messages, anthropic_tools)
+            try:
+                import pathlib
+
+                out = pathlib.Path("/tmp/td_output/last_payload.json")
+                if not out.exists():  # first image-bearing turn only
+                    if any(
+                        isinstance(m.get("content"), list)
+                        and any(c.get("type") == "image_url" for c in m["content"])
+                        for m in completion_messages
+                    ):
+                        out.write_text(
+                            json.dumps({"messages": completion_messages, "tools": anthropic_tools})
+                        )
+                        print("[CUA_DEBUG_IMAGES] wrote last_payload.json", flush=True)
+            except Exception as e:
+                print(f"[CUA_DEBUG_IMAGES] dump failed: {e}", flush=True)
 
         # Call API start hook
         if _on_api_start:
             await _on_api_start(api_kwargs)
 
+        if os.environ.get("CUA_DEBUG_IMAGES"):
+            extra = {
+                k: (type(v).__name__ if k in ("messages", "tools") else v)
+                for k, v in api_kwargs.items()
+            }
+            print(f"[CUA_DEBUG_IMAGES] acompletion kwargs: {extra}", flush=True)
+
         # Use liteLLM acompletion
         response = await litellm.acompletion(**api_kwargs)
+        if os.environ.get("CUA_DEBUG_IMAGES"):
+            try:
+                u = response.usage
+                print(
+                    f"[CUA_DEBUG_IMAGES] response usage: prompt={getattr(u,'prompt_tokens',None)} "
+                    f"completion={getattr(u,'completion_tokens',None)} total={getattr(u,'total_tokens',None)}",
+                    flush=True,
+                )
+            except Exception:
+                pass
 
         # print(f"[DEBUG][Anthropic Response] response: {response}")
 

@@ -415,6 +415,10 @@ impl ToolProvider for SdkAdapter {
         self.tools_list()
     }
 
+    fn is_known_tool(&self, name: &str) -> bool {
+        SdkAdapter::is_known_tool(self, name)
+    }
+
     async fn invoke_tool(&self, name: &str, arguments: Value) -> Result<Value, String> {
         self.invoke_raw(name, arguments).await
     }

@@ -790,6 +790,10 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
+    pub fn is_known_tool(&self, name: &str) -> bool {
+        name == "type_text_chars" || self.tools.contains_key(name)
+    }
+
     pub fn retain_session_end_hook(
         &mut self,
         registration: crate::session::SessionEndHookRegistration,

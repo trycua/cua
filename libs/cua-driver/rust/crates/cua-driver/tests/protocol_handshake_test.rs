@@ -285,6 +285,10 @@ fn tools_call_unknown_tool() {
     // Error should be in the content with isError=true, not a protocol error.
     let is_error = resp["result"]["isError"].as_bool().unwrap_or(false);
     assert!(is_error, "Expected isError=true for unknown tool");
+    assert_eq!(
+        resp["result"]["content"][0]["text"],
+        "Unknown tool: nonexistent_tool"
+    );
 }
 
 #[test]

@@ -19,6 +19,12 @@ from typing import Any, Optional, Union
 from cua_sandbox.transport.base import Transport
 
 
+# Fleet service requests pass through a gateway with a 1 MiB body limit. Binary
+# payloads expand by one third when base64 encoded, so leave room for the JSON
+# command envelope instead of relying on the gateway's exact implementation.
+_TRANSFER_CHUNK_BYTES = 512 * 1024
+
+
 @dataclass
 class FileEntry:
     name: str
@@ -94,18 +100,48 @@ class Files:
 
     # ── binary I/O ───────────────────────────────────────────────────────
     async def read_bytes(self, path: str, offset: int = 0, length: Optional[int] = None) -> bytes:
-        kwargs: dict[str, Any] = {"path": path, "offset": offset}
-        if length is not None:
-            kwargs["length"] = length
-        result = await self._t.send("read_bytes", **kwargs)
-        b64 = _unwrap(result, "content_b64", "") or _unwrap(result, "content", "") or ""
-        if not b64:
-            return b""
-        return base64.b64decode(b64)
+        requested_length = length
+        if requested_length is None:
+            requested_length = max(0, await self.size(path) - max(0, offset))
+
+        if requested_length <= _TRANSFER_CHUNK_BYTES:
+            result = await self._t.send(
+                "read_bytes", path=path, offset=offset, length=requested_length
+            )
+            b64 = _unwrap(result, "content_b64", "") or _unwrap(result, "content", "") or ""
+            return base64.b64decode(b64) if b64 else b""
+
+        chunks: list[bytes] = []
+        current_offset = max(0, offset)
+        remaining = requested_length
+        while remaining > 0:
+            chunk_length = min(remaining, _TRANSFER_CHUNK_BYTES)
+            result = await self._t.send(
+                "read_bytes", path=path, offset=current_offset, length=chunk_length
+            )
+            b64 = _unwrap(result, "content_b64", "") or _unwrap(result, "content", "") or ""
+            chunk = base64.b64decode(b64) if b64 else b""
+            if not chunk:
+                break
+            chunks.append(chunk)
+            current_offset += len(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
 
     async def write_bytes(self, path: str, content: bytes) -> None:
-        b64 = base64.b64encode(content).decode("ascii")
-        await self._t.send("write_bytes", path=path, content_b64=b64)
+        if len(content) <= _TRANSFER_CHUNK_BYTES:
+            b64 = base64.b64encode(content).decode("ascii")
+            await self._t.send("write_bytes", path=path, content_b64=b64)
+            return
+
+        for offset in range(0, len(content), _TRANSFER_CHUNK_BYTES):
+            chunk = content[offset : offset + _TRANSFER_CHUNK_BYTES]
+            await self._t.send(
+                "write_bytes",
+                path=path,
+                content_b64=base64.b64encode(chunk).decode("ascii"),
+                append=offset > 0,
+            )
 
     # ── host ↔ sandbox transfer ──────────────────────────────────────────
     async def upload(self, local_path: Union[str, Path], remote_path: str) -> None:

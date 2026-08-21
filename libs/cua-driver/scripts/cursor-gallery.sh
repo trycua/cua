@@ -134,11 +134,17 @@ case "${1:-help}" in
     echo "cursor-gallery: http://127.0.0.1:$PORT"
     exec python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$GALLERY_DIR"
     ;;
+  dev)
+    require cargo
+    require ffmpeg
+    require python3
+    exec python3 "$GALLERY_DIR/dev_server.py" --port "$PORT"
+    ;;
   export-docs)
     export_docs
     ;;
   *)
-    echo "usage: $0 {assets|serve|export-docs}" >&2
+    echo "usage: $0 {assets|serve|dev|export-docs}" >&2
     exit 2
     ;;
 esac

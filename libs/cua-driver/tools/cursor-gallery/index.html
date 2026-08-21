@@ -38,6 +38,97 @@
         </div>
       </header>
 
+      <section id="animation-workbench" class="workbench-section" aria-labelledby="workbench-title">
+        <div class="section-heading workbench-heading">
+          <div>
+            <p class="section-count">Repository playground</p>
+            <h2 id="workbench-title">Inspect one animation closely</h2>
+          </div>
+          <div class="build-summary" aria-live="polite">
+            <span id="build-status" class="build-status status-static">Static render</span>
+            <span id="build-detail">Run the repo-only dev mode for live rebuilds.</span>
+          </div>
+        </div>
+
+        <div class="workbench-shell">
+          <aside class="action-rail" aria-label="Cursor actions">
+            <label for="workbench-action">Action</label>
+            <select id="workbench-action" aria-label="Workbench action"></select>
+            <div id="action-rail-buttons" class="action-rail-buttons"></div>
+          </aside>
+
+          <article class="workbench-stage-card">
+            <div class="workbench-toolbar" aria-label="Preview scene controls">
+              <label>
+                <span>Scene</span>
+                <select id="workbench-scene" aria-label="Preview scene">
+                  <option value="isolated">Animation only</option>
+                  <option value="runtime">Runtime composition</option>
+                  <option value="movement">Movement path</option>
+                </select>
+              </label>
+              <label>
+                <span>Background</span>
+                <select id="workbench-background" aria-label="Preview background">
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                  <option value="blue">Brand</option>
+                  <option value="checker">Transparency</option>
+                </select>
+              </label>
+              <label class="toggle-label">
+                <input id="reduced-motion" type="checkbox" />
+                <span>Reduced motion</span>
+              </label>
+              <label class="toggle-label">
+                <input id="compare-build" type="checkbox" disabled />
+                <span>Compare previous</span>
+              </label>
+            </div>
+
+            <div id="workbench-stage" class="workbench-stage stage-dark">
+              <figure class="workbench-frame current-frame">
+                <video id="workbench-video" autoplay loop muted playsinline
+                  aria-label="Current Observe animation"></video>
+                <img id="workbench-still" alt="Reduced-motion still frame" hidden />
+                <figcaption>Current</figcaption>
+              </figure>
+              <figure id="comparison-frame" class="workbench-frame comparison-frame" hidden>
+                <video id="comparison-video" muted playsinline aria-label="Previous build comparison"></video>
+                <figcaption>Previous valid build</figcaption>
+              </figure>
+            </div>
+
+            <div class="timeline-controls" aria-label="Animation timeline">
+              <button id="workbench-play" type="button">Pause</button>
+              <button id="workbench-replay" type="button">Replay</button>
+              <input id="workbench-timeline" type="range" min="0" max="4" step="0.033333" value="0"
+                aria-label="Animation time" />
+              <output id="workbench-time" for="workbench-timeline">0.00 / 4.00s</output>
+            </div>
+          </article>
+
+          <aside class="workbench-inspector" aria-label="Build and animation details">
+            <div>
+              <p class="section-count">Animation</p>
+              <h3 id="inspector-action">Observe</h3>
+              <dl class="animation-facts">
+                <div><dt>Playback</dt><dd id="inspector-playback">Loop</dd></div>
+                <div><dt>Frames</dt><dd id="inspector-frames">48 authored</dd></div>
+                <div><dt>Still</dt><dd id="inspector-still">Frame 8</dd></div>
+                <div><dt>Scene</dt><dd id="inspector-scene">Animation only</dd></div>
+                <div><dt>Cadence</dt><dd id="inspector-cadence">30 fps</dd></div>
+                <div><dt>Renderer</dt><dd>Production Rust</dd></div>
+              </dl>
+            </div>
+            <div class="diagnostics-block">
+              <p class="section-count">Diagnostics</p>
+              <pre id="build-diagnostics">No build errors.</pre>
+            </div>
+          </aside>
+        </div>
+      </section>
+
       <section id="runtime-preview-section" class="runtime-section" aria-labelledby="runtime-title">
         <div class="section-heading">
           <div>
@@ -85,7 +176,6 @@
             <video
               id="runtime-preview"
               class="cursor-video"
-              src="./generated/previews/observe--background--browser.webm"
               data-group="previews"
               data-state="observe--background--browser"
               autoplay

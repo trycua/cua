@@ -471,6 +471,7 @@ class Computer:
                                     ephemeral=ephemeral,
                                     noVNC_port=noVNC_port,
                                     api_port=self.api_port,
+                                    runtime=self.custom_run_opts.get("container_runtime"),
                                 )
                             else:
                                 raise ValueError(f"Unsupported provider type: {self.provider_type}")

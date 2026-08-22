@@ -1113,11 +1113,11 @@ fn harness_appkit_double_click_px_background() {
                 response.text()
             );
             std::thread::sleep(Duration::from_millis(250));
+            let receiver_snapshot = snapshot_elements(driver, pid, wid);
+            let receiver = receiver_snapshot.tree_text();
             assert!(
-                snapshot_elements(driver, pid, wid)
-                    .tree_text()
-                    .contains("last_action=double_click"),
-                "AppKit background double-click handler did not fire"
+                receiver.contains("last_action=double_click") && receiver.contains("clicks=2"),
+                "AppKit background double-click receiver did not record exactly two clicks"
             );
         },
     );

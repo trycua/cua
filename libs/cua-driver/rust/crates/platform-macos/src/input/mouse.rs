@@ -17,6 +17,28 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 
+#[derive(Clone, Copy)]
+enum MousePostMode {
+    Both,
+    PublicOnly,
+}
+
+#[derive(Clone, Copy)]
+pub enum WindowClickDelivery {
+    Background,
+    Foreground,
+}
+
+impl WindowClickDelivery {
+    pub fn from_foreground(foreground: bool) -> Self {
+        if foreground {
+            Self::Foreground
+        } else {
+            Self::Background
+        }
+    }
+}
+
 /// Left-click at `(x, y)` screen coordinates, posted to `pid`.
 ///
 /// Window-local coordinates for backgrounded targets: if `window_local` is
@@ -29,7 +51,7 @@ pub fn click_at_xy(
     count: usize,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    click_at_xy_inner(pid, x, y, None, None, count, modifiers)
+    click_at_xy_inner(pid, x, y, None, None, count, modifiers, MousePostMode::Both)
 }
 
 /// Screen-absolute click posted to the GLOBAL HID tap (`CGEventTapLocation::HID`),
@@ -234,9 +256,9 @@ extern "C" {
     fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;
 }
 
-/// Like `click_at_xy` but also stamps window-local `(wx, wy)` onto the event.
-/// When `wid` is provided, additionally stamps Chromium routing fields
-/// (f51 / f58 / f91 / f92) for better backgrounded-target delivery.
+/// Like `click_at_xy` but also targets a specific window. Foreground delivery
+/// uses one public pid post; background delivery uses one SkyLight post with a
+/// public fallback only when the private symbol is unavailable.
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
@@ -248,8 +270,23 @@ pub fn click_at_xy_with_window_local(
     wid: u32,
     count: usize,
     modifiers: &[&str],
+    delivery: WindowClickDelivery,
 ) -> anyhow::Result<()> {
-    click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), count, modifiers)
+    match delivery {
+        WindowClickDelivery::Background => {
+            click_at_xy_chromium(pid, x, y, wx, wy, wid, count, modifiers)
+        }
+        WindowClickDelivery::Foreground => click_at_xy_inner(
+            pid,
+            x,
+            y,
+            Some((wx, wy)),
+            Some(wid),
+            count,
+            modifiers,
+            MousePostMode::PublicOnly,
+        ),
+    }
 }
 
 fn click_at_xy_inner(
@@ -260,6 +297,7 @@ fn click_at_xy_inner(
     wid: Option<u32>,
     count: usize,
     modifiers: &[&str],
+    post_mode: MousePostMode,
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -282,7 +320,15 @@ fn click_at_xy_inner(
         // mouseMoved so an AppKit NSButton / NSView hit-tests the down at the
         // right point. Without it the synthetic mouseDown on a backgrounded
         // AppKit control is silently ignored.
-        post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
+        post_mouse_moved_primer(
+            pid,
+            &source,
+            point,
+            window_local,
+            wid,
+            click_group_id,
+            post_mode,
+        );
         std::thread::sleep(std::time::Duration::from_millis(12));
 
         for pair_index in 0..count {
@@ -299,7 +345,7 @@ fn click_at_xy_inner(
                 down.set_flags(flags);
             }
 
-            post_mouse_event(
+            post_mouse_event_with_mode(
                 pid,
                 &down,
                 window_local,
@@ -308,6 +354,7 @@ fn click_at_xy_inner(
                 click_state,
                 0,
                 3,
+                post_mode,
             );
             // 28 ms down→up gap: an NSButton's mouseDown enters a modal
             // tracking loop that polls for the matching mouseUp; too tight a
@@ -325,7 +372,7 @@ fn click_at_xy_inner(
                 up.set_flags(flags);
             }
 
-            post_mouse_event(
+            post_mouse_event_with_mode(
                 pid,
                 &up,
                 window_local,
@@ -334,6 +381,7 @@ fn click_at_xy_inner(
                 click_state,
                 0,
                 3,
+                post_mode,
             );
 
             if count > 1 {
@@ -383,8 +431,8 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f58 = constant click-group ID across all events (gesture coalescing)
 ///  - `CGEventSetWindowLocation` per-event (window-local point)
 ///
-/// Uses both SkyLight `SLEventPostToPid` AND `CGEvent::post_to_pid` (belt+suspenders)
-/// for AppKit / Catalyst target coverage.
+/// Uses the SkyLight route required by Chromium-compatible targets, with the
+/// public API only as a fallback when the private symbol is unavailable.
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
@@ -440,11 +488,11 @@ pub fn click_at_xy_chromium(
         }
     };
 
-    // Belt+suspenders: SkyLight path for Chromium/Catalyst + public API for AppKit.
     let post = |event: &CGEvent| {
         let ptr = event.as_ptr() as *mut std::ffi::c_void;
-        crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false);
-        event.post_to_pid(pid as libc::pid_t);
+        if !crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false) {
+            event.post_to_pid(pid as libc::pid_t);
+        }
     };
 
     // Step 1: mouseMoved at target (phase=2, clickState=0).
@@ -975,7 +1023,15 @@ fn right_click_at_xy_inner(
 
     // Prime cursor-tracking state at the target so AppKit hit-tests the
     // right-down at the right NSView (same rationale as the left path).
-    post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
+    post_mouse_moved_primer(
+        pid,
+        &source,
+        point,
+        window_local,
+        wid,
+        click_group_id,
+        MousePostMode::Both,
+    );
     std::thread::sleep(std::time::Duration::from_millis(12));
 
     let down = CGEvent::new_mouse_event(
@@ -1045,6 +1101,31 @@ pub(super) fn post_mouse_event(
     button_number: i64,
     subtype: i64,
 ) {
+    post_mouse_event_with_mode(
+        pid,
+        event,
+        window_local,
+        wid,
+        click_group_id,
+        click_state,
+        button_number,
+        subtype,
+        MousePostMode::Both,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn post_mouse_event_with_mode(
+    pid: i32,
+    event: &CGEvent,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    click_group_id: Option<i64>,
+    click_state: i64,
+    button_number: i64,
+    subtype: i64,
+    mode: MousePostMode,
+) {
     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
 
     // Stamp window-local point for backgrounded window targeting.
@@ -1070,13 +1151,14 @@ pub(super) fn post_mouse_event(
     // Always stamp f40 = target pid (Chromium synthetic-event filter).
     crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
 
-    // SkyLight path: activity-monitor tickle → reaches Catalyst/Chromium.
-    // Mouse events skip the auth-message envelope (Swift: attachAuthMessage: false).
-    crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-
-    // Public path: delivers to AppKit targets where SkyLight mouse drops.
-    // Belt+suspenders — both fire unconditionally (matches Swift `postBoth`).
-    event.post_to_pid(pid as libc::pid_t);
+    match mode {
+        MousePostMode::Both => {
+            // Preserve the established transport for non-left-click callers.
+            crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
+            event.post_to_pid(pid as libc::pid_t);
+        }
+        MousePostMode::PublicOnly => event.post_to_pid(pid as libc::pid_t),
+    }
 }
 
 /// Post a stamped `mouseMoved` to `pid` at `point` before a down/up pair.
@@ -1097,6 +1179,7 @@ fn post_mouse_moved_primer(
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     click_group_id: Option<i64>,
+    mode: MousePostMode,
 ) {
     if let Ok(mv) = CGEvent::new_mouse_event(
         source.clone(),
@@ -1104,7 +1187,7 @@ fn post_mouse_moved_primer(
         point,
         CGMouseButton::Left,
     ) {
-        post_mouse_event(pid, &mv, window_local, wid, click_group_id, 0, 0, 3);
+        post_mouse_event_with_mode(pid, &mv, window_local, wid, click_group_id, 0, 0, 3, mode);
     }
 }
 
@@ -1170,6 +1253,7 @@ pub fn scroll_wheel_at_xy(
                 .unwrap_or_default()
                 .subsec_nanos() as i64,
         ),
+        MousePostMode::Both,
     );
     std::thread::sleep(std::time::Duration::from_millis(12));
 

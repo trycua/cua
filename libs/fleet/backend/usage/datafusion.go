@@ -259,7 +259,7 @@ func allocationSQL(namespaces []string) string {
 	for index, namespace := range namespaces {
 		literals[index] = "'" + namespace + "'"
 	}
-	return "SELECT window_start, window_end, namespace, pod, cpu_usage_core_hours, cpu_request_core_hours, ram_usage_byte_hours, ram_request_byte_hours " +
+	return "SELECT window_start, window_end, namespace, pod, cpu_usage_core_hours, cpu_request_core_hours, ram_usage_byte_hours, ram_request_byte_hours, total_cost_usd " +
 		"FROM allocation WHERE namespace IN (" + strings.Join(literals, ",") + ") " +
 		"ORDER BY window_start, namespace, pod LIMIT 100001"
 }
@@ -334,7 +334,7 @@ func parseDataFusionAllocations(contents []byte, requestedStart, requestedEnd ti
 	if err != nil {
 		return nil, time.Time{}, 0, false, newSanitizedError("decode allocation query result", err)
 	}
-	wantHeader := []string{"window_start", "window_end", "namespace", "pod", "cpu_usage_core_hours", "cpu_request_core_hours", "ram_usage_byte_hours", "ram_request_byte_hours"}
+	wantHeader := []string{"window_start", "window_end", "namespace", "pod", "cpu_usage_core_hours", "cpu_request_core_hours", "ram_usage_byte_hours", "ram_request_byte_hours", "total_cost_usd"}
 	if len(header) != len(wantHeader) {
 		return nil, time.Time{}, 0, false, fmt.Errorf("decode allocation query result: unexpected columns")
 	}
@@ -366,7 +366,7 @@ func parseDataFusionAllocations(contents []byte, requestedStart, requestedEnd ti
 		if parsedRows > maxDataFusionAllocationRows {
 			return nil, time.Time{}, 0, false, fmt.Errorf("allocation query row limit exceeded")
 		}
-		if record[3] == "NULL" || record[4] == "NULL" || record[5] == "NULL" || record[6] == "NULL" || record[7] == "NULL" {
+		if record[3] == "NULL" || record[4] == "NULL" || record[5] == "NULL" || record[6] == "NULL" || record[7] == "NULL" || record[8] == "NULL" {
 			legacyPartial = true
 			continue
 		}
@@ -402,7 +402,7 @@ func parseDataFusionAllocation(record []string, requestedStart, requestedEnd tim
 	if len(pod) > 253 || !queryPodName.MatchString(pod) {
 		return Allocation{}, fmt.Errorf("invalid pod")
 	}
-	values := make([]float64, 4)
+	values := make([]float64, 5)
 	for index := range values {
 		value, parseErr := strconv.ParseFloat(record[index+4], 64)
 		if parseErr != nil {
@@ -424,6 +424,7 @@ func parseDataFusionAllocation(record []string, requestedStart, requestedEnd tim
 		CPURequestAverage:      values[1] / hours,
 		RAMUsageAverageBytes:   values[2] / hours,
 		RAMRequestAverageBytes: values[3] / hours,
+		CostUSD:                values[4],
 	}, nil
 }
 

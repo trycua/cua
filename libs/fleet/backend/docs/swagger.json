@@ -541,6 +541,90 @@
                 }
             }
         },
+        "/api/billing/usage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns Stripe-backed invoice spend, trend, and current-period line-item breakdown for the authenticated Fleet subject.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Billing usage",
+                "parameters": [
+                    {
+                        "enum": [
+                            3,
+                            6,
+                            12
+                        ],
+                        "type": "integer",
+                        "default": 6,
+                        "description": "History window in months",
+                        "name": "months",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/billing.Usage"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/billing/webhook": {
             "post": {
                 "description": "Verifies a Stripe-signed raw webhook body and configures the default payment method for completed fleet setup intents.",
@@ -1480,6 +1564,81 @@
                 }
             }
         },
+        "billing.Usage": {
+            "type": "object",
+            "properties": {
+                "breakdown": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/billing.UsageBreakdownItem"
+                    }
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "current_estimate": {
+                    "type": "integer"
+                },
+                "current_period_end": {
+                    "type": "string"
+                },
+                "current_period_start": {
+                    "type": "string"
+                },
+                "previous_period_amount": {
+                    "type": "integer"
+                },
+                "range_end": {
+                    "type": "string"
+                },
+                "range_start": {
+                    "type": "string"
+                },
+                "trend": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/billing.UsagePoint"
+                    }
+                }
+            }
+        },
+        "billing.UsageBreakdownItem": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
+                },
+                "quantity": {
+                    "type": "integer"
+                }
+            }
+        },
+        "billing.UsagePoint": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "estimate": {
+                    "type": "boolean"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
+                }
+            }
+        },
         "chat.Conversation": {
             "type": "object",
             "properties": {
@@ -1687,6 +1846,9 @@
                     "type": "boolean"
                 },
                 "chat": {
+                    "type": "boolean"
+                },
+                "usage": {
                     "type": "boolean"
                 }
             }

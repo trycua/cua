@@ -23,7 +23,7 @@ import { PoolNew } from "./pages/PoolNew"
 import { UserApiKeys } from "./pages/UserApiKeys"
 import { Settings } from "./pages/Settings"
 import { AgentChat } from "./pages/AgentChat"
-import { Usage } from "./pages/Usage"
+import { BillingUsagePage } from "./pages/BillingUsage"
 import { PageShell } from "./components/PageShell"
 import { FeatureFlags } from "./pages/FeatureFlags"
 import { FeatureFlagProvider, useFeatureFlags } from "./components/FeatureFlagContext"
@@ -112,7 +112,7 @@ function Shell() {
     setNavigationOpen(tabletOrWider)
   }, [tabletOrWider])
   const user = userInfo()
-  const { admin, chat, usage } = useFeatureFlags()
+  const { admin, billing, chat } = useFeatureFlags()
   useEffect(() => {
     const path = location.pathname
     const pageTitle = path === "/usage"
@@ -200,7 +200,11 @@ function Shell() {
                 }}
                 items={[
                   { type: "link", text: "Pools", href: "#/pools" },
-                  ...(usage
+
+                  ...(chat
+                    ? [{ type: "link" as const, text: "Chat", href: "#/agent" }]
+                    : []),
+                  ...(billing
                     ? [
                         {
                           type: "link" as const,
@@ -209,9 +213,6 @@ function Shell() {
                           info: <Badge color="blue">Admin</Badge>,
                         },
                       ]
-                    : []),
-                  ...(chat
-                    ? [{ type: "link" as const, text: "Chat", href: "#/agent" }]
                     : []),
                   { type: "link", text: "User API keys", href: "#/user-keys" },
                   { type: "link", text: "Settings", href: "#/settings" },
@@ -278,9 +279,8 @@ export function App() {
             <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
             <Route path="/user-keys" element={<UserApiKeys />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="/usage" element={<UsageRoute />} />
+            <Route path="/usage" element={<BillingUsageRoute />} />
             <Route path="/agent" element={<ChatRoute />} />
-            <Route path="/billing" element={<Navigate to="/settings" replace />} />
             <Route element={<AdminRoute />}>
               <Route path="/admin/feature-flags" element={<FeatureFlags />} />
             </Route>
@@ -320,14 +320,14 @@ function ChatRoute() {
   return chat ? <AgentChat /> : <Navigate to="/pools" replace />
 }
 
-function UsageRoute() {
-  const { usage, resolved } = useFeatureFlags()
+function BillingUsageRoute() {
+  const { billing, resolved } = useFeatureFlags()
   if (!resolved) {
     return (
-      <PageShell eyebrow="Resources" title="Usage preview">
-        <div />
+      <PageShell eyebrow="Billing" title="Usage">
+        <div className="usage-layout" />
       </PageShell>
     )
   }
-  return usage ? <Usage /> : <Navigate to="/pools" replace />
+  return billing ? <BillingUsagePage /> : <Navigate to="/settings" replace />
 }

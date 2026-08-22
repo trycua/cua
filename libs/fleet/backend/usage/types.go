@@ -38,10 +38,11 @@ type MetricTotals struct {
 }
 
 type PoolSummary struct {
-	ID     string       `json:"id"`
-	Name   string       `json:"name"`
-	CPU    MetricTotals `json:"cpu"`
-	Memory MetricTotals `json:"memory"`
+	ID      string       `json:"id"`
+	Name    string       `json:"name"`
+	CPU     MetricTotals `json:"cpu"`
+	Memory  MetricTotals `json:"memory"`
+	CostUSD float64      `json:"cost_usd"`
 }
 
 type OverviewResponse struct {
@@ -103,6 +104,7 @@ type Allocation struct {
 	CPURequestAverage      float64
 	RAMUsageAverageBytes   float64
 	RAMRequestAverageBytes float64
+	CostUSD                float64
 }
 
 type AllocationClient interface {

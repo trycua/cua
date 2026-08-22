@@ -286,6 +286,7 @@ var routeSurfaces = map[string]string{
 	"/api/chat/conversations/{id}/turns": "chat",
 
 	"/api/billing/summary":        "billing",
+	"/api/billing/usage":          "billing",
 	"/api/billing/setup-session":  "billing",
 	"/api/billing/portal-session": "billing",
 

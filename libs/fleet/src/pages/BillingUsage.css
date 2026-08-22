@@ -1,0 +1,210 @@
+.usage-layout {
+  display: grid;
+  gap: 20px;
+}
+
+.usage-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-block: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+
+.usage-summary__metric {
+  display: grid;
+  grid-column: 3;
+  gap: 5px;
+  min-width: 0;
+  padding: 22px 0 22px 24px;
+  border-inline-start: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+
+.usage-summary__label,
+.usage-panel__eyebrow,
+.usage-breakdown__header {
+  color: var(--cua-color-text-muted, rgba(224, 230, 238, 0.68));
+  font-family: var(--cua-dashboard-font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.usage-summary__metric strong {
+  color: var(--cua-dashboard-text, #f6f8fb);
+  font-family: var(--cua-dashboard-font-display, Georgia, serif);
+  font-size: clamp(28px, 4vw, 43px);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+
+.usage-summary__metric > span:last-child {
+  color: var(--cua-color-text-muted, rgba(224, 230, 238, 0.68));
+  font-size: 13px;
+}
+
+.usage-panel {
+  min-width: 0;
+  padding: 22px 24px 18px;
+  overflow: hidden;
+  border: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
+  border-radius: var(--cua-radius-container, 12px);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 45%),
+    var(--cua-color-surface-raised, #181818);
+}
+
+.usage-panel__heading {
+  margin-block-end: 20px;
+}
+
+.usage-panel__heading h2,
+.usage-panel__heading p {
+  margin: 0;
+}
+
+.usage-panel__heading h2 {
+  margin-block-start: 5px;
+  color: var(--cua-dashboard-text, #f6f8fb);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.usage-breakdown {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.usage-breakdown thead,
+.usage-breakdown tbody {
+  display: block;
+}
+
+.usage-breakdown__header,
+.usage-breakdown__row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, auto);
+  gap: 24px;
+  align-items: center;
+}
+
+.usage-breakdown__header {
+  padding: 0 12px 9px;
+  border-block-end: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.usage-breakdown__header th {
+  padding: 0;
+  font: inherit;
+  text-align: start;
+}
+
+.usage-breakdown__header th:last-child,
+.usage-breakdown__row > :last-child {
+  text-align: end;
+}
+
+.usage-breakdown__row {
+  min-height: 58px;
+  padding: 10px 12px;
+  border-block-end: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--cua-color-text-body, #f6f8fb);
+  font-size: 14px;
+}
+
+.usage-breakdown__row:last-child {
+  border-block-end: 0;
+}
+
+.usage-breakdown__row strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-empty {
+  padding: 48px 0;
+  border-block: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+
+.usage-skeleton {
+  display: grid;
+  gap: 20px;
+}
+
+.usage-skeleton__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.usage-skeleton__block,
+.usage-skeleton__row {
+  background:
+    linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.07) 48%, transparent 66%) 0 0 / 250% 100%,
+    var(--cua-color-surface-raised, #181818);
+  animation: usage-skeleton-shift 1.6s ease-in-out infinite;
+}
+
+.usage-skeleton__block {
+  grid-column: 3;
+  height: 112px;
+}
+
+.usage-skeleton__rows {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
+  border-radius: var(--cua-radius-container, 12px);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.usage-skeleton__row {
+  height: 58px;
+}
+
+@keyframes usage-skeleton-shift {
+  to { background-position: -180% 0; }
+}
+
+@media (max-width: 760px) {
+  .usage-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-summary__metric {
+    grid-column: 1;
+    padding: 18px 0;
+    border-inline-start: 0;
+  }
+
+  .usage-panel {
+    padding: 18px 14px 12px;
+  }
+
+  .usage-breakdown__header,
+  .usage-breakdown__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-inline: 0;
+  }
+
+  .usage-skeleton__summary {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-skeleton__block {
+    grid-column: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-skeleton__block,
+  .usage-skeleton__row {
+    animation: none;
+  }
+}

@@ -1,5 +1,10 @@
 import type { PoolData, PoolSummary } from "./sdk/models"
 import type {
+  BillingUsage,
+  UsagePoint,
+  UsageRangeMonths,
+} from "./sdk/billing"
+import type {
   ChatMessage,
   Conversation,
   ConversationSummary,
@@ -206,4 +211,55 @@ export async function streamLocalVisualPreviewTurn(
   conversation.messages.push(assistant)
   conversation.updated_at = timestamp
   return assistant
+}
+
+
+export async function getLocalVisualPreviewBillingUsage(
+  months: UsageRangeMonths,
+): Promise<BillingUsage> {
+  const state = new URLSearchParams(window.location.search).get(
+    "cua-preview-state",
+  )
+  if (state === "error") throw new Error("Preview usage is unavailable")
+  if (state === "loading") {
+    await new Promise(resolve => window.setTimeout(resolve, 2_000))
+  }
+  if (state === "empty") {
+    return {
+      currency: "usd",
+      range_start: "2026-02-01T00:00:00Z",
+      range_end: "2026-08-22T00:00:00Z",
+      current_period_start: null,
+      current_period_end: null,
+      current_estimate: 0,
+      previous_period_amount: 0,
+      trend: [],
+      breakdown: [],
+    }
+  }
+
+  const allTrend: UsagePoint[] = [
+    { period_start: "2026-03-01T00:00:00Z", period_end: "2026-04-01T00:00:00Z", amount: 18420, estimate: false },
+    { period_start: "2026-04-01T00:00:00Z", period_end: "2026-05-01T00:00:00Z", amount: 22780, estimate: false },
+    { period_start: "2026-05-01T00:00:00Z", period_end: "2026-06-01T00:00:00Z", amount: 21410, estimate: false },
+    { period_start: "2026-06-01T00:00:00Z", period_end: "2026-07-01T00:00:00Z", amount: 28640, estimate: false },
+    { period_start: "2026-07-01T00:00:00Z", period_end: "2026-08-01T00:00:00Z", amount: 31920, estimate: false },
+    { period_start: "2026-08-01T00:00:00Z", period_end: "2026-09-01T00:00:00Z", amount: 24680, estimate: true },
+  ]
+  return {
+    currency: "usd",
+    range_start: "2026-02-22T00:00:00Z",
+    range_end: "2026-08-22T00:00:00Z",
+    current_period_start: "2026-08-01T00:00:00Z",
+    current_period_end: "2026-09-01T00:00:00Z",
+    current_estimate: 24680,
+    previous_period_amount: 31920,
+    trend: allTrend.slice(-months),
+    breakdown: [
+      { name: "Linux desktop runtime", amount: 13240, quantity: 368, period_start: "2026-08-01T00:00:00Z", period_end: "2026-09-01T00:00:00Z" },
+      { name: "Windows desktop runtime", amount: 6860, quantity: 98, period_start: "2026-08-01T00:00:00Z", period_end: "2026-09-01T00:00:00Z" },
+      { name: "Android emulator runtime", amount: 3890, quantity: 81, period_start: "2026-08-01T00:00:00Z", period_end: "2026-09-01T00:00:00Z" },
+      { name: "Persistent storage", amount: 690, quantity: 230, period_start: "2026-08-01T00:00:00Z", period_end: "2026-09-01T00:00:00Z" },
+    ],
+  }
 }

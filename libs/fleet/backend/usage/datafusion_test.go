@@ -76,8 +76,8 @@ func TestDataFusionAllocationClientQueriesBoundedParquetAndMapsSemantics(t *test
 	start := time.Date(2026, 8, 19, 9, 0, 0, 0, time.UTC)
 	store := &fakeQueryObjectStore{
 		status: [][]byte{[]byte(`{"status":"succeeded","rows":1,"partitions_expanded":1,"partitions_matched":1,"partitions_missing":0}`)},
-		result: []byte("window_start,window_end,namespace,pod,cpu_usage_core_hours,cpu_request_core_hours,ram_usage_byte_hours,ram_request_byte_hours\n" +
-			"2026-08-19 09:00:00,2026-08-19 10:00:00,ns-a,virt-launcher-vm-a-x,2,4,3221225472,6442450944\n"),
+		result: []byte("window_start,window_end,namespace,pod,cpu_usage_core_hours,cpu_request_core_hours,ram_usage_byte_hours,ram_request_byte_hours,total_cost_usd\n" +
+			"2026-08-19 09:00:00,2026-08-19 10:00:00,ns-a,virt-launcher-vm-a-x,2,4,3221225472,6442450944,1.25\n"),
 	}
 	client, err := NewDataFusionAllocationClient(server.URL, secret, "results-bucket", "cyclops/usage-query", "kopf-k3s", "production", time.Second, time.Millisecond, 1<<20, store)
 	if err != nil {
@@ -88,13 +88,13 @@ func TestDataFusionAllocationClientQueriesBoundedParquetAndMapsSemantics(t *test
 		t.Fatalf("allocations=%#v asOf=%s partial=%t err=%v", allocations, asOf, partial, err)
 	}
 	allocation := allocations[0]
-	if allocation.Minutes != 60 || allocation.CPUUsageAverage != 2 || allocation.CPURequestAverage != 4 || allocation.RAMUsageAverageBytes != 3*gibibyte || allocation.RAMRequestAverageBytes != 6*gibibyte {
+	if allocation.Minutes != 60 || allocation.CPUUsageAverage != 2 || allocation.CPURequestAverage != 4 || allocation.RAMUsageAverageBytes != 3*gibibyte || allocation.RAMRequestAverageBytes != 6*gibibyte || allocation.CostUSD != 1.25 {
 		t.Fatalf("allocation = %#v", allocation)
 	}
 	if payload.Dataset != "allocation" || payload.Cluster != "kopf-k3s" || payload.Environment != "production" || payload.SchemaVersion != "v2" || payload.OutputFormat != "csv" {
 		t.Fatalf("payload = %#v", payload)
 	}
-	for _, fragment := range []string{"namespace IN ('ns-a','ns-b')", "LIMIT 100001", "cpu_usage_core_hours", "cpu_request_core_hours", "ram_usage_byte_hours", "ram_request_byte_hours"} {
+	for _, fragment := range []string{"namespace IN ('ns-a','ns-b')", "LIMIT 100001", "cpu_usage_core_hours", "cpu_request_core_hours", "ram_usage_byte_hours", "ram_request_byte_hours", "total_cost_usd"} {
 		if !strings.Contains(payload.Query, fragment) {
 			t.Fatalf("query %q does not contain %q", payload.Query, fragment)
 		}
@@ -180,7 +180,7 @@ func TestDataFusionAllocationClientPreservesCancellationAndMissingPartitions(t *
 	defer server.Close()
 	store := &fakeQueryObjectStore{
 		status: [][]byte{[]byte(`{"status":"succeeded","rows":0,"partitions_expanded":2,"partitions_matched":1,"partitions_missing":1}`)},
-		result: []byte("window_start,window_end,namespace,pod,cpu_usage_core_hours,cpu_request_core_hours,ram_usage_byte_hours,ram_request_byte_hours\n"),
+		result: []byte("window_start,window_end,namespace,pod,cpu_usage_core_hours,cpu_request_core_hours,ram_usage_byte_hours,ram_request_byte_hours,total_cost_usd\n"),
 	}
 	client, err := NewDataFusionAllocationClient(server.URL, "secret", "bucket", "cyclops/usage-query", "kopf-k3s", "production", time.Second, time.Millisecond, 1<<20, store)
 	if err != nil {
@@ -208,8 +208,8 @@ func TestDataFusionAllocationClientMarksLegacyParquetRowsPartial(t *testing.T) {
 	defer server.Close()
 	store := &fakeQueryObjectStore{
 		status: [][]byte{[]byte(`{"status":"succeeded","table":"allocation","rows":1,"partitions_expanded":1,"partitions_matched":1,"partitions_missing":0}`)},
-		result: []byte("window_start,window_end,namespace,pod,cpu_usage_core_hours,cpu_request_core_hours,ram_usage_byte_hours,ram_request_byte_hours\n" +
-			"2026-08-19T09:00:00Z,2026-08-19T10:00:00Z,ns-a,NULL,NULL,NULL,NULL,NULL\n"),
+		result: []byte("window_start,window_end,namespace,pod,cpu_usage_core_hours,cpu_request_core_hours,ram_usage_byte_hours,ram_request_byte_hours,total_cost_usd\n" +
+			"2026-08-19T09:00:00Z,2026-08-19T10:00:00Z,ns-a,NULL,NULL,NULL,NULL,NULL,NULL\n"),
 	}
 	client, err := NewDataFusionAllocationClient(server.URL, "secret", "bucket", "cyclops/usage-query", "kopf-k3s", "production", time.Second, time.Millisecond, 1<<20, store)
 	if err != nil {

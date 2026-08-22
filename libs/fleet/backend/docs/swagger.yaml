@@ -23,6 +23,55 @@ definitions:
     - card
     - payment_method_present
     type: object
+  billing.Usage:
+    properties:
+      breakdown:
+        items:
+          $ref: '#/definitions/billing.UsageBreakdownItem'
+        type: array
+      currency:
+        type: string
+      current_estimate:
+        type: integer
+      current_period_end:
+        type: string
+      current_period_start:
+        type: string
+      previous_period_amount:
+        type: integer
+      range_end:
+        type: string
+      range_start:
+        type: string
+      trend:
+        items:
+          $ref: '#/definitions/billing.UsagePoint'
+        type: array
+    type: object
+  billing.UsageBreakdownItem:
+    properties:
+      amount:
+        type: integer
+      name:
+        type: string
+      period_end:
+        type: string
+      period_start:
+        type: string
+      quantity:
+        type: integer
+    type: object
+  billing.UsagePoint:
+    properties:
+      amount:
+        type: integer
+      estimate:
+        type: boolean
+      period_end:
+        type: string
+      period_start:
+        type: string
+    type: object
   chat.Conversation:
     properties:
       created_at:
@@ -168,6 +217,8 @@ definitions:
       billing:
         type: boolean
       chat:
+        type: boolean
+      usage:
         type: boolean
     type: object
   handlers.CreateFeatureFlagRequest:
@@ -685,6 +736,62 @@ paths:
       security:
       - BearerAuth: []
       summary: Billing summary
+      tags:
+      - billing
+  /api/billing/usage:
+    get:
+      description: Returns Stripe-backed invoice spend, trend, and current-period
+        line-item breakdown for the authenticated Fleet subject.
+      parameters:
+      - default: 6
+        description: History window in months
+        enum:
+        - 3
+        - 6
+        - 12
+        in: query
+        name: months
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/billing.Usage'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Billing usage
       tags:
       - billing
   /api/billing/webhook:

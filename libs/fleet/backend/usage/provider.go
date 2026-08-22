@@ -49,7 +49,7 @@ func (p *provider) Overview(ctx context.Context, query Query) (OverviewResponse,
 	}
 	response := OverviewResponse{DataAsOf: data.asOf, Partial: data.partial, Pools: make([]PoolSummary, 0)}
 	for _, pool := range data.pools {
-		response.Pools = append(response.Pools, PoolSummary{ID: pool.id, Name: pool.name, CPU: MetricTotals{Consumed: pool.cpuConsumed, Provisioned: pool.cpuProvisioned}, Memory: MetricTotals{Consumed: pool.memoryConsumed, Provisioned: pool.memoryProvisioned}})
+		response.Pools = append(response.Pools, PoolSummary{ID: pool.id, Name: pool.name, CPU: MetricTotals{Consumed: pool.cpuConsumed, Provisioned: pool.cpuProvisioned}, Memory: MetricTotals{Consumed: pool.memoryConsumed, Provisioned: pool.memoryProvisioned}, CostUSD: pool.costUSD})
 	}
 	return response, nil
 }
@@ -101,6 +101,7 @@ type usageTotals struct {
 	cpuProvisioned    float64
 	memoryConsumed    float64
 	memoryProvisioned float64
+	costUSD           float64
 }
 
 type bucketKey struct {
@@ -391,7 +392,7 @@ func findPool(pools []usageTotals, id string) (usageTotals, bool) {
 }
 
 func (totals usageTotals) isZero() bool {
-	return totals.cpuConsumed == 0 && totals.cpuProvisioned == 0 && totals.memoryConsumed == 0 && totals.memoryProvisioned == 0
+	return totals.cpuConsumed == 0 && totals.cpuProvisioned == 0 && totals.memoryConsumed == 0 && totals.memoryProvisioned == 0 && totals.costUSD == 0
 }
 
 func disambiguatePoolNames(pools []usageTotals) {
@@ -438,6 +439,7 @@ func attributeAllocation(allocation Allocation, segments []liveSegment, windowSt
 			cpuProvisioned := allocation.CPURequestAverage * minutes / 60
 			memoryConsumed := allocation.RAMUsageAverageBytes * minutes / 60 / gibibyte
 			memoryProvisioned := allocation.RAMRequestAverageBytes * minutes / 60 / gibibyte
+			costUSD := allocation.CostUSD * fraction
 			id := match.namespace + ":" + match.pool
 			pool := pools[id]
 			pool.id, pool.name = id, match.pool
@@ -445,6 +447,7 @@ func attributeAllocation(allocation Allocation, segments []liveSegment, windowSt
 			pool.cpuProvisioned += cpuProvisioned
 			pool.memoryConsumed += memoryConsumed
 			pool.memoryProvisioned += memoryProvisioned
+			pool.costUSD += costUSD
 			pools[id] = pool
 			key := bucketKey{namespace: match.namespace, pool: match.pool, start: bucketStart}
 			bucket := buckets[key]

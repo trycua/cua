@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeGateway struct {
@@ -33,6 +34,12 @@ type fakeGateway struct {
 	defaultApplied         bool
 	setupRequest           SetupSessionRequest
 	portalRequest          PortalSessionRequest
+	previewInvoice         *Invoice
+	previewErr             error
+	invoices               []Invoice
+	invoicesErr            error
+	invoiceCustomerID      string
+	invoiceCreatedAfter    time.Time
 }
 
 func (f *fakeGateway) SearchCustomers(_ context.Context, subject string) ([]Customer, error) {
@@ -89,6 +96,68 @@ func (f *fakeGateway) CreateSetupSession(_ context.Context, request SetupSession
 func (f *fakeGateway) CreatePortalSession(_ context.Context, request PortalSessionRequest) (string, error) {
 	f.portalRequest = request
 	return "https://billing.stripe.test/session", nil
+}
+
+func (f *fakeGateway) PreviewInvoice(_ context.Context, customerID string) (*Invoice, error) {
+	f.invoiceCustomerID = customerID
+	return f.previewInvoice, f.previewErr
+}
+
+func (f *fakeGateway) ListInvoices(_ context.Context, customerID string, createdAfter time.Time) ([]Invoice, error) {
+	f.invoiceCustomerID = customerID
+	f.invoiceCreatedAfter = createdAfter
+	return f.invoices, f.invoicesErr
+}
+
+func TestUsageAggregatesInvoiceHistoryAndPreviewLines(t *testing.T) {
+	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	previousStart := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
+	currentStart := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	gateway := &fakeGateway{
+		customers: []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
+		invoices: []Invoice{{
+			ID: "in_previous", Currency: "usd", Total: 3200, Status: "paid",
+			PeriodStart: previousStart, PeriodEnd: currentStart,
+		}},
+		previewInvoice: &Invoice{
+			ID: "upcoming", Currency: "usd", Total: 2500, Status: "draft",
+			PeriodStart: currentStart, PeriodEnd: currentStart.AddDate(0, 1, 0),
+			Lines: []InvoiceLine{
+				{Description: "Linux runtime", Amount: 1500, Quantity: 20, PeriodStart: currentStart, PeriodEnd: currentStart.AddDate(0, 1, 0)},
+				{Description: "Linux runtime", Amount: 500, Quantity: 5, PeriodStart: currentStart, PeriodEnd: currentStart.AddDate(0, 1, 0)},
+				{Description: "Storage", Amount: 500, Quantity: 10, PeriodStart: currentStart, PeriodEnd: currentStart.AddDate(0, 1, 0)},
+			},
+		},
+	}
+
+	usage, err := NewService(gateway).Usage(context.Background(), "subject-123", 6, now)
+	if err != nil {
+		t.Fatalf("Usage() error = %v", err)
+	}
+	if usage.CurrentEstimate != 2500 || usage.PreviousPeriodAmount != 3200 {
+		t.Fatalf("amounts = current %d previous %d", usage.CurrentEstimate, usage.PreviousPeriodAmount)
+	}
+	if len(usage.Trend) != 2 || !usage.Trend[1].Estimate {
+		t.Fatalf("trend = %#v", usage.Trend)
+	}
+	if len(usage.Breakdown) != 2 || usage.Breakdown[0].Name != "Linux runtime" || usage.Breakdown[0].Amount != 2000 || usage.Breakdown[0].Quantity != 25 {
+		t.Fatalf("breakdown = %#v", usage.Breakdown)
+	}
+	wantStart := now.AddDate(0, -6, 0)
+	if !gateway.invoiceCreatedAfter.Equal(wantStart) {
+		t.Fatalf("created after = %v, want %v", gateway.invoiceCreatedAfter, wantStart)
+	}
+}
+
+func TestUsageReturnsEmptyDataWithoutBillingCustomer(t *testing.T) {
+	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	usage, err := NewService(&fakeGateway{}).Usage(context.Background(), "subject-123", 3, now)
+	if err != nil {
+		t.Fatalf("Usage() error = %v", err)
+	}
+	if usage.Currency != "usd" || len(usage.Trend) != 0 || len(usage.Breakdown) != 0 {
+		t.Fatalf("usage = %#v", usage)
+	}
 }
 
 func TestFindOrCreateCustomerUsesExactControlledMetadata(t *testing.T) {

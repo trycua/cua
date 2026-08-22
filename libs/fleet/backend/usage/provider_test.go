@@ -53,7 +53,7 @@ func TestProviderOverviewAggregatesTenantLauncherUsage(t *testing.T) {
 	allocations := &fakeAllocationClient{asOf: cutoff, allocations: []Allocation{{
 		Start: cutoff.Add(-time.Hour), End: cutoff, Namespace: "ns-a", Pod: "virt-launcher-vm-a-abc",
 		Minutes: 60, CPUUsageAverage: 2, CPURequestAverage: 4,
-		RAMUsageAverageBytes: 3 * gibibyte, RAMRequestAverageBytes: 6 * gibibyte,
+		RAMUsageAverageBytes: 3 * gibibyte, RAMRequestAverageBytes: 6 * gibibyte, CostUSD: 1.25,
 	}}}
 	provider := NewProvider(events, allocations, func() time.Time { return cutoff })
 
@@ -71,7 +71,7 @@ func TestProviderOverviewAggregatesTenantLauncherUsage(t *testing.T) {
 		t.Fatalf("overview = %#v", got)
 	}
 	pool := got.Pools[0]
-	if pool.ID != "ns-a:pool-a" || pool.Name != "pool-a" || pool.CPU.Consumed != 2 || pool.CPU.Provisioned != 4 || pool.Memory.Consumed != 3 || pool.Memory.Provisioned != 6 {
+	if pool.ID != "ns-a:pool-a" || pool.Name != "pool-a" || pool.CPU.Consumed != 2 || pool.CPU.Provisioned != 4 || pool.Memory.Consumed != 3 || pool.Memory.Provisioned != 6 || pool.CostUSD != 1.25 {
 		t.Fatalf("pool = %#v", pool)
 	}
 }
@@ -169,9 +169,9 @@ func TestProviderMarksPartiallyUncoveredAllocationPartial(t *testing.T) {
 	t.Parallel()
 	cutoff := time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC)
 	event := SandboxEvent{EventID: mustUUID("00000000-0000-0000-0000-000000000040"), Namespace: "ns-a", SandboxName: "sandbox", SandboxUID: "uid", PoolName: "pool-a", Runtime: "kubevirt", VMName: "vm", EventType: "Added", ObservedAt: cutoff.Add(-30 * time.Minute)}
-	allocation := Allocation{Start: cutoff.Add(-time.Hour), End: cutoff, Namespace: "ns-a", Pod: "virt-launcher-vm-a", Minutes: 60, CPUUsageAverage: 1, CPURequestAverage: 1, RAMUsageAverageBytes: gibibyte, RAMRequestAverageBytes: gibibyte}
+	allocation := Allocation{Start: cutoff.Add(-time.Hour), End: cutoff, Namespace: "ns-a", Pod: "virt-launcher-vm-a", Minutes: 60, CPUUsageAverage: 1, CPURequestAverage: 1, RAMUsageAverageBytes: gibibyte, RAMRequestAverageBytes: gibibyte, CostUSD: 2}
 	got, err := NewProvider(&fakeEventStore{events: []SandboxEvent{event}}, &fakeAllocationClient{asOf: cutoff, allocations: []Allocation{allocation}}, func() time.Time { return cutoff }).Overview(context.Background(), Query{Subject: "alice", Timeframe: Timeframe24H})
-	if err != nil || !got.Partial || len(got.Pools) != 1 || got.Pools[0].CPU.Consumed != 0.5 {
+	if err != nil || !got.Partial || len(got.Pools) != 1 || got.Pools[0].CPU.Consumed != 0.5 || got.Pools[0].CostUSD != 1 {
 		t.Fatalf("overview=%#v err=%v", got, err)
 	}
 }

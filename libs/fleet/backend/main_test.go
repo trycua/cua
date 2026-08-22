@@ -203,6 +203,9 @@ func TestSwaggerUsesBillingSetupSessionRoute(t *testing.T) {
 	if _, ok := spec.Paths["/api/billing/setup-session"]; !ok {
 		t.Fatal("swagger.json missing /api/billing/setup-session")
 	}
+	if _, ok := spec.Paths["/api/billing/usage"]; !ok {
+		t.Fatal("swagger.json missing /api/billing/usage")
+	}
 	if _, ok := spec.Paths["/api/billing/checkout-session"]; ok {
 		t.Fatal("swagger.json still contains /api/billing/checkout-session")
 	}
@@ -370,6 +373,10 @@ func (routerBillingService) Summary(context.Context, string) (billing.Summary, e
 	return billing.Summary{}, nil
 }
 
+func (routerBillingService) Usage(context.Context, string, int, time.Time) (billing.Usage, error) {
+	return billing.Usage{Currency: "usd", Trend: []billing.UsagePoint{}, Breakdown: []billing.UsageBreakdownItem{}}, nil
+}
+
 func (routerBillingService) CreateSetupSession(context.Context, string, billing.SetupOptions) (string, error) {
 	return "https://checkout.stripe.test/session", nil
 }
@@ -405,6 +412,18 @@ func TestBillingRouterAuthorizationBoundaries(t *testing.T) {
 	router.ServeHTTP(authorized, authorizedRequest(t, http.MethodGet, "/api/billing/summary", nil))
 	if authorized.Code != http.StatusOK {
 		t.Fatalf("authenticated summary status = %d, want 200; body = %s", authorized.Code, authorized.Body.String())
+	}
+
+	unauthorizedUsage := httptest.NewRecorder()
+	router.ServeHTTP(unauthorizedUsage, httptest.NewRequest(http.MethodGet, "/api/billing/usage", nil))
+	if unauthorizedUsage.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated usage status = %d, want 401; body = %s", unauthorizedUsage.Code, unauthorizedUsage.Body.String())
+	}
+
+	authorizedUsage := httptest.NewRecorder()
+	router.ServeHTTP(authorizedUsage, authorizedRequest(t, http.MethodGet, "/api/billing/usage", nil))
+	if authorizedUsage.Code != http.StatusOK {
+		t.Fatalf("authenticated usage status = %d, want 200; body = %s", authorizedUsage.Code, authorizedUsage.Body.String())
 	}
 
 	for _, tc := range []struct {

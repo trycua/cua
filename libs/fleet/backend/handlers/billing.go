@@ -6,7 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
@@ -18,6 +20,10 @@ type BillingService interface {
 	CreateSetupSession(ctx context.Context, subject string, options billing.SetupOptions) (string, error)
 	CreatePortalSession(ctx context.Context, subject, returnURL string) (string, error)
 	SetDefaultPaymentMethodForSetupGeneration(ctx context.Context, customerID, paymentMethodID, generation string) (bool, error)
+}
+
+type BillingUsageService interface {
+	Usage(ctx context.Context, subject string, months int, now time.Time) (billing.Usage, error)
 }
 
 type BillingSessionResponse struct {
@@ -97,6 +103,47 @@ func (h Handlers) GetBillingSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// GetBillingUsage godoc
+// @Summary Billing usage
+// @Description Returns Stripe-backed invoice spend, trend, and current-period line-item breakdown for the authenticated Fleet subject.
+// @Tags billing
+// @Produce json
+// @Param months query int false "History window in months" Enums(3, 6, 12) default(6)
+// @Success 200 {object} billing.Usage
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/billing/usage [get]
+func (h Handlers) GetBillingUsage(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireBillingEnabled(w, r)
+	if !ok || !h.billingAvailable(w) {
+		return
+	}
+	months := 6
+	if raw := r.URL.Query().Get("months"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || (parsed != 3 && parsed != 6 && parsed != 12) {
+			writeErr(w, http.StatusBadRequest, "months must be 3, 6, or 12")
+			return
+		}
+		months = parsed
+	}
+	usageService, ok := h.Billing.(BillingUsageService)
+	if !ok {
+		writeErr(w, http.StatusServiceUnavailable, "billing usage is not configured")
+		return
+	}
+	usage, err := usageService.Usage(r.Context(), user.ID, months, time.Now())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "could not load billing usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, usage)
 }
 
 // CreateBillingSetupSession godoc

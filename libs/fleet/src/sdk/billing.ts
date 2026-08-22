@@ -1,5 +1,6 @@
 import { getToken } from "../auth/keycloak";
 import {
+	getLocalVisualPreviewBillingUsage,
 	isLocalVisualPreview,
 	localVisualPreviewPath,
 } from "../local-visual-preview";
@@ -14,6 +15,35 @@ export interface SavedCard {
 export interface BillingSummary {
 	payment_method_present: boolean;
 	card: SavedCard | null;
+}
+
+export type UsageRangeMonths = 3 | 6 | 12;
+
+export interface UsagePoint {
+	period_start: string;
+	period_end: string;
+	amount: number;
+	estimate: boolean;
+}
+
+export interface UsageBreakdownItem {
+	name: string;
+	amount: number;
+	quantity: number;
+	period_start: string;
+	period_end: string;
+}
+
+export interface BillingUsage {
+	currency: string;
+	range_start: string;
+	range_end: string;
+	current_period_start: string | null;
+	current_period_end: string | null;
+	current_estimate: number;
+	previous_period_amount: number;
+	trend: UsagePoint[];
+	breakdown: UsageBreakdownItem[];
 }
 
 async function billingRequest<T>(
@@ -50,4 +80,13 @@ export const billingApi = {
 					url: localVisualPreviewPath("/settings?billing=portal-preview"),
 				})
 			: billingRequest<{ url: string }>("/api/billing/portal-session", "POST"),
+	usage: (months: UsageRangeMonths) => {
+		if (isLocalVisualPreview()) {
+			return getLocalVisualPreviewBillingUsage(months);
+		}
+		return billingRequest<BillingUsage>(
+			`/api/billing/usage?months=${months}`,
+			"GET",
+		);
+	},
 };

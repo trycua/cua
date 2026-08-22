@@ -61,10 +61,14 @@ def test_to_build_recipe_returns_a_complete_validated_resource() -> None:
 
 
 def test_to_build_recipe_resolves_copied_files_without_emitting_local_paths() -> None:
-    resource = Image.linux().copy("./secret.txt", "/opt/input.txt").to_build_recipe(
-        name="with-file",
-        namespace="tenant-a",
-        file_references={"./secret.txt": _reference()},
+    resource = (
+        Image.linux()
+        .copy("./secret.txt", "/opt/input.txt")
+        .to_build_recipe(
+            name="with-file",
+            namespace="tenant-a",
+            file_references={"./secret.txt": _reference()},
+        )
     )
     serialized = json.dumps(resource, sort_keys=True, separators=(",", ":"))
     assert "./secret.txt" not in serialized
@@ -101,6 +105,10 @@ def test_to_build_recipe_rejects_missing_and_unused_file_references() -> None:
         (Image.linux(kind="container"), "only Linux VM recipes"),
         (Image.from_registry("example.invalid/image:tag"), "registry-only images"),
         (Image.from_file("/tmp/example.qcow2", os_type="linux"), "local disk images"),
+        (
+            Image.linux()._with(_snapshot_source={"snapshotId": "snapshot-123"}),
+            "snapshot source images",
+        ),
     ],
 )
 def test_to_build_recipe_rejects_unsupported_image_sources(image: Image, message: str) -> None:
@@ -122,9 +130,10 @@ def test_to_build_recipe_is_deterministic() -> None:
     canonical_first = json.dumps(first, sort_keys=True, separators=(",", ":"))
     canonical_second = json.dumps(second, sort_keys=True, separators=(",", ":"))
     assert canonical_first == canonical_second
-    assert hashlib.sha256(canonical_first.encode()).hexdigest() == hashlib.sha256(
-        canonical_second.encode()
-    ).hexdigest()
+    assert (
+        hashlib.sha256(canonical_first.encode()).hexdigest()
+        == hashlib.sha256(canonical_second.encode()).hexdigest()
+    )
 
 
 def test_to_dict_remains_the_legacy_local_contract() -> None:

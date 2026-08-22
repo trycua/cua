@@ -155,10 +155,7 @@ class ImageResource(GeneratedImageResource):
 
 def _source_header() -> str:
     digest = hashlib.sha256(CRD_PATH.read_bytes()).hexdigest()
-    return (
-        "# Source: clusters/base/cua-images/crd.yaml\n"
-        f"# Source SHA-256: {digest}\n"
-    )
+    return f"# Source: clusters/base/cua-images/crd.yaml\n# Source SHA-256: {digest}\n"
 
 
 def _write_or_check(path: Path, content: str, *, check: bool) -> None:
@@ -187,7 +184,9 @@ def generate(*, check: bool) -> None:
         if "class ImageResource(BaseModel):" not in model_content:
             raise ValueError("expected datamodel-code-generator to emit ImageResource")
         model_content += _schema_validation_wrapper(schema_content)
-        model_content += "\n# Stable public name derived from the CRD title.\nImageFileReference = Source\n"
+        model_content += (
+            "\n# Stable public name derived from the CRD title.\nImageFileReference = Source\n"
+        )
     _write_or_check(SCHEMA_PATH, schema_content, check=check)
     _write_or_check(MODEL_PATH, model_content, check=check)
 

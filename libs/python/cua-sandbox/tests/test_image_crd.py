@@ -65,9 +65,7 @@ def test_image_crd_restricts_the_initial_recipe_contract() -> None:
 
 def test_image_crd_files_use_external_references() -> None:
     schema = _version()["schema"]["openAPIV3Schema"]
-    file_item = schema["properties"]["spec"]["properties"]["recipe"]["properties"][
-        "files"
-    ]["items"]
+    file_item = schema["properties"]["spec"]["properties"]["recipe"]["properties"]["files"]["items"]
     assert file_item["required"] == ["source", "destination"]
     assert file_item["properties"]["source"]["required"] == [
         "reference",
@@ -87,9 +85,10 @@ def test_image_crd_has_controller_owned_status_contract() -> None:
         "reference",
         "digest",
     ]
-    assert status["properties"]["artifacts"]["properties"]["volumeSnapshot"][
-        "required"
-    ] == ["namespace", "name"]
+    assert status["properties"]["artifacts"]["properties"]["volumeSnapshot"]["required"] == [
+        "namespace",
+        "name",
+    ]
 
 
 def test_image_crd_kustomization_contains_only_the_crd() -> None:

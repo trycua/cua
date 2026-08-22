@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Determine version
         id: version
@@ -37,7 +39,24 @@ jobs:
             echo "invalid Image API version: ${VERSION}" >&2
             exit 1
           fi
+          RELEASE_TAG="image-api-v${VERSION}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_NAME}" != "${RELEASE_TAG}" ]]; then
+            echo "unexpected Image API tag: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          if ! git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            echo "Image API release tag not found: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          TAG_COMMIT="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          CHECKED_OUT_COMMIT="$(git rev-parse HEAD)"
+          if [[ "${TAG_COMMIT}" != "${CHECKED_OUT_COMMIT}" ]]; then
+            echo "Image API version ${VERSION} must run from ${RELEASE_TAG}" >&2
+            exit 1
+          fi
           echo "version=${VERSION}" >>"${GITHUB_OUTPUT}"
+          echo "release_tag=${RELEASE_TAG}" >>"${GITHUB_OUTPUT}"
+          echo "commit=${TAG_COMMIT}" >>"${GITHUB_OUTPUT}"
 
       - name: Install Flux CLI 2.9.4
         shell: bash
@@ -61,10 +80,18 @@ jobs:
       - name: Publish Image API artifact
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          COMMIT: ${{ steps.version.outputs.commit }}
         shell: bash
         run: |
           set -euo pipefail
-          flux push artifact "oci://ghcr.io/trycua/cua-image-api:v${VERSION}" \
+          ARTIFACT_DESTINATION="oci://ghcr.io/trycua/cua-image-api:v${VERSION}"
+          ARTIFACT_REFERENCE="${ARTIFACT_DESTINATION#oci://}"
+          if docker manifest inspect "${ARTIFACT_REFERENCE}" >/dev/null 2>&1; then
+            echo "Image API artifact already exists: ${ARTIFACT_DESTINATION}" >&2
+            exit 1
+          fi
+          flux push artifact "${ARTIFACT_DESTINATION}" \
             --path=clusters/base/cua-images \
             --source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --revision="${GITHUB_REF_NAME}@sha1:${GITHUB_SHA}"
+            --revision="${RELEASE_TAG}@sha1:${COMMIT}"

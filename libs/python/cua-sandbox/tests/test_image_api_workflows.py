@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import shlex
 from pathlib import Path
 
 import yaml
@@ -34,11 +36,70 @@ def test_image_api_cd_publishes_only_versioned_artifacts() -> None:
     workflow = yaml.safe_load(CD_WORKFLOW.read_text())
     assert workflow[True]["push"]["tags"] == ["image-api-v*"]
     assert workflow["permissions"] == {"contents": "read", "packages": "write"}
-    commands = "\n".join(
-        step.get("run", "") for step in workflow["jobs"]["publish"]["steps"]
-    )
+    commands = "\n".join(step.get("run", "") for step in workflow["jobs"]["publish"]["steps"])
     assert "flux_2.9.4_linux_amd64.tar.gz" in commands
     assert "c2c397a52930f52d2005c01d276116b059d062de379386d58e98115380a766a2" in commands
     assert "flux push artifact" in commands
-    assert "ghcr.io/trycua/cua-image-api:v${VERSION}" in commands
-    assert ":latest" not in commands
+
+
+def test_image_api_cd_binds_manual_publication_to_the_release_tag_commit() -> None:
+    workflow = yaml.safe_load(CD_WORKFLOW.read_text())
+    steps = workflow["jobs"]["publish"]["steps"]
+    checkout = next(step for step in steps if step["name"] == "Checkout repository")
+    version = next(step for step in steps if step["name"] == "Determine version")["run"]
+
+    assert checkout.get("with", {}).get("fetch-depth") == 0
+    assert 'VERSION="${{ inputs.version }}"' in version
+    assert 'VERSION="${GITHUB_REF_NAME#image-api-v}"' in version
+    assert '[[ ! "${VERSION}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in version
+    assert 'RELEASE_TAG="image-api-v${VERSION}"' in version
+    assert 'TAG_COMMIT="$(git rev-list -n 1 "${RELEASE_TAG}")"' in version
+    assert 'CHECKED_OUT_COMMIT="$(git rev-parse HEAD)"' in version
+    assert 'if [[ "${TAG_COMMIT}" != "${CHECKED_OUT_COMMIT}" ]]; then' in version
+    assert 'echo "release_tag=${RELEASE_TAG}" >>"${GITHUB_OUTPUT}"' in version
+    assert 'echo "commit=${TAG_COMMIT}" >>"${GITHUB_OUTPUT}"' in version
+
+
+def test_image_api_cd_authenticates_and_rejects_existing_artifacts_before_push() -> None:
+    workflow = yaml.safe_load(CD_WORKFLOW.read_text())
+    steps = workflow["jobs"]["publish"]["steps"]
+    authenticate = next(step for step in steps if step["name"] == "Authenticate to GHCR")["run"]
+    publish = next(step for step in steps if step["name"] == "Publish Image API artifact")["run"]
+
+    assert "docker login ghcr.io" in authenticate
+    assert 'echo "${{ github.token }}"' in authenticate
+    assert '--username "${{ github.actor }}"' in authenticate
+    assert "--password-stdin" in authenticate
+    assert 'ARTIFACT_REFERENCE="${ARTIFACT_DESTINATION#oci://}"' in publish
+    assert 'if docker manifest inspect "${ARTIFACT_REFERENCE}" >/dev/null 2>&1; then' in publish
+    assert 'echo "Image API artifact already exists: ${ARTIFACT_DESTINATION}" >&2' in publish
+    assert publish.index("docker manifest inspect") < publish.index("flux push artifact")
+
+
+def test_image_api_cd_uses_an_exact_immutable_artifact_destination_and_metadata() -> None:
+    workflow = yaml.safe_load(CD_WORKFLOW.read_text())
+    publish = next(
+        step
+        for step in workflow["jobs"]["publish"]["steps"]
+        if step["name"] == "Publish Image API artifact"
+    )
+    commands = publish["run"]
+    destination_match = re.search(
+        r'^ARTIFACT_DESTINATION="(?P<destination>[^"]+)"$', commands, re.MULTILINE
+    )
+
+    assert destination_match is not None
+    destination = destination_match.group("destination")
+    assert re.fullmatch(r"oci://ghcr\.io/trycua/cua-image-api:v\$\{VERSION\}", destination)
+
+    tokens = shlex.split(commands)
+    flux_push = tokens.index("flux")
+    assert tokens[flux_push : flux_push + 4] == [
+        "flux",
+        "push",
+        "artifact",
+        "${ARTIFACT_DESTINATION}",
+    ]
+    assert "--path=clusters/base/cua-images" in tokens
+    assert "--source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" in tokens
+    assert "--revision=${RELEASE_TAG}@sha1:${COMMIT}" in tokens

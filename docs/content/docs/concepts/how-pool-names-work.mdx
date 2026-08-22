@@ -1,0 +1,93 @@
+---
+title: How pool names work
+description: Why a Cua Sandbox pool name is a globally unique namespace, how claim names differ, and what happens when a name is already taken.
+---
+
+A pool name is not a label you attach to a pool. It **is** the pool's
+namespace, and that namespace is shared across every Cua account. Claim names
+live *inside* that namespace, so they only have to be unique within your own
+pool.
+
+That single difference explains most of the naming behavior in the Sandbox SDK:
+why `Pool.apply()` insists on an explicit `name=`, why the SDK invents claim
+names for you but never pool names, and why one particular failure cannot be
+retried away.
+
+For the surrounding model — what a pool is warming, and how claims relate to
+sandboxes — read [How sandboxes work](/concepts/how-sandboxes-work).
+
+## One flat, shared namespace
+
+Fleet addresses a pool by its namespace. There is no per-account prefix in
+front of it, so two accounts cannot both hold `windows-pool`: the first account
+to create it owns that namespace, and every other account is refused.
+
+This makes a pool name a claim on a global resource rather than a private
+identifier. Names that read as generic — `test`, `windows`, `dev-pool` — are
+the ones most likely to be taken already, and a name that works today is a name
+someone else can no longer take. Prefixing with something you own, such as an
+org or team name, is what keeps a pool name yours in practice:
+`acme-research-windows` rather than `windows`.
+
+## Why the SDK never invents a pool name
+
+Because the namespace is global, a generated pool name would be a silent claim
+on shared space, made on your behalf, that later runs could not find again.
+The SDK therefore refuses to guess:
+
+- `Pool.apply()` requires an explicit `name=`.
+- `Sandbox.create(image, ...)` refuses Fleet registry images with no pool.
+  Apply a named pool first and pass it as `pool=`.
+
+```python
+pool = await Pool.apply(image, name="my-team-windows-pool")
+sandbox = await Sandbox.create(pool=pool, name="my-claim")
+```
+
+Claim names are the opposite case. A claim only has to be unique inside a
+namespace you already own, so nothing global is at stake and the SDK can safely
+generate a `claim-<petname>` name when you do not pass one.
+
+`Sandbox.ephemeral(image)` stays a one-liner for the same reason: it takes a
+disposable pool name of its own, `cua-eph-<hex>`, and deletes that pool on
+exit, so the name never has to be found again. Asking to keep the pool with
+`keep_pool=True` reintroduces that requirement, so it requires `name=`.
+
+## When the name is already taken
+
+If the pool name you pick belongs to another account, the SDK raises
+`PoolAccessDeniedError`:
+
+```text
+PoolAccessDeniedError: Fleet denied create pool on pool namespace
+'my-team-windows-pool' (HTTP 403: k8s request is not allowed). Pool names
+are globally unique across accounts, so this name may already be taken —
+try a new pool name. If that does not work, contact support on Discord:
+https://discord.gg/mVnXXpdE85
+```
+
+This is a permanent answer about the name, not a transient failure. Retrying
+the same call does not help, and neither does claiming with fresh claim names:
+the conflict is on the pool and its namespace, so nothing about the claim
+changes it. The only fix is a different pool name.
+
+Fleet returns the same opaque `403 k8s request is not allowed` for a few
+unrelated policy denials, so the SDK cannot always tell you with certainty that
+the cause was an owned name. Treat a `PoolAccessDeniedError` on pool creation
+as a name conflict first: try a distinctly different pool name once. If a name
+nobody else would plausibly hold is also refused, the denial is something else,
+and support can see which policy rejected the request.
+
+## Choosing names that keep working
+
+- Pick pool names you can hold long-term — namespaced to your org or team, not
+  generic words. Names must be lowercase DNS labels.
+- Reuse the pool name across runs. `Pool.apply()` reconciles an existing pool
+  rather than creating a second one, which is how later runs find the same warm
+  replicas.
+- Let claim names vary freely. They identify a session inside your pool, so
+  generated names are fine, and stable ones only matter when a later process
+  needs to reconnect to the same claim.
+
+To apply a named pool and claim a sandbox from it, see
+[Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python).

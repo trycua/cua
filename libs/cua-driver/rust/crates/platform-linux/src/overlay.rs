@@ -3812,6 +3812,7 @@ mod tests {
         map.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
         cursor.apply_command(OverlayCommand::SetSessionLabel("research-run".to_owned()));
 
         let tiles = render_x11_tiles(&map);
@@ -3829,6 +3830,7 @@ mod tests {
         map.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
         cursor.apply_command(OverlayCommand::BeginAction {
             action: CursorAction::Click,
             delivery: Some(cursor_overlay::DeliveryModifier::Foreground),

@@ -5,6 +5,7 @@
 //! - `overlay::run_on_main_thread()` — called from `main()` on the main thread
 //! - `overlay::send_command(cmd)` — called from tool implementations
 
+mod display_layout;
 pub mod overlay;
 pub mod state;
 

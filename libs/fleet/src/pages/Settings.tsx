@@ -245,47 +245,43 @@ steps:
       description="Manage your identity, payment method, and automation access."
     >
       <SpaceBetween size="l">
-        <Container
-          header={
-            <Header
-              variant="h2"
-              description="Identity details from your current Cua session."
-            >
-              Account
-            </Header>
-          }
+        <ExpandableSection
+          variant="container"
+          defaultExpanded={false}
+          headerText="Account"
+          headerDescription="Identity details from your current Cua session."
         >
           <SpaceBetween size="m">
-          <FormField label="Username">
-            {name ? (
-              <CopyToClipboard
-                variant="inline"
-                textToCopy={name}
-                textToDisplay={<code>{name}</code>}
-                copyButtonAriaLabel="Copy username"
-                copySuccessText="Username copied"
-                copyErrorText="Failed to copy username"
-              />
-            ) : (
-              <Box color="text-status-inactive">Unknown</Box>
-            )}
-          </FormField>
-          <FormField label="Subject (sub)">
-            {sub ? (
-              <CopyToClipboard
-                variant="inline"
-                textToCopy={sub}
-                textToDisplay={<code>{sub}</code>}
-                copyButtonAriaLabel="Copy subject"
-                copySuccessText="Subject copied"
-                copyErrorText="Failed to copy subject"
-              />
-            ) : (
-              <Box color="text-status-inactive">Unknown</Box>
-            )}
-          </FormField>
+            <FormField label="Username">
+              {name ? (
+                <CopyToClipboard
+                  variant="inline"
+                  textToCopy={name}
+                  textToDisplay={<code>{name}</code>}
+                  copyButtonAriaLabel="Copy username"
+                  copySuccessText="Username copied"
+                  copyErrorText="Failed to copy username"
+                />
+              ) : (
+                <Box color="text-status-inactive">Unknown</Box>
+              )}
+            </FormField>
+            <FormField label="Subject (sub)">
+              {sub ? (
+                <CopyToClipboard
+                  variant="inline"
+                  textToCopy={sub}
+                  textToDisplay={<code>{sub}</code>}
+                  copyButtonAriaLabel="Copy subject"
+                  copySuccessText="Subject copied"
+                  copyErrorText="Failed to copy subject"
+                />
+              ) : (
+                <Box color="text-status-inactive">Unknown</Box>
+              )}
+            </FormField>
           </SpaceBetween>
-        </Container>
+        </ExpandableSection>
 
       {billing && <BillingSettings />}
 

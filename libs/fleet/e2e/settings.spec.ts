@@ -34,6 +34,25 @@ for (const viewport of [
   })
 }
 
+test("keeps account identity in a collapsed drawer", async ({ page }) => {
+  await mockAuth(page)
+  await mockNamespacesApi(page)
+  await mockGitHubTrustPoliciesApi(page)
+  await page.goto("/settings")
+
+  const accountToggle = page.getByRole("button", { name: "Account" })
+  const settingsContent = page.getByRole("main")
+  await expect(accountToggle).toHaveAttribute("aria-expanded", "false")
+  await expect(settingsContent.getByText("testuser", { exact: true })).toBeHidden()
+  await expect(settingsContent.getByText("test-user-id", { exact: true })).toBeHidden()
+
+  await accountToggle.click()
+
+  await expect(accountToggle).toHaveAttribute("aria-expanded", "true")
+  await expect(settingsContent.getByText("testuser", { exact: true })).toBeVisible()
+  await expect(settingsContent.getByText("test-user-id", { exact: true })).toBeVisible()
+})
+
 test.describe("Settings GitHub trust policies", () => {
   test.beforeEach(async ({ page }) => {
     await mockAuth(page)

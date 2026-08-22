@@ -89,12 +89,14 @@ func run(ctx context.Context, now func() time.Time) error {
 	facts, _ := meter.Int64Counter("cyclops.usage_meter.facts")
 	facts.Add(ctx, int64(result.Inserted), attributeMetric("outcome", "inserted"))
 	facts.Add(ctx, int64(result.Unchanged), attributeMetric("outcome", "unchanged"))
+	facts.Add(ctx, int64(result.Unattributed), attributeMetric("outcome", "unattributed"))
 	coverage, _ := meter.Float64Histogram("cyclops.usage_meter.coverage", meteringMetricOptions("KSM source coverage for a materialized hour.")...)
 	coverage.Record(ctx, result.Coverage.Seconds())
 	span.SetAttributes(
 		attribute.Int("meter.sandboxes_discovered", result.Discovered),
 		attribute.Int("meter.facts_inserted", result.Inserted),
 		attribute.Int("meter.facts_unchanged", result.Unchanged),
+		attribute.Int("meter.sandboxes_unattributed", result.Unattributed),
 		attribute.Int64("meter.coverage_seconds", int64(result.Coverage.Seconds())),
 	)
 	slog.Info("hourly reservation metering complete",
@@ -102,6 +104,7 @@ func run(ctx context.Context, now func() time.Time) error {
 		"discovered", result.Discovered,
 		"inserted", result.Inserted,
 		"unchanged", result.Unchanged,
+		"unattributed", result.Unattributed,
 		"coverage_seconds", int64(result.Coverage.Seconds()))
 	return nil
 }

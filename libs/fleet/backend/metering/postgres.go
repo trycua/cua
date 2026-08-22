@@ -2,12 +2,14 @@ package metering
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -55,15 +57,19 @@ func (s *PostgresStore) Close() {
 	}
 }
 
-func (s *PostgresStore) ResolveTenant(ctx context.Context, clusterID, namespace, sandboxUID string) (string, error) {
+func (s *PostgresStore) ResolveTenant(ctx context.Context, clusterID, namespace, sandboxUID string) (string, bool, error) {
 	var tenant string
 	if err := s.pool.QueryRow(ctx, `select k8s_api.sandbox_meter_tenant($1, $2, $3)`, clusterID, namespace, sandboxUID).Scan(&tenant); err != nil {
-		return "", fmt.Errorf("query sandbox tenant: %w", err)
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "P0001" && postgresError.Message == "sandbox tenant identity is unavailable" {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("query sandbox tenant: %w", err)
 	}
 	if strings.TrimSpace(tenant) == "" {
-		return "", fmt.Errorf("sandbox tenant is empty")
+		return "", false, fmt.Errorf("sandbox tenant is empty")
 	}
-	return tenant, nil
+	return tenant, true, nil
 }
 
 func (s *PostgresStore) AppendFact(ctx context.Context, fact HourFact) (bool, error) {

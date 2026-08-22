@@ -26,7 +26,7 @@ type RangeQuerier interface {
 }
 
 type TenantResolver interface {
-	ResolveTenant(context.Context, string, string, string) (string, error)
+	ResolveTenant(context.Context, string, string, string) (string, bool, error)
 }
 
 type FactWriter interface {
@@ -79,10 +79,11 @@ type Collector struct {
 }
 
 type CollectResult struct {
-	Discovered int
-	Inserted   int
-	Unchanged  int
-	Coverage   time.Duration
+	Discovered   int
+	Inserted     int
+	Unchanged    int
+	Unattributed int
+	Coverage     time.Duration
 }
 
 type sandboxIdentity struct {
@@ -172,9 +173,13 @@ func (c Collector) CollectHour(ctx context.Context, hourStart time.Time) (Collec
 		if err != nil {
 			return CollectResult{}, fmt.Errorf("integrate readiness for sandbox %s: %w", sandbox.identity.SandboxUID, err)
 		}
-		tenant, err := c.Tenants.ResolveTenant(ctx, c.ClusterID, sandbox.identity.Namespace, sandbox.identity.SandboxUID)
+		tenant, attributed, err := c.Tenants.ResolveTenant(ctx, c.ClusterID, sandbox.identity.Namespace, sandbox.identity.SandboxUID)
 		if err != nil {
 			return CollectResult{}, fmt.Errorf("resolve tenant for sandbox %s: %w", sandbox.identity.SandboxUID, err)
+		}
+		if !attributed {
+			result.Unattributed++
+			continue
 		}
 		fact := HourFact{
 			FactID:                   uuid.New(),
@@ -242,22 +247,20 @@ func mergeSandboxSeries(metrics map[string][]Series) (map[string]*sandboxSamples
 			} else if sandbox.identity != identity {
 				return nil, fmt.Errorf("sandbox %s metric labels disagree", identity.SandboxUID)
 			}
+			var merged []Sample
 			switch metric {
 			case CPUQuery:
-				if sandbox.cpu != nil {
-					return nil, fmt.Errorf("sandbox %s has duplicate CPU series", identity.SandboxUID)
-				}
-				sandbox.cpu = series.Samples
+				merged, err = mergeMetricSamples(sandbox.cpu, series.Samples)
+				sandbox.cpu = merged
 			case MemoryQuery:
-				if sandbox.memory != nil {
-					return nil, fmt.Errorf("sandbox %s has duplicate memory series", identity.SandboxUID)
-				}
-				sandbox.memory = series.Samples
+				merged, err = mergeMetricSamples(sandbox.memory, series.Samples)
+				sandbox.memory = merged
 			case ReadyQuery:
-				if sandbox.ready != nil {
-					return nil, fmt.Errorf("sandbox %s has duplicate ready series", identity.SandboxUID)
-				}
-				sandbox.ready = series.Samples
+				merged, err = mergeMetricSamples(sandbox.ready, series.Samples)
+				sandbox.ready = merged
+			}
+			if err != nil {
+				return nil, fmt.Errorf("sandbox %s has conflicting %s series: %w", identity.SandboxUID, metric, err)
 			}
 		}
 	}
@@ -267,6 +270,22 @@ func mergeSandboxSeries(metrics map[string][]Series) (map[string]*sandboxSamples
 		}
 	}
 	return out, nil
+}
+
+func mergeMetricSamples(existing, incoming []Sample) ([]Sample, error) {
+	merged := append(append([]Sample(nil), existing...), incoming...)
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Timestamp.Before(merged[j].Timestamp) })
+	compacted := merged[:0]
+	for _, sample := range merged {
+		if len(compacted) == 0 || !compacted[len(compacted)-1].Timestamp.Equal(sample.Timestamp) {
+			compacted = append(compacted, sample)
+			continue
+		}
+		if compacted[len(compacted)-1].Value != sample.Value {
+			return nil, fmt.Errorf("timestamp %s has values %g and %g", sample.Timestamp.Format(time.RFC3339Nano), compacted[len(compacted)-1].Value, sample.Value)
+		}
+	}
+	return compacted, nil
 }
 
 func identityFromLabels(labels map[string]string) (sandboxIdentity, error) {

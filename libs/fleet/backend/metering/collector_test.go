@@ -15,8 +15,8 @@ func (f fakeQuerier) QueryRange(_ context.Context, query string, _, _ time.Time,
 
 type fakeTenantResolver struct{ tenant string }
 
-func (f fakeTenantResolver) ResolveTenant(context.Context, string, string, string) (string, error) {
-	return f.tenant, nil
+func (f fakeTenantResolver) ResolveTenant(context.Context, string, string, string) (string, bool, error) {
+	return f.tenant, f.tenant != "", nil
 }
 
 type fakeFactWriter struct{ facts []HourFact }
@@ -71,6 +71,32 @@ func TestCollectorMaterializesReservationHour(t *testing.T) {
 	}
 }
 
+func TestCollectorSkipsUnattributedSandbox(t *testing.T) {
+	start := time.Date(2026, 8, 22, 7, 0, 0, 0, time.UTC)
+	labels := map[string]string{
+		"namespace": "legacy-system", "sandbox": "sandbox-a", "sandbox_uid": "uid-a",
+		"pool": "pool-a", "runtime": "macos",
+	}
+	writer := &fakeFactWriter{}
+	collector := Collector{
+		Prometheus: fakeQuerier{
+			SourceQuery: {{Samples: constantSamples(start.Add(-15*time.Second), start.Add(time.Hour), 15*time.Second, 1)}},
+			CPUQuery:    {{Labels: labels, Samples: constantSamples(start, start.Add(time.Hour), 15*time.Second, 4)}},
+			MemoryQuery: {{Labels: labels, Samples: constantSamples(start, start.Add(time.Hour), 15*time.Second, float64(4<<30))}},
+		},
+		Tenants: fakeTenantResolver{}, Writer: writer, ClusterID: "kopf-k3s",
+		Step: 15 * time.Second, MaxSampleValidity: time.Minute, MinimumCoverage: 3570 * time.Second,
+	}
+
+	result, err := collector.CollectHour(context.Background(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Discovered != 1 || result.Unattributed != 1 || result.Inserted != 0 || len(writer.facts) != 0 {
+		t.Fatalf("result = %+v, facts = %d", result, len(writer.facts))
+	}
+}
+
 func TestCollectorFailsClosedOnSourceCoverage(t *testing.T) {
 	start := time.Date(2026, 8, 22, 7, 0, 0, 0, time.UTC)
 	collector := Collector{
@@ -85,6 +111,44 @@ func TestCollectorFailsClosedOnSourceCoverage(t *testing.T) {
 	_, err := collector.CollectHour(context.Background(), start)
 	if err == nil || !strings.Contains(err.Error(), "below required") {
 		t.Fatalf("error = %v, want coverage rejection", err)
+	}
+}
+
+func TestMergeSandboxSeriesStitchesLabelChurn(t *testing.T) {
+	start := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	labels := map[string]string{
+		"namespace": "tenant-a", "sandbox": "sandbox-a", "sandbox_uid": "uid-a",
+		"pool": "pool-a", "runtime": "kubevirt",
+	}
+	labelsWithWarmPool := map[string]string{
+		"namespace": "tenant-a", "sandbox": "sandbox-a", "sandbox_uid": "uid-a",
+		"pool": "pool-a", "warmpool": "pool-a", "runtime": "kubevirt",
+	}
+	metrics := map[string][]Series{
+		CPUQuery: {
+			{Labels: labelsWithWarmPool, Samples: []Sample{{Timestamp: start, Value: 4}}},
+			{Labels: labels, Samples: []Sample{{Timestamp: start.Add(15 * time.Second), Value: 4}}},
+		},
+		MemoryQuery: {{Labels: labels, Samples: []Sample{{Timestamp: start, Value: float64(4 << 30)}}}},
+	}
+
+	sandboxes, err := mergeSandboxSeries(metrics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sandboxes["tenant-a/uid-a"].cpu; len(got) != 2 || !got[0].Timestamp.Equal(start) || !got[1].Timestamp.Equal(start.Add(15*time.Second)) {
+		t.Fatalf("merged CPU samples = %+v", got)
+	}
+}
+
+func TestMergeMetricSamplesRejectsConflictingTimestamp(t *testing.T) {
+	timestamp := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	_, err := mergeMetricSamples(
+		[]Sample{{Timestamp: timestamp, Value: 4}},
+		[]Sample{{Timestamp: timestamp, Value: 8}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "has values 4 and 8") {
+		t.Fatalf("error = %v, want conflicting values", err)
 	}
 }
 

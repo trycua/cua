@@ -4070,6 +4070,7 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
                 "name":         tool.get("name").cloned().unwrap_or(serde_json::Value::Null),
                 "description":  tool.get("description").cloned().unwrap_or(serde_json::Value::String(String::new())),
                 "input_schema": tool.get("inputSchema").cloned().unwrap_or_else(|| serde_json::json!({"type": "object"})),
+                "output_schema": tool.get("outputSchema").cloned().unwrap_or(serde_json::Value::Null),
                 "read_only":    annotations.get("readOnlyHint").cloned().unwrap_or(serde_json::Value::Bool(false)),
                 "destructive":  annotations.get("destructiveHint").cloned().unwrap_or(serde_json::Value::Bool(false)),
                 "idempotent":   annotations.get("idempotentHint").cloned().unwrap_or(serde_json::Value::Bool(false)),

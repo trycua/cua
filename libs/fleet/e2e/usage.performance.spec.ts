@@ -22,7 +22,7 @@ async function delayedJSON(route: Route, body: unknown) {
 
 test("measures Usage dashboard ready time", async ({ page }) => {
   const visualPreview = process.env.CYCLOPS_BROWSER_VISUAL_PREVIEW === "true"
-  if (!visualPreview) await mockAuth(page, { admin: false, usage: true })
+  if (!visualPreview) await mockAuth(page, { admin: false, billing: true })
   let usageRequests = 0
   let browserTimings: Record<string, number> | null = null
   await page.route("**/api/usage/overview**", async (route) => {
@@ -37,14 +37,14 @@ test("measures Usage dashboard ready time", async ({ page }) => {
   const started = performance.now()
   await page.goto(visualPreview ? "/usage?cua-visual-preview" : "/usage")
   await expect(
-    page.getByRole("heading", { name: "Cost by pool" }),
+    page.getByRole("heading", { name: "Reserved resources by pool" }),
   ).toBeVisible()
   const readyMS = performance.now() - started
   await expect.poll(() => browserTimings).not.toBeNull()
 
   console.log(`METRIC browser_ready_ms=${readyMS.toFixed(3)}`)
   console.log(`METRIC browser_usage_requests=${usageRequests}`)
-  expect(usageRequests).toBe(1)
+  expect(usageRequests).toBe(2)
   expect(browserTimings?.initial_load_ms).toBeGreaterThanOrEqual(200)
   expect(browserTimings?.dashboard_ready_ms).toBeGreaterThanOrEqual(200)
 })

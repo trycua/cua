@@ -4,6 +4,7 @@ import {
   getLocalVisualPreviewConversation,
   isLocalVisualPreview,
   listLocalVisualPreviewConversations,
+  setLocalVisualPreviewConversationArchived,
   streamLocalVisualPreviewTurn,
 } from "../local-visual-preview"
 
@@ -35,6 +36,7 @@ export interface Conversation {
   messages: ChatMessage[]
   created_at: string
   updated_at: string
+  archived_at?: string
 }
 
 export interface ConversationSummary {
@@ -42,6 +44,7 @@ export interface ConversationSummary {
   title: string
   created_at: string
   updated_at: string
+  archived_at?: string
 }
 
 export class ChatApiError extends Error {
@@ -142,9 +145,27 @@ export async function createConversation(): Promise<Conversation> {
   return chatJson<Conversation>("/api/chat/conversations", { method: "POST" })
 }
 
-export async function listConversations(): Promise<ConversationSummary[]> {
-  if (isLocalVisualPreview()) return listLocalVisualPreviewConversations()
-  return chatJson<ConversationSummary[]>("/api/chat/conversations")
+export async function listConversations(
+  options: { archived?: boolean } = {},
+): Promise<ConversationSummary[]> {
+  if (isLocalVisualPreview()) return listLocalVisualPreviewConversations(options)
+  const query = options.archived ? "?archived=true" : ""
+  return chatJson<ConversationSummary[]>(`/api/chat/conversations${query}`)
+}
+
+export async function setConversationArchived(
+  id: string,
+  archived: boolean,
+): Promise<Conversation> {
+  if (isLocalVisualPreview()) {
+    const conversation = setLocalVisualPreviewConversationArchived(id, archived)
+    if (!conversation) throw new ChatApiError("Conversation not found", 404)
+    return conversation
+  }
+  return chatJson<Conversation>(`/api/chat/conversations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ archived }),
+  })
 }
 
 export async function getConversation(id: string): Promise<Conversation> {
@@ -163,7 +184,14 @@ export async function streamTurn(
   signal?: AbortSignal,
 ): Promise<ChatMessage> {
   if (isLocalVisualPreview()) {
-    return streamLocalVisualPreviewTurn(conversationId, messages, onDelta)
+    try {
+      return await streamLocalVisualPreviewTurn(conversationId, messages, onDelta)
+    } catch (error) {
+      if (error instanceof Error && "status" in error && typeof error.status === "number") {
+        throw new ChatApiError(error.message, error.status)
+      }
+      throw error
+    }
   }
   const response = await chatFetch(
     `/api/chat/conversations/${encodeURIComponent(conversationId)}/turns`,

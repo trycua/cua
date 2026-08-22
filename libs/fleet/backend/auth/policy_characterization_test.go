@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -151,6 +152,19 @@ type routeCase struct {
 // characterizationCases lists the parameter cases for every route. A route with
 // no entry fails the test rather than being skipped — an unlisted route is one
 // whose verdicts nobody recorded.
+func TestChatConversationPatchUsesExistingAuthorizationSurface(t *testing.T) {
+	const route = "/api/chat/conversations/{id}"
+	if surface, ok := RouteSurface(route); !ok || surface != "chat" {
+		t.Fatalf("RouteSurface(%q) = (%q, %t), want (chat, true)", route, surface, ok)
+	}
+	if !slices.Contains(characterizationMethods, http.MethodPatch) {
+		t.Fatalf("characterizationMethods = %v, missing PATCH", characterizationMethods)
+	}
+	if len(characterizationCases()[route]) == 0 {
+		t.Fatalf("characterizationCases missing %q", route)
+	}
+}
+
 func characterizationCases() map[string][]routeCase {
 	cases := map[string][]routeCase{}
 

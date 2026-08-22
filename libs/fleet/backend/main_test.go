@@ -570,24 +570,59 @@ func TestK8sRouteRejectsDisallowedPoolBeforeProxy(t *testing.T) {
 	}
 }
 
+func TestChatConversationRouteRegistersPatch(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+	request := httptest.NewRequest(http.MethodPatch, "/api/chat/conversations/id-1", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("PATCH status = %d, want 401; body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestSwaggerIncludesChatRoutes(t *testing.T) {
 	data, err := os.ReadFile("docs/swagger.json")
 	if err != nil {
 		t.Fatal(err)
 	}
+	type swaggerParameter struct {
+		In   string `json:"in"`
+		Name string `json:"name"`
+	}
+	type swaggerOperation struct {
+		Parameters []swaggerParameter `json:"parameters"`
+	}
+	type swaggerSchema struct {
+		Required []string `json:"required"`
+	}
 	var spec struct {
-		Paths map[string]map[string]struct{} `json:"paths"`
+		Definitions map[string]swaggerSchema               `json:"definitions"`
+		Paths       map[string]map[string]swaggerOperation `json:"paths"`
 	}
 	if err := json.Unmarshal(data, &spec); err != nil {
 		t.Fatalf("unmarshal swagger.json: %v", err)
 	}
 	for _, tc := range []struct{ path, method string }{
 		{"/api/chat/conversations", "post"}, {"/api/chat/conversations", "get"},
-		{"/api/chat/conversations/{id}", "get"}, {"/api/chat/conversations/{id}/turns", "post"},
+		{"/api/chat/conversations/{id}", "get"}, {"/api/chat/conversations/{id}", "patch"},
+		{"/api/chat/conversations/{id}/turns", "post"},
 	} {
 		if _, ok := spec.Paths[tc.path][tc.method]; !ok {
 			t.Fatalf("swagger.json missing %s %s", strings.ToUpper(tc.method), tc.path)
 		}
+	}
+	archivedQueryFound := false
+	for _, parameter := range spec.Paths["/api/chat/conversations"]["get"].Parameters {
+		if parameter.In == "query" && parameter.Name == "archived" {
+			archivedQueryFound = true
+			break
+		}
+	}
+	if !archivedQueryFound {
+		t.Fatal("swagger.json GET /api/chat/conversations missing archived query parameter")
+	}
+	if !slices.Contains(spec.Definitions["handlers.ArchiveConversationRequest"].Required, "archived") {
+		t.Fatal("swagger.json ArchiveConversationRequest missing required archived field")
 	}
 }
 

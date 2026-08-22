@@ -17,7 +17,7 @@
     "test:auth-contract": "tsx --test tests/auth-redirects.test.ts",
     "test:design-boundary": "node --test tests/design-package-boundary.test.mjs",
     "test:favicon": "node --test tests/favicon.test.mjs",
-    "test:sdk-models": "rm -rf target/sdk-model-tests && tsc e2e/sdk-models.unit.ts src/sdk/status.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --outDir target/sdk-model-tests --skipLibCheck && node target/sdk-model-tests/e2e/sdk-models.unit.js",
+    "test:sdk-models": "rm -rf target/sdk-model-tests && tsc -p tsconfig.sdk-models.json && node target/sdk-model-tests/e2e/sdk-models.unit.js",
     "test:agent": "tsx --test agent.test.ts"
   },
   "dependencies": {

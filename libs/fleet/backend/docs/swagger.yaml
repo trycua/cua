@@ -74,6 +74,8 @@ definitions:
     type: object
   chat.Conversation:
     properties:
+      archived_at:
+        type: string
       created_at:
         type: string
       id:
@@ -89,6 +91,8 @@ definitions:
     type: object
   chat.ConversationSummary:
     properties:
+      archived_at:
+        type: string
       created_at:
         type: string
       id:
@@ -199,6 +203,13 @@ definitions:
         $ref: '#/definitions/featureflagadmin.Flag'
       message:
         type: string
+    type: object
+  handlers.ArchiveConversationRequest:
+    properties:
+      archived:
+        type: boolean
+    required:
+    - archived
     type: object
   handlers.BillingSessionResponse:
     properties:
@@ -832,6 +843,11 @@ paths:
       - billing
   /api/chat/conversations:
     get:
+      parameters:
+      - description: Whether to list archived conversations
+        in: query
+        name: archived
+        type: boolean
       produces:
       - application/json
       responses:
@@ -841,6 +857,10 @@ paths:
             items:
               $ref: '#/definitions/chat.ConversationSummary'
             type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -919,6 +939,53 @@ paths:
       summary: Get a chat conversation
       tags:
       - chat
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Conversation ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Archive state
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ArchiveConversationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/chat.Conversation'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Archive or restore a chat conversation
+      tags:
+      - chat
   /api/chat/conversations/{id}/turns:
     post:
       consumes:
@@ -952,6 +1019,10 @@ paths:
             $ref: '#/definitions/handlers.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
         "503":

@@ -145,6 +145,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 		withAuthenticatedMiddlewares("/api/chat/conversations", c.ListConversations))
 	r.Handle("GET /api/chat/conversations/{id}",
 		withAuthenticatedMiddlewares("/api/chat/conversations/{id}", c.GetConversation))
+	r.Handle("PATCH /api/chat/conversations/{id}",
+		withAuthenticatedMiddlewares("/api/chat/conversations/{id}", c.UpdateConversation))
 	r.Handle("POST /api/chat/conversations/{id}/turns",
 		withAuthenticatedMiddlewares("/api/chat/conversations/{id}/turns", c.CreateTurn))
 

@@ -51,17 +51,17 @@ test("usage appears in navigation when billing is enabled", async ({
 	await expect(page.getByRole("link", { name: "Usage", exact: true })).toBeVisible();
 });
 
-test("usage shows pool costs in a two-column table", async ({ page }) => {
+test("usage shows reserved resources and pool costs", async ({ page }) => {
 	await setBillingFlag(page, true);
 	await mockResourceUsage(page);
 	await page.goto("/usage");
 	await expect(page.getByRole("button", { name: "Usage history range Last 24 hours" })).toBeVisible();
-	await expect(page.getByText("Cost incurred", { exact: true }).first()).toBeVisible();
+	await expect(page.getByText("OpenCost incurred", { exact: true }).first()).toBeVisible();
 	const summary = page.getByLabel("Usage summary");
 	await expect(summary.getByText("$3.64")).toBeVisible();
 	await expect(summary.getByText("Timeframe", { exact: true })).toHaveCount(0);
 	await expect(summary.getByText("Data status", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("columnheader")).toHaveCount(2);
+	await expect(page.getByRole("columnheader")).toHaveCount(4);
 	await expect(page.getByRole("cell", { name: "prod-web-fleet" })).toBeVisible();
 	await expect(page.getByRole("cell", { name: "$2.75" })).toBeVisible();
 	await expect(page.locator(".usage-trend")).toHaveCount(0);
@@ -83,7 +83,7 @@ test("usage has a useful empty state", async ({ page }) => {
 	);
 	await page.goto("/usage");
 	await expect(page.getByText("No resource usage yet")).toBeVisible();
-	await expect(page.getByText(/pools begin reporting resource activity/i)).toBeVisible();
+	await expect(page.getByText(/pools begin reporting activity/i)).toBeVisible();
 });
 
 test("usage can retry a failed load", async ({ page }) => {

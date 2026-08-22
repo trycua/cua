@@ -147,11 +147,19 @@ const localVisualPreviewConversations: Conversation[] = [
     updated_at: "2026-08-15T18:10:00.000Z",
     messages: [],
   },
+  {
+    id: "preview-archived-task",
+    title: "Archived browser investigation",
+    created_at: "2026-08-14T16:00:00.000Z",
+    updated_at: "2026-08-14T17:00:00.000Z",
+    archived_at: "2026-08-14T17:00:00.000Z",
+    messages: [],
+  },
 ]
 
-export async function listLocalVisualPreviewConversations(): Promise<
-  ConversationSummary[]
-> {
+export async function listLocalVisualPreviewConversations(
+  { archived = false }: { archived?: boolean } = {},
+): Promise<ConversationSummary[]> {
   const state = new URLSearchParams(window.location.search).get(
     "cua-preview-state",
   )
@@ -159,15 +167,29 @@ export async function listLocalVisualPreviewConversations(): Promise<
     await new Promise(resolve => window.setTimeout(resolve, 2_000))
   }
   if (state === "empty") return []
-  return localVisualPreviewConversations.map(({ messages: _messages, ...summary }) => ({
-    ...summary,
-  }))
+  return localVisualPreviewConversations
+    .filter(conversation => Boolean(conversation.archived_at) === archived)
+    .map(({ messages: _messages, ...summary }) => ({ ...summary }))
 }
 
 export function getLocalVisualPreviewConversation(
   id: string,
 ): Conversation | undefined {
   return localVisualPreviewConversations.find(conversation => conversation.id === id)
+}
+
+export function setLocalVisualPreviewConversationArchived(
+  id: string,
+  archived: boolean,
+): Conversation | undefined {
+  const conversation = getLocalVisualPreviewConversation(id)
+  if (!conversation) return undefined
+
+  const timestamp = new Date().toISOString()
+  conversation.updated_at = timestamp
+  if (archived) conversation.archived_at = timestamp
+  else delete conversation.archived_at
+  return conversation
 }
 
 export function createLocalVisualPreviewConversation(): Conversation {
@@ -190,6 +212,11 @@ export async function streamLocalVisualPreviewTurn(
 ): Promise<ChatMessage> {
   const conversation = getLocalVisualPreviewConversation(conversationId)
   if (!conversation) throw new Error("Preview conversation not found")
+  if (conversation.archived_at) {
+    const error = new Error("Conversation is archived") as Error & { status: number }
+    error.status = 409
+    throw error
+  }
 
   const timestamp = new Date().toISOString()
   const content =

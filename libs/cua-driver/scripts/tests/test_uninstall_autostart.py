@@ -153,3 +153,37 @@ def test_current_autostart_file_is_a_rust_install_marker(
 
     assert not autostart_file.exists()
     assert not skill_link.is_symlink()
+
+
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_release_uninstall_reports_and_preserves_local_product(
+    tmp_path: Path, os_name: str
+) -> None:
+    home, _calls, env = _sandbox(tmp_path, os_name)
+    local_home = home / ".cua-driver-local"
+    local_marker = local_home / "packages/current/cua-driver-local"
+    local_marker.parent.mkdir(parents=True)
+    local_marker.write_text("local driver\n", encoding="utf-8")
+    local_cli = home / ".local/bin/cua-driver-local"
+    local_cli.parent.mkdir(parents=True)
+    local_cli.symlink_to(local_marker)
+
+    result = _run_uninstall(env)
+
+    assert local_cli.is_symlink()
+    assert local_marker.read_text(encoding="utf-8") == "local driver\n"
+    assert "a separate source-built cua-driver-local installation remains" in result.stdout
+    assert str(local_cli) in result.stdout
+    assert "./libs/cua-driver/scripts/uninstall-local.sh" in result.stdout
+
+
+def test_release_uninstall_ignores_marker_free_local_home(tmp_path: Path) -> None:
+    home, _calls, env = _sandbox(tmp_path, "Linux")
+    local_home = home / ".cua-driver-local"
+    local_home.mkdir()
+    (local_home / "unrelated.txt").write_text("keep\n", encoding="utf-8")
+
+    result = _run_uninstall(env)
+
+    assert (local_home / "unrelated.txt").read_text(encoding="utf-8") == "keep\n"
+    assert "source-built cua-driver-local installation remains" not in result.stdout

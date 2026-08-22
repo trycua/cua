@@ -109,6 +109,37 @@ fi
 # ----------------------------------------------------------------------
 log() { printf '==> %s\n' "$*"; }
 
+report_surviving_local_install() {
+    local local_home="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"
+    local local_bin_dir="${CUA_DRIVER_LOCAL_INSTALL_DIR:-$HOME/.local/bin}"
+    local local_cli="$local_bin_dir/cua-driver-local"
+    local local_marker="$local_home/packages/current/cua-driver-local"
+    local path_cli=""
+    local survivor=""
+
+    path_cli="$(command -v cua-driver-local 2>/dev/null || true)"
+    if [[ -e "$local_cli" || -L "$local_cli" ]]; then
+        survivor="$local_cli"
+    elif [[ -e "$local_marker" || -L "$local_marker" ]]; then
+        survivor="$local_marker"
+    elif [[ -n "$path_cli" ]]; then
+        survivor="$path_cli"
+    elif [[ "$OS" == "Darwin" && -x "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local" ]]; then
+        survivor="/Applications/CuaDriverLocal.app"
+    else
+        return 0
+    fi
+
+    cat <<LOCALUNMSG
+
+Note: a separate source-built cua-driver-local installation remains at $survivor.
+The cua-driver uninstaller intentionally leaves this local product untouched.
+To remove it, run from your Cua checkout:
+
+  ./libs/cua-driver/scripts/uninstall-local.sh
+LOCALUNMSG
+}
+
 purge_macos_history() {
     local app_bundle="$1"
     local helper="$2"
@@ -694,6 +725,7 @@ To delete them too, re-run with --purge:
 TELEMETRYUNMSG
         fi
     fi
+    report_surviving_local_install
     exit 0
 fi
 

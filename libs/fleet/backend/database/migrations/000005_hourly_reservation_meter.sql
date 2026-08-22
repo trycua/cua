@@ -3,9 +3,9 @@ CREATE ROLE cyclops_meter_writer LOGIN NOINHERIT NOCREATEROLE NOSUPERUSER NOCREA
 GRANT billing_meter_owner TO CURRENT_USER WITH INHERIT FALSE, SET TRUE;
 
 CREATE SCHEMA billing_meter AUTHORIZATION billing_meter_owner;
+SET LOCAL ROLE billing_meter_owner;
 REVOKE CREATE ON SCHEMA billing_meter FROM PUBLIC;
 
-SET LOCAL ROLE billing_meter_owner;
 CREATE TABLE billing_meter.reservation_hour_collection (
     collection_run_id uuid PRIMARY KEY,
     logical_key text NOT NULL,

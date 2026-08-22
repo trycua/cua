@@ -417,17 +417,17 @@ func Run(ctx context.Context, config Config) (runErr error) {
 
 	roleEvents, membershipEvents, err := reconcileStaticRoleContracts(ctx, transaction)
 	if err != nil {
-		return err
+		return fmt.Errorf("reconcile static role contracts: %w", err)
 	}
 	if err := reconcileReportingBoundary(ctx, transaction); err != nil {
-		return err
+		return fmt.Errorf("reconcile reporting boundary: %w", err)
 	}
 	if err := validateNoPublicSecurityDefiner(ctx, transaction); err != nil {
-		return err
+		return fmt.Errorf("validate security definer boundary: %w", err)
 	}
 	credentialEvents, err := reconcilePasswords(ctx, transaction, credentials)
 	if err != nil {
-		return err
+		return fmt.Errorf("reconcile database credentials: %w", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return fmt.Errorf("commit database migrations: %w", err)

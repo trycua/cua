@@ -101,6 +101,7 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	bootstrapGrantor := currentRole(t, ctx, maintenanceURL)
 	assertImplicitCreatorAdminMembership(t, ctx, migrationURL, "k8s_state_owner", bootstrapGrantor)
 	assertImplicitCreatorAdminMembership(t, ctx, migrationURL, "k8s_reporting_owner", bootstrapGrantor)
+	assertImplicitCreatorAdminMembership(t, ctx, migrationURL, "billing_meter_owner", bootstrapGrantor)
 	assertNoQueryBroker(t, ctx, migrationURL)
 	assertOwnershipAndPublicACLs(t, ctx, inspectionURL, currentRole(t, ctx, migrationURL))
 	assertRLSContract(t, ctx, inspectionURL)
@@ -133,14 +134,14 @@ func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
 	upgrade := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if upgrade.Current != 1 || upgrade.Target != 4 || upgrade.Pending != 3 || upgrade.Applied != 3 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+	if upgrade.Current != 1 || upgrade.Target != 5 || upgrade.Pending != 4 || upgrade.Applied != 4 || upgrade.Skipped != 1 || upgrade.Result != "success" {
 		t.Fatalf("version-one upgrade summary = %+v", upgrade)
 	}
 
 	noOp := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if noOp.Current != 4 || noOp.Target != 4 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 4 || noOp.Result != "success" {
+	if noOp.Current != 5 || noOp.Target != 5 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 5 || noOp.Result != "success" {
 		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
 	}
 }
@@ -1536,8 +1537,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 4 {
-		t.Fatalf("migration ledger row count = %d, want 4", len(ledger))
+	if len(ledger) != 5 {
+		t.Fatalf("migration ledger row count = %d, want 5", len(ledger))
 	}
 	for index, want := range []struct {
 		version  int64
@@ -1547,6 +1548,7 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 		{2, "000002_usage_sandbox_events.sql"},
 		{3, "000003_usage_claimed_sandbox_pool.sql"},
 		{4, "000004_filter_invalid_usage_sandbox_events.sql"},
+		{5, "000005_hourly_reservation_meter.sql"},
 	} {
 		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
 			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
@@ -1608,7 +1610,7 @@ func assertStaticCreatorAdminMemberships(t *testing.T, ctx context.Context, migr
 			t.Fatalf("iterate static creator memberships for %s: %v", role, err)
 		}
 		rows.Close()
-		allowOwnerGrant := role == "k8s_state_owner" || role == "k8s_reporting_owner"
+		allowOwnerGrant := role == "k8s_state_owner" || role == "k8s_reporting_owner" || role == "billing_meter_owner"
 		if !staticCreatorAdminMembershipsAreExact(migrationOwner, grants, allowOwnerGrant, nil) {
 			t.Fatalf("static creator memberships for %s = %+v", role, grants)
 		}
@@ -1878,7 +1880,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 4 {
+		if err != nil || count != 5 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)

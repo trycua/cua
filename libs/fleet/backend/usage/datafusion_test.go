@@ -91,7 +91,7 @@ func TestDataFusionAllocationClientQueriesBoundedParquetAndMapsSemantics(t *test
 	if allocation.Minutes != 60 || allocation.CPUUsageAverage != 2 || allocation.CPURequestAverage != 4 || allocation.RAMUsageAverageBytes != 3*gibibyte || allocation.RAMRequestAverageBytes != 6*gibibyte {
 		t.Fatalf("allocation = %#v", allocation)
 	}
-	if payload.Dataset != "allocation" || payload.Cluster != "kopf-k3s" || payload.Environment != "production" || payload.OutputFormat != "csv" {
+	if payload.Dataset != "allocation" || payload.Cluster != "kopf-k3s" || payload.Environment != "production" || payload.SchemaVersion != "v2" || payload.OutputFormat != "csv" {
 		t.Fatalf("payload = %#v", payload)
 	}
 	for _, fragment := range []string{"namespace IN ('ns-a','ns-b')", "LIMIT 100001", "cpu_usage_core_hours", "cpu_request_core_hours", "ram_usage_byte_hours", "ram_request_byte_hours"} {

@@ -59,14 +59,15 @@ type dataFusionAllocationClient struct {
 }
 
 type dataFusionWebhookPayload struct {
-	Dataset      string                `json:"dataset"`
-	Cluster      string                `json:"cluster"`
-	Environment  string                `json:"environment"`
-	Window       dataFusionQueryWindow `json:"window"`
-	Query        string                `json:"query"`
-	OutputURL    string                `json:"output_url"`
-	OutputFormat string                `json:"output_format"`
-	StatusURL    string                `json:"status_url"`
+	Dataset       string                `json:"dataset"`
+	Cluster       string                `json:"cluster"`
+	Environment   string                `json:"environment"`
+	SchemaVersion string                `json:"schema_version"`
+	Window        dataFusionQueryWindow `json:"window"`
+	Query         string                `json:"query"`
+	OutputURL     string                `json:"output_url"`
+	OutputFormat  string                `json:"output_format"`
+	StatusURL     string                `json:"status_url"`
 }
 
 type dataFusionQueryWindow struct {
@@ -171,14 +172,15 @@ func (client *dataFusionAllocationClient) Allocations(ctx context.Context, start
 		return nil, time.Time{}, false, newSanitizedError("prepare allocation query status", err)
 	}
 	payload, err := json.Marshal(dataFusionWebhookPayload{
-		Dataset:      "allocation",
-		Cluster:      client.cluster,
-		Environment:  client.environment,
-		Window:       dataFusionQueryWindow{Start: start, End: end},
-		Query:        query,
-		OutputURL:    resultURL,
-		OutputFormat: "csv",
-		StatusURL:    statusURL,
+		Dataset:       "allocation",
+		Cluster:       client.cluster,
+		Environment:   client.environment,
+		SchemaVersion: "v2",
+		Window:        dataFusionQueryWindow{Start: start, End: end},
+		Query:         query,
+		OutputURL:     resultURL,
+		OutputFormat:  "csv",
+		StatusURL:     statusURL,
 	})
 	if err != nil {
 		return nil, time.Time{}, false, newSanitizedError("encode allocation query request", err)

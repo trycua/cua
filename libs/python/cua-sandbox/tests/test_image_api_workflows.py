@@ -49,7 +49,7 @@ def test_image_api_cd_binds_manual_publication_to_the_release_tag_commit() -> No
     version = next(step for step in steps if step["name"] == "Determine version")["run"]
 
     assert checkout.get("with", {}).get("fetch-depth") == 0
-    assert 'VERSION="${{ inputs.version }}"' in version
+    assert 'VERSION="${MANUAL_VERSION}"' in version
     assert 'VERSION="${GITHUB_REF_NAME#image-api-v}"' in version
     assert '[[ ! "${VERSION}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in version
     assert 'RELEASE_TAG="image-api-v${VERSION}"' in version
@@ -71,7 +71,7 @@ def test_image_api_cd_authenticates_and_rejects_existing_artifacts_before_push()
     assert '--username "${{ github.actor }}"' in authenticate
     assert "--password-stdin" in authenticate
     assert 'ARTIFACT_REFERENCE="${ARTIFACT_DESTINATION#oci://}"' in publish
-    assert 'if docker manifest inspect "${ARTIFACT_REFERENCE}" >/dev/null 2>&1; then' in publish
+    assert 'docker manifest inspect "${ARTIFACT_REFERENCE}"' in publish
     assert 'echo "Image API artifact already exists: ${ARTIFACT_DESTINATION}" >&2' in publish
     assert publish.index("docker manifest inspect") < publish.index("flux push artifact")
 
@@ -103,3 +103,40 @@ def test_image_api_cd_uses_an_exact_immutable_artifact_destination_and_metadata(
     assert "--path=clusters/base/cua-images" in tokens
     assert "--source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" in tokens
     assert "--revision=${RELEASE_TAG}@sha1:${COMMIT}" in tokens
+
+
+def test_image_api_cd_serializes_publication_by_version_across_triggers() -> None:
+    workflow = yaml.safe_load(CD_WORKFLOW.read_text())
+
+    assert workflow.get("concurrency") == {
+        "group": "image-api-${{ github.event_name == 'workflow_dispatch' && format('image-api-v{0}', inputs.version) || github.ref_name }}",
+        "cancel-in-progress": False,
+    }
+
+
+def test_image_api_cd_fails_closed_unless_the_manifest_is_confirmed_missing() -> None:
+    workflow = yaml.safe_load(CD_WORKFLOW.read_text())
+    publish = next(
+        step
+        for step in workflow["jobs"]["publish"]["steps"]
+        if step["name"] == "Publish Image API artifact"
+    )["run"]
+
+    assert 'MANIFEST_OUTPUT="$(docker manifest inspect "${ARTIFACT_REFERENCE}" 2>&1)"' in publish
+    assert "MANIFEST_STATUS=$?" in publish
+    assert 'if [[ "${MANIFEST_STATUS}" -eq 0 ]]; then' in publish
+    assert "grep -Eiq 'manifest unknown|no such manifest'" in publish
+    assert (
+        'echo "could not verify Image API artifact absence: ${ARTIFACT_DESTINATION}" >&2' in publish
+    )
+    assert publish.index("MANIFEST_STATUS=$?") < publish.index("flux push artifact")
+
+
+def test_image_api_cd_passes_manual_version_through_the_environment() -> None:
+    workflow = yaml.safe_load(CD_WORKFLOW.read_text())
+    publish = workflow["jobs"]["publish"]
+    version = next(step for step in publish["steps"] if step["name"] == "Determine version")["run"]
+
+    assert publish.get("env", {}).get("MANUAL_VERSION") == "${{ inputs.version }}"
+    assert 'VERSION="${MANUAL_VERSION}"' in version
+    assert "${{ inputs.version }}" not in version

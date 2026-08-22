@@ -11,6 +11,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: "image-api-${{ github.event_name == 'workflow_dispatch' && format('image-api-v{0}', inputs.version) || github.ref_name }}"
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
@@ -19,6 +23,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      MANUAL_VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            VERSION="${{ inputs.version }}"
+            VERSION="${MANUAL_VERSION}"
           else
             VERSION="${GITHUB_REF_NAME#image-api-v}"
           fi
@@ -87,8 +93,17 @@ jobs:
           set -euo pipefail
           ARTIFACT_DESTINATION="oci://ghcr.io/trycua/cua-image-api:v${VERSION}"
           ARTIFACT_REFERENCE="${ARTIFACT_DESTINATION#oci://}"
-          if docker manifest inspect "${ARTIFACT_REFERENCE}" >/dev/null 2>&1; then
+          set +e
+          MANIFEST_OUTPUT="$(docker manifest inspect "${ARTIFACT_REFERENCE}" 2>&1)"
+          MANIFEST_STATUS=$?
+          set -e
+          if [[ "${MANIFEST_STATUS}" -eq 0 ]]; then
             echo "Image API artifact already exists: ${ARTIFACT_DESTINATION}" >&2
+            exit 1
+          fi
+          if ! grep -Eiq 'manifest unknown|no such manifest' <<<"${MANIFEST_OUTPUT}"; then
+            echo "could not verify Image API artifact absence: ${ARTIFACT_DESTINATION}" >&2
+            printf '%s\n' "${MANIFEST_OUTPUT}" >&2
             exit 1
           fi
           flux push artifact "${ARTIFACT_DESTINATION}" \

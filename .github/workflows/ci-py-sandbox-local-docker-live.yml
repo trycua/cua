@@ -1,6 +1,8 @@
 name: "CI: cua-sandbox local Linux Docker live (amd64)"
 
 on:
+  push:
+    branches: [ci/sandbox-local-docker-live-amd64]
   workflow_dispatch:
     inputs:
       image:

@@ -33,7 +33,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const visualPreview = isLocalVisualPreview()
   const [value, setValue] = useState<Omit<FeatureFlagContextValue, "refresh">>({
     ...(visualPreview
-      ? { ...DEFAULT_FLAGS, billing: true, chat: true }
+      ? { ...DEFAULT_FLAGS, billing: true, chat: true, usage: true }
       : DEFAULT_FLAGS),
     resolved: visualPreview,
   })

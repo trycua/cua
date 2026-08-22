@@ -7,11 +7,13 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"cyclops-cs-backend/identity"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -19,10 +21,30 @@ var (
 	dns1123Label    = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`)
 )
 
+const (
+	defaultUsageCacheTTL = 2 * time.Minute
+	maxUsageCacheEntries = 256
+)
+
 type provider struct {
 	events      EventStore
 	allocations AllocationClient
 	clock       func() time.Time
+	cacheTTL    time.Duration
+	cacheMu     sync.Mutex
+	cache       map[usageCacheKey]usageCacheEntry
+	loads       singleflight.Group
+}
+
+type usageCacheKey struct {
+	subject   string
+	timeframe Timeframe
+	cutoff    time.Time
+}
+
+type usageCacheEntry struct {
+	data      usageData
+	expiresAt time.Time
 }
 
 type liveSegment struct {
@@ -39,7 +61,10 @@ func NewProvider(events EventStore, allocations AllocationClient, clock func() t
 	if clock == nil {
 		clock = time.Now
 	}
-	return &provider{events: events, allocations: allocations, clock: clock}
+	return &provider{
+		events: events, allocations: allocations, clock: clock,
+		cacheTTL: defaultUsageCacheTTL, cache: make(map[usageCacheKey]usageCacheEntry),
+	}
 }
 
 func (p *provider) Overview(ctx context.Context, query Query) (OverviewResponse, error) {
@@ -47,32 +72,40 @@ func (p *provider) Overview(ctx context.Context, query Query) (OverviewResponse,
 	if err != nil {
 		return OverviewResponse{}, err
 	}
+	return buildOverview(data), nil
+}
+
+func buildOverview(data usageData) OverviewResponse {
 	response := OverviewResponse{DataAsOf: data.asOf, Partial: data.partial, Pools: make([]PoolSummary, 0)}
 	for _, pool := range data.pools {
 		response.Pools = append(response.Pools, PoolSummary{ID: pool.id, Name: pool.name, CPU: MetricTotals{Consumed: pool.cpuConsumed, Provisioned: pool.cpuProvisioned}, Memory: MetricTotals{Consumed: pool.memoryConsumed, Provisioned: pool.memoryProvisioned}, CostUSD: pool.costUSD})
 	}
-	return response, nil
+	return response
 }
 
 func (p *provider) PoolDetail(ctx context.Context, query PoolQuery) (PoolDetailResponse, error) {
-	namespace, poolName, ok := parsePoolID(query.PoolID)
-	if !ok {
-		return PoolDetailResponse{}, fmt.Errorf("invalid pool ID")
-	}
 	data, err := p.load(ctx, query.Query)
 	if err != nil {
 		return PoolDetailResponse{}, err
 	}
-	step, err := intervalDuration(query.Interval)
+	return buildPoolDetail(ctx, data, query.PoolID, query.Interval)
+}
+
+func buildPoolDetail(ctx context.Context, data usageData, poolID string, interval Interval) (PoolDetailResponse, error) {
+	namespace, poolName, ok := parsePoolID(poolID)
+	if !ok {
+		return PoolDetailResponse{}, fmt.Errorf("invalid pool ID")
+	}
+	step, err := intervalDuration(interval)
 	if err != nil {
 		return PoolDetailResponse{}, err
 	}
-	pool, ok := findPool(data.pools, query.PoolID)
+	pool, ok := findPool(data.pools, poolID)
 	if !ok {
-		return PoolDetailResponse{}, fmt.Errorf("%w: %s", ErrPoolNotFound, query.PoolID)
+		return PoolDetailResponse{}, fmt.Errorf("%w: %s", ErrPoolNotFound, poolID)
 	}
 	_, bucketSpan := usageTracer().Start(ctx, "usage.buckets.build", trace.WithAttributes(
-		attribute.String("usage.interval", string(query.Interval)),
+		attribute.String("usage.interval", string(interval)),
 	))
 	response := PoolDetailResponse{DataAsOf: data.asOf, Partial: data.partial, Pool: PoolIdentity{ID: pool.id, Name: pool.name}, Buckets: make([]Bucket, 0)}
 	for start := data.start; start.Before(data.end); start = start.Add(step) {
@@ -111,6 +144,8 @@ type bucketKey struct {
 }
 
 func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
+	now := p.clock().UTC()
+	key := usageCacheKey{subject: query.Subject, timeframe: query.Timeframe, cutoff: now.Truncate(time.Hour)}
 	ctx, span := usageTracer().Start(ctx, "usage.load", trace.WithAttributes(
 		attribute.String("usage.timeframe", string(query.Timeframe)),
 		attribute.Bool("usage.admin", query.Admin),
@@ -118,12 +153,46 @@ func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
 	))
 	defer span.End()
 
+	if cached, ok := p.cached(key, now); ok {
+		span.SetAttributes(attribute.Bool("usage.cache.hit", true))
+		recordUsageCache(ctx, query.Timeframe, "hit")
+		return cached, nil
+	}
+	span.SetAttributes(attribute.Bool("usage.cache.hit", false))
+
+	loaded, err, shared := p.loads.Do(cacheFlightKey(key), func() (any, error) {
+		if cached, ok := p.cached(key, p.clock().UTC()); ok {
+			return cached, nil
+		}
+		data, loadErr := p.loadUncached(ctx, query, now)
+		if loadErr == nil {
+			p.storeCached(key, data, p.clock().UTC())
+		}
+		return data, loadErr
+	})
+	cacheOutcome := "miss"
+	if shared {
+		cacheOutcome = "shared"
+	}
+	recordUsageCache(ctx, query.Timeframe, cacheOutcome)
+	if err != nil {
+		return usageData{}, err
+	}
+	return loaded.(usageData), nil
+}
+
+func (p *provider) loadUncached(ctx context.Context, query Query, now time.Time) (data usageData, err error) {
+	ctx, span := usageTracer().Start(ctx, "usage.load.uncached")
+	defer span.End()
+	started := time.Now()
+	defer func() { recordUsageLoad(ctx, query.Timeframe, time.Since(started), err) }()
+
 	if p.events == nil || p.allocations == nil {
-		err := fmt.Errorf("usage provider is not configured")
+		err = fmt.Errorf("usage provider is not configured")
 		markUsageSpanError(span, "usage provider unavailable")
 		return usageData{}, err
 	}
-	start, end, step, err := usageWindow(query.Timeframe, p.clock())
+	start, end, step, err := usageWindow(query.Timeframe, now)
 	if err != nil {
 		markUsageSpanError(span, "invalid usage window")
 		return usageData{}, err
@@ -152,7 +221,7 @@ func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
 	)
 	segmentsSpan.End()
 
-	data := usageData{start: start, end: end, asOf: end, partial: partial, pools: make([]usageTotals, 0), buckets: make(map[bucketKey]usageTotals)}
+	data = usageData{start: start, end: end, asOf: end, partial: partial, pools: make([]usageTotals, 0), buckets: make(map[bucketKey]usageTotals)}
 	if len(segments) == 0 || len(namespaces) == 0 {
 		span.SetAttributes(
 			attribute.Int("usage.pool_count", 0),
@@ -219,6 +288,52 @@ func (p *provider) load(ctx context.Context, query Query) (usageData, error) {
 		attribute.Bool("usage.partial", data.partial),
 	)
 	return data, nil
+}
+
+func cacheFlightKey(key usageCacheKey) string {
+	return key.subject + "\x00" + string(key.timeframe) + "\x00" + key.cutoff.Format(time.RFC3339)
+}
+
+func (p *provider) cached(key usageCacheKey, now time.Time) (usageData, bool) {
+	if p.cacheTTL <= 0 {
+		return usageData{}, false
+	}
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	entry, ok := p.cache[key]
+	if !ok {
+		return usageData{}, false
+	}
+	if !now.Before(entry.expiresAt) {
+		delete(p.cache, key)
+		return usageData{}, false
+	}
+	return entry.data, true
+}
+
+func (p *provider) storeCached(key usageCacheKey, data usageData, now time.Time) {
+	if p.cacheTTL <= 0 {
+		return
+	}
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	if len(p.cache) >= maxUsageCacheEntries {
+		var oldestKey usageCacheKey
+		var oldestExpiry time.Time
+		for candidate, entry := range p.cache {
+			if !now.Before(entry.expiresAt) {
+				delete(p.cache, candidate)
+				continue
+			}
+			if oldestExpiry.IsZero() || entry.expiresAt.Before(oldestExpiry) {
+				oldestKey, oldestExpiry = candidate, entry.expiresAt
+			}
+		}
+		if len(p.cache) >= maxUsageCacheEntries && !oldestExpiry.IsZero() {
+			delete(p.cache, oldestKey)
+		}
+	}
+	p.cache[key] = usageCacheEntry{data: data, expiresAt: now.Add(p.cacheTTL)}
 }
 
 func usageWindow(timeframe Timeframe, now time.Time) (time.Time, time.Time, time.Duration, error) {

@@ -38,6 +38,11 @@ export interface UsagePoolDetailResponse {
   buckets: UsageBucket[]
 }
 
+export interface UsageBrowserTimings {
+  initial_load_ms: number
+  dashboard_ready_ms: number
+}
+
 const previewPools: UsagePoolSummary[] = [
   {
     id: "preview:browser-agent-fleet",
@@ -159,6 +164,23 @@ function params(timeframe: UsageTimeframe, subject?: string) {
   return query
 }
 
+async function recordBrowserTimings(
+  timeframe: UsageTimeframe,
+  timings: UsageBrowserTimings,
+): Promise<void> {
+  if (isLocalVisualPreview()) return
+  const token = await getToken()
+  await fetch(`/api/usage/browser-timings?${params(timeframe)}`, {
+    method: "POST",
+    headers: {
+      Authorization: token ? `Bearer ${token}` : "",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(timings),
+    keepalive: true,
+  })
+}
+
 export const usageApi = {
   overview: (timeframe: UsageTimeframe, subject?: string) =>
     isLocalVisualPreview()
@@ -173,4 +195,5 @@ export const usageApi = {
     query.set("pool", poolId)
     return request<UsagePoolDetailResponse>("/api/usage/pool", query)
   },
+  recordBrowserTimings,
 }

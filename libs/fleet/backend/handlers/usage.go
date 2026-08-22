@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -32,6 +34,18 @@ const (
 	UsageIntervalHour = usage.IntervalHour
 	UsageIntervalDay  = usage.IntervalDay
 )
+
+type usageBrowserTimings struct {
+	InitialLoadMS    float64 `json:"initial_load_ms"`
+	DashboardReadyMS float64 `json:"dashboard_ready_ms"`
+}
+
+func (timings usageBrowserTimings) valid() bool {
+	const maxDurationMS = 120_000
+	return timings.InitialLoadMS >= 0 && timings.InitialLoadMS <= maxDurationMS &&
+		timings.DashboardReadyMS >= 0 && timings.DashboardReadyMS <= maxDurationMS &&
+		timings.DashboardReadyMS >= timings.InitialLoadMS
+}
 
 var usagePoolID = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$`)
 
@@ -154,4 +168,26 @@ func (h Handlers) GetUsagePoolDetail(w http.ResponseWriter, r *http.Request) {
 
 func markUsageHandlerError(span trace.Span, description string) {
 	span.SetStatus(codes.Error, description)
+}
+
+func (h Handlers) RecordUsageBrowserTimings(w http.ResponseWriter, r *http.Request) {
+	ctx, span := handlerTracer().Start(r.Context(), "usage.browser_timings")
+	defer span.End()
+	r = r.WithContext(ctx)
+	w.Header().Set("Cache-Control", "private, no-store")
+	query, _, ok := h.authorizeUsage(w, r)
+	if !ok {
+		return
+	}
+
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 4<<10))
+	decoder.DisallowUnknownFields()
+	var timings usageBrowserTimings
+	if err := decoder.Decode(&timings); err != nil || !timings.valid() {
+		writeErr(w, http.StatusBadRequest, "invalid usage browser timings")
+		return
+	}
+	recordUsageBrowserTimings(ctx, query.Timeframe, timings)
+	span.SetAttributes(attribute.String("usage.timeframe", string(query.Timeframe)))
+	w.WriteHeader(http.StatusNoContent)
 }

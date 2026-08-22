@@ -1,5 +1,5 @@
 import Select from "@cloudscape-design/components/select"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CuaButton } from "../components/CuaButton"
 import { PageEmpty, PageError } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
@@ -42,12 +42,27 @@ export function BillingUsagePage() {
   const [overview, setOverview] = useState<UsageOverviewResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const loadStarted = useRef(0)
 
   const load = useCallback(async () => {
+    loadStarted.current = performance.now()
     setLoading(true)
     setError(false)
     try {
-      setOverview(await usageApi.overview(timeframe))
+      const value = await usageApi.overview(timeframe)
+      const initialLoadMS = performance.now() - loadStarted.current
+      setOverview(value)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          performance.mark("usage-dashboard-ready")
+          void usageApi
+            .recordBrowserTimings(timeframe, {
+              initial_load_ms: initialLoadMS,
+              dashboard_ready_ms: performance.now() - loadStarted.current,
+            })
+            .catch(() => undefined)
+        })
+      })
     } catch {
       setOverview(null)
       setError(true)

@@ -276,10 +276,11 @@ var surfacePolicies = map[string]surfacePolicy{
 // memoized per surface: the three billing routes share one module, one tree,
 // and one compiled plan.
 var routeSurfaces = map[string]string{
-	"/api/config":         "config",
-	"/api/state/query":    "state-query",
-	"/api/usage/overview": "usage",
-	"/api/usage/pool":     "usage",
+	"/api/config":                "config",
+	"/api/state/query":           "state-query",
+	"/api/usage/overview":        "usage",
+	"/api/usage/pool":            "usage",
+	"/api/usage/browser-timings": "usage",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",

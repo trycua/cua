@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel"
@@ -78,6 +79,29 @@ func TestUsagePoolValidationAndInterval(t *testing.T) {
 	uh(p, true, false).GetUsagePoolDetail(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=../../x", nil), &auth.User{ID: "user"}))
 	if w.Code != 400 {
 		t.Fatalf("status=%d", w.Code)
+	}
+}
+
+func TestRecordUsageBrowserTimingsValidatesPayload(t *testing.T) {
+	handler := uh(&fakeUsageProvider{}, true, false)
+	request := withUser(
+		httptest.NewRequest(http.MethodPost, "/api/usage/browser-timings?timeframe=24h", strings.NewReader(`{"initial_load_ms":120,"dashboard_ready_ms":140}`)),
+		&auth.User{ID: "user"},
+	)
+	response := httptest.NewRecorder()
+	handler.RecordUsageBrowserTimings(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+
+	request = withUser(
+		httptest.NewRequest(http.MethodPost, "/api/usage/browser-timings?timeframe=24h", strings.NewReader(`{"initial_load_ms":120,"dashboard_ready_ms":10}`)),
+		&auth.User{ID: "user"},
+	)
+	response = httptest.NewRecorder()
+	handler.RecordUsageBrowserTimings(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
 }
 

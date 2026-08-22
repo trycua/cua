@@ -152,6 +152,7 @@ func setupRouter(c handlers.Handlers) http.Handler {
 		withAuthenticatedMiddlewares("/api/state/query", c.QueryState))
 	r.Handle("GET /api/usage/overview", withAuthenticatedMiddlewares("/api/usage/overview", c.GetUsageOverview))
 	r.Handle("GET /api/usage/pool", withAuthenticatedMiddlewares("/api/usage/pool", c.GetUsagePoolDetail))
+	r.Handle("POST /api/usage/browser-timings", withAuthenticatedMiddlewares("/api/usage/browser-timings", c.RecordUsageBrowserTimings))
 	r.Handle("GET /api/admin/feature-flags", withAuthenticatedMiddlewares("/api/admin/feature-flags", c.ListFeatureFlags))
 	r.Handle("POST /api/admin/feature-flags", withAuthenticatedMiddlewares("/api/admin/feature-flags", c.CreateFeatureFlag))
 	r.Handle("PUT /api/admin/feature-flags/{key}", withAuthenticatedMiddlewares("/api/admin/feature-flags/{key}", c.UpdateFeatureFlag))
@@ -261,7 +262,7 @@ func initializeTelemetry(ctx context.Context, cfg config.TelemetryConfiguration)
 		ResourceAttrs:    cfg.ResourceAttrs,
 	})
 	if err != nil {
-		slog.Warn("otel: init failed; tracing disabled", "err", err)
+		slog.Warn("otel: init failed; telemetry disabled", "err", err)
 		return func(context.Context) error { return nil }, err
 	}
 	return shutdown, nil

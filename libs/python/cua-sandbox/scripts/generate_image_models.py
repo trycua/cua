@@ -122,6 +122,37 @@ def _render_models(schema_path: Path, output_path: Path) -> None:
     )
 
 
+def _schema_validation_wrapper(schema_content: str) -> str:
+    schema_literal = json.dumps(schema_content)
+    return f"""
+import json as _json
+from typing import Any as _Any
+
+from jsonschema import Draft202012Validator as _Draft202012Validator
+from pydantic import model_validator as _model_validator
+
+_GENERATED_IMAGE_SCHEMA = _json.loads({schema_literal})
+_GENERATED_IMAGE_SCHEMA_VALIDATOR = _Draft202012Validator(_GENERATED_IMAGE_SCHEMA)
+GeneratedImageResource = ImageResource
+
+
+class ImageResource(GeneratedImageResource):
+    @_model_validator(mode="before")
+    @classmethod
+    def _validate_generated_schema(cls, value: _Any) -> _Any:
+        errors = sorted(
+            _GENERATED_IMAGE_SCHEMA_VALIDATOR.iter_errors(value),
+            key=lambda error: (error.json_path, error.message),
+        )
+        if errors:
+            messages = "; ".join(
+                f"{{error.json_path}}: {{error.message}}" for error in errors
+            )
+            raise ValueError(messages)
+        return value
+"""
+
+
 def _source_header() -> str:
     digest = hashlib.sha256(CRD_PATH.read_bytes()).hexdigest()
     return (
@@ -153,6 +184,9 @@ def generate(*, check: bool) -> None:
         model_content = _source_header() + temporary_model.read_text()
         if "class Source(BaseModel):" not in model_content:
             raise ValueError("expected datamodel-code-generator to emit Source")
+        if "class ImageResource(BaseModel):" not in model_content:
+            raise ValueError("expected datamodel-code-generator to emit ImageResource")
+        model_content += _schema_validation_wrapper(schema_content)
         model_content += "\n# Stable public name derived from the CRD title.\nImageFileReference = Source\n"
     _write_or_check(SCHEMA_PATH, schema_content, check=check)
     _write_or_check(MODEL_PATH, model_content, check=check)

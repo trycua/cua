@@ -60,6 +60,7 @@ func (h Handlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 		slog.WarnContext(ctx, "chat access eval failed; defaulting off", "err", err)
 		chatEnabled = false
 	}
+	chatEnabled = chatEnabled && h.Conversations != nil && h.Model != nil
 
 	writeJSON(w, http.StatusOK, ConfigResponse{Admin: isAdmin, Billing: billingEnabled, Chat: chatEnabled, Usage: usageEnabled})
 }

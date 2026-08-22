@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"cyclops-cs-backend/auth"
+	"cyclops-cs-backend/chat"
 	"github.com/trycua/cloud/pkg/featureflags"
 )
 
@@ -15,12 +16,16 @@ func TestGetConfigReturnsEffectiveChatAccess(t *testing.T) {
 	auth.LoadOpa()
 	user := &auth.User{ID: "user-1", AZP: "cyclops-cs-spa"}
 	tests := []struct {
-		name    string
-		allowed bool
-		want    bool
+		name              string
+		allowed           bool
+		withConversations bool
+		withModel         bool
+		want              bool
 	}{
-		{name: "globally and personally allowed", allowed: true, want: true},
-		{name: "globally or personally denied", allowed: false, want: false},
+		{name: "available and allowed", allowed: true, withConversations: true, withModel: true, want: true},
+		{name: "missing conversation store", allowed: true, withModel: true, want: false},
+		{name: "missing model", allowed: true, withConversations: true, want: false},
+		{name: "not allowed", allowed: false, withConversations: true, withModel: true, want: false},
 	}
 
 	for _, test := range tests {
@@ -29,6 +34,12 @@ func TestGetConfigReturnsEffectiveChatAccess(t *testing.T) {
 				chatAccessEvaluator: func(context.Context, *auth.User) (bool, error) {
 					return test.allowed, nil
 				},
+			}
+			if test.withConversations {
+				h.Conversations = chat.NewMemoryConversationStore()
+			}
+			if test.withModel {
+				h.Model = &fakeModel{}
 			}
 			w := httptest.NewRecorder()
 			h.GetConfig(w, withUser(httptest.NewRequest(http.MethodGet, "/api/config", nil), user))

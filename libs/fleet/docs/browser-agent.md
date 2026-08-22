@@ -64,11 +64,12 @@ storage.
 - `LITELLM_MODEL` selects the model alias and defaults to `large`.
 - `LITELLM_API_KEY` is the backend-only LiteLLM virtual key.
 
-Production resolves both chat flags from AWS SSM through OpenFeature. The
-`SimpleEnvProvider` maps them to `CYCLOPS_CS_CHAT_ACCESS` and
-`CYCLOPS_CS_CHAT_SUBS` for development and previews. Set both
-`LITELLM_BASE_URL` and `LITELLM_API_KEY`, or leave both unset to run without a
-configured chat model.
+Production resolves both chat flags from AWS SSM through OpenFeature and uses
+the in-cluster LiteLLM service with a backend-only virtual key synced from AWS
+Secrets Manager. The `SimpleEnvProvider` maps the flags to
+`CYCLOPS_CS_CHAT_ACCESS` and `CYCLOPS_CS_CHAT_SUBS` for development and
+previews. Set both `LITELLM_BASE_URL` and `LITELLM_API_KEY`, or leave both unset
+to run without a configured chat model.
 
 ## API routes
 
@@ -90,7 +91,7 @@ not stranded.
 
 ## Preview environments
 
-Chat is enabled only in the preview base at
+Chat is also enabled in the preview base at
 `clusters/kopf-k3s/cyclops-cs-previews-base`. Each preview has a Flux
 `GitRepository` pinned to the PR head SHA, so manifest and secret-wiring changes
 are rendered from the same commit as the frontend/backend images. The backend
@@ -106,8 +107,8 @@ and revoke the credential if any enabled preview becomes untrusted.
 
 An `ExternalSecret` named `cyclops-cs-litellm` reads property `api_key` from
 AWS Secrets Manager path `kopf-k3s/cyclops-cs-browser-agent-litellm` and creates
-a namespace-local Secret with the same name. Production manifests are not
-changed by this preview configuration.
+a namespace-local Secret with the same name. Production syncs the same
+restricted browser-agent credential into its own namespace.
 
 The stored value must be a dedicated LiteLLM virtual key restricted to model
 alias `large`. Configure a strict spend budget and an expiry, or use a documented

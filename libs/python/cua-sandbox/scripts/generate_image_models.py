@@ -66,6 +66,17 @@ def _writable_metadata_schema() -> dict[str, Any]:
     }
 
 
+def _translate_kubernetes_extensions(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_translate_kubernetes_extensions(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    translated = {key: _translate_kubernetes_extensions(item) for key, item in value.items()}
+    if translated.get("x-kubernetes-list-type") == "set":
+        translated["uniqueItems"] = True
+    return translated
+
+
 def _strip_kubernetes_extensions(value: Any) -> Any:
     if isinstance(value, list):
         return [_strip_kubernetes_extensions(item) for item in value]
@@ -78,10 +89,29 @@ def _strip_kubernetes_extensions(value: Any) -> Any:
     }
 
 
+def _derive_strict_object_schemas(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_derive_strict_object_schemas(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    strict = {key: _derive_strict_object_schemas(item) for key, item in value.items()}
+    if (
+        strict.get("type") == "object"
+        and "properties" in strict
+        and not isinstance(strict.get("additionalProperties"), dict)
+    ):
+        strict["additionalProperties"] = False
+    return strict
+
+
 def build_schema() -> dict[str, Any]:
     crd = _load_crd()
     version = _select_version(crd)
-    schema = _strip_kubernetes_extensions(deepcopy(version["schema"]["openAPIV3Schema"]))
+    schema = _derive_strict_object_schemas(
+        _strip_kubernetes_extensions(
+            _translate_kubernetes_extensions(deepcopy(version["schema"]["openAPIV3Schema"]))
+        )
+    )
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     schema["$id"] = SCHEMA_ID
     schema["title"] = "ImageResource"

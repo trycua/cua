@@ -35,7 +35,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -55,6 +55,7 @@ jobs:
           pip install uv
           uv sync --project libs/python/cua-sandbox --group dev --extra dev
           go install sigs.k8s.io/kustomize/kustomize/v5@v5.8.1
+          go install sigs.k8s.io/kind@v0.26.0
 
       - name: Verify generated Image API artifacts
         run: |
@@ -67,6 +68,18 @@ jobs:
           kustomize build clusters/base/cua-images >/tmp/cua-image-crd.yaml
           grep -q '^kind: CustomResourceDefinition$' /tmp/cua-image-crd.yaml
           grep -q 'name: images.images.cua.ai' /tmp/cua-image-crd.yaml
+
+      - name: Validate CRD API-server admission
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          kind create cluster --name cua-image-api --wait 120s
+          kubectl apply --server-side --dry-run=server -f clusters/base/cua-images/crd.yaml
+
+      - name: Delete temporary Kind cluster
+        if: always()
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          kind delete cluster --name cua-image-api
 
       - name: Run focused tests
         run: |

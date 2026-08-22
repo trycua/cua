@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -19,6 +20,14 @@ def _version() -> dict:
     versions = _crd()["spec"]["versions"]
     assert len(versions) == 1
     return versions[0]
+
+
+def _schema_nodes(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [node for item in value for node in _schema_nodes(item)]
+    if not isinstance(value, dict):
+        return []
+    return [value, *[node for item in value.values() for node in _schema_nodes(item)]]
 
 
 def test_image_crd_identity_and_scope() -> None:
@@ -82,11 +91,27 @@ def test_image_crd_files_use_external_references() -> None:
     assert "path" not in file_item["properties"]["source"]["properties"]
 
 
+def test_image_crd_uses_only_kubernetes_valid_structural_keywords() -> None:
+    schema = _version()["schema"]["openAPIV3Schema"]
+    nodes = _schema_nodes(schema)
+
+    assert all(node.get("additionalProperties") is not False for node in nodes)
+    assert all(node.get("uniqueItems") is not True for node in nodes)
+    ports = schema["properties"]["spec"]["properties"]["recipe"]["properties"]["ports"]
+    assert ports["x-kubernetes-list-type"] == "set"
+
+
 def test_image_crd_layers_reject_fields_from_other_layer_shapes() -> None:
     layer = _version()["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]["recipe"][
         "properties"
     ]["layers"]["items"]
-    assert all(branch["additionalProperties"] is False for branch in layer["oneOf"])
+    exclusions = [
+        {field for alternative in branch["not"]["anyOf"] for field in alternative["required"]}
+        for branch in layer["oneOf"]
+    ]
+
+    assert all("additionalProperties" not in branch for branch in layer["oneOf"])
+    assert exclusions == [{"appId", "command"}, {"command", "packages"}, {"appId", "packages"}]
 
 
 def test_image_crd_has_controller_owned_status_contract() -> None:

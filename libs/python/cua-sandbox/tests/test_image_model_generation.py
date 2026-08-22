@@ -81,6 +81,18 @@ def test_generated_models_reject_non_uploaded_file_references(reference: str) ->
         )
 
 
+def test_generated_models_reject_unknown_file_reference_fields() -> None:
+    with pytest.raises(ValidationError):
+        ImageFileReference.model_validate(
+            {
+                "reference": "uploads/tenant-a/a",
+                "digest": "sha256:" + "a" * 64,
+                "sizeBytes": 123,
+                "path": "/tmp/secret.txt",
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "layer",
     [

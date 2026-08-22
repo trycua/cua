@@ -34,6 +34,19 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     assert "test_image_api_workflows.py" in commands
     assert "test_image.py" in commands
 
+    assert workflow["jobs"]["validate"]["timeout-minutes"] >= 15
+    admission = next(
+        step
+        for step in workflow["jobs"]["validate"]["steps"]
+        if step["name"] == "Validate CRD API-server admission"
+    )["run"]
+    assert "go install sigs.k8s.io/kind@v0.26.0" in commands
+    assert "kind create cluster --name cua-image-api" in admission
+    assert (
+        "kubectl apply --server-side --dry-run=server -f clusters/base/cua-images/crd.yaml"
+        in admission
+    )
+
 
 def test_image_api_cd_publishes_only_versioned_artifacts() -> None:
     workflow = yaml.safe_load(CD_WORKFLOW.read_text())

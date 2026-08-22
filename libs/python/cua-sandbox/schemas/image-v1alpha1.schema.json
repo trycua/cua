@@ -1,6 +1,7 @@
 {
   "$id": "https://cua.ai/schemas/images.cua.ai/v1alpha1/image.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
   "properties": {
     "apiVersion": {
       "const": "images.cua.ai/v1alpha1",
@@ -160,9 +161,21 @@
                 "additionalProperties": false,
                 "oneOf": [
                   {
-                    "additionalProperties": false,
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "appId"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "command"
+                          ]
+                        }
+                      ]
+                    },
                     "properties": {
-                      "packages": {},
                       "type": {
                         "enum": [
                           "apt_install",
@@ -172,14 +185,25 @@
                       }
                     },
                     "required": [
-                      "type",
                       "packages"
                     ]
                   },
                   {
-                    "additionalProperties": false,
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "packages"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "command"
+                          ]
+                        }
+                      ]
+                    },
                     "properties": {
-                      "appId": {},
                       "type": {
                         "enum": [
                           "app_install"
@@ -187,14 +211,25 @@
                       }
                     },
                     "required": [
-                      "type",
                       "appId"
                     ]
                   },
                   {
-                    "additionalProperties": false,
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "packages"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "appId"
+                          ]
+                        }
+                      ]
+                    },
                     "properties": {
-                      "command": {},
                       "type": {
                         "enum": [
                           "run"
@@ -202,7 +237,6 @@
                       }
                     },
                     "required": [
-                      "type",
                       "command"
                     ]
                   }

@@ -52,14 +52,12 @@ spec:
             spec:
               title: ImageSpec
               type: object
-              additionalProperties: false
               required:
                 - recipe
               properties:
                 recipe:
                   title: ImageRecipe
                   type: object
-                  additionalProperties: false
                   required:
                     - osType
                     - distro
@@ -89,7 +87,6 @@ spec:
                       items:
                         title: ImageLayer
                         type: object
-                        additionalProperties: false
                         required:
                           - type
                         properties:
@@ -118,35 +115,44 @@ spec:
                             minLength: 1
                             maxLength: 16384
                         oneOf:
-                          - additionalProperties: false
-                            properties:
+                          - properties:
                               type:
                                 enum:
                                   - apt_install
                                   - pip_install
                                   - uv_install
-                              packages: {}
                             required:
-                              - type
                               - packages
-                          - additionalProperties: false
-                            properties:
+                            not:
+                              anyOf:
+                                - required:
+                                    - appId
+                                - required:
+                                    - command
+                          - properties:
                               type:
                                 enum:
                                   - app_install
-                              appId: {}
                             required:
-                              - type
                               - appId
-                          - additionalProperties: false
-                            properties:
+                            not:
+                              anyOf:
+                                - required:
+                                    - packages
+                                - required:
+                                    - command
+                          - properties:
                               type:
                                 enum:
                                   - run
-                              command: {}
                             required:
-                              - type
                               - command
+                            not:
+                              anyOf:
+                                - required:
+                                    - packages
+                                - required:
+                                    - appId
                     env:
                       type: object
                       maxProperties: 128
@@ -156,7 +162,7 @@ spec:
                     ports:
                       type: array
                       maxItems: 32
-                      uniqueItems: true
+                      x-kubernetes-list-type: set
                       items:
                         type: integer
                         minimum: 1
@@ -167,7 +173,6 @@ spec:
                       items:
                         title: ImageFile
                         type: object
-                        additionalProperties: false
                         required:
                           - source
                           - destination
@@ -175,7 +180,6 @@ spec:
                           source:
                             title: ImageFileReference
                             type: object
-                            additionalProperties: false
                             required:
                               - reference
                               - digest
@@ -201,7 +205,6 @@ spec:
                 metadata:
                   title: ImageUserMetadata
                   type: object
-                  additionalProperties: false
                   properties:
                     tags:
                       type: object
@@ -212,7 +215,6 @@ spec:
                 build:
                   title: ImageBuildOptions
                   type: object
-                  additionalProperties: false
                   properties:
                     timeoutSeconds:
                       type: integer
@@ -226,7 +228,6 @@ spec:
             status:
               title: ImageStatus
               type: object
-              additionalProperties: false
               properties:
                 observedGeneration:
                   type: integer
@@ -254,12 +255,10 @@ spec:
                 artifacts:
                   title: ImageArtifacts
                   type: object
-                  additionalProperties: false
                   properties:
                     oci:
                       title: ImageOciArtifact
                       type: object
-                      additionalProperties: false
                       required:
                         - reference
                         - digest
@@ -274,7 +273,6 @@ spec:
                     volumeSnapshot:
                       title: ImageVolumeSnapshotArtifact
                       type: object
-                      additionalProperties: false
                       required:
                         - namespace
                         - name
@@ -290,7 +288,6 @@ spec:
                 logs:
                   title: ImageLogs
                   type: object
-                  additionalProperties: false
                   properties:
                     livePodName:
                       type: string
@@ -306,7 +303,6 @@ spec:
                   items:
                     title: ImageCondition
                     type: object
-                    additionalProperties: false
                     required:
                       - type
                       - status

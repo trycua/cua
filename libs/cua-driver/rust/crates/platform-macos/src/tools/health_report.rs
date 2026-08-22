@@ -110,13 +110,28 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_default();
 
-    let is_correct = bid.as_deref() == Some(CANONICAL_BUNDLE_ID);
+    if cua_driver_core::embedded_mode() {
+        let responsible_process_id = unsafe { libc::getppid() } as u32;
+        let observed_host_bundle_id =
+            crate::apps::bundle_id_for_pid(responsible_process_id as libc::pid_t);
+        let configured_host_bundle_id = std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV)
+            .ok()
+            .filter(|id| !id.trim().is_empty());
+        return check_embedded_bundle_identity(
+            observed_host_bundle_id,
+            configured_host_bundle_id,
+            responsible_process_id,
+            exe,
+        );
+    }
+
     let data = CheckData {
         bundle_identifier: bid.clone(),
         executable_path: if exe.is_empty() { None } else { Some(exe) },
+        identity_source: Some("current_process".to_owned()),
         ..Default::default()
     };
-    if is_correct {
+    if bid.as_deref() == Some(CANONICAL_BUNDLE_ID) {
         return CheckEntry::pass(
             NAME_BUNDLE_IDENTITY,
             format!("Bundle is {CANONICAL_BUNDLE_ID}."),
@@ -140,7 +155,55 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
             ),
         ),
     };
+
     CheckEntry::fail(NAME_BUNDLE_IDENTITY, message, hint).with_data(data)
+}
+fn check_embedded_bundle_identity(
+    observed_host_bundle_id: Option<String>,
+    configured_host_bundle_id: Option<String>,
+    responsible_process_id: u32,
+    executable_path: String,
+) -> CheckEntry {
+    let data = CheckData {
+        bundle_identifier: observed_host_bundle_id.clone(),
+        configured_bundle_identifier: configured_host_bundle_id.clone(),
+        executable_path: if executable_path.is_empty() {
+            None
+        } else {
+            Some(executable_path)
+        },
+        identity_source: Some("parent_application".to_owned()),
+        responsible_process_id: Some(responsible_process_id),
+        ..Default::default()
+    };
+
+    let Some(observed) = observed_host_bundle_id else {
+        return CheckEntry::fail(
+            NAME_BUNDLE_IDENTITY,
+            "Embedded mode is set, but the parent process is not an identifiable macOS application.",
+            "Spawn `cua-driver serve --embedded` directly from the signed host app process. Do not launch it through a shell, gateway, `open`, or NSWorkspace.",
+        )
+        .with_data(data);
+    };
+
+    if let Some(configured) = configured_host_bundle_id {
+        if configured != observed {
+            return CheckEntry::fail(
+                NAME_BUNDLE_IDENTITY,
+                format!(
+                    "Observed host bundle is {observed}, but the configured host bundle is {configured}."
+                ),
+                "Spawn the embedded daemon directly from the configured host application, or correct CUA_DRIVER_HOST_BUNDLE_ID.",
+            )
+            .with_data(data);
+        }
+    }
+
+    CheckEntry::pass(
+        NAME_BUNDLE_IDENTITY,
+        format!("Embedded daemon is directly hosted by {observed}."),
+    )
+    .with_data(data)
 }
 
 fn check_tcc_accessibility() -> CheckEntry {
@@ -282,6 +345,26 @@ mod tests {
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
 
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::permissions::test_env_lock()
+    }
+
+    fn swap_env(var: &str, value: Option<&str>) -> Option<std::ffi::OsString> {
+        let original = std::env::var_os(var);
+        match value {
+            Some(v) => std::env::set_var(var, v),
+            None => std::env::remove_var(var),
+        }
+        original
+    }
+
+    fn restore_env(var: &str, original: Option<std::ffi::OsString>) {
+        match original {
+            Some(value) => std::env::set_var(var, value),
+            None => std::env::remove_var(var),
+        }
+    }
+
     #[test]
     fn binary_version_always_passes() {
         let entry = check_binary_version();
@@ -316,6 +399,9 @@ mod tests {
 
     #[test]
     fn bundle_identity_in_test_host_fails_with_full_shape() {
+        let _guard = env_lock();
+        let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, None);
+
         // The Rust test binary runs outside CuaDriver.app, so its
         // bundle id is either absent or not com.trycua.driver. Either
         // way the documented fail-mode shape applies: message + hint
@@ -342,6 +428,58 @@ mod tests {
             data.executable_path.is_some(),
             "executable_path must be set so consumers can identify the wrong binary"
         );
+
+        restore_env(cua_driver_core::EMBEDDED_ENV, embedded);
+    }
+
+    #[test]
+    fn embedded_bundle_identity_passes_for_observed_host() {
+        let entry = check_embedded_bundle_identity(
+            Some("com.example.host".to_owned()),
+            Some("com.example.host".to_owned()),
+            1234,
+            "/usr/local/bin/cua-driver".to_owned(),
+        );
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(entry.message.contains("com.example.host"));
+        assert!(entry.hint.is_none());
+        let data = entry.data.expect("diagnostic data expected");
+        assert_eq!(data.bundle_identifier.as_deref(), Some("com.example.host"));
+        assert_eq!(
+            data.configured_bundle_identifier.as_deref(),
+            Some("com.example.host")
+        );
+        assert_eq!(data.identity_source.as_deref(), Some("parent_application"));
+        assert_eq!(data.responsible_process_id, Some(1234));
+    }
+
+    #[test]
+    fn embedded_bundle_identity_fails_without_observable_host() {
+        let entry = check_embedded_bundle_identity(
+            None,
+            Some("com.example.host".to_owned()),
+            1234,
+            "/usr/local/bin/cua-driver".to_owned(),
+        );
+        assert_eq!(entry.status, CheckStatus::Fail);
+        assert!(entry
+            .message
+            .contains("not an identifiable macOS application"));
+        assert!(entry.hint.is_some());
+    }
+
+    #[test]
+    fn embedded_bundle_identity_fails_on_configured_host_mismatch() {
+        let entry = check_embedded_bundle_identity(
+            Some("com.example.gateway".to_owned()),
+            Some("com.example.host".to_owned()),
+            1234,
+            "/usr/local/bin/cua-driver".to_owned(),
+        );
+        assert_eq!(entry.status, CheckStatus::Fail);
+        assert!(entry.message.contains("com.example.gateway"));
+        assert!(entry.message.contains("com.example.host"));
+        assert!(entry.hint.is_some());
     }
 
     // End-to-end through the dispatcher — checks every macOS canonical

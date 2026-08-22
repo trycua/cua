@@ -35,7 +35,7 @@
 - Create: `clusters/base/cua-images/kustomization.yaml`
 - Create: `libs/python/cua-sandbox/tests/test_image_crd.py`
 - Modify: `libs/python/cua-sandbox/pyproject.toml`
-- Modify: `uv.lock`
+- Modify: `libs/python/cua-sandbox/uv.lock`
 
 **Interfaces:**
 - Consumes: the approved Image resource shape from `docs/superpowers/specs/2026-08-22-image-api-source-of-truth-design.md`.
@@ -58,7 +58,7 @@ dev = [
 Refresh the lockfile:
 
 ```bash
-uv lock
+uv lock --project libs/python/cua-sandbox
 ```
 
 - [ ] **Step 2: Write the failing CRD contract tests**
@@ -545,7 +545,7 @@ Expected: the CRD tests PASS and `/tmp/cua-image-crd.yaml` contains exactly one 
 git add clusters/base/cua-images \
   libs/python/cua-sandbox/pyproject.toml \
   libs/python/cua-sandbox/tests/test_image_crd.py \
-  uv.lock
+  libs/python/cua-sandbox/uv.lock
 git commit -m "feat(sandbox): define Image custom resource"
 ```
 
@@ -560,7 +560,7 @@ git commit -m "feat(sandbox): define Image custom resource"
 - Create: `libs/python/cua-sandbox/cua_sandbox/generated/image_models.py`
 - Create: `libs/python/cua-sandbox/tests/test_image_model_generation.py`
 - Modify: `libs/python/cua-sandbox/pyproject.toml`
-- Modify: `uv.lock`
+- Modify: `libs/python/cua-sandbox/uv.lock`
 
 **Interfaces:**
 - Consumes: `clusters/base/cua-images/crd.yaml` and `datamodel-code-generator==0.74.0`.
@@ -599,7 +599,7 @@ dev = [
 Run:
 
 ```bash
-uv lock
+uv lock --project libs/python/cua-sandbox
 ```
 
 - [ ] **Step 2: Write failing generation and drift tests**
@@ -891,7 +891,7 @@ git add libs/python/cua-sandbox/cua_sandbox/generated \
   libs/python/cua-sandbox/schemas \
   libs/python/cua-sandbox/scripts/generate_image_models.py \
   libs/python/cua-sandbox/tests/test_image_model_generation.py \
-  uv.lock
+  libs/python/cua-sandbox/uv.lock
 git commit -m "feat(sandbox): generate Image API models from CRD"
 ```
 
@@ -1254,7 +1254,7 @@ on:
       - "libs/python/cua-sandbox/scripts/generate_image_models.py"
       - "libs/python/cua-sandbox/tests/test_image*.py"
       - "libs/python/cua-sandbox/pyproject.toml"
-      - "uv.lock"
+      - "libs/python/cua-sandbox/uv.lock"
       - ".github/workflows/ci-image-api.yml"
   workflow_dispatch:
 
@@ -1602,7 +1602,7 @@ libs/python/cua-sandbox/tests/test_image_api_workflows.py
 libs/python/cua-sandbox/tests/test_image_build_recipe.py
 libs/python/cua-sandbox/tests/test_image_crd.py
 libs/python/cua-sandbox/tests/test_image_model_generation.py
-uv.lock
+libs/python/cua-sandbox/uv.lock
 ```
 
 No path under `libs/fleet/` or `trycua/cloud` belongs in this pull request.
@@ -1634,7 +1634,7 @@ git add clusters/base/cua-images \
   libs/python/cua-sandbox \
   .github/workflows/ci-image-api.yml \
   .github/workflows/cd-image-api.yml \
-  uv.lock
+  libs/python/cua-sandbox/uv.lock
 git commit -m "chore(sandbox): finalize Image API artifacts"
 ```
 

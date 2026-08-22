@@ -11,6 +11,9 @@ jobs:
   test:
     name: Test ${{ matrix.package }}
     runs-on: ubuntu-latest
+    # A test that waits on a sandbox which never boots would otherwise hold the
+    # runner for the six-hour default.
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false # Test all packages even if one fails
@@ -23,6 +26,7 @@ jobs:
           - mcp-server
           - som
           - cua-auto
+          - cua-sandbox
 
     steps:
       - name: Checkout code

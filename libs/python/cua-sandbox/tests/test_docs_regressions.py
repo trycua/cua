@@ -100,10 +100,14 @@ class TestConcurrentLocalVMsDoNotCollide:
 
         from cua_sandbox.runtime.qemu import _find_free_vnc_display
 
+        # Occupy whichever display the helper hands out first: that has to push
+        # the next answer somewhere else. Binding a hardcoded 5900 instead blows
+        # up with EADDRINUSE on any host that already has a VNC server.
+        first = _find_free_vnc_display(0)
         with socket.socket() as taken:
-            taken.bind(("", 5900))
+            taken.bind(("", 5900 + first))
             taken.listen(1)
-            assert _find_free_vnc_display(0) != 0
+            assert _find_free_vnc_display(0) != first
 
     def test_efivars_is_per_vm_not_shared(self):
         """Every session disk lives in one directory; a shared efivars.fd would

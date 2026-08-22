@@ -43,6 +43,16 @@ LEGACY_DISK_CHUNK = "application/vnd.trycua.lume.disk.chunk.lz4"
 LEGACY_AUX = "application/vnd.trycua.lume.aux.image.v1"
 LEGACY_CONFIG = "application/vnd.trycua.lume.config.v1+json"
 
+# ── Lume (chunked disk parts) ──────────────────────────────────────────────
+#
+# What lume pushes today, e.g. ghcr.io/trycua/macos-sequoia-cua:latest: one
+# layer per disk.img.part.N, part number/total carried in org.trycua.lume.part.*
+# annotations rather than in the media type string.
+
+LUME_DISK = "application/vnd.trycua.lume.disk.v1"
+LUME_NVRAM = "application/vnd.trycua.lume.nvram.v1"
+LUME_PART_NUMBER_ANNOTATION = "org.trycua.lume.part.number"
+
 # ── Standard OCI / Docker container ────────────────────────────────────────
 
 OCI_IMAGE_LAYER = "application/vnd.oci.image.layer.v1.tar+gzip"
@@ -67,6 +77,8 @@ VM_MEDIA_TYPES = frozenset(
         LEGACY_DISK_CHUNK,
         LEGACY_AUX,
         LEGACY_CONFIG,
+        LUME_DISK,
+        LUME_NVRAM,
         TART_CONFIG,
         TART_DISK,
         TART_NVRAM,

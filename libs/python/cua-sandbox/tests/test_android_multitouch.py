@@ -52,6 +52,8 @@ from cua_sandbox.runtime.android_emulator import AndroidEmulatorRuntime
 from cua_sandbox.runtime.compat import skip_if_unsupported
 from cua_sandbox.sandbox import Sandbox
 
+from tests.conftest import requires_runtime_optin
+
 # ── Config ─────────────────────────────────────────────────────────────────
 
 _APK_RELEASE_URL = (
@@ -428,6 +430,10 @@ class _MultitouchTests:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+# Boots a real Android emulator through the SDK. skip_if_unsupported() lets this
+# through on a GitHub runner — the SDK is auto-installable there — and the launch
+# then dies on "This user doesn't have permissions to use KVM (/dev/kvm)".
+@requires_runtime_optin
 @pytest.mark.asyncio
 class TestAndroidMultitouchLocal(_MultitouchTests):
     """Full touch action suite against a bare-metal AndroidEmulatorRuntime."""

@@ -614,5 +614,5 @@ func initializeUsageProvider(ctx context.Context, cfg config.UsageConfiguration)
 		events.Close()
 		return nil, noop, fmt.Errorf("create DataFusion allocation client: %w", err)
 	}
-	return usage.NewProvider(events, allocations, nil), events.Close, nil
+	return usage.NewProviderWithReservations(events, allocations, events, cfg.QueryCluster, nil), events.Close, nil
 }

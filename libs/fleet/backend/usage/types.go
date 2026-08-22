@@ -112,3 +112,21 @@ type AllocationClient interface {
 }
 
 const gibibyte = float64(1 << 30)
+
+type ReservationFact struct {
+	Namespace                string
+	SandboxUID               string
+	SandboxName              string
+	PoolName                 string
+	Runtime                  string
+	HourStart                time.Time
+	HourEnd                  time.Time
+	VirtualCPUCoreSeconds    float64
+	VirtualMemoryByteSeconds float64
+	ReadySeconds             float64
+	CoveredSeconds           float64
+}
+
+type ReservationStore interface {
+	Reservations(context.Context, string, string, time.Time, time.Time) ([]ReservationFact, time.Time, bool, error)
+}

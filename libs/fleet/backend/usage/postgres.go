@@ -94,3 +94,38 @@ func validateSandboxEvent(event SandboxEvent) error {
 }
 
 var _ EventStore = (*PostgresEventStore)(nil)
+
+const reservationFactsQuery = `select namespace, sandbox_uid, sandbox_name, pool_name, runtime,
+       hour_start, hour_end, virtual_cpu_core_seconds, virtual_memory_byte_seconds,
+       ready_seconds, covered_seconds
+from k8s_reporting.reservation_hour_facts($1, $2, $3)`
+
+func (s *PostgresEventStore) Reservations(ctx context.Context, tenant, cluster string, start, end time.Time) ([]ReservationFact, time.Time, bool, error) {
+	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(cluster) == "" || start.IsZero() || end.IsZero() || !end.After(start) {
+		return nil, time.Time{}, false, fmt.Errorf("invalid reservation query")
+	}
+	var asOf time.Time
+	var complete bool
+	if err := s.pool.QueryRow(ctx, `select data_as_of, complete from k8s_reporting.reservation_meter_status(, , )`, cluster, start, end).Scan(&asOf, &complete); err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("query reservation meter status: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, reservationFactsQuery, tenant, start, end)
+	if err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("query reservation facts: %w", err)
+	}
+	defer rows.Close()
+	facts := make([]ReservationFact, 0)
+	for rows.Next() {
+		var fact ReservationFact
+		if err := rows.Scan(&fact.Namespace, &fact.SandboxUID, &fact.SandboxName, &fact.PoolName, &fact.Runtime, &fact.HourStart, &fact.HourEnd, &fact.VirtualCPUCoreSeconds, &fact.VirtualMemoryByteSeconds, &fact.ReadySeconds, &fact.CoveredSeconds); err != nil {
+			return nil, time.Time{}, false, fmt.Errorf("scan reservation fact: %w", err)
+		}
+		facts = append(facts, fact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("read reservation facts: %w", err)
+	}
+	return facts, asOf.UTC(), !complete, nil
+}
+
+var _ ReservationStore = (*PostgresEventStore)(nil)

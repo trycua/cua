@@ -24,6 +24,7 @@ const tenantCredentialFingerprintLookup = `select credential_fingerprint from k8
 var staticMigrationRoles = []string{
 	"cyclops_app",
 	"cyclops_usage_reader",
+	"cyclops_meter_writer",
 	"k8s_state_owner",
 	"k8s_state_writer",
 	"k8s_state_exporter",
@@ -31,6 +32,7 @@ var staticMigrationRoles = []string{
 	"k8s_query_admin",
 	"k8s_role_admin",
 	"k8s_reporting_owner",
+	"billing_meter_owner",
 	"k8s_metabase",
 }
 
@@ -1501,6 +1503,7 @@ func testCredentialURLs(t *testing.T, adminURL string) CredentialURLs {
 		RoleAdmin:   withRole("k8s_role_admin"),
 		Metabase:    withRole("k8s_metabase"),
 		Usage:       withRole("cyclops_usage_reader"),
+		Meter:       withRole("cyclops_meter_writer"),
 	}
 }
 
@@ -1678,8 +1681,10 @@ func assertRoleContract(t *testing.T, ctx context.Context, adminURL string) {
 		"k8s_query_admin":      {false, true, false},
 		"k8s_role_admin":       {true, false, true},
 		"k8s_reporting_owner":  {false, true, false},
+		"billing_meter_owner":  {false, true, false},
 		"k8s_metabase":         {true, false, false},
 		"cyclops_usage_reader": {true, false, false},
+		"cyclops_meter_writer": {true, false, false},
 	}
 	for role, want := range expected {
 		var login, inherit, createRole, super, createDB, replication, bypassRLS bool
@@ -2310,10 +2315,15 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 				('schema:k8s_state', 'USAGE', 'k8s_reporting_owner', 'k8s_state_owner', false),
 				('relation:k8s_state.resource_state', 'SELECT', 'k8s_reporting_owner', 'k8s_state_owner', false),
 				('relation:k8s_state.resource_event_outbox', 'SELECT', 'k8s_reporting_owner', 'k8s_state_owner', false),
+				('schema:billing_meter', 'USAGE', 'k8s_reporting_owner', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_current', 'SELECT', 'k8s_reporting_owner', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_collection_current', 'SELECT', 'k8s_reporting_owner', 'billing_meter_owner', false),
 				('schema:k8s_reporting', 'USAGE', 'k8s_metabase', 'k8s_reporting_owner', false),
 				('relation:k8s_reporting.current_resources', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),
 				('schema:k8s_reporting', 'USAGE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
-				('routine:k8s_reporting.usage_sandbox_events(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false)
+				('routine:k8s_reporting.usage_sandbox_events(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
+				('routine:k8s_reporting.reservation_hour_facts(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
+				('routine:k8s_reporting.reservation_meter_status(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false)
 		)
 		select count(*) from (
 			(select * from actual except select * from expected)
@@ -2349,7 +2359,7 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 			join pg_namespace as namespace on namespace.oid = routine.pronamespace
 			join lateral aclexplode(routine.proacl) as acl on true
 			where namespace.nspname = 'k8s_reporting'
-			  and routine.proname = 'usage_sandbox_events'
+			  and routine.proname in ('usage_sandbox_events', 'reservation_hour_facts', 'reservation_meter_status')
 			  and routine.proargtypes = '25 1184 1184'::oidvector
 			  and acl.grantee <> routine.proowner
 			  and (acl.grantee <> 'cyclops_usage_reader'::regrole or acl.privilege_type <> 'EXECUTE' or acl.is_grantable)

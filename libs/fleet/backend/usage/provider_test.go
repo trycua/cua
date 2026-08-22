@@ -388,3 +388,49 @@ func TestProviderRestoresAttributionAfterUnambiguousAdded(t *testing.T) {
 		t.Fatalf("overview=%#v err=%v", got, err)
 	}
 }
+
+type fakeReservationStore struct {
+	facts   []ReservationFact
+	asOf    time.Time
+	partial bool
+	err     error
+	tenant  string
+	cluster string
+}
+
+func (s *fakeReservationStore) Reservations(_ context.Context, tenant, cluster string, _, _ time.Time) ([]ReservationFact, time.Time, bool, error) {
+	s.tenant, s.cluster = tenant, cluster
+	return s.facts, s.asOf, s.partial, s.err
+}
+
+func TestProviderUsesVirtualReservationsForProvisionedTotals(t *testing.T) {
+	t.Parallel()
+	cutoff := time.Date(2026, 8, 22, 8, 0, 0, 0, time.UTC)
+	events := &fakeEventStore{events: []SandboxEvent{{
+		EventID: mustUUID("00000000-0000-0000-0000-000000000090"), Namespace: "ns-a", SandboxName: "sandbox-a", SandboxUID: "uid-a",
+		PoolName: "pool-a", Runtime: "kubevirt", VMName: "vm-a", EventType: "Added", ObservedAt: cutoff.Add(-25 * time.Hour),
+	}}}
+	allocations := &fakeAllocationClient{asOf: cutoff, allocations: []Allocation{{
+		Start: cutoff.Add(-time.Hour), End: cutoff, Namespace: "ns-a", Pod: "virt-launcher-vm-a-abc",
+		Minutes: 60, CPUUsageAverage: 1, CPURequestAverage: 2,
+		RAMUsageAverageBytes: 3 * gibibyte, RAMRequestAverageBytes: 4 * gibibyte, CostUSD: 0.5,
+	}}}
+	reservations := &fakeReservationStore{asOf: cutoff, facts: []ReservationFact{{
+		Namespace: "ns-a", SandboxUID: "uid-a", SandboxName: "sandbox-a", PoolName: "pool-a", Runtime: "kubevirt",
+		HourStart: cutoff.Add(-time.Hour), HourEnd: cutoff,
+		VirtualCPUCoreSeconds: 4 * 3600, VirtualMemoryByteSeconds: 8 * gibibyte * 3600,
+	}}}
+	provider := NewProviderWithReservations(events, allocations, reservations, "kopf-k3s", func() time.Time { return cutoff })
+
+	got, err := provider.Overview(context.Background(), Query{Subject: "alice", Timeframe: Timeframe24H})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reservations.tenant != "user-alice" || reservations.cluster != "kopf-k3s" || got.Partial || len(got.Pools) != 1 {
+		t.Fatalf("overview=%#v reservations=%+v", got, reservations)
+	}
+	pool := got.Pools[0]
+	if pool.CPU.Consumed != 1 || pool.CPU.Provisioned != 4 || pool.Memory.Consumed != 3 || pool.Memory.Provisioned != 8 || pool.CostUSD != 0.5 {
+		t.Fatalf("pool=%#v", pool)
+	}
+}

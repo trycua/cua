@@ -10,7 +10,8 @@ RUN go mod tidy
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4 && \
     /go/bin/swag init -g main.go -o ./docs --parseDependency --parseInternal
 RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cyclops-cs-backend . \
-    && CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cyclops-db-migrate ./cmd/db-migrate
+    && CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cyclops-db-migrate ./cmd/db-migrate \
+    && CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cyclops-usage-meter ./cmd/usage-meter
 
 FROM --platform=linux/amd64 rust:1.94-bookworm AS rust-builder
 WORKDIR /src/k8s-state-query
@@ -23,6 +24,7 @@ FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 WORKDIR /app
 COPY --from=go-builder /out/cyclops-cs-backend /app/cyclops-cs-backend
 COPY --from=go-builder /out/cyclops-db-migrate /app/cyclops-db-migrate
+COPY --from=go-builder /out/cyclops-usage-meter /app/cyclops-usage-meter
 COPY --from=rust-builder /out-k8s-state-projector /app/k8s-state-projector
 USER nonroot:nonroot
 EXPOSE 8080

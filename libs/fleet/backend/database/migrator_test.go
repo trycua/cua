@@ -520,8 +520,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 4 {
-		t.Fatalf("expected exactly four migrations, got %d", len(files))
+	if len(files) != 5 {
+		t.Fatalf("expected exactly five migrations, got %d", len(files))
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -607,6 +607,26 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	} {
 		if !strings.Contains(legacyFilter.SQL, expected) {
 			t.Errorf("usage filter migration is missing contract %q", expected)
+		}
+	}
+
+	meter := files[4]
+	if meter.Version != 5 || meter.Name != "000005_hourly_reservation_meter.sql" {
+		t.Fatalf("expected version 5 reservation meter migration, got version=%d name=%q", meter.Version, meter.Name)
+	}
+	for _, expected := range []string{
+		"CREATE ROLE billing_meter_owner NOLOGIN",
+		"CREATE ROLE cyclops_meter_writer LOGIN",
+		"CREATE TABLE billing_meter.reservation_hour_fact",
+		"CREATE VIEW billing_meter.reservation_hour_current",
+		"BEFORE UPDATE OR DELETE OR TRUNCATE ON billing_meter.reservation_hour_fact",
+		"CREATE FUNCTION k8s_api.sandbox_meter_tenant",
+		"CREATE FUNCTION k8s_reporting.reservation_hour_facts",
+		"GRANT SELECT, INSERT ON TABLE billing_meter.reservation_hour_collection, billing_meter.reservation_hour_fact TO cyclops_meter_writer",
+		"GRANT EXECUTE ON FUNCTION k8s_reporting.reservation_hour_facts(text, timestamptz, timestamptz) TO cyclops_usage_reader",
+	} {
+		if !strings.Contains(meter.SQL, expected) {
+			t.Errorf("reservation meter migration is missing contract %q", expected)
 		}
 	}
 }
@@ -726,12 +746,13 @@ func TestCredentialURLsExcludeDynamicTenantRoles(t *testing.T) {
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
+		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
 	})
 	if err != nil {
 		t.Fatalf("parse fixed runtime credentials: %v", err)
 	}
-	if len(credentials) != 6 {
-		t.Fatalf("credential count = %d, want 6", len(credentials))
+	if len(credentials) != 7 {
+		t.Fatalf("credential count = %d, want 7", len(credentials))
 	}
 	for _, credential := range credentials {
 		if credential.Role == "k8s_query_broker" || strings.HasPrefix(credential.Role, "k8s_tenant_") {
@@ -755,8 +776,10 @@ func TestStaticRoleContractsAreAllowlistedAndFixed(t *testing.T) {
 		"k8s_query_admin":      {false, true, false, false, -1, staticRoleValidUntilInfinity},
 		"k8s_role_admin":       {true, false, true, false, -1, staticRoleValidUntilInfinity},
 		"k8s_reporting_owner":  {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"billing_meter_owner":  {false, true, false, false, -1, staticRoleValidUntilInfinity},
 		"k8s_metabase":         {true, false, false, false, -1, staticRoleValidUntilInfinity},
 		"cyclops_usage_reader": {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"cyclops_meter_writer": {true, false, false, false, -1, staticRoleValidUntilInfinity},
 	}
 	if len(contracts) != len(want) {
 		t.Fatalf("static role contract count = %d, want %d", len(contracts), len(want))
@@ -781,6 +804,7 @@ func TestStaticMembershipContractsUsePG16Options(t *testing.T) {
 	want := []staticMembershipContract{
 		{role: "k8s_state_owner", member: "migration_owner", admin: false, inherit: false, set: true},
 		{role: "k8s_reporting_owner", member: "migration_owner", admin: false, inherit: false, set: true},
+		{role: "billing_meter_owner", member: "migration_owner", admin: false, inherit: false, set: true},
 		{role: "k8s_query_tenant", member: "k8s_role_admin", admin: true, inherit: false, set: false},
 		{role: "k8s_query_admin", member: "k8s_reporting_owner", admin: false, inherit: true, set: false},
 	}
@@ -805,6 +829,7 @@ func TestCredentialURLsRequireExpectedRoleNames(t *testing.T) {
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
+		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
 	})
 	if err == nil {
 		t.Fatal("expected application role-name validation")
@@ -822,6 +847,7 @@ func TestCredentialURLsRejectEmptyPassword(t *testing.T) {
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
+		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
 	})
 	if err == nil || err.Error() != "application credential database URL must include a password" {
 		t.Fatalf("expected empty password rejection, got %v", err)
@@ -836,6 +862,7 @@ func TestCredentialURLParseErrorsPreserveCauseForBoundaryClassification(t *testi
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
+		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
 	})
 	if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("error = %v, want ErrInvalidConfiguration", err)

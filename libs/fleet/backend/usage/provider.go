@@ -27,13 +27,15 @@ const (
 )
 
 type provider struct {
-	events      EventStore
-	allocations AllocationClient
-	clock       func() time.Time
-	cacheTTL    time.Duration
-	cacheMu     sync.Mutex
-	cache       map[usageCacheKey]usageCacheEntry
-	loads       singleflight.Group
+	events             EventStore
+	allocations        AllocationClient
+	reservations       ReservationStore
+	reservationCluster string
+	clock              func() time.Time
+	cacheTTL           time.Duration
+	cacheMu            sync.Mutex
+	cache              map[usageCacheKey]usageCacheEntry
+	loads              singleflight.Group
 }
 
 type usageCacheKey struct {
@@ -58,11 +60,15 @@ type liveSegment struct {
 }
 
 func NewProvider(events EventStore, allocations AllocationClient, clock func() time.Time) *provider {
+	return NewProviderWithReservations(events, allocations, nil, "", clock)
+}
+
+func NewProviderWithReservations(events EventStore, allocations AllocationClient, reservations ReservationStore, reservationCluster string, clock func() time.Time) *provider {
 	if clock == nil {
 		clock = time.Now
 	}
 	return &provider{
-		events: events, allocations: allocations, clock: clock,
+		events: events, allocations: allocations, reservations: reservations, reservationCluster: reservationCluster, clock: clock,
 		cacheTTL: defaultUsageCacheTTL, cache: make(map[usageCacheKey]usageCacheEntry),
 	}
 }
@@ -267,6 +273,26 @@ func (p *provider) loadUncached(ctx context.Context, query Query, now time.Time)
 		matched, allocationPartial := attributeAllocation(allocation, segments, start, end, step, poolTotals, data.buckets)
 		if !matched || allocationPartial {
 			data.partial = true
+		}
+	}
+	if p.reservations != nil {
+		reservationCtx, reservationSpan := usageTracer().Start(ctx, "usage.reservations.query")
+		facts, reservationAsOf, reservationPartial, reservationErr := p.reservations.Reservations(reservationCtx, identity.PersonalGroup(reservationCtx, query.Subject), p.reservationCluster, start, end)
+		if reservationErr != nil {
+			markUsageSpanError(reservationSpan, "reservation fact query failed")
+			reservationSpan.End()
+			markUsageSpanError(span, "reservation fact query failed")
+			return usageData{}, fmt.Errorf("read reservation facts: %w", reservationErr)
+		}
+		reservationSpan.SetAttributes(attribute.Int("usage.reservation_fact_count", len(facts)))
+		reservationSpan.End()
+		if reservationAsOf.Before(data.asOf) {
+			data.asOf = maxTime(start, reservationAsOf.UTC())
+		}
+		data.partial = data.partial || reservationPartial || data.asOf.Before(end)
+		if err := applyReservationFacts(facts, start, end, step, poolTotals, data.buckets); err != nil {
+			markUsageSpanError(span, "reservation fact attribution failed")
+			return usageData{}, err
 		}
 	}
 	for _, totals := range poolTotals {
@@ -641,3 +667,35 @@ func maxTime(left, right time.Time) time.Time {
 }
 
 var _ Provider = (*provider)(nil)
+
+func applyReservationFacts(facts []ReservationFact, windowStart, windowEnd time.Time, bucketDuration time.Duration, pools map[string]usageTotals, buckets map[bucketKey]usageTotals) error {
+	for id, pool := range pools {
+		pool.cpuProvisioned = 0
+		pool.memoryProvisioned = 0
+		pools[id] = pool
+	}
+	for key, bucket := range buckets {
+		bucket.cpuProvisioned = 0
+		bucket.memoryProvisioned = 0
+		buckets[key] = bucket
+	}
+	for _, fact := range facts {
+		if fact.Namespace == "" || !validPoolName(fact.PoolName) || !fact.HourEnd.Equal(fact.HourStart.Add(time.Hour)) || fact.HourStart.Before(windowStart) || fact.HourEnd.After(windowEnd) || fact.VirtualCPUCoreSeconds < 0 || fact.VirtualMemoryByteSeconds < 0 {
+			return fmt.Errorf("invalid reservation fact")
+		}
+		cpuCoreHours := fact.VirtualCPUCoreSeconds / 3600
+		memoryGiBHours := fact.VirtualMemoryByteSeconds / 3600 / gibibyte
+		id := fact.Namespace + ":" + fact.PoolName
+		pool := pools[id]
+		pool.id, pool.name = id, fact.PoolName
+		pool.cpuProvisioned += cpuCoreHours
+		pool.memoryProvisioned += memoryGiBHours
+		pools[id] = pool
+		key := bucketKey{namespace: fact.Namespace, pool: fact.PoolName, start: bucketStartFor(fact.HourStart, windowStart, bucketDuration)}
+		bucket := buckets[key]
+		bucket.cpuProvisioned += cpuCoreHours
+		bucket.memoryProvisioned += memoryGiBHours
+		buckets[key] = bucket
+	}
+	return nil
+}

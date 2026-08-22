@@ -54,6 +54,7 @@ type CredentialURLs struct {
 	RoleAdmin   string
 	Metabase    string
 	Usage       string
+	Meter       string
 }
 
 type migrationFile struct {
@@ -161,6 +162,7 @@ var expectedCredentialRoles = map[string]string{
 	"role-admin":  "k8s_role_admin",
 	"metabase":    "k8s_metabase",
 	"usage":       "cyclops_usage_reader",
+	"meter":       "cyclops_meter_writer",
 }
 
 const selectAppliedMigrationsStatement = `select version, filename, sha256 from cyclops_migrations.applied_migrations order by application_order`
@@ -477,6 +479,7 @@ func parseCredentialURLs(urls CredentialURLs) ([]credential, error) {
 		{Name: "role-admin", URL: urls.RoleAdmin},
 		{Name: "metabase", URL: urls.Metabase},
 		{Name: "usage", URL: urls.Usage},
+		{Name: "meter", URL: urls.Meter},
 	}
 
 	credentials := make([]credential, 0, len(inputs))
@@ -508,8 +511,10 @@ func staticRoleContracts() []staticRoleContract {
 		{role: "k8s_query_admin", inherit: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 		{role: "k8s_role_admin", login: true, createRole: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 		{role: "k8s_reporting_owner", inherit: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "billing_meter_owner", inherit: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 		{role: "k8s_metabase", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 		{role: "cyclops_usage_reader", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "cyclops_meter_writer", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 	}
 }
 
@@ -532,6 +537,7 @@ func staticMembershipContracts(migrationOwner string) []staticMembershipContract
 	return []staticMembershipContract{
 		{role: "k8s_state_owner", member: migrationOwner, admin: false, inherit: false, set: true},
 		{role: "k8s_reporting_owner", member: migrationOwner, admin: false, inherit: false, set: true},
+		{role: "billing_meter_owner", member: migrationOwner, admin: false, inherit: false, set: true},
 		{role: "k8s_query_tenant", member: "k8s_role_admin", admin: true, inherit: false, set: false},
 		{role: "k8s_query_admin", member: "k8s_reporting_owner", admin: false, inherit: true, set: false},
 	}
@@ -705,8 +711,8 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 				routine.oid,
 				case
 					when namespace.nspname = 'k8s_reporting'
-					 and routine.proname = 'usage_sandbox_events'
-					 and routine.proargtypes = '25 1184 1184'::oidvector then 'usage_sandbox_events'
+					 and routine.proname in ('usage_sandbox_events', 'reservation_hour_facts', 'reservation_meter_status')
+					 and routine.proargtypes = '25 1184 1184'::oidvector then routine.proname
 					else routine.oid::regprocedure::text
 				end,
 				routine.proowner::regrole::text,
@@ -724,7 +730,7 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 				acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole)
 				or (
 					namespace.nspname = 'k8s_reporting'
-					and routine.proname = 'usage_sandbox_events'
+					and routine.proname in ('usage_sandbox_events', 'reservation_hour_facts', 'reservation_meter_status')
 					and routine.proargtypes = '25 1184 1184'::oidvector
 				)
 			  )
@@ -775,10 +781,15 @@ func expectedReportingACLs() []reportingACL {
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_state"}, owner: "k8s_state_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_reporting_owner", grantor: "k8s_state_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_state", name: "resource_state"}, owner: "k8s_state_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "k8s_state_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_state", name: "resource_event_outbox"}, owner: "k8s_state_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "k8s_state_owner"},
+		{object: reportingObject{kind: reportingObjectSchema, schema: "billing_meter"}, owner: "billing_meter_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_reporting_owner", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_collection_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "billing_meter_owner"},
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "current_resources"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRoutine}, routineIdentity: "usage_sandbox_events", owner: "k8s_reporting_owner", privilege: reportingPrivilegeExecute, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},
+		{object: reportingObject{kind: reportingObjectRoutine}, routineIdentity: "reservation_hour_facts", owner: "k8s_reporting_owner", privilege: reportingPrivilegeExecute, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},
+		{object: reportingObject{kind: reportingObjectRoutine}, routineIdentity: "reservation_meter_status", owner: "k8s_reporting_owner", privilege: reportingPrivilegeExecute, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},
 	}
 }
 
@@ -800,26 +811,28 @@ func containsReportingACL(acls []reportingACL, want reportingACL) bool {
 }
 
 func reconcileUsageRoutineExecute(ctx context.Context, transaction pgx.Tx) error {
-	var routineOID uint32
-	if err := transaction.QueryRow(ctx, `
-		select routine.oid
-		from pg_proc as routine
-		join pg_namespace as namespace on namespace.oid = routine.pronamespace
-		where namespace.nspname = 'k8s_reporting'
-		  and routine.proname = 'usage_sandbox_events'
-		  and routine.proargtypes = '25 1184 1184'::oidvector`).Scan(&routineOID); err != nil {
-		return fmt.Errorf("resolve usage reporting routine: %w", err)
-	}
-	acl := reportingACL{
-		object:          reportingObject{kind: reportingObjectRoutine, routineOID: routineOID},
-		routineIdentity: "usage_sandbox_events",
-		owner:           "k8s_reporting_owner",
-		privilege:       reportingPrivilegeExecute,
-		grantee:         "cyclops_usage_reader",
-		grantor:         "k8s_reporting_owner",
-	}
-	if err := newRuntimeDDL(transaction).grantReportingACL(ctx, acl); err != nil {
-		return fmt.Errorf("reconcile usage routine execute grant: %w", err)
+	for _, routineIdentity := range []string{"usage_sandbox_events", "reservation_hour_facts", "reservation_meter_status"} {
+		var routineOID uint32
+		if err := transaction.QueryRow(ctx, `
+			select routine.oid
+			from pg_proc as routine
+			join pg_namespace as namespace on namespace.oid = routine.pronamespace
+			where namespace.nspname = 'k8s_reporting'
+			  and routine.proname = $1
+			  and routine.proargtypes = '25 1184 1184'::oidvector`, routineIdentity).Scan(&routineOID); err != nil {
+			return fmt.Errorf("resolve usage reporting routine %s: %w", routineIdentity, err)
+		}
+		acl := reportingACL{
+			object:          reportingObject{kind: reportingObjectRoutine, routineOID: routineOID},
+			routineIdentity: routineIdentity,
+			owner:           "k8s_reporting_owner",
+			privilege:       reportingPrivilegeExecute,
+			grantee:         "cyclops_usage_reader",
+			grantor:         "k8s_reporting_owner",
+		}
+		if err := newRuntimeDDL(transaction).grantReportingACL(ctx, acl); err != nil {
+			return fmt.Errorf("reconcile usage routine %s execute grant: %w", routineIdentity, err)
+		}
 	}
 	return nil
 }

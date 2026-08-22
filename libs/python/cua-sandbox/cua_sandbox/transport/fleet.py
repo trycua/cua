@@ -90,12 +90,18 @@ class FleetTransport(Transport):
         method: str,
         path: str,
         json_body: Any = None,
+        content: bytes | None = None,
         headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         if name not in self._bound.services:
             raise ValueError(f"Fleet sandbox does not expose service {name!r}")
         return await self._request(
-            method, path, json_body=json_body, service_name=name, extra_headers=headers
+            method,
+            path,
+            json_body=json_body,
+            content=content,
+            service_name=name,
+            extra_headers=headers,
         )
 
     async def _request(
@@ -104,13 +110,20 @@ class FleetTransport(Transport):
         path: str,
         *,
         json_body: Any = None,
+        content: bytes | None = None,
         service_name: str | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         assert self._connected, "Transport not connected"
-        body = None if json_body is None else json.dumps(json_body).encode()
+        if json_body is not None and content is not None:
+            raise ValueError("json_body and content are mutually exclusive")
+        body = (
+            content
+            if content is not None
+            else (None if json_body is None else json.dumps(json_body).encode())
+        )
         headers = (
-            [] if body is None else [HttpHeader(name="content-type", value="application/json")]
+            [] if json_body is None else [HttpHeader(name="content-type", value="application/json")]
         )
         for name, value in (extra_headers or {}).items():
             headers.append(HttpHeader(name=name, value=value))

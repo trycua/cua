@@ -100,13 +100,16 @@ const reservationFactsQuery = `select namespace, sandbox_uid, sandbox_name, pool
        ready_seconds, covered_seconds
 from k8s_reporting.reservation_hour_facts($1, $2, $3)`
 
+const reservationStatusQuery = `select data_as_of, complete
+from k8s_reporting.reservation_meter_status($1, $2, $3)`
+
 func (s *PostgresEventStore) Reservations(ctx context.Context, tenant, cluster string, start, end time.Time) ([]ReservationFact, time.Time, bool, error) {
 	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(cluster) == "" || start.IsZero() || end.IsZero() || !end.After(start) {
 		return nil, time.Time{}, false, fmt.Errorf("invalid reservation query")
 	}
 	var asOf time.Time
 	var complete bool
-	if err := s.pool.QueryRow(ctx, `select data_as_of, complete from k8s_reporting.reservation_meter_status(, , )`, cluster, start, end).Scan(&asOf, &complete); err != nil {
+	if err := s.pool.QueryRow(ctx, reservationStatusQuery, cluster, start, end).Scan(&asOf, &complete); err != nil {
 		return nil, time.Time{}, false, fmt.Errorf("query reservation meter status: %w", err)
 	}
 	rows, err := s.pool.Query(ctx, reservationFactsQuery, tenant, start, end)

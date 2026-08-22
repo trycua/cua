@@ -21,6 +21,18 @@ func TestUsageSandboxEventsQueryIsFixed(t *testing.T) {
 	}
 }
 
+func TestReservationQueriesAreFixed(t *testing.T) {
+	t.Parallel()
+	const wantStatus = "select data_as_of, complete\nfrom k8s_reporting.reservation_meter_status($1, $2, $3)"
+	if reservationStatusQuery != wantStatus {
+		t.Fatalf("unexpected status query: %q", reservationStatusQuery)
+	}
+	const wantFacts = "select namespace, sandbox_uid, sandbox_name, pool_name, runtime,\n       hour_start, hour_end, virtual_cpu_core_seconds, virtual_memory_byte_seconds,\n       ready_seconds, covered_seconds\nfrom k8s_reporting.reservation_hour_facts($1, $2, $3)"
+	if reservationFactsQuery != wantFacts {
+		t.Fatalf("unexpected facts query: %q", reservationFactsQuery)
+	}
+}
+
 func TestNewPostgresEventStoreAcceptsUsageReaderAndCloses(t *testing.T) {
 	t.Parallel()
 	store, err := NewPostgresEventStore(context.Background(), "postgres://cyclops_usage_reader:pw@127.0.0.1:1/cyclops")

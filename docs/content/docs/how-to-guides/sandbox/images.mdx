@@ -236,6 +236,46 @@ registry containerDisks, which land in
 `~/.cua/cua-sandbox/images/container-disks/<sha256-of-ref>/disk.qcow2`. Delete
 either directory to force a re-download.
 
+## Use images on Cua Cloud
+
+Sandboxes run on Cua Cloud by default: omit `local=True` and set the `CUA_API_KEY` environment variable. The built-in constructors all work in the cloud.
+
+```python
+from cua import Sandbox, Image
+
+img = Image.linux().apt_install('curl', 'git').pip_install('requests')
+
+async with Sandbox.ephemeral(img) as sb:  # no local=True, so this runs on Cua Cloud
+    ...
+```
+
+Cua Cloud provisions the sandbox from a managed base image matching the image's OS type — `Image.linux()`, `Image.windows()`, `Image.macos()`, or `Image.android()` — then applies your builder layers (packages, environment variables, setup commands, copied files) once the sandbox is running.
+
+Size the cloud machine on the `Sandbox` call, not the Image. `cpu`, `memory_mb`, `disk_gb`, and `region` are cloud-only parameters.
+
+```python
+sb = await Sandbox.create(
+    Image.linux(),
+    name='my-cloud-sandbox',
+    cpu=4,
+    memory_mb=8192,
+    disk_gb=64,
+    region='us-east-1',
+)
+```
+
+<Callout type="info">
+  Image.from_registry() and Image.from_file() are supported on local runtimes only. To reuse a customized environment in the cloud, snapshot a running cloud sandbox instead.
+</Callout>
+
+Snapshot a cloud sandbox to capture its disk state as a new Image, then start any number of forks from it without repeating setup work.
+
+```python
+snap = await sb.snapshot()                    # returns an Image
+async with Sandbox.ephemeral(snap) as fork:   # starts from the snapshot
+    ...
+```
+
 ## Inspect an image
 
 Call `.to_dict()` to inspect the final image spec before using it.

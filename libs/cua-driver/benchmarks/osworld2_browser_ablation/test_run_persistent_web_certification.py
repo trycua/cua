@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+
+import run_persistent_web_certification as persistent
+
+
+def tasks() -> list[dict[str, str]]:
+    return [
+        {
+            "task_id": f"{index:03d}",
+            "stratum": "test",
+            "order": "control-first",
+        }
+        for index in range(1, 11)
+    ]
+
+
+class PersistentCertificationTests(unittest.TestCase):
+    def test_adopts_model_result_but_retries_infrastructure_only_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            valid_dir = output_dir / "01-task001"
+            invalid_dir = output_dir / "persistent-continuation" / "task002"
+            valid_dir.mkdir()
+            invalid_dir.mkdir(parents=True)
+            (valid_dir / "paired-result.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "001",
+                        "pair_valid": True,
+                        "episodes": [{"steps_executed": 1}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (invalid_dir / "paired-result.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "002",
+                        "pair_valid": False,
+                        "episodes": [],
+                        "run_error": "Fleet readiness timeout",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            adopted, attempts = persistent.existing_pair_results(
+                output_dir=output_dir,
+                tasks=tasks(),
+            )
+
+        self.assertEqual(set(adopted), {"001"})
+        self.assertEqual([attempt["task_id"] for attempt in attempts], ["002"])
+
+    def test_model_attempt_is_sealed_even_when_pair_is_invalid(self) -> None:
+        self.assertTrue(
+            persistent.result_has_model_attempt(
+                {
+                    "pair_valid": False,
+                    "episodes": [{"steps_executed": 1}],
+                }
+            )
+        )
+        self.assertFalse(
+            persistent.result_has_model_attempt(
+                {
+                    "pair_valid": False,
+                    "episodes": [],
+                }
+            )
+        )
+
+    def test_hashed_resume_result_supersedes_partial_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            partial_dir = output_dir / "partial" / "task001"
+            resumed_dir = output_dir / "resumed" / "task001"
+            partial_dir.mkdir(parents=True)
+            resumed_dir.mkdir(parents=True)
+            partial_path = partial_dir / "paired-result.json"
+            resumed_path = resumed_dir / "paired-result.json"
+            partial_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": "001",
+                        "pair_valid": False,
+                        "episodes": [{"steps_executed": 3}],
+                        "run_error": "guest transport failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            resumed_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": "001",
+                        "pair_valid": True,
+                        "episodes": [{"steps_executed": 24}],
+                        "supersedes_result": {
+                            "path": str(partial_path),
+                            "sha256": persistent.paired.sha256_file(partial_path),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            adopted, attempts = persistent.existing_pair_results(
+                output_dir=output_dir,
+                tasks=tasks(),
+            )
+
+        self.assertEqual(adopted["001"][0], resumed_path)
+        self.assertEqual(attempts[0]["result_path"], str(partial_path))
+        self.assertEqual(
+            Path(attempts[0]["superseded_by"]),
+            resumed_path.resolve(),
+        )
+
+    def test_posthoc_attestation_error_quarantines_a_valid_result(self) -> None:
+        record = persistent.record_for(
+            task=tasks()[0],
+            pair_cap=8.0,
+            result_path=Path("paired-result.json"),
+            result={
+                "pair_valid": True,
+                "episodes": [],
+                "pair_validation_errors": [],
+            },
+            lifecycle="persistent",
+            attestation_errors=["evaluator controller missing"],
+        )
+
+        self.assertFalse(record["pair_valid"])
+        self.assertEqual(
+            record["posthoc_attestation_errors"],
+            ["evaluator controller missing"],
+        )
+        self.assertIn(
+            "evaluator controller missing",
+            record["pair_validation_errors"],
+        )
+
+    def test_revalidation_requires_matching_hashed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pair_path = root / "paired-result.json"
+            setup_path = root / "setup-certification.json"
+            evidence_path = root / "revalidation.json"
+            pair_path.write_text(
+                json.dumps({"task_id": "001", "pair_valid": True}),
+                encoding="utf-8",
+            )
+            setup_path.write_text(
+                json.dumps(
+                    {
+                        "setup_valid": True,
+                        "fleet_cleanup": {
+                            "record": {"cleanup_verified": True}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": "001",
+                        "revalidated": True,
+                        "paired_result": {
+                            "path": str(pair_path),
+                            "sha256": persistent.paired.sha256_file(pair_path),
+                        },
+                        "setup_certification": {
+                            "path": str(setup_path),
+                            "sha256": persistent.paired.sha256_file(setup_path),
+                        },
+                        "corrected_official_baseline_score": 0.0,
+                        "equivalence": "non-interference proved",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            revalidations = persistent.load_revalidations(
+                evidence_paths=[evidence_path],
+                adopted={
+                    "001": (
+                        pair_path,
+                        {"task_id": "001", "pair_valid": True},
+                    )
+                },
+                known_task_ids={"001"},
+            )
+
+        self.assertEqual(
+            revalidations["001"]["corrected_official_baseline_score"],
+            0.0,
+        )
+        self.assertEqual(
+            revalidations["001"]["equivalence"],
+            "non-interference proved",
+        )
+
+    def test_summary_requires_verified_persistent_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            manifest_path = output_dir / "manifest.json"
+            manifest = {
+                "max_estimated_model_cost_usd": 75,
+                "minimum_valid_pair_rate": 0.8,
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            records = [
+                {
+                    "pair_valid": True,
+                    "estimated_model_cost_usd": 1,
+                }
+                for _ in range(10)
+            ]
+            args = SimpleNamespace(
+                manifest=manifest_path,
+                model="gpt-5.5",
+                reasoning_effort="xhigh",
+                max_steps=24,
+                output_dir=output_dir,
+            )
+
+            summary = persistent.write_summary(
+                args=args,
+                manifest=manifest,
+                tasks=tasks(),
+                records=records,
+                infrastructure_attempts=[],
+                persistent_lifecycle={"cleanup_verified": False},
+                stopped_reason=None,
+                final=True,
+            )
+
+        self.assertFalse(summary["passed"])
+
+
+if __name__ == "__main__":
+    unittest.main()

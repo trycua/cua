@@ -13,14 +13,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 const DEFAULT_STARTUP_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS: u64 = 2_000;
 const HANDSHAKE_ATTEMPT_TIMEOUT_MS: u64 = 500;
+const STDERR_TAIL_LIMIT_BYTES: usize = 65_536;
+const STDERR_DRAIN_TIMEOUT_MS: u64 = 500;
+const STDERR_TEE_QUEUE_CHUNKS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum EmbeddedPermissionMode {
@@ -55,6 +59,8 @@ pub struct EmbeddedDriverHostOptions {
     pub inherit_stderr: bool,
     #[uniffi(default = false)]
     pub no_overlay: bool,
+    #[uniffi(default = false)]
+    pub capture_stderr: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -88,6 +94,14 @@ pub struct EmbeddedDriverExit {
     pub generation: String,
     pub code: Option<i32>,
     pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmbeddedDriverDiagnostics {
+    pub lifecycle_phase: String,
+    pub exit_code: Option<i32>,
+    pub stderr_tail: String,
+    pub stderr_truncated: bool,
 }
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -124,6 +138,7 @@ struct ValidatedOptions {
     environment: Vec<EmbeddedEnvironmentVariable>,
     inherit_stderr: bool,
     no_overlay: bool,
+    capture_stderr: bool,
 }
 
 #[cfg(unix)]
@@ -141,6 +156,7 @@ struct RunningProcess {
     connection: EmbeddedDriverConnection,
     child: Child,
     liveness: Option<ChildStdin>,
+    stderr_pump: Option<StderrPump>,
     endpoint_identity: EndpointIdentity,
 }
 
@@ -161,10 +177,81 @@ struct HostInner {
     last_exit: Option<EmbeddedDriverExit>,
 }
 
+struct DiagnosticCapture {
+    generation: String,
+    exit_code: Option<i32>,
+    stderr: Vec<u8>,
+    truncated: bool,
+}
+
+impl DiagnosticCapture {
+    fn new(generation: String) -> Self {
+        Self {
+            generation,
+            exit_code: None,
+            stderr: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    fn append(&mut self, bytes: &[u8]) {
+        if bytes.len() >= STDERR_TAIL_LIMIT_BYTES {
+            self.stderr.clear();
+            self.stderr
+                .extend_from_slice(&bytes[bytes.len() - STDERR_TAIL_LIMIT_BYTES..]);
+            self.truncated = true;
+            return;
+        }
+        let overflow = self
+            .stderr
+            .len()
+            .saturating_add(bytes.len())
+            .saturating_sub(STDERR_TAIL_LIMIT_BYTES);
+        if overflow > 0 {
+            self.stderr.drain(..overflow);
+            self.truncated = true;
+        }
+        self.stderr.extend_from_slice(bytes);
+    }
+
+    fn snapshot(&self) -> EmbeddedDriverDiagnostics {
+        EmbeddedDriverDiagnostics {
+            lifecycle_phase: "startup".into(),
+            exit_code: self.exit_code,
+            stderr_tail: String::from_utf8_lossy(&self.stderr).into_owned(),
+            stderr_truncated: self.truncated,
+        }
+    }
+}
+
+struct StderrPump {
+    reader: Option<JoinHandle<()>>,
+    tee: Option<JoinHandle<()>>,
+}
+
+impl StderrPump {
+    async fn finish(mut self) {
+        finish_stderr_task(self.reader.take()).await;
+        finish_stderr_task(self.tee.take()).await;
+    }
+}
+
+impl Drop for StderrPump {
+    fn drop(&mut self) {
+        if let Some(task) = self.reader.take() {
+            task.abort();
+        }
+        if let Some(task) = self.tee.take() {
+            task.abort();
+        }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct EmbeddedCuaDriverHost {
     options: ValidatedOptions,
     inner: Mutex<HostInner>,
+    diagnostics: Arc<Mutex<Option<DiagnosticCapture>>>,
     changed: Notify,
 }
 
@@ -267,6 +354,7 @@ impl EmbeddedCuaDriverHost {
             environment: Vec::new(),
             inherit_stderr: true,
             no_overlay: false,
+            capture_stderr: false,
         })
     }
 
@@ -280,6 +368,7 @@ impl EmbeddedCuaDriverHost {
                 phase: HostPhase::Stopped,
                 last_exit: None,
             }),
+            diagnostics: Arc::new(Mutex::new(None)),
             changed: Notify::new(),
         }))
     }
@@ -304,6 +393,14 @@ impl EmbeddedCuaDriverHost {
         }
     }
 
+    pub fn last_diagnostics(&self) -> Option<EmbeddedDriverDiagnostics> {
+        self.diagnostics
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(DiagnosticCapture::snapshot)
+    }
+
     pub async fn start(self: Arc<Self>) -> Result<EmbeddedDriverConnection, EmbeddedDriverError> {
         loop {
             let notified = self.changed.notified();
@@ -314,6 +411,10 @@ impl EmbeddedCuaDriverHost {
                     HostPhase::Ready(running) => return Ok(running.connection.clone()),
                     HostPhase::Stopped => {
                         let generation = Uuid::new_v4().to_string();
+                        *self.diagnostics.lock().unwrap() = self
+                            .options
+                            .capture_stderr
+                            .then(|| DiagnosticCapture::new(generation.clone()));
                         let cancel = Arc::new(AtomicBool::new(false));
                         inner.phase = HostPhase::Starting {
                             generation: generation.clone(),
@@ -433,7 +534,9 @@ impl EmbeddedCuaDriverHost {
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(if self.options.inherit_stderr {
+            .stderr(if self.options.capture_stderr {
+                Stdio::piped()
+            } else if self.options.inherit_stderr {
                 Stdio::inherit()
             } else {
                 Stdio::null()
@@ -464,11 +567,28 @@ impl EmbeddedCuaDriverHost {
                 binary_path: self.options.binary_path.clone(),
                 reason: "failed to create parent-liveness stdin pipe".into(),
             })?;
+        let mut stderr_pump = if self.options.capture_stderr {
+            let stderr = child
+                .stderr
+                .take()
+                .ok_or_else(|| EmbeddedDriverError::Spawn {
+                    binary_path: self.options.binary_path.clone(),
+                    reason: "failed to capture embedded daemon stderr".into(),
+                })?;
+            Some(spawn_stderr_pump(
+                stderr,
+                self.diagnostics.clone(),
+                generation.clone(),
+                self.options.inherit_stderr,
+            ))
+        } else {
+            None
+        };
 
         let deadline = tokio::time::Instant::now() + self.options.startup_timeout;
         let metadata = loop {
             if cancel.load(Ordering::Acquire) {
-                terminate_startup_child(&mut child, &mut liveness).await;
+                terminate_startup_child(&mut child, &mut liveness, &mut stderr_pump).await;
                 return Err(EmbeddedDriverError::StartupCancelled);
             }
             if let Some(status) =
@@ -478,12 +598,14 @@ impl EmbeddedCuaDriverHost {
                         reason: format!("inspect startup child: {error}"),
                     })?
             {
+                finish_stderr_pump(&mut stderr_pump).await;
+                set_diagnostic_exit_code(&self.diagnostics, &generation, status.code());
                 return Err(EmbeddedDriverError::ExitedBeforeReady {
                     code: status.code(),
                 });
             }
             if tokio::time::Instant::now() >= deadline {
-                terminate_startup_child(&mut child, &mut liveness).await;
+                terminate_startup_child(&mut child, &mut liveness, &mut stderr_pump).await;
                 return Err(EmbeddedDriverError::StartupTimeout {
                     timeout_ms: self.options.startup_timeout.as_millis() as u64,
                 });
@@ -501,13 +623,13 @@ impl EmbeddedCuaDriverHost {
                     Ok(Ok(Ok(metadata))) => break metadata,
                     Ok(Ok(Err(_))) => {}
                     Ok(Err(join_error)) => {
-                        terminate_startup_child(&mut child, &mut liveness).await;
+                        terminate_startup_child(&mut child, &mut liveness, &mut stderr_pump).await;
                         return Err(EmbeddedDriverError::Lifecycle {
                             reason: format!("daemon metadata task failed: {join_error}"),
                         });
                     }
                     Err(_) => {
-                        terminate_startup_child(&mut child, &mut liveness).await;
+                        terminate_startup_child(&mut child, &mut liveness, &mut stderr_pump).await;
                         return Err(EmbeddedDriverError::StartupTimeout {
                             timeout_ms: self.options.startup_timeout.as_millis() as u64,
                         });
@@ -520,12 +642,12 @@ impl EmbeddedCuaDriverHost {
         let endpoint_identity = match capture_endpoint_identity(&socket_path) {
             Ok(identity) => identity,
             Err(error) => {
-                terminate_startup_child(&mut child, &mut liveness).await;
+                terminate_startup_child(&mut child, &mut liveness, &mut stderr_pump).await;
                 return Err(error);
             }
         };
         if let Err(error) = validate_metadata(&metadata, pid, &self.options.host_bundle_id) {
-            terminate_startup_child(&mut child, &mut liveness).await;
+            terminate_startup_child(&mut child, &mut liveness, &mut stderr_pump).await;
             cleanup_owned_endpoint(&socket_path, &endpoint_identity);
             return Err(error);
         }
@@ -540,7 +662,7 @@ impl EmbeddedCuaDriverHost {
         };
 
         if cancel.load(Ordering::Acquire) {
-            terminate_startup_child(&mut child, &mut liveness).await;
+            terminate_startup_child(&mut child, &mut liveness, &mut stderr_pump).await;
             cleanup_owned_endpoint(&socket_path, &endpoint_identity);
             return Err(EmbeddedDriverError::StartupCancelled);
         }
@@ -548,6 +670,7 @@ impl EmbeddedCuaDriverHost {
             connection: connection.clone(),
             child,
             liveness: Some(liveness),
+            stderr_pump,
             endpoint_identity,
         });
         let still_starting = {
@@ -565,11 +688,13 @@ impl EmbeddedCuaDriverHost {
         if !still_starting {
             let mut running = pending.unwrap();
             let mut liveness = running.liveness.take().unwrap();
-            terminate_startup_child(&mut running.child, &mut liveness).await;
+            terminate_startup_child(&mut running.child, &mut liveness, &mut running.stderr_pump)
+                .await;
             cleanup_owned_endpoint(&socket_path, &running.endpoint_identity);
             return Err(EmbeddedDriverError::StartupCancelled);
         }
         transition_guard.disarm();
+        clear_diagnostics(&self.diagnostics, &generation);
         self.changed.notify_waiters();
         Ok(connection)
     }
@@ -608,7 +733,10 @@ impl EmbeddedCuaDriverHost {
                 }
             }
         };
-        let running = transition_guard.disarm();
+        let mut running = transition_guard.disarm();
+        if let Some(stderr_pump) = running.stderr_pump.take() {
+            stderr_pump.finish().await;
+        }
         cleanup_owned_endpoint(&running.connection.socket_path, &running.endpoint_identity);
         {
             let mut inner = self.inner.lock().unwrap();
@@ -823,6 +951,7 @@ fn validate_options(
         environment: options.environment,
         inherit_stderr: options.inherit_stderr,
         no_overlay: options.no_overlay,
+        capture_stderr: options.capture_stderr,
     })
 }
 
@@ -1122,7 +1251,123 @@ fn cleanup_owned_endpoint(socket_path: &str, identity: &EndpointIdentity) {
     }
 }
 
-async fn terminate_startup_child(child: &mut Child, liveness: &mut ChildStdin) {
+fn spawn_stderr_pump(
+    mut stderr: tokio::process::ChildStderr,
+    diagnostics: Arc<Mutex<Option<DiagnosticCapture>>>,
+    generation: String,
+    inherit_stderr: bool,
+) -> StderrPump {
+    let (tee_sender, tee) = if inherit_stderr {
+        let (sender, mut receiver) = mpsc::channel::<Vec<u8>>(STDERR_TEE_QUEUE_CHUNKS);
+        let task = tokio::spawn(async move {
+            let mut inherited = tokio::io::stderr();
+            while let Some(bytes) = receiver.recv().await {
+                if inherited.write_all(&bytes).await.is_err() {
+                    break;
+                }
+            }
+        });
+        (Some(sender), Some(task))
+    } else {
+        (None, None)
+    };
+
+    let reader = tokio::spawn(async move {
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let Ok(count) = stderr.read(&mut buffer).await else {
+                break;
+            };
+            if count == 0 {
+                break;
+            }
+            capture_and_queue_stderr(
+                &diagnostics,
+                &generation,
+                &buffer[..count],
+                tee_sender.as_ref(),
+            );
+        }
+    });
+
+    StderrPump {
+        reader: Some(reader),
+        tee,
+    }
+}
+
+fn capture_and_queue_stderr(
+    diagnostics: &Arc<Mutex<Option<DiagnosticCapture>>>,
+    generation: &str,
+    bytes: &[u8],
+    tee_sender: Option<&mpsc::Sender<Vec<u8>>>,
+) {
+    append_diagnostic_bytes(diagnostics, generation, bytes);
+    if let Some(sender) = tee_sender {
+        // Diagnostics must keep draining even if inherited stderr is blocked.
+        // The bounded tee is intentionally best effort.
+        let _ = sender.try_send(bytes.to_vec());
+    }
+}
+
+fn append_diagnostic_bytes(
+    diagnostics: &Arc<Mutex<Option<DiagnosticCapture>>>,
+    generation: &str,
+    bytes: &[u8],
+) {
+    if let Some(capture) = diagnostics.lock().unwrap().as_mut() {
+        if capture.generation == generation {
+            capture.append(bytes);
+        }
+    }
+}
+
+fn set_diagnostic_exit_code(
+    diagnostics: &Arc<Mutex<Option<DiagnosticCapture>>>,
+    generation: &str,
+    exit_code: Option<i32>,
+) {
+    if let Some(capture) = diagnostics.lock().unwrap().as_mut() {
+        if capture.generation == generation {
+            capture.exit_code = exit_code;
+        }
+    }
+}
+
+fn clear_diagnostics(diagnostics: &Arc<Mutex<Option<DiagnosticCapture>>>, generation: &str) {
+    let mut current = diagnostics.lock().unwrap();
+    if current
+        .as_ref()
+        .is_some_and(|capture| capture.generation == generation)
+    {
+        *current = None;
+    }
+}
+
+async fn finish_stderr_task(task: Option<JoinHandle<()>>) {
+    let Some(mut task) = task else {
+        return;
+    };
+    if tokio::time::timeout(Duration::from_millis(STDERR_DRAIN_TIMEOUT_MS), &mut task)
+        .await
+        .is_err()
+    {
+        task.abort();
+        let _ = task.await;
+    }
+}
+
+async fn finish_stderr_pump(stderr_pump: &mut Option<StderrPump>) {
+    if let Some(stderr_pump) = stderr_pump.take() {
+        stderr_pump.finish().await;
+    }
+}
+
+async fn terminate_startup_child(
+    child: &mut Child,
+    liveness: &mut ChildStdin,
+    stderr_pump: &mut Option<StderrPump>,
+) {
     let _ = liveness.shutdown().await;
     if tokio::time::timeout(Duration::from_millis(250), child.wait())
         .await
@@ -1131,6 +1376,7 @@ async fn terminate_startup_child(child: &mut Child, liveness: &mut ChildStdin) {
         let _ = child.start_kill();
         let _ = child.wait().await;
     }
+    finish_stderr_pump(stderr_pump).await;
 }
 
 #[cfg(test)]
@@ -1157,6 +1403,7 @@ mod tests {
             environment: Vec::new(),
             inherit_stderr: false,
             no_overlay: false,
+            capture_stderr: false,
         }
     }
 
@@ -1221,6 +1468,53 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+    }
+
+    #[test]
+    fn diagnostic_capture_retains_a_bounded_stderr_tail() {
+        let mut capture = DiagnosticCapture::new("generation-1".into());
+        capture.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES]);
+        capture.append(b"final-error");
+
+        let diagnostics = capture.snapshot();
+        assert!(diagnostics.stderr_truncated);
+        assert_eq!(diagnostics.stderr_tail.len(), STDERR_TAIL_LIMIT_BYTES);
+        assert!(diagnostics.stderr_tail.ends_with("final-error"));
+    }
+
+    #[test]
+    fn diagnostic_capture_rejects_bytes_from_an_old_generation() {
+        let diagnostics = Arc::new(Mutex::new(Some(DiagnosticCapture::new(
+            "generation-2".into(),
+        ))));
+
+        append_diagnostic_bytes(&diagnostics, "generation-1", b"stale");
+        append_diagnostic_bytes(&diagnostics, "generation-2", b"current");
+        set_diagnostic_exit_code(&diagnostics, "generation-1", Some(7));
+        set_diagnostic_exit_code(&diagnostics, "generation-2", Some(8));
+
+        let snapshot = diagnostics.lock().unwrap().as_ref().unwrap().snapshot();
+        assert_eq!(snapshot.stderr_tail, "current");
+        assert_eq!(snapshot.exit_code, Some(8));
+
+        clear_diagnostics(&diagnostics, "generation-1");
+        assert!(diagnostics.lock().unwrap().is_some());
+        clear_diagnostics(&diagnostics, "generation-2");
+        assert!(diagnostics.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn blocked_stderr_tee_does_not_block_or_drop_diagnostics() {
+        let diagnostics = Arc::new(Mutex::new(Some(DiagnosticCapture::new(
+            "generation-1".into(),
+        ))));
+        let (sender, _receiver) = mpsc::channel(1);
+
+        capture_and_queue_stderr(&diagnostics, "generation-1", b"first-", Some(&sender));
+        capture_and_queue_stderr(&diagnostics, "generation-1", b"second", Some(&sender));
+
+        let snapshot = diagnostics.lock().unwrap().as_ref().unwrap().snapshot();
+        assert_eq!(snapshot.stderr_tail, "first-second");
     }
 
     #[test]
@@ -1410,6 +1704,7 @@ mod tests {
             },
             child,
             liveness,
+            stderr_pump: None,
             endpoint_identity,
         };
         host.inner.lock().unwrap().phase = HostPhase::Stopping { generation };

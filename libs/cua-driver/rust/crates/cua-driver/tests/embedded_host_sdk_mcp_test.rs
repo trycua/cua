@@ -9,7 +9,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cua_driver_contract::{CaptureScope, GetSessionStateInput, StartSessionInput};
-use cua_driver_sdk::{CuaDriver, DriverError, EmbeddedCuaDriverHost, EmbeddedDriverHostState};
+use cua_driver_sdk::{
+    CuaDriver, DriverError, EmbeddedCuaDriverHost, EmbeddedDriverHostOptions,
+    EmbeddedDriverHostState,
+};
 use cua_driver_testkit::{spawn_in_job, ChildReaper};
 use serde_json::{json, Value};
 
@@ -62,6 +65,31 @@ fn write_test_shell_script(path: &std::path::Path, body: &str) {
         .expect("test environment must provide a shell");
     std::fs::write(path, format!("#!{}\n{body}\n", shell.display())).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[cfg(unix)]
+fn capturing_host(
+    binary: &std::path::Path,
+    host_bundle_id: &str,
+) -> std::sync::Arc<EmbeddedCuaDriverHost> {
+    EmbeddedCuaDriverHost::with_options(EmbeddedDriverHostOptions {
+        binary_path: binary.to_string_lossy().into_owned(),
+        host_bundle_id: host_bundle_id.into(),
+        socket_path: None,
+        startup_timeout_ms: None,
+        shutdown_timeout_ms: None,
+        permission_mode: None,
+        capability_manifest_path: None,
+        approve_capability_manifest: false,
+        session_policy_path: None,
+        approve_session_policy: false,
+        dangerously_bypass_approvals: false,
+        environment: Vec::new(),
+        inherit_stderr: false,
+        no_overlay: false,
+        capture_stderr: true,
+    })
+    .expect("construct capturing host")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -291,12 +319,8 @@ async fn concurrent_start_coalesces_and_restart_rotates_generation() {
 async fn stop_cancels_startup_and_unblocks_every_waiter() {
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("never-ready-driver");
-    write_test_shell_script(&binary, "read _");
-    let host = EmbeddedCuaDriverHost::new(
-        binary.to_string_lossy().into_owned(),
-        "com.trycua.embedded-cancel-test".into(),
-    )
-    .expect("construct host");
+    write_test_shell_script(&binary, "printf 'cancelled-startup\\n' >&2\nread _");
+    let host = capturing_host(&binary, "com.trycua.embedded-cancel-test");
 
     let starting = tokio::spawn(host.clone().start());
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -305,6 +329,21 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
     }
     assert_eq!(host.state(), EmbeddedDriverHostState::Starting);
 
+    let diagnostic_deadline = Instant::now() + Duration::from_secs(2);
+    while host
+        .last_diagnostics()
+        .as_ref()
+        .map(|diagnostics| diagnostics.stderr_tail.as_str())
+        != Some("cancelled-startup\n")
+        && Instant::now() < diagnostic_deadline
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        host.last_diagnostics().unwrap().stderr_tail,
+        "cancelled-startup\n"
+    );
+
     host.clone().stop().await.expect("cancel startup");
     let start_error = starting.await.unwrap().unwrap_err();
     assert!(matches!(
@@ -312,6 +351,10 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
         cua_driver_sdk::EmbeddedDriverError::StartupCancelled
     ));
     assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
+    assert_eq!(
+        host.last_diagnostics().unwrap().stderr_tail,
+        "cancelled-startup\n"
+    );
 }
 
 #[cfg(unix)]
@@ -319,12 +362,8 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
 async fn early_child_exit_resets_the_host_to_stopped() {
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("early-exit-driver");
-    write_test_shell_script(&binary, "exit 7");
-    let host = EmbeddedCuaDriverHost::new(
-        binary.to_string_lossy().into_owned(),
-        "com.trycua.embedded-early-exit-test".into(),
-    )
-    .expect("construct host");
+    write_test_shell_script(&binary, "printf 'complete-startup-error\\n' >&2\nexit 7");
+    let host = capturing_host(&binary, "com.trycua.embedded-early-exit-test");
     for attempt in 1..=64 {
         let error = host.clone().start().await.unwrap_err();
         assert!(
@@ -339,5 +378,44 @@ async fn early_child_exit_resets_the_host_to_stopped() {
             EmbeddedDriverHostState::Stopped,
             "attempt {attempt}/64 did not reset the host after {error:?}"
         );
+        let diagnostics = host
+            .last_diagnostics()
+            .expect("failed startup should retain diagnostics");
+        assert_eq!(diagnostics.exit_code, Some(7));
+        assert_eq!(diagnostics.stderr_tail, "complete-startup-error\n");
+        assert!(!diagnostics.stderr_truncated);
     }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn late_stderr_from_an_old_start_cannot_contaminate_the_next_generation() {
+    let directory = tempfile::tempdir().unwrap();
+    let binary = directory.path().join("generation-driver");
+    let counter = directory.path().join("started-once");
+    write_test_shell_script(
+        &binary,
+        &format!(
+            "if [ ! -e '{}' ]; then\n  : > '{}'\n  (sleep 1; printf 'stale-generation\\n' >&2) &\n  exit 7\nfi\nprintf 'current-generation\\n' >&2\nexit 8",
+            counter.display(),
+            counter.display()
+        ),
+    );
+    let host = capturing_host(&binary, "com.trycua.embedded-generation-test");
+
+    let first = host.clone().start().await.unwrap_err();
+    assert!(matches!(
+        first,
+        cua_driver_sdk::EmbeddedDriverError::ExitedBeforeReady { code: Some(7) }
+    ));
+    let second = host.clone().start().await.unwrap_err();
+    assert!(matches!(
+        second,
+        cua_driver_sdk::EmbeddedDriverError::ExitedBeforeReady { code: Some(8) }
+    ));
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
+    let diagnostics = host.last_diagnostics().unwrap();
+    assert_eq!(diagnostics.exit_code, Some(8));
+    assert_eq!(diagnostics.stderr_tail, "current-generation\n");
 }

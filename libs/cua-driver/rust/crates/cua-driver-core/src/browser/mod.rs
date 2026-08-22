@@ -55,6 +55,7 @@ pub mod tools;
 pub mod types;
 #[cfg(test)]
 mod v2_tests;
+mod verification;
 
 pub use engine::BrowserEngine;
 pub use platform::{

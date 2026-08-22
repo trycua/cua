@@ -66,6 +66,30 @@ automation profile must survive across sessions. `allow_launch: true` states
 that this call may create the separate process; it does not widen runtime
 authorization. `get_browser_state` never performs setup itself.
 
+For standalone browser use where the caller wants a less automation-shaped
+Chromium launch, add `"launch_posture":"stealth"`:
+
+```jsonc
+browser_prepare({
+  "session": "research-1",
+  "allow_launch": true,
+  "launch_posture": "stealth",
+  "profile": {"mode": "isolated_new"}
+})
+```
+
+This still launches a separate driver-owned profile. It does not attach to an
+existing profile, accept a `pid`, inject page scripts, override browser
+identity, or guarantee that a site will accept the session. It uses a real
+installed non-headless Chromium-family browser with a driver-selected nonzero
+DevTools port instead of Chromium's port=0 launch path.
+
+If a site presents a CAPTCHA or bot-verification challenge, Cua Driver does not
+solve or bypass it. A later `get_browser_state` snapshot can report
+`verification.required: true` with `next_action: "human_verification"` so the
+agent can pause, ask a human to complete the visible challenge, and then resume
+from a fresh snapshot.
+
 ## Attach to an existing Chrome or Edge profile
 
 Use this route only when the agent must work in a supported Chromium profile

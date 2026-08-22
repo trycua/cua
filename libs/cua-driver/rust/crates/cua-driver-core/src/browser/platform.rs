@@ -82,6 +82,26 @@ pub struct PrepareProfile {
     pub name: Option<String>,
 }
 
+/// Browser launch posture for a driver-owned isolated profile.
+///
+/// This is intentionally not an existing-profile setting. Existing profiles
+/// keep their real browser identity and the reviewed personal-profile CDP
+/// policy; callers cannot use this enum to request identity overrides or page
+/// script injection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrepareLaunchPosture {
+    /// Current deterministic launch: minimize browser-owned background work so
+    /// setup is quiet and repeatable.
+    #[default]
+    Standard,
+    /// Standalone compatibility launch: use a real non-headless installed
+    /// browser with a driver-owned profile and a driver-selected nonzero
+    /// DevTools port instead of Chromium's port=0 automation-shaped launch
+    /// path. This does not promise detector bypass.
+    Stealth,
+}
+
 /// Acting strategy for browser preparation that is not a driver-owned profile
 /// lifecycle operation. Existing profiles remain owned by the user/browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,9 +114,9 @@ pub enum PrepareStrategy {
 /// implicit: `get_browser_state` must not trigger it.
 #[derive(Debug, Clone)]
 pub struct PrepareRequest {
-    /// Existing browser process used to select and attest the launch executable.
-    /// Omitted only for a driver-owned isolated launch, where the platform
-    /// resolves a supported installed Chromium executable instead.
+    /// Existing browser process to prepare, or the standard isolated launch
+    /// executable source. Omitted for pid-free driver-owned isolated launch,
+    /// including all stealth launches.
     pub pid: Option<i64>,
     /// Exact native window used as the visible approval and ownership anchor
     /// for existing-profile attachment.
@@ -112,6 +132,9 @@ pub struct PrepareRequest {
     /// Allows launching a separate driver-owned isolated browser process.
     /// It never authorizes terminating or modifying the requested process.
     pub allow_launch: bool,
+    /// Standalone launch posture. Non-default values are valid only with a
+    /// driver-owned isolated launch (`allow_launch=true` plus `profile`).
+    pub launch_posture: PrepareLaunchPosture,
 }
 
 /// What a platform adapter actually did (or found) during prepare.
@@ -141,6 +164,10 @@ pub struct PrepareOutcome {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_pid: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_posture: Option<PrepareLaunchPosture>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub launch_posture_notes: Vec<String>,
     #[serde(default)]
     pub side_effects: PrepareSideEffects,
     #[serde(skip_serializing_if = "Option::is_none")]

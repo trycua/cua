@@ -558,8 +558,8 @@ pub fn parse_command() -> Command {
         );
         println!();
         println!("authorization revocation:");
-        println!("  cua-driver revoke --session <id>  Stop and revoke one session's grants.");
-        println!("  cua-driver revoke --all           Stop and revoke every live session.");
+        println!("  cua-driver revoke --session <id>  Revoke one session's authorization scope.");
+        println!("  cua-driver revoke --all           Revoke every live authorization scope.");
         println!("                                      Revocation is deny-only and never needs a token.");
         println!();
         println!("mcp options:");
@@ -1792,8 +1792,8 @@ pub fn build_manifest() -> serde_json::Value {
             { "name": "revoke",
               "description": "Revoke one session or every live authorization scope without minting new authority.",
               "args": [
-                  { "name": "--session", "type": "string", "description": "Exact session id to stop and revoke." },
-                  { "name": "--all", "type": "flag", "description": "Stop and revoke every live session." },
+                  { "name": "--session", "type": "string", "description": "Exact session id to revoke." },
+                  { "name": "--all", "type": "flag", "description": "Revoke every live authorization scope." },
                   { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
               ] },
             { "name": "status",
@@ -3822,11 +3822,11 @@ fn cli_docs_json() -> serde_json::Value {
                 "discussion": "Revocation is deny-only and never accepts an approval token.",
                 "arguments": no_args,
                 "options": [
-                    {"name":"session","short_name":null,"help":"Exact session id to stop and revoke.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"session","short_name":null,"help":"Exact session id to revoke.","type":"String","default_value":null,"is_optional":true},
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
-                    {"name":"all","short_name":null,"help":"Stop and revoke every live session.","default_value":false}
+                    {"name":"all","short_name":null,"help":"Revoke every live authorization scope.","default_value":false}
                 ],
                 "subcommands": no_subcommands
             },

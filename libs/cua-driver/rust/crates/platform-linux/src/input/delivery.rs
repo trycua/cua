@@ -104,6 +104,10 @@ pub enum BackgroundUnavailable {
     /// WebKitGTK rejects synthetic XSendEvent input and no real target-addressed
     /// pointer backend is available in this session.
     WebKitSyntheticInput,
+    /// AT-SPI-at-point missed and this X server cannot host an MPX/uinput
+    /// pointer (Xvfb and/or `/dev/uinput` inaccessible). XSendEvent is not
+    /// reported as a landed click on those hosts.
+    NoMpxPointer,
 }
 
 impl BackgroundUnavailable {
@@ -113,6 +117,7 @@ impl BackgroundUnavailable {
             Self::ChromiumInput => "background_unavailable",
             Self::FocusedInputOnly => "background_unavailable",
             Self::WebKitSyntheticInput => "background_unavailable",
+            Self::NoMpxPointer => "background_unavailable",
         }
     }
     fn detail(self) -> &'static str {
@@ -132,6 +137,11 @@ impl BackgroundUnavailable {
             }
             Self::WebKitSyntheticInput => {
                 "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
+            }
+            Self::NoMpxPointer => {
+                "AT-SPI-at-point did not land and this X server cannot host an \
+                 MPX/uinput pointer (Xvfb and/or /dev/uinput inaccessible); \
+                 XSendEvent is not treated as a landed click"
             }
         }
     }
@@ -220,6 +230,25 @@ mod tests {
             .as_str()
             .expect("delivery_mode description");
         assert!(!description.contains("bring_to_front"));
+    }
+
+    #[test]
+    fn no_mpx_pointer_refusal_is_background_unavailable() {
+        let r = background_unavailable_error(BackgroundUnavailable::NoMpxPointer);
+        assert_eq!(r.is_error, Some(true));
+        let structured = r.structured_content.as_ref().unwrap();
+        assert_eq!(
+            structured["code"],
+            serde_json::json!("background_unavailable")
+        );
+        assert_eq!(
+            structured["escalation"]["recommended"].as_str(),
+            Some("foreground")
+        );
+        let detail = structured["detail"].as_str().unwrap_or_default();
+        assert!(detail.contains("Xvfb"), "{detail}");
+        assert!(detail.contains("uinput"), "{detail}");
+        assert!(detail.contains("XSendEvent"), "{detail}");
     }
 
     #[test]

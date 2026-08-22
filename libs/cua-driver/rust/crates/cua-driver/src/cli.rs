@@ -3179,7 +3179,7 @@ fn run_permissions_status(json: bool) {
         None
     };
 
-    let Some(structured) = daemon_status else {
+    let Some(mut structured) = daemon_status else {
         // No reliable answer. Emit NO accessibility/screen_recording booleans —
         // nothing downstream can misread a false `granted: true`.
         if json {
@@ -3211,6 +3211,11 @@ fn run_permissions_status(json: bool) {
         return;
     };
 
+    #[cfg(target_os = "macos")]
+    if let Some(verification) = crate::direct_capture_verification::status_value() {
+        structured["direct_capture_verification"] = verification;
+    }
+
     if json {
         println!(
             "{}",
@@ -3225,6 +3230,7 @@ fn run_permissions_status(json: bool) {
     let cap = structured
         .get("screen_recording_capturable")
         .and_then(|v| v.as_bool());
+    let direct_capture_verification = structured.get("direct_capture_verification");
     let attribution = structured
         .get("source")
         .and_then(|s| s.get("attribution"))
@@ -3249,9 +3255,32 @@ fn run_permissions_status(json: bool) {
                 );
             }
         }
-        None => println!(
-            "Direct Capture:     ❓ not checked (status is read-only; run `{cli_name} permissions grant`)"
-        ),
+        None => {
+            if let Some(verification) = direct_capture_verification {
+                let source = verification
+                    .get("source")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown source");
+                let verified_at = verification
+                    .get("verified_at")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown time");
+                let bundle_id = verification
+                    .get("bundle_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown identity");
+                println!(
+                    "Direct Capture:     ✅ previously verified ({source}, {verified_at}, {bundle_id})"
+                );
+                println!(
+                    "  ℹ️  historical observation; this read-only status did not run a live probe."
+                );
+            } else {
+                println!(
+                    "Direct Capture:     ❓ not checked (status is read-only; run `{cli_name} permissions grant`)"
+                );
+            }
+        }
     }
     println!("Source: {attribution}");
     if !(ax && sr) {
@@ -3579,10 +3608,21 @@ fn run_permissions_grant() {
             .as_ref()
             .is_some_and(permission_grant_is_ready)
         {
+            if let Err(error) = crate::direct_capture_verification::record() {
+                let _ = crate::direct_capture_verification::clear();
+                eprintln!(
+                    "\n❌ Direct capture worked, but its verification could not be recorded: {error}"
+                );
+                process::exit(1);
+            }
             println!(
                 "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
             );
             return;
+        }
+
+        if let Err(error) = crate::direct_capture_verification::clear() {
+            eprintln!("⚠️  Could not clear the previous direct capture verification: {error}");
         }
 
         eprintln!("\n❌ {app_name} still cannot use direct ScreenCaptureKit capture.");

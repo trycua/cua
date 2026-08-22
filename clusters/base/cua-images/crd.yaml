@@ -118,25 +118,34 @@ spec:
                             minLength: 1
                             maxLength: 16384
                         oneOf:
-                          - properties:
+                          - additionalProperties: false
+                            properties:
                               type:
                                 enum:
                                   - apt_install
                                   - pip_install
                                   - uv_install
+                              packages: {}
                             required:
+                              - type
                               - packages
-                          - properties:
+                          - additionalProperties: false
+                            properties:
                               type:
                                 enum:
                                   - app_install
+                              appId: {}
                             required:
+                              - type
                               - appId
-                          - properties:
+                          - additionalProperties: false
+                            properties:
                               type:
                                 enum:
                                   - run
+                              command: {}
                             required:
+                              - type
                               - command
                     env:
                       type: object
@@ -176,6 +185,7 @@ spec:
                                 type: string
                                 minLength: 1
                                 maxLength: 2048
+                                pattern: ^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$
                               digest:
                                 type: string
                                 pattern: ^sha256:[0-9a-f]{64}$
@@ -183,6 +193,7 @@ spec:
                                 type: integer
                                 format: int64
                                 minimum: 0
+                                maximum: 9223372036854775807
                           destination:
                             type: string
                             pattern: ^/.*

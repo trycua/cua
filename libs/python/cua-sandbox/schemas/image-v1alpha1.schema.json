@@ -120,10 +120,12 @@
                       "reference": {
                         "maxLength": 2048,
                         "minLength": 1,
+                        "pattern": "^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$",
                         "type": "string"
                       },
                       "sizeBytes": {
                         "format": "int64",
+                        "maximum": 9223372036854775807,
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -158,7 +160,9 @@
                 "additionalProperties": false,
                 "oneOf": [
                   {
+                    "additionalProperties": false,
                     "properties": {
+                      "packages": {},
                       "type": {
                         "enum": [
                           "apt_install",
@@ -168,11 +172,14 @@
                       }
                     },
                     "required": [
+                      "type",
                       "packages"
                     ]
                   },
                   {
+                    "additionalProperties": false,
                     "properties": {
+                      "appId": {},
                       "type": {
                         "enum": [
                           "app_install"
@@ -180,11 +187,14 @@
                       }
                     },
                     "required": [
+                      "type",
                       "appId"
                     ]
                   },
                   {
+                    "additionalProperties": false,
                     "properties": {
+                      "command": {},
                       "type": {
                         "enum": [
                           "run"
@@ -192,6 +202,7 @@
                       }
                     },
                     "required": [
+                      "type",
                       "command"
                     ]
                   }

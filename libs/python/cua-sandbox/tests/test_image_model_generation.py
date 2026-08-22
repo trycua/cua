@@ -61,7 +61,35 @@ def test_generated_models_validate_the_resource_and_file_reference() -> None:
     assert resource.spec.recipe.os_type == "linux"
 
 
-def test_generated_models_reject_layer_fields_invalid_under_one_of() -> None:
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "/tmp/secret.txt",
+        "file:///tmp/secret.txt",
+        "data:text/plain;base64,c2VjcmV0",
+        "uploads/tenant-a/../secret",
+    ],
+)
+def test_generated_models_reject_non_uploaded_file_references(reference: str) -> None:
+    with pytest.raises(ValidationError):
+        ImageFileReference.model_validate(
+            {
+                "reference": reference,
+                "digest": "sha256:" + "a" * 64,
+                "sizeBytes": 123,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "layer",
+    [
+        {"type": "apt_install", "packages": ["curl"], "appId": "playwright"},
+        {"type": "app_install", "appId": "playwright", "command": "echo unexpected"},
+        {"type": "run", "command": "echo ok", "packages": ["curl"]},
+    ],
+)
+def test_generated_models_reject_irrelevant_layer_fields(layer: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         ImageResource.model_validate(
             {
@@ -74,9 +102,31 @@ def test_generated_models_reject_layer_fields_invalid_under_one_of() -> None:
                         "distro": "ubuntu",
                         "version": "24.04",
                         "kind": "vm",
-                        "layers": [{"type": "run", "packages": ["curl"]}],
+                        "layers": [layer],
                     }
                 },
+            }
+        )
+
+
+def test_generated_models_accept_file_reference_at_kubernetes_int64_maximum() -> None:
+    reference = ImageFileReference.model_validate(
+        {
+            "reference": "uploads/tenant-a/a",
+            "digest": "sha256:" + "a" * 64,
+            "sizeBytes": 9223372036854775807,
+        }
+    )
+    assert reference.size_bytes == 9223372036854775807
+
+
+def test_generated_models_reject_file_reference_larger_than_kubernetes_int64() -> None:
+    with pytest.raises(ValidationError):
+        ImageFileReference.model_validate(
+            {
+                "reference": "uploads/tenant-a/a",
+                "digest": "sha256:" + "a" * 64,
+                "sizeBytes": 9223372036854775808,
             }
         )
 

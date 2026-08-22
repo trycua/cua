@@ -1,6 +1,19 @@
 name: "CI: Image API"
 
 on:
+  push:
+    paths:
+      - "clusters/base/cua-images/**"
+      - "libs/python/cua-sandbox/cua_sandbox/image.py"
+      - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
+      - "libs/python/cua-sandbox/cua_sandbox/generated/**"
+      - "libs/python/cua-sandbox/schemas/**"
+      - "libs/python/cua-sandbox/scripts/generate_image_models.py"
+      - "libs/python/cua-sandbox/tests/test_image*.py"
+      - "libs/python/cua-sandbox/pyproject.toml"
+      - "libs/python/cua-sandbox/uv.lock"
+      - ".github/workflows/ci-image-api.yml"
+      - ".github/workflows/cd-image-api.yml"
   pull_request:
     paths:
       - "clusters/base/cua-images/**"
@@ -13,6 +26,7 @@ on:
       - "libs/python/cua-sandbox/pyproject.toml"
       - "libs/python/cua-sandbox/uv.lock"
       - ".github/workflows/ci-image-api.yml"
+      - ".github/workflows/cd-image-api.yml"
   workflow_dispatch:
 
 permissions:

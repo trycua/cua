@@ -60,6 +60,15 @@ def test_to_build_recipe_returns_a_complete_validated_resource() -> None:
     assert "status" not in resource
 
 
+def test_to_build_recipe_normalizes_app_install_to_crd_field_names() -> None:
+    image = Image.linux().app_install("playwright")
+
+    assert image.to_dict()["layers"] == [{"type": "app_install", "app_id": "playwright"}]
+    assert image.to_build_recipe(name="app-test", namespace="tenant-a")["spec"]["recipe"][
+        "layers"
+    ] == [{"type": "app_install", "appId": "playwright"}]
+
+
 def test_to_build_recipe_resolves_copied_files_without_emitting_local_paths() -> None:
     resource = (
         Image.linux()
@@ -82,6 +91,26 @@ def test_to_build_recipe_resolves_copied_files_without_emitting_local_paths() ->
             "destination": "/opt/input.txt",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "/tmp/secret.txt",
+        "file:///tmp/secret.txt",
+        "data:text/plain;base64,c2VjcmV0",
+        "uploads/tenant-a/../secret",
+    ],
+)
+def test_to_build_recipe_rejects_non_uploaded_file_references(reference: str) -> None:
+    invalid_reference = _reference().model_copy(update={"reference": reference})
+
+    with pytest.raises(ValidationError):
+        Image.linux().copy("./input.txt", "/opt/input.txt").to_build_recipe(
+            name="with-file",
+            namespace="tenant-a",
+            file_references={"./input.txt": invalid_reference},
+        )
 
 
 def test_to_build_recipe_rejects_missing_and_unused_file_references() -> None:

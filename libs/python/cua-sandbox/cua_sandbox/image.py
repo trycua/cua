@@ -442,12 +442,19 @@ class Image:
         if unused_sources:
             raise ValueError(f"unused file references: {', '.join(unused_sources)}")
 
+        layers = []
+        for layer in self._layers:
+            if layer["type"] == "app_install":
+                layers.append({"type": "app_install", "appId": layer["app_id"]})
+            else:
+                layers.append(layer)
+
         recipe: Dict[str, Any] = {
             "osType": self.os_type,
             "distro": self.distro,
             "version": self.version,
             "kind": self.kind,
-            "layers": list(self._layers),
+            "layers": layers,
         }
         if self._env:
             recipe["env"] = dict(self._env)

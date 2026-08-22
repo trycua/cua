@@ -14,12 +14,15 @@ CD_WORKFLOW = REPO_ROOT / ".github/workflows/cd-image-api.yml"
 def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     workflow = yaml.safe_load(CI_WORKFLOW.read_text())
     pull_request_paths = workflow[True]["pull_request"]["paths"]
+    push_paths = workflow[True]["push"]["paths"]
     assert "clusters/base/cua-images/**" in pull_request_paths
     assert "libs/python/cua-sandbox/cua_sandbox/image.py" in pull_request_paths
     assert "libs/python/cua-sandbox/cua_sandbox/generated/**" in pull_request_paths
     assert "libs/python/cua-sandbox/schemas/**" in pull_request_paths
     assert "libs/python/cua-sandbox/scripts/generate_image_models.py" in pull_request_paths
     assert "libs/python/cua-sandbox/uv.lock" in pull_request_paths
+    assert ".github/workflows/cd-image-api.yml" in pull_request_paths
+    assert ".github/workflows/cd-image-api.yml" in push_paths
     commands = "\n".join(step.get("run", "") for step in workflow["jobs"]["validate"]["steps"])
     assert "uv sync --project libs/python/cua-sandbox --group dev --extra dev" in commands
     assert "generate_image_models.py --check" in commands

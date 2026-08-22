@@ -72,8 +72,21 @@ def test_image_crd_files_use_external_references() -> None:
         "digest",
         "sizeBytes",
     ]
+    reference = file_item["properties"]["source"]["properties"]["reference"]
+    assert reference["pattern"] == "^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$"
+    assert (
+        file_item["properties"]["source"]["properties"]["sizeBytes"]["maximum"]
+        == 9223372036854775807
+    )
     assert "content" not in file_item["properties"]
     assert "path" not in file_item["properties"]["source"]["properties"]
+
+
+def test_image_crd_layers_reject_fields_from_other_layer_shapes() -> None:
+    layer = _version()["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]["recipe"][
+        "properties"
+    ]["layers"]["items"]
+    assert all(branch["additionalProperties"] is False for branch in layer["oneOf"])
 
 
 def test_image_crd_has_controller_owned_status_contract() -> None:

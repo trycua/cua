@@ -22,6 +22,9 @@ const DEFAULT_STARTUP_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS: u64 = 2_000;
 const HANDSHAKE_ATTEMPT_TIMEOUT_MS: u64 = 500;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum EmbeddedPermissionMode {
     Standard,
@@ -52,6 +55,8 @@ pub struct EmbeddedDriverHostOptions {
     pub approve_session_policy: bool,
     pub dangerously_bypass_approvals: bool,
     pub environment: Vec<EmbeddedEnvironmentVariable>,
+    /// Inherit daemon stderr. On Windows, disabling inheritance also prevents
+    /// the console-subsystem daemon from allocating a visible console.
     pub inherit_stderr: bool,
     #[uniffi(default = false)]
     pub no_overlay: bool,
@@ -433,12 +438,8 @@ impl EmbeddedCuaDriverHost {
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(if self.options.inherit_stderr {
-                Stdio::inherit()
-            } else {
-                Stdio::null()
-            })
             .kill_on_drop(true);
+        configure_embedded_child(&mut command, self.options.inherit_stderr);
         for variable in safe_environment(&self.options.environment) {
             command.env(variable.name, variable.value);
         }
@@ -695,6 +696,22 @@ impl EmbeddedCuaDriverHost {
             },
             other => inner.phase = other,
         }
+    }
+}
+
+fn configure_embedded_child(command: &mut Command, inherit_stderr: bool) {
+    command.stderr(if inherit_stderr {
+        Stdio::inherit()
+    } else {
+        Stdio::null()
+    });
+
+    #[cfg(windows)]
+    if !inherit_stderr {
+        // Redirecting stderr does not prevent a console-subsystem executable
+        // from allocating a console. Embedded GUI hosts that suppress driver
+        // diagnostics also expect the daemon to remain windowless.
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 
@@ -1137,6 +1154,9 @@ async fn terminate_startup_child(child: &mut Child, liveness: &mut ChildStdin) {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    const CONSOLE_PROBE_ENV: &str = "CUA_DRIVER_SDK_CONSOLE_PROBE";
+
     fn options(mode: EmbeddedPermissionMode) -> EmbeddedDriverHostOptions {
         EmbeddedDriverHostOptions {
             binary_path: std::env::current_dir()
@@ -1366,6 +1386,44 @@ mod tests {
         assert_ne!(first, second);
         #[cfg(unix)]
         assert!(first.len() < 104);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn embedded_child_without_inherited_stderr_has_no_console() {
+        if std::env::var_os(CONSOLE_PROBE_ENV).is_some() {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn GetConsoleWindow() -> *mut std::ffi::c_void;
+            }
+
+            // SAFETY: GetConsoleWindow takes no arguments and returns either a
+            // valid HWND or null without transferring ownership.
+            let console = unsafe { GetConsoleWindow() };
+            assert!(
+                console.is_null(),
+                "embedded child unexpectedly owns a console"
+            );
+            return;
+        }
+
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .args([
+                "--exact",
+                "embedded::tests::embedded_child_without_inherited_stderr_has_no_console",
+                "--nocapture",
+            ])
+            .env(CONSOLE_PROBE_ENV, "1")
+            .stdout(Stdio::piped());
+        configure_embedded_child(&mut command, false);
+
+        let output = command.output().await.expect("spawn console probe");
+        assert!(
+            output.status.success(),
+            "console probe failed: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
     }
 
     #[cfg(unix)]

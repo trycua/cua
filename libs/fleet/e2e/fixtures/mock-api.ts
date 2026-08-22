@@ -678,6 +678,73 @@ export async function mockPoolsApi(page: Page): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Instances API mocking (OSGymSandbox CRD)
+// ---------------------------------------------------------------------------
+
+export async function mockInstancesApi(page: Page): Promise<void> {
+  await page.route(
+    "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxes",
+    async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              apiVersion: "osgym.cua.ai/v1alpha1",
+              kind: "OSGymSandbox",
+              metadata: {
+                name: "vm-xyz789",
+                namespace: "demo-pool",
+                creationTimestamp: "2026-05-28T09:55:00Z",
+                annotations: {
+                  "osgym.cua.ai/origin-warmpool": "demo-pool",
+                  "osgym.cua.ai/origin-warmpool-namespace": "demo-pool",
+                },
+                ownerReferences: [
+                  {
+                    apiVersion: "osgym.cua.ai/v1alpha1",
+                    kind: "OSGymSandboxClaim",
+                    name: "claim-abc123",
+                    uid: "claim-abc123-uid",
+                    controller: true,
+                  },
+                ],
+              },
+              status: { phase: "Ready", ready: true },
+            },
+            {
+              apiVersion: "osgym.cua.ai/v1alpha1",
+              kind: "OSGymSandbox",
+              metadata: {
+                name: "vm-ready456",
+                namespace: "demo-pool",
+                creationTimestamp: "2026-05-28T09:58:00Z",
+                labels: { "osgym.cua.ai/warmpool": "demo-pool" },
+                annotations: {
+                  "osgym.cua.ai/origin-warmpool": "demo-pool",
+                  "osgym.cua.ai/origin-warmpool-namespace": "demo-pool",
+                },
+              },
+              status: { phase: "Ready", ready: true },
+            },
+            {
+              apiVersion: "osgym.cua.ai/v1alpha1",
+              kind: "OSGymSandbox",
+              metadata: {
+                name: "other-pool-instance",
+                namespace: "demo-pool",
+                labels: { "osgym.cua.ai/warmpool": "other-pool" },
+              },
+              status: { phase: "Ready", ready: true },
+            },
+          ],
+        }),
+      })
+    },
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Claims API mocking (OSGymSandboxClaim CRD)
 // ---------------------------------------------------------------------------
 

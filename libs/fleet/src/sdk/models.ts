@@ -48,3 +48,11 @@ export interface Claim {
   sandboxService?: string
   createdAt: string
 }
+
+export interface PoolInstance {
+  name: string
+  namespace: string
+  phase: string
+  claimName?: string
+  createdAt: string
+}

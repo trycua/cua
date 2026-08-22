@@ -306,6 +306,8 @@ func TestK8sAllow_AllowlistVerdicts(t *testing.T) {
 		{"namespaced claims / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxclaims", false, true},
 		{"namespaced warm pools / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxwarmpools", false, true},
 		{"namespaced templates / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxtemplates", false, true},
+		{"namespaced sandboxes / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxes", false, true},
+		{"namespaced sandboxes / admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxes", true, true},
 
 		// Unenumerated, and denied for that reason alone -- no exclusion list
 		// mentions any of them. The Secret read is the one a reviewer is most
@@ -314,7 +316,6 @@ func TestK8sAllow_AllowlistVerdicts(t *testing.T) {
 		{"namespaced secrets / non-admin", "api/v1/namespaces/pool-foo/secrets/ecr-credentials", false, false},
 		{"namespaced configmaps / non-admin", "api/v1/namespaces/pool-foo/configmaps", false, false},
 		{"storage classes / non-admin", "apis/storage.k8s.io/v1/storageclasses", false, false},
-		{"sandboxes CRD / admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxes", true, false},
 
 		// Events: denied for everyone, admins included. Unlike every infra path
 		// above, the admin row here is a deny too — that asymmetry is the whole

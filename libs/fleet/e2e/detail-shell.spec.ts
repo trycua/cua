@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test"
 import {
   mockAuth,
   mockClaimsApi,
+  mockInstancesApi,
   mockNamespacesApi,
   mockPoolsApi,
 } from "./fixtures/mock-api"
@@ -11,6 +12,7 @@ async function mockFleet(page: Parameters<typeof mockAuth>[0]) {
   await mockAuth(page)
   await mockNamespacesApi(page)
   await mockPoolsApi(page)
+  await mockInstancesApi(page)
   await mockClaimsApi(page)
 }
 
@@ -24,8 +26,7 @@ for (const viewport of [
     await page.goto("/pools/demo-pool/demo-pool")
 
     await expect(page.getByRole("heading", { name: "demo-pool", level: 1 })).toBeVisible()
-    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible()
-    await expect(page.getByRole("heading", { name: "Claims" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Instances" })).toBeVisible()
     await expectSharedPageShell(page)
   })
 

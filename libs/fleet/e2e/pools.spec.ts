@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test"
 import {
   mockAuth,
+  mockInstancesApi,
   mockNamespacesApi,
   mockPoolsApi,
   mockClaimsApi,
@@ -277,7 +278,7 @@ test("local visual preview keeps preview data active on pool detail", async ({
     page.getByRole("heading", { name: "prod-web-fleet" }),
   ).toBeVisible()
   await expect(page.getByText("Failed to load pool")).toHaveCount(0)
-  await expect(page.getByRole("heading", { name: "Claims" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Instances" })).toBeVisible()
 })
 
 test.describe("Pool creation", () => {
@@ -431,11 +432,12 @@ test.describe("Pool duplication", () => {
   })
 })
 
-test.describe("Pool detail with claims", () => {
-  test("pool detail page shows claims section", async ({ page }) => {
+test.describe("Pool detail instances", () => {
+  test("shows warm pool instances and claim state", async ({ page }) => {
     await mockAuth(page)
     await mockNamespacesApi(page)
     await mockPoolsApi(page)
+    await mockInstancesApi(page)
     await mockClaimsApi(page)
 
     await page.goto("/pools/demo-pool/demo-pool")
@@ -443,8 +445,7 @@ test.describe("Pool detail with claims", () => {
     // The pool name should be shown
     await expect(page.getByRole("heading", { name: "demo-pool" })).toBeVisible()
 
-    // The Claims section should be present
-    await expect(page.getByRole("heading", { name: "Claims" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Instances" })).toBeVisible()
 
     // The "Create claim" button should be visible
     await expect(
@@ -454,20 +455,26 @@ test.describe("Pool detail with claims", () => {
       "border-radius",
       "10px",
     )
-    await expect(page.getByRole("button", { name: "Refresh claims" })).toHaveCSS(
+    await expect(page.getByRole("button", { name: "Refresh instances" })).toHaveCSS(
       "border-radius",
       "10px",
     )
-    await expect(page.getByRole("button", { name: "Refresh claims" })).toHaveCSS(
+    await expect(page.getByRole("button", { name: "Refresh instances" })).toHaveCSS(
       "width",
       "40px",
     )
 
-    // The existing mock claim should be listed
-    const claimRow = page.getByRole("row").filter({ hasText: "claim-abc123" })
-    await expect(claimRow).toBeVisible()
-    await expect(page.getByText("Bound")).toBeVisible()
-    await expect(claimRow.getByRole("cell").nth(3)).not.toHaveText("-")
+    const claimedRow = page.getByRole("row").filter({ hasText: "vm-xyz789" })
+    await expect(claimedRow).toContainText("Ready")
+    await expect(claimedRow).toContainText("claim-abc123")
+    await expect(claimedRow).toContainText("Bound")
+    await expect(claimedRow.getByRole("button", { name: "Release" })).toBeVisible()
+
+    const availableRow = page.getByRole("row").filter({ hasText: "vm-ready456" })
+    await expect(availableRow).toContainText("Ready")
+    await expect(availableRow).toContainText("Unclaimed")
+    await expect(availableRow.getByRole("button", { name: "Release" })).toHaveCount(0)
+    await expect(page.getByText("other-pool-instance")).toHaveCount(0)
   })
 })
 

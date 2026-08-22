@@ -3,14 +3,15 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
-    PrepareOutcome, PrepareRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -20,8 +21,69 @@ use cua_driver_core::browser::types::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+pub struct LinuxBrowserPlatform {
+    cursor_registry: Arc<cursor_overlay::CursorRegistry>,
+    browser_cursors: Mutex<BrowserCursorTracker>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserCursorBinding {
+    window_id: u64,
+    cdp_target_id: String,
+}
+
 #[derive(Debug, Default)]
-pub struct LinuxBrowserPlatform;
+struct BrowserCursorTracker {
+    bindings: HashMap<String, BrowserCursorBinding>,
+}
+
+impl BrowserCursorTracker {
+    fn update(
+        &mut self,
+        session: &str,
+        window_id: u64,
+        cdp_target_id: &str,
+        tab_is_active: bool,
+    ) -> Vec<(String, bool)> {
+        self.bindings.insert(
+            session.to_owned(),
+            BrowserCursorBinding {
+                window_id,
+                cdp_target_id: cdp_target_id.to_owned(),
+            },
+        );
+
+        if !tab_is_active {
+            return vec![(session.to_owned(), false)];
+        }
+
+        self.bindings
+            .iter()
+            .filter(|(_, binding)| binding.window_id == window_id)
+            .map(|(key, binding)| {
+                (
+                    key.clone(),
+                    key == session && binding.cdp_target_id == cdp_target_id,
+                )
+            })
+            .collect()
+    }
+}
+
+impl LinuxBrowserPlatform {
+    pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
+        Self {
+            cursor_registry,
+            browser_cursors: Mutex::new(BrowserCursorTracker::default()),
+        }
+    }
+}
+
+impl Default for LinuxBrowserPlatform {
+    fn default() -> Self {
+        Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
+    }
+}
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -470,6 +532,76 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
+    }
+
+    async fn visualize_browser_action(&self, action: BrowserVisualAction) {
+        if action.session.is_empty()
+            || action.cdp_target_id.is_empty()
+            || cua_driver_core::session::is_session_ended(&action.session)
+        {
+            return;
+        }
+
+        let visibility_updates = self.browser_cursors.lock().unwrap().update(
+            &action.session,
+            action.window_id,
+            &action.cdp_target_id,
+            action.tab_is_active,
+        );
+        let cursor_enabled = self
+            .cursor_registry
+            .get_or_create(&action.session)
+            .config
+            .enabled;
+        for (key, visible) in visibility_updates {
+            let enabled = if key == action.session {
+                visible && cursor_enabled
+            } else {
+                visible
+                    && self
+                        .cursor_registry
+                        .get(&key)
+                        .is_some_and(|state| state.config.enabled)
+            };
+            crate::overlay::send_command_for(
+                key,
+                cursor_overlay::OverlayCommand::SetEnabled(enabled),
+            );
+        }
+        if !action.tab_is_active || !cursor_enabled {
+            return;
+        }
+        let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
+            return;
+        };
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+
+        crate::overlay::send_command_for(
+            action.session.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(action.window_id),
+        );
+        crate::overlay::animate_cursor_to_for(action.session.clone(), screen_x, screen_y).await;
+        self.cursor_registry
+            .update_position(&action.session, screen_x, screen_y);
+
+        if matches!(
+            action.kind,
+            BrowserVisualActionKind::Click
+                | BrowserVisualActionKind::Type
+                | BrowserVisualActionKind::RightClick
+                | BrowserVisualActionKind::DoubleClick
+                | BrowserVisualActionKind::Drag
+        ) {
+            crate::overlay::send_command_for(
+                action.session,
+                cursor_overlay::OverlayCommand::ClickPulse {
+                    x: screen_x,
+                    y: screen_y,
+                },
+            );
+        }
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
@@ -1152,6 +1284,79 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn browser_visual_feedback_updates_the_declared_session_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-test".to_owned(),
+                window_id: 77,
+                cdp_target_id: "tab-A".to_owned(),
+                tab_is_active: true,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-test")
+            .expect("browser action should materialize its session cursor");
+        assert_eq!((state.x, state.y), (Some(321.0), Some(456.0)));
+    }
+
+    #[tokio::test]
+    async fn inactive_tab_feedback_materializes_but_does_not_move_its_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-hidden".to_owned(),
+                window_id: 77,
+                cdp_target_id: "tab-hidden".to_owned(),
+                tab_is_active: false,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-hidden")
+            .expect("browser action should establish its session-to-tab binding");
+        assert!(
+            state.x.is_none() && state.y.is_none(),
+            "an inactive tab must not animate or move its visible cursor"
+        );
+    }
+
+    #[test]
+    fn browser_cursor_tracker_shows_only_the_active_tabs_session_per_window() {
+        let mut tracker = BrowserCursorTracker::default();
+        assert_eq!(
+            tracker.update("session-red", 77, "tab-A", false),
+            vec![("session-red".to_owned(), false)]
+        );
+
+        let first_active = tracker.update("session-red", 77, "tab-A", true);
+        assert_eq!(first_active, vec![("session-red".to_owned(), true)]);
+
+        let second_active = tracker
+            .update("session-blue", 77, "tab-B", true)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(second_active.get("session-red"), Some(&false));
+        assert_eq!(second_active.get("session-blue"), Some(&true));
+
+        let other_window = tracker.update("session-green", 88, "tab-C", true);
+        assert_eq!(
+            other_window,
+            vec![("session-green".to_owned(), true)],
+            "an active tab in another native window must not hide this window"
+        );
+    }
 
     #[test]
     fn isolated_browser_candidates_use_only_root_managed_payloads() {

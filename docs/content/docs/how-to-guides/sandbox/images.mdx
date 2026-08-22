@@ -217,7 +217,7 @@ async with Sandbox.ephemeral(img, local=True, runtime=QEMURuntime(mode='bare-met
   does not set `os_type` — every registry image reports `os_type='linux'`, including
   the macOS one above, so pass a runtime matching the real guest. And the puller
   authenticates anonymously, which works for `public.ecr.aws` and `ghcr.io` but not
-  for Docker Hub. On Cua cloud, only Cua-published images are pullable.
+  for Docker Hub.
 </Callout>
 
 ## Use a local disk image

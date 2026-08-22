@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
 	await mockAuth(page);
 });
 
-test("billing has no navigation link even when the flag is on", async ({
+test("usage appears in navigation when billing is enabled", async ({
 	page,
 }) => {
 	await setBillingFlag(page, true);
@@ -27,10 +27,10 @@ test("billing has no navigation link even when the flag is on", async ({
 	);
 	await page.goto("/pools");
 	await expect(page.getByRole("link", { name: "User API keys" })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Billing" })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Usage" })).toBeVisible();
 });
 
-test("the old /billing route redirects to settings", async ({ page }) => {
+test("the old /billing route redirects to usage", async ({ page }) => {
 	await setBillingFlag(page, true);
 	await page.route("**/api/billing/summary", (route) =>
 		route.fulfill({
@@ -38,9 +38,33 @@ test("the old /billing route redirects to settings", async ({ page }) => {
 			body: JSON.stringify({ payment_method_present: false, card: null }),
 		}),
 	);
-	await page.goto("/billing");
-	await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
-	await expect(page).toHaveURL(/\/settings$/);
+	await page.goto("/billing?cua-visual-preview");
+	await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
+	await expect(page).toHaveURL(/\/usage\?cua-visual-preview$/);
+});
+
+test("usage shows spend trend and service breakdown", async ({ page }) => {
+	await setBillingFlag(page, true);
+	await page.goto("/usage?cua-visual-preview");
+	await expect(page.getByText("Current estimate")).toBeVisible();
+	await expect(page.getByLabel("Usage summary").getByText("$246.80")).toBeVisible();
+	await expect(page.getByRole("img", { name: /estimated this period/i })).toBeVisible();
+	await expect(page.getByRole("cell", { name: "Linux desktop runtime" })).toBeVisible();
+	await expect(page.getByRole("cell", { name: "$132.40" })).toBeVisible();
+});
+
+test("usage has a useful empty state", async ({ page }) => {
+	await setBillingFlag(page, true);
+	await page.goto("/usage?cua-visual-preview&cua-preview-state=empty");
+	await expect(page.getByText("No invoiced usage yet")).toBeVisible();
+	await expect(page.getByText(/services begin reporting billable activity/i)).toBeVisible();
+});
+
+test("usage can retry a failed load", async ({ page }) => {
+	await setBillingFlag(page, true);
+	await page.goto("/usage?cua-visual-preview&cua-preview-state=error");
+	await expect(page.getByText("Usage is temporarily unavailable")).toBeVisible();
+	await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 });
 
 test("settings hides billing when the flag is off", async ({ page }) => {

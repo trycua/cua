@@ -152,6 +152,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// webhook uses Stripe signature verification as its authentication boundary.
 	r.Handle("GET /api/billing/summary",
 		withAuthenticatedMiddlewares("/api/billing/summary", c.GetBillingSummary))
+	r.Handle("GET /api/billing/usage",
+		withAuthenticatedMiddlewares("/api/billing/usage", c.GetBillingUsage))
 	r.Handle("POST /api/billing/setup-session",
 		withAuthenticatedMiddlewares("/api/billing/setup-session", c.CreateBillingSetupSession))
 	r.Handle("POST /api/billing/portal-session",

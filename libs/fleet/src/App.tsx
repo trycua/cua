@@ -21,6 +21,7 @@ import { PoolDetail } from "./pages/PoolDetail"
 import { PoolNew } from "./pages/PoolNew"
 import { UserApiKeys } from "./pages/UserApiKeys"
 import { Settings } from "./pages/Settings"
+import { Usage } from "./pages/Usage"
 import { AgentChat } from "./pages/AgentChat"
 import { PageShell } from "./components/PageShell"
 import { FeatureFlagProvider, useFeatureFlags } from "./components/FeatureFlagContext"
@@ -108,7 +109,7 @@ function Shell() {
     setNavigationOpen(tabletOrWider)
   }, [tabletOrWider])
   const user = userInfo()
-  const { chat } = useFeatureFlags()
+  const { billing, chat } = useFeatureFlags()
   useEffect(() => {
     const path = location.pathname
     const pageTitle = path === "/agent"
@@ -117,6 +118,8 @@ function Shell() {
         ? "User API keys"
         : path === "/settings"
           ? "Settings"
+          : path === "/usage"
+            ? "Usage"
           : path === "/pools/new"
             ? "New pool"
             : path.includes("/claims/")
@@ -197,6 +200,9 @@ function Shell() {
                   ...(chat
                     ? [{ type: "link" as const, text: "Chat", href: "#/agent" }]
                     : []),
+                  ...(billing
+                    ? [{ type: "link" as const, text: "Usage", href: "#/usage" }]
+                    : []),
                   { type: "link", text: "User API keys", href: "#/user-keys" },
                   { type: "link", text: "Settings", href: "#/settings" },
                 ]}
@@ -252,8 +258,9 @@ export function App() {
             <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
             <Route path="/user-keys" element={<UserApiKeys />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/usage" element={<UsageRoute />} />
             <Route path="/agent" element={<ChatRoute />} />
-            <Route path="/billing" element={<Navigate to="/settings" replace />} />
+            <Route path="/billing" element={<LegacyBillingRedirect />} />
             <Route
               path="/pools/:namespace/:poolName/claims/:claimName"
               element={<ClaimDetail />}
@@ -277,6 +284,10 @@ function RedirectModule() {
   return <Navigate to={path} replace />
 }
 
+function LegacyBillingRedirect() {
+  return <Navigate to={localVisualPreviewPath("/usage")} replace />
+}
+
 function ChatRoute() {
   const { chat, resolved } = useFeatureFlags()
   if (!resolved) {
@@ -287,4 +298,16 @@ function ChatRoute() {
     )
   }
   return chat ? <AgentChat /> : <Navigate to="/pools" replace />
+}
+
+function UsageRoute() {
+  const { billing, resolved } = useFeatureFlags()
+  if (!resolved) {
+    return (
+      <PageShell eyebrow="Billing" title="Usage">
+        <div className="usage-layout" />
+      </PageShell>
+    )
+  }
+  return billing ? <Usage /> : <Navigate to="/settings" replace />
 }

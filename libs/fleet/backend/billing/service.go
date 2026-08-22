@@ -6,6 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"sort"
+	"strings"
+	"time"
 )
 
 const (
@@ -54,6 +57,54 @@ type Gateway interface {
 	SetDefaultPaymentMethodForSetupGeneration(ctx context.Context, customerID, paymentMethodID, generation string) (bool, error)
 	CreateSetupSession(ctx context.Context, request SetupSessionRequest) (string, error)
 	CreatePortalSession(ctx context.Context, request PortalSessionRequest) (string, error)
+	PreviewInvoice(ctx context.Context, customerID string) (*Invoice, error)
+	ListInvoices(ctx context.Context, customerID string, createdAfter time.Time) ([]Invoice, error)
+}
+
+type InvoiceLine struct {
+	Description string
+	Amount      int64
+	Quantity    int64
+	PeriodStart time.Time
+	PeriodEnd   time.Time
+}
+
+type Invoice struct {
+	ID          string
+	Currency    string
+	Total       int64
+	Status      string
+	PeriodStart time.Time
+	PeriodEnd   time.Time
+	Created     time.Time
+	Lines       []InvoiceLine
+}
+
+type UsagePoint struct {
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+	Amount      int64     `json:"amount"`
+	Estimate    bool      `json:"estimate"`
+}
+
+type UsageBreakdownItem struct {
+	Name        string    `json:"name"`
+	Amount      int64     `json:"amount"`
+	Quantity    int64     `json:"quantity"`
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+}
+
+type Usage struct {
+	Currency             string               `json:"currency"`
+	RangeStart           time.Time            `json:"range_start"`
+	RangeEnd             time.Time            `json:"range_end"`
+	CurrentPeriodStart   *time.Time           `json:"current_period_start"`
+	CurrentPeriodEnd     *time.Time           `json:"current_period_end"`
+	CurrentEstimate      int64                `json:"current_estimate"`
+	PreviousPeriodAmount int64                `json:"previous_period_amount"`
+	Trend                []UsagePoint         `json:"trend"`
+	Breakdown            []UsageBreakdownItem `json:"breakdown"`
 }
 
 type Service struct {
@@ -175,6 +226,115 @@ func (s *Service) Summary(ctx context.Context, subject string) (Summary, error) 
 			ExpYear:  card.ExpYear,
 		},
 	}, nil
+}
+
+func (s *Service) Usage(ctx context.Context, subject string, months int, now time.Time) (Usage, error) {
+	end := now.UTC()
+	start := end.AddDate(0, -months, 0)
+	empty := Usage{
+		Currency:   "usd",
+		RangeStart: start,
+		RangeEnd:   end,
+		Trend:      []UsagePoint{},
+		Breakdown:  []UsageBreakdownItem{},
+	}
+
+	customer, err := s.findCustomerReadOnly(ctx, subject)
+	if errors.Is(err, ErrCustomerNotFound) {
+		return empty, nil
+	}
+	if err != nil {
+		return Usage{}, err
+	}
+
+	invoices, err := s.gateway.ListInvoices(ctx, customer.ID, start)
+	if err != nil {
+		return Usage{}, err
+	}
+	preview, err := s.gateway.PreviewInvoice(ctx, customer.ID)
+	if err != nil {
+		return Usage{}, err
+	}
+
+	currency := ""
+	if preview != nil {
+		currency = preview.Currency
+	}
+	if currency == "" && len(invoices) > 0 {
+		currency = invoices[0].Currency
+	}
+	if currency == "" {
+		currency = empty.Currency
+	}
+
+	usage := empty
+	usage.Currency = strings.ToLower(currency)
+	for _, invoice := range invoices {
+		if !strings.EqualFold(invoice.Currency, usage.Currency) || invoice.Status == "draft" || invoice.Status == "void" {
+			continue
+		}
+		usage.Trend = append(usage.Trend, UsagePoint{
+			PeriodStart: invoice.PeriodStart,
+			PeriodEnd:   invoice.PeriodEnd,
+			Amount:      invoice.Total,
+		})
+	}
+	sort.Slice(usage.Trend, func(i, j int) bool {
+		return usage.Trend[i].PeriodStart.Before(usage.Trend[j].PeriodStart)
+	})
+	if len(usage.Trend) > 0 {
+		usage.PreviousPeriodAmount = usage.Trend[len(usage.Trend)-1].Amount
+	}
+
+	if preview == nil || !strings.EqualFold(preview.Currency, usage.Currency) {
+		return usage, nil
+	}
+	usage.CurrentPeriodStart = &preview.PeriodStart
+	usage.CurrentPeriodEnd = &preview.PeriodEnd
+	usage.CurrentEstimate = preview.Total
+	usage.Trend = append(usage.Trend, UsagePoint{
+		PeriodStart: preview.PeriodStart,
+		PeriodEnd:   preview.PeriodEnd,
+		Amount:      preview.Total,
+		Estimate:    true,
+	})
+
+	byName := map[string]UsageBreakdownItem{}
+	for _, line := range preview.Lines {
+		name := strings.TrimSpace(line.Description)
+		if name == "" {
+			name = "Usage"
+		}
+		item := byName[name]
+		item.Name = name
+		item.Amount += line.Amount
+		item.Quantity += line.Quantity
+		if item.PeriodStart.IsZero() || line.PeriodStart.Before(item.PeriodStart) {
+			item.PeriodStart = line.PeriodStart
+		}
+		if line.PeriodEnd.After(item.PeriodEnd) {
+			item.PeriodEnd = line.PeriodEnd
+		}
+		byName[name] = item
+	}
+	for _, item := range byName {
+		usage.Breakdown = append(usage.Breakdown, item)
+	}
+	sort.Slice(usage.Breakdown, func(i, j int) bool {
+		left := usage.Breakdown[i].Amount
+		if left < 0 {
+			left = -left
+		}
+		right := usage.Breakdown[j].Amount
+		if right < 0 {
+			right = -right
+		}
+		if left == right {
+			return usage.Breakdown[i].Name < usage.Breakdown[j].Name
+		}
+		return left > right
+	})
+	return usage, nil
 }
 
 type SetupOptions struct {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
@@ -30,6 +31,10 @@ type fakeBillingService struct {
 	defaultApplied         bool
 	defaultCalls           int
 	defaultErr             error
+	usageMonths            int
+	usageSubject           string
+	usageResponse          billing.Usage
+	usageErr               error
 }
 
 func (f *fakeBillingService) AttachedCards(context.Context, string) ([]billing.SavedCard, error) {
@@ -64,6 +69,12 @@ func (f *fakeBillingService) CreatePortalSession(_ context.Context, subject, ret
 	return "https://billing.stripe.test/session", nil
 }
 
+func (f *fakeBillingService) Usage(_ context.Context, subject string, months int, _ time.Time) (billing.Usage, error) {
+	f.usageSubject = subject
+	f.usageMonths = months
+	return f.usageResponse, f.usageErr
+}
+
 var billingAlice = &auth.User{ID: "user-alice"}
 
 func newBillingRequest(method, target, body string, user *auth.User) *http.Request {
@@ -88,6 +99,38 @@ func setBillingFlag(t *testing.T, enabled bool) {
 	t.Setenv("CYCLOPS_CS_BILLING_ENABLED", value)
 	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
 		t.Fatalf("setup feature flag provider: %v", err)
+	}
+}
+
+func TestGetBillingUsageUsesValidatedHistoryWindow(t *testing.T) {
+	setBillingFlag(t, true)
+	service := &fakeBillingService{usageResponse: billing.Usage{Currency: "usd", Trend: []billing.UsagePoint{}, Breakdown: []billing.UsageBreakdownItem{}}}
+	h := Handlers{Billing: service, Stripe: config.StripeConfiguration{SecretKey: "sk_test"}}
+	w := httptest.NewRecorder()
+
+	h.GetBillingUsage(w, newBillingRequest(http.MethodGet, "/api/billing/usage?months=12", "", billingAlice))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	if service.usageSubject != billingAlice.ID || service.usageMonths != 12 {
+		t.Fatalf("usage call = subject %q months %d", service.usageSubject, service.usageMonths)
+	}
+}
+
+func TestGetBillingUsageRejectsUnsupportedHistoryWindow(t *testing.T) {
+	setBillingFlag(t, true)
+	service := &fakeBillingService{}
+	h := Handlers{Billing: service, Stripe: config.StripeConfiguration{SecretKey: "sk_test"}}
+	w := httptest.NewRecorder()
+
+	h.GetBillingUsage(w, newBillingRequest(http.MethodGet, "/api/billing/usage?months=9", "", billingAlice))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+	if service.usageMonths != 0 {
+		t.Fatalf("usage months = %d, want no call", service.usageMonths)
 	}
 }
 

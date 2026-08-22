@@ -102,6 +102,7 @@ mod tests {
     use core_graphics::display::CGDisplay;
 
     #[test]
+    #[ignore = "requires an attached macOS display; run explicitly on a native Retina host"]
     fn main_display_scale_matches_current_mode() {
         let display = CGDisplay::main();
         let mode = display

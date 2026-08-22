@@ -17,7 +17,7 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
-fn field_equals(node: &AtspiNode, expected: &str) -> bool {
+fn field_has_exact_value(node: &AtspiNode, expected: &str) -> bool {
     [
         node.name.as_deref(),
         node.value.as_deref(),
@@ -33,57 +33,60 @@ fn role_is(node: &AtspiNode, accepted: &[&str]) -> bool {
     accepted.iter().any(|candidate| role == *candidate)
 }
 
-fn setup_page_proven(
-    nodes: &[AtspiNode],
-    descriptor: &BrowserSetupDescriptor,
-    trusted_navigation: bool,
-) -> bool {
-    let has_contradictory_address_bar = nodes.iter().any(|node| {
-        role_is(node, &["entry", "text"])
-            && field_equals(node, "Address and search bar")
-            && node.value.as_deref().is_some_and(|value| {
-                !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case(descriptor.setup_url)
-            })
-    });
-    let exact_url = nodes.iter().any(|node| {
-        role_is(node, &["entry", "text"])
-            && field_equals(node, "Address and search bar")
-            && node
-                .value
-                .as_deref()
-                .or(node.name.as_deref())
-                .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-    });
-    let exact_heading = nodes.iter().any(|node| {
-        role_is(node, &["heading", "section", "static"])
-            && field_equals(node, descriptor.page_heading)
-    });
-    let exact_page = nodes.iter().any(|node| {
-        role_is(node, &["document web", "document frame"])
-            && descriptor
-                .page_titles
-                .iter()
-                .any(|title| field_equals(node, title))
-    });
-    let exact_identity =
-        exact_url || (trusted_navigation && !has_contradictory_address_bar && exact_page);
-    exact_identity && exact_heading
+fn setup_page_proven(nodes: &[AtspiNode], descriptor: &BrowserSetupDescriptor) -> bool {
+    let native_fields = nodes
+        .iter()
+        .filter(|node| {
+            !node.in_web_content
+                && role_is(node, &["entry", "text"])
+                && node.element_index.is_some()
+                && !node.actions.is_empty()
+        })
+        .collect::<Vec<_>>();
+    let exact_url_count = native_fields
+        .iter()
+        .filter(|node| field_has_exact_value(node, descriptor.setup_url))
+        .count();
+    let contradictory_native_field = matches!(native_fields.as_slice(), [field]
+    if field.value.as_deref().is_some_and(|value| {
+        !value.trim().is_empty()
+            && !value.trim().eq_ignore_ascii_case(descriptor.setup_url)
+    }));
+    let document_uris = nodes
+        .iter()
+        .filter(|node| role_is(node, &["document web", "document frame"]))
+        .filter_map(|node| node.document_uri.as_deref())
+        .filter(|uri| !uri.trim().is_empty())
+        .collect::<Vec<_>>();
+    let exact_document_uri_count = document_uris
+        .iter()
+        .filter(|uri| uri.trim().eq_ignore_ascii_case(descriptor.setup_url))
+        .count();
+    let web_heading_present = nodes
+        .iter()
+        .any(|node| node.in_web_content && role_is(node, &["heading", "section", "static"]));
+    let exact_destination = match document_uris.len() {
+        0 => exact_url_count == 1,
+        1 => exact_document_uri_count == 1,
+        _ => false,
+    };
+    exact_destination && !contradictory_native_field && web_heading_present
 }
 
 fn exact_setup_checkbox<'a>(
     nodes: &'a [AtspiNode],
     descriptor: &BrowserSetupDescriptor,
-    trusted_navigation: bool,
 ) -> Result<Option<&'a AtspiNode>, BrowserRefusal> {
-    if !setup_page_proven(nodes, descriptor, trusted_navigation) {
+    if !setup_page_proven(nodes, descriptor) {
         return Ok(None);
     }
     let matches = nodes
         .iter()
         .filter(|node| {
             role_is(node, &["check box", "checkbox"])
-                && field_equals(node, descriptor.checkbox_label)
+                && node.in_web_content
                 && !node.actions.is_empty()
+                && node.enabled != Some(false)
                 && node.element_index.is_some()
         })
         .collect::<Vec<_>>();
@@ -92,7 +95,7 @@ fn exact_setup_checkbox<'a>(
         [node] => Ok(Some(*node)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple exact remote-debugging checkboxes were exposed",
+            "multiple renderer checkboxes exposed an actionable setup toggle",
         )),
     }
 }
@@ -143,8 +146,9 @@ fn exact_omnibox<'a>(
     let matches = nodes
         .iter()
         .filter(|node| {
-            role_is(node, &["entry", "text"])
-                && field_equals(node, "Address and search bar")
+            !node.in_web_content
+                && role_is(node, &["entry", "text"])
+                && !node.actions.is_empty()
                 && node.element_index.is_some()
         })
         .collect::<Vec<_>>();
@@ -163,10 +167,7 @@ fn exact_omnibox<'a>(
 
 /// Whether the omnibox currently holds exactly the fixed setup URL.
 fn omnibox_holds_setup_url(node: &AtspiNode, descriptor: &BrowserSetupDescriptor) -> bool {
-    node.value
-        .as_deref()
-        .or(node.name.as_deref())
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
+    field_has_exact_value(node, descriptor.setup_url)
 }
 
 /// Navigate the approved window to its fixed setup page.
@@ -290,14 +291,10 @@ fn trusted_setup_navigation(
     loop {
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
-        if tree.nodes.iter().any(|node| {
-            role_is(node, &["document web", "document frame"])
-                && descriptor
-                    .page_titles
-                    .iter()
-                    .any(|title| field_equals(node, title))
-        }) {
-            return Ok(());
+        match exact_setup_checkbox(&tree.nodes, descriptor) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(error) => anyhow::bail!(error.message),
         }
         if Instant::now() >= deadline {
             let landed = tree
@@ -356,7 +353,6 @@ pub struct SetupUiHandle {
     pid: u32,
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
-    trusted_setup_navigation: bool,
     enable_attempted: bool,
     trusted_checkbox_fallback_attempted: bool,
     pub opened_setup_page: bool,
@@ -372,13 +368,12 @@ impl SetupUiHandle {
             return true;
         }
         let tree = crate::atspi::walk_tree(self.pid, self.window_id, None);
-        let restored =
-            exact_setup_checkbox(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
-                .ok()
-                .flatten()
-                .filter(|node| node.checked == Some(true))
-                .and_then(|node| node.element_index)
-                .is_some_and(|index| crate::atspi::perform_action(self.pid, index).is_ok());
+        let restored = exact_setup_checkbox(&tree.nodes, self.descriptor)
+            .ok()
+            .flatten()
+            .filter(|node| node.checked == Some(true))
+            .and_then(|node| node.element_index)
+            .is_some_and(|index| crate::atspi::perform_action(self.pid, index).is_ok());
         if restored {
             self.enabled_remote_debugging = false;
         }
@@ -414,7 +409,7 @@ impl SetupUiHandle {
             return Ok(None);
         }
         let tree = crate::atspi::walk_tree(self.pid, self.window_id, None);
-        if !setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation) {
+        if !setup_page_proven(&tree.nodes, self.descriptor) {
             let error = refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the temporary setup page was no longer exact before cleanup",
@@ -438,7 +433,7 @@ impl SetupUiHandle {
         }
         let tree = crate::atspi::walk_tree(self.pid, self.window_id, None);
         Some(
-            setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
+            setup_page_proven(&tree.nodes, self.descriptor)
                 && close_tab(self.pid, self.window_id).is_ok(),
         )
     }
@@ -497,13 +492,12 @@ pub fn enable(
     descriptor: &'static BrowserSetupDescriptor,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
     let initial = window_scoped_tree(pid, window_id)?;
-    let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor, false)?;
+    let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor)?;
     let mut handle = if initial_checkbox.is_some() {
         SetupUiHandle {
             pid,
             window_id,
             descriptor,
-            trusted_setup_navigation: false,
             enable_attempted: false,
             trusted_checkbox_fallback_attempted: false,
             opened_setup_page: false,
@@ -517,7 +511,6 @@ pub fn enable(
             pid,
             window_id,
             descriptor,
-            trusted_setup_navigation: true,
             enable_attempted: false,
             trusted_checkbox_fallback_attempted: false,
             opened_setup_page: true,
@@ -544,7 +537,7 @@ pub fn enable(
             Ok(tree) => tree,
             Err(error) => return Err(handle.abort(error)),
         };
-        match exact_setup_checkbox(&tree.nodes, descriptor, handle.trusted_setup_navigation) {
+        match exact_setup_checkbox(&tree.nodes, descriptor) {
             Ok(Some(node)) => match node.checked {
                 Some(true) => {
                     if handle.enable_attempted {
@@ -568,15 +561,10 @@ pub fn enable(
                 {
                     handle.trusted_checkbox_fallback_attempted = true;
                     handle.foregrounded_window = true;
-                    let trusted_navigation = handle.trusted_setup_navigation;
                     let clicked = with_target_foreground(pid, window_id, || {
                         std::thread::sleep(Duration::from_millis(60));
                         let tree = crate::atspi::walk_tree(pid, window_id, None);
-                        let checkbox = exact_setup_checkbox(
-                            &tree.nodes,
-                            descriptor,
-                            trusted_navigation,
-                        )
+                        let checkbox = exact_setup_checkbox(&tree.nodes, descriptor)
                         .map_err(|error| anyhow::anyhow!(error.message))?
                         .ok_or_else(|| {
                             anyhow::anyhow!(
@@ -662,7 +650,9 @@ mod tests {
             checked: None,
             enabled: None,
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             element_key: 0,
             depth: 0,
@@ -673,21 +663,24 @@ mod tests {
 
     #[test]
     fn checkbox_requires_exact_url_heading_and_unique_action() {
-        let mut checkbox = node("check box", descriptor().checkbox_label, None, &["toggle"]);
+        let mut checkbox = node("check box", "opaque toggle", None, &["toggle"]);
         checkbox.checked = Some(false);
+        checkbox.in_web_content = true;
+        let mut heading = node("heading", "opaque heading", None, &[]);
+        heading.in_web_content = true;
         let nodes = vec![
             node(
                 "entry",
-                "Address and search bar",
+                "opaque native field",
                 Some(descriptor().setup_url),
                 &["activate"],
             ),
-            node("document web", descriptor().page_titles[0], None, &[]),
-            node("heading", descriptor().page_heading, None, &[]),
+            node("document web", "opaque document", None, &[]),
+            heading,
             checkbox,
         ];
         assert_eq!(
-            exact_setup_checkbox(&nodes, descriptor(), false)
+            exact_setup_checkbox(&nodes, descriptor())
                 .unwrap()
                 .unwrap()
                 .checked,
@@ -696,7 +689,7 @@ mod tests {
 
         let titleless = vec![nodes[0].clone(), nodes[2].clone(), nodes[3].clone()];
         assert!(
-            exact_setup_checkbox(&titleless, descriptor(), false)
+            exact_setup_checkbox(&titleless, descriptor())
                 .unwrap()
                 .is_some(),
             "an exact internal URL and heading prove products that omit the document title from AT-SPI"
@@ -704,34 +697,73 @@ mod tests {
 
         let addressless = nodes[1..].to_vec();
         assert!(
-            exact_setup_checkbox(&addressless, descriptor(), false)
+            exact_setup_checkbox(&addressless, descriptor())
                 .unwrap()
                 .is_none(),
             "page labels alone must not authorize a setup action"
         );
         assert!(
-            exact_setup_checkbox(&addressless, descriptor(), true)
+            exact_setup_checkbox(&addressless, descriptor())
                 .unwrap()
-                .is_some(),
-            "the exact compositor-routed fixed navigation may substitute for hidden browser chrome"
+                .is_none(),
+            "committing the fixed navigation cannot substitute for destination evidence"
         );
 
         let mut redacted_address = nodes.clone();
         redacted_address[0].value = None;
+        redacted_address[1].document_uri = Some(descriptor().setup_url.to_owned());
         assert!(
-            exact_setup_checkbox(&redacted_address, descriptor(), true)
+            exact_setup_checkbox(&redacted_address, descriptor())
                 .unwrap()
                 .is_some(),
-            "an address control with a withheld value is not contradictory evidence"
+            "the exact rendered document URI proves a setup page whose address value is withheld"
         );
 
-        let mut contradictory = nodes;
+        let mut contradictory = redacted_address;
         contradictory[0].value = Some("https://example.test/spoof".to_owned());
         assert!(
-            exact_setup_checkbox(&contradictory, descriptor(), true)
+            exact_setup_checkbox(&contradictory, descriptor())
                 .unwrap()
                 .is_none(),
             "trusted navigation must not override a visible contradictory address bar"
+        );
+    }
+
+    #[test]
+    fn trusted_navigation_without_exact_destination_refuses_renderer_lookalike() {
+        let mut heading = node("heading", "opaque heading", None, &[]);
+        heading.in_web_content = true;
+        let mut checkbox = node("check box", "opaque toggle", None, &["toggle"]);
+        checkbox.in_web_content = true;
+        let nodes = vec![
+            node("document web", "unrelated page", None, &[]),
+            heading,
+            checkbox,
+        ];
+
+        assert!(
+            exact_setup_checkbox(&nodes, descriptor())
+                .unwrap()
+                .is_none(),
+            "committing a navigation does not prove which page the browser ultimately rendered"
+        );
+    }
+
+    #[test]
+    fn exact_document_uri_proves_localized_setup_page_without_readable_omnibox() {
+        let mut document = node("document web", "opaque document", None, &[]);
+        document.document_uri = Some(descriptor().setup_url.to_owned());
+        let mut heading = node("heading", "opaque heading", None, &[]);
+        heading.in_web_content = true;
+        let mut checkbox = node("check box", "opaque toggle", None, &["toggle"]);
+        checkbox.in_web_content = true;
+        let nodes = vec![document, heading, checkbox];
+
+        assert!(
+            exact_setup_checkbox(&nodes, descriptor())
+                .unwrap()
+                .is_some(),
+            "Chromium's exact AT-SPI Document URI should prove the destination without labels"
         );
     }
 
@@ -743,7 +775,33 @@ mod tests {
     }
 
     fn omnibox(value: Option<&str>) -> AtspiNode {
-        node("entry", "Address and search bar", value, &["activate"])
+        node("entry", "opaque native field", value, &["activate"])
+    }
+
+    #[test]
+    fn setup_names_are_opaque_across_scripts_and_missing_labels() {
+        for (document_name, heading_name, checkbox_name) in [
+            ("e\u{301}", "हिन्दी", "ไทย"),
+            ("\u{2067}العربية\u{2069}", "עברית", "فارسی"),
+            ("日本語", "한국어", "简体中文"),
+            ("Հայերեն", "ქართული", "አማርኛ"),
+            ("A\u{200d}B", "👩🏽‍💻", "✅"),
+            ("", "", ""),
+        ] {
+            let mut heading = node("heading", heading_name, None, &[]);
+            heading.in_web_content = true;
+            let mut checkbox = node("check box", checkbox_name, None, &["toggle"]);
+            checkbox.in_web_content = true;
+            let nodes = vec![
+                omnibox(Some(descriptor().setup_url)),
+                node("document web", document_name, None, &[]),
+                heading,
+                checkbox,
+            ];
+            assert!(exact_setup_checkbox(&nodes, descriptor())
+                .unwrap()
+                .is_some());
+        }
     }
 
     #[test]

@@ -741,6 +741,11 @@ the grab (a perf knob, not a modality choice).
 
 The response carries:
 
+- `elements` — preferred structured rows with `element_index`, `element_token`,
+  role, label, geometry, and optional platform fields. On Windows, native
+  controls with a non-empty UIA `AutomationId` expose it as `id`; renderer-owned
+  web content does not. An ID can keep an otherwise patternless native control
+  indexed, but it does not imply that the control accepts an action.
 - `tree_markdown` — every actionable element tagged `[N]`; the structured row
   with the same `element_index` carries its opaque `element_token`. The tree can be very large (Finder is
   ~1600 elements, ~190 KB); when it exceeds token limits the MCP

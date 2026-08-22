@@ -520,8 +520,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 5 {
-		t.Fatalf("expected exactly five migrations, got %d", len(files))
+	if len(files) != 6 {
+		t.Fatalf("expected exactly six migrations, got %d", len(files))
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -627,6 +627,22 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	} {
 		if !strings.Contains(meter.SQL, expected) {
 			t.Errorf("reservation meter migration is missing contract %q", expected)
+		}
+	}
+
+	chatConversations := files[5]
+	if chatConversations.Version != 6 || chatConversations.Name != "000006_chat_conversations.sql" {
+		t.Fatalf("expected version 6 chat migration, got version=%d name=%q", chatConversations.Version, chatConversations.Name)
+	}
+	for _, expected := range []string{
+		"CREATE TABLE public.chat_conversations",
+		"messages jsonb NOT NULL DEFAULT '[]'::jsonb",
+		"CREATE INDEX chat_conversations_owner_active_idx",
+		"CREATE INDEX chat_conversations_owner_archived_idx",
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.chat_conversations TO cyclops_app",
+	} {
+		if !strings.Contains(chatConversations.SQL, expected) {
+			t.Errorf("chat conversation migration is missing contract %q", expected)
 		}
 	}
 }

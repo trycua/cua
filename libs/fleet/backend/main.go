@@ -358,6 +358,25 @@ func run() error {
 	} else {
 		slog.Info("usage: enabled")
 	}
+	if cfg.Chat.BaseURL != "" {
+		chatStorage := "memory"
+		if cfg.Database.URL != "" {
+			conversationStore, conversationStoreErr := chat.NewPostgresConversationStore(ctx, cfg.Database.URL)
+			if conversationStoreErr != nil {
+				return errors.Join(fmt.Errorf("initialize chat conversation store: %w", conversationStoreErr), startupErrors, telemetryErr)
+			}
+			defer conversationStore.Close()
+			h.Conversations = conversationStore
+			chatStorage = "postgres"
+		} else {
+			h.Conversations = chat.NewMemoryConversationStore()
+		}
+		h.Model = chat.NewLiteLLMClient(cfg.Chat.BaseURL, cfg.Chat.APIKey, cfg.Chat.Model)
+		slog.Info("chat: configured", "base_url", cfg.Chat.BaseURL, "model", cfg.Chat.Model, "storage", chatStorage)
+	} else {
+		slog.Info("chat: not configured (LITELLM_BASE_URL and LITELLM_API_KEY unset)")
+	}
+
 	managementStore, processLocalManagement, managementStoreErr := featureFlagManagementStoreFromEnv(os.Getenv)
 	if managementStoreErr != nil {
 		startupErrors = errors.Join(startupErrors, managementStoreErr)
@@ -389,14 +408,6 @@ func run() error {
 	databaseFeatures := defaultDatabaseFeatureDependencies()
 	progress := initializeDatabaseFeatures(ctx, cfg.Database, &h, databaseFeatures)
 	go retryDatabaseFeatures(ctx, cfg.Database, &h, databaseFeatures, progress, databaseRetryInterval)
-
-	if cfg.Chat.BaseURL != "" {
-		h.Conversations = chat.NewMemoryConversationStore()
-		h.Model = chat.NewLiteLLMClient(cfg.Chat.BaseURL, cfg.Chat.APIKey, cfg.Chat.Model)
-		slog.Info("chat: configured", "base_url", cfg.Chat.BaseURL, "model", cfg.Chat.Model)
-	} else {
-		slog.Info("chat: not configured (LITELLM_BASE_URL and LITELLM_API_KEY unset)")
-	}
 
 	router := setupRouter(h)
 

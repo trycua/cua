@@ -82,9 +82,10 @@ middleware:
 - `POST /api/chat/conversations/{id}/turns` appends user or tool messages and
   streams the assistant response as server-sent events.
 
-The backend stores user, assistant, tool-call, and tool-result messages. The
-React UI keeps only transient rendering and run state; it reloads canonical
-conversation history from the backend. If a browser run is stopped or rejects a
+In production, the backend stores user, assistant, tool-call, and tool-result
+messages in the shared Cyclops Postgres database, so conversations survive
+replica changes and pod restarts. The React UI keeps only transient rendering
+and run state; it reloads canonical conversation history from the backend. If a browser run is stopped or rejects a
 tool call after the assistant request is stored, the next retry or user prompt
 records synthetic failed tool results before continuing, so the conversation is
 not stranded.

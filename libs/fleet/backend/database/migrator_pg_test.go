@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"cyclops-cs-backend/chat"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -123,6 +124,46 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	assertMetabaseBoundary(t, ctx, inspectionURL, credentials.Metabase)
 	assertUsageReaderBoundary(t, ctx, inspectionURL, credentials.Usage)
 	assertApplicationBoundary(t, ctx, credentials.Application)
+	assertChatConversationStore(t, ctx, credentials.Application)
+}
+
+func assertChatConversationStore(t *testing.T, ctx context.Context, applicationURL string) {
+	t.Helper()
+	first, err := chat.NewPostgresConversationStore(ctx, applicationURL)
+	if err != nil {
+		t.Fatalf("create first chat store: %v", err)
+	}
+	defer first.Close()
+	second, err := chat.NewPostgresConversationStore(ctx, applicationURL)
+	if err != nil {
+		t.Fatalf("create second chat store: %v", err)
+	}
+	defer second.Close()
+
+	conversation, err := first.Create(ctx, "owner-1")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := first.Append(ctx, "owner-1", conversation.ID, chat.Message{Role: chat.RoleUser, Content: "list pools"}); err != nil {
+		t.Fatalf("append through first store: %v", err)
+	}
+	loaded, err := second.Get(ctx, "owner-1", conversation.ID)
+	if err != nil {
+		t.Fatalf("load through second store: %v", err)
+	}
+	if loaded.Title != "list pools" || len(loaded.Messages) != 1 {
+		t.Fatalf("second store loaded conversation = %+v", loaded)
+	}
+	if err := second.Append(ctx, "owner-1", conversation.ID, chat.Message{Role: chat.RoleAssistant, Content: "ready"}); err != nil {
+		t.Fatalf("append through second store: %v", err)
+	}
+	loaded, err = first.Get(ctx, "owner-1", conversation.ID)
+	if err != nil {
+		t.Fatalf("reload through first store: %v", err)
+	}
+	if len(loaded.Messages) != 2 || loaded.Messages[1].Content != "ready" {
+		t.Fatalf("first store did not observe second store append: %+v", loaded.Messages)
+	}
 }
 
 func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
@@ -134,14 +175,14 @@ func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
 	upgrade := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if upgrade.Current != 1 || upgrade.Target != 5 || upgrade.Pending != 4 || upgrade.Applied != 4 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+	if upgrade.Current != 1 || upgrade.Target != 6 || upgrade.Pending != 5 || upgrade.Applied != 5 || upgrade.Skipped != 1 || upgrade.Result != "success" {
 		t.Fatalf("version-one upgrade summary = %+v", upgrade)
 	}
 
 	noOp := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if noOp.Current != 5 || noOp.Target != 5 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 5 || noOp.Result != "success" {
+	if noOp.Current != 6 || noOp.Target != 6 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 6 || noOp.Result != "success" {
 		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
 	}
 }
@@ -1537,8 +1578,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 5 {
-		t.Fatalf("migration ledger row count = %d, want 5", len(ledger))
+	if len(ledger) != 6 {
+		t.Fatalf("migration ledger row count = %d, want 6", len(ledger))
 	}
 	for index, want := range []struct {
 		version  int64
@@ -1549,6 +1590,7 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 		{3, "000003_usage_claimed_sandbox_pool.sql"},
 		{4, "000004_filter_invalid_usage_sandbox_events.sql"},
 		{5, "000005_hourly_reservation_meter.sql"},
+		{6, "000006_chat_conversations.sql"},
 	} {
 		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
 			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
@@ -1787,6 +1829,7 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 	defer connection.Close(ctx)
 	for _, want := range []struct{ schema, name, owner string }{
 		{"public", "github_trust_policies", migrationOwner},
+		{"public", "chat_conversations", migrationOwner},
 		{"k8s_state", "resource_state", "k8s_state_owner"},
 		{"k8s_state", "resource_event_outbox", "k8s_state_owner"},
 		{"k8s_state", "resource_event_outbox_usage_lookup_idx", "k8s_state_owner"},
@@ -1819,7 +1862,7 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 	for _, schema := range []string{"k8s_state", "k8s_api", "k8s_reporting", "cyclops_migrations"} {
 		assertNoPublicSchemaPrivilege(t, ctx, connection, schema, "USAGE")
 	}
-	for _, relation := range []string{"public.github_trust_policies", "k8s_state.resource_state", "k8s_state.resource_event_outbox", "k8s_api.current_resources", "k8s_reporting.current_resources", "cyclops_migrations.applied_migrations"} {
+	for _, relation := range []string{"public.github_trust_policies", "public.chat_conversations", "k8s_state.resource_state", "k8s_state.resource_event_outbox", "k8s_api.current_resources", "k8s_reporting.current_resources", "cyclops_migrations.applied_migrations"} {
 		assertNoPublicTablePrivilege(t, ctx, connection, relation)
 	}
 }
@@ -1880,7 +1923,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 5 {
+		if err != nil || count != 6 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)

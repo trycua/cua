@@ -68,7 +68,7 @@ class LocalTransport(Transport):
             "key_down": lambda p: keyboard.key_down(p["key"]),
             "key_up": lambda p: keyboard.key_up(p["key"]),
             # Clipboard
-            "copy_to_clipboard": lambda p: clipboard.get(),
+            "copy_to_clipboard": lambda p: {"success": True, "content": clipboard.get()},
             "set_clipboard": lambda p: clipboard.set(p["text"]),
             # Shell
             "run_command": lambda p: shell.run(p["command"], p.get("timeout", 30)),

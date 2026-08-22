@@ -27,7 +27,17 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
+fn is_helium(name: &str) -> bool {
+    std::path::Path::new(name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("helium"))
+}
+
 fn is_chromium(name: &str) -> bool {
+    if is_helium(name) {
+        return true;
+    }
     let name = name.to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "msedge", "vivaldi", "opera", "arc",
@@ -48,6 +58,9 @@ fn is_firefox(name: &str) -> bool {
 }
 
 fn browser_product(identity: &str) -> BrowserProduct {
+    if is_helium(identity) {
+        return BrowserProduct::Helium;
+    }
     let tokens = identity
         .to_ascii_lowercase()
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -110,13 +123,92 @@ fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
 }
 
+fn command_line_arguments(bytes: &[u8]) -> Vec<String> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+        .collect()
+}
+
+fn has_process_type(arguments: &[String]) -> bool {
+    arguments.iter().any(|argument| {
+        argument
+            .strip_prefix("--type=")
+            .is_some_and(|kind| !kind.is_empty())
+    })
+}
+
+/// Recover argv from the single space-joined `/proc/<pid>/cmdline` record
+/// observed for Helium, which does not use the usual NUL delimiter.
+///
+/// This is deliberately narrow. It applies only to a one-record command line,
+/// and every caller gates it on the product already resolved from
+/// `/proc/<pid>/exe`, so no non-Helium process reaches it. Splitting happens
+/// only at a ` --` switch boundary, so a value containing spaces
+/// (`--user-data-dir=/tmp/helium profile`) survives intact, and leading
+/// positional arguments (`helium https://example.test --flag`) do not defeat
+/// recovery. Every other process keeps ordinary NUL semantics.
+///
+/// The packed encoding is inherently ambiguous: it carries no quoting or
+/// length information, so a value that itself contains ` --` is
+/// indistinguishable from a following switch. Where that ambiguity bites,
+/// this parser prefers the reading that refuses rather than the one that
+/// grants access.
+fn packed_helium_arguments(bytes: &[u8]) -> Option<Vec<String>> {
+    let arguments = command_line_arguments(bytes);
+    let [packed] = arguments.as_slice() else {
+        return None;
+    };
+    let (_leading, switches) = packed.split_once(" --")?;
+    let mut recovered = Vec::new();
+    for switch in switches.split(" --") {
+        // Inside one switch record the boundary is already known, so a
+        // `--flag value` pair splits at its first space and everything after
+        // it is the value. `--flag=value` stays a single argument.
+        match switch.split_once(' ') {
+            Some((flag, value)) if !flag.contains('=') => {
+                recovered.push(format!("--{flag}"));
+                recovered.push(value.to_owned());
+            }
+            _ => recovered.push(format!("--{switch}")),
+        }
+    }
+    Some(recovered)
+}
+
+fn packed_helium_process_type(bytes: &[u8]) -> bool {
+    // Any recovered `--type=` marks this as a helper, not just a leading one.
+    // Chromium emits it first in every helper observed here, but relying on
+    // that position would let an unexpected ordering promote a renderer, GPU,
+    // or utility process to the main-browser role. Reading a spurious
+    // `--type=` out of an exotic value only costs a refusal, so this
+    // deliberately errs toward Helper.
+    packed_helium_arguments(bytes).is_some_and(|arguments| has_process_type(&arguments))
+}
+
+fn user_data_dir_arguments(arguments: &[String]) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    for (index, argument) in arguments.iter().enumerate() {
+        if let Some(path) = argument.strip_prefix("--user-data-dir=") {
+            if !path.is_empty() {
+                directories.push(PathBuf::from(path));
+            }
+        } else if argument == "--user-data-dir" {
+            if let Some(path) = arguments.get(index + 1).filter(|path| !path.is_empty()) {
+                directories.push(PathBuf::from(path));
+            }
+        }
+    }
+    directories
+}
+
 fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole {
     let helper = std::fs::read(format!("/proc/{pid}/cmdline"))
         .ok()
         .is_some_and(|bytes| {
-            bytes.split(|byte| *byte == 0).any(|arg| {
-                arg.starts_with(b"--type=") && arg.get(7..).is_some_and(|kind| !kind.is_empty())
-            })
+            has_process_type(&command_line_arguments(&bytes))
+                || (product == BrowserProduct::Helium && packed_helium_process_type(&bytes))
         });
     if helper {
         BrowserProcessRole::Helper
@@ -126,6 +218,7 @@ fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole
         product,
         BrowserProduct::GoogleChrome
             | BrowserProduct::Chromium
+            | BrowserProduct::Helium
             | BrowserProduct::MicrosoftEdge
             | BrowserProduct::Brave
             | BrowserProduct::Vivaldi
@@ -169,6 +262,30 @@ fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
             ))
         })
         .collect()
+}
+
+/// Resolve the kernel inode of the filesystem-bound AF_UNIX socket listening
+/// at exactly `target`, by scanning `/proc/net/unix`.
+///
+/// The kernel's `Inode` column is `%5lu`: right-justified in a minimum
+/// five-character field, so a small inode number is left-padded with extra
+/// spaces. Splitting on runs of whitespace (rather than a fixed column
+/// offset) is what keeps that padding from being misread as additional
+/// fields.
+fn unix_socket_inode(target: &std::path::Path) -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/net/unix").ok()?;
+    text.lines().skip(1).find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let inode = fields.nth(6)?.parse::<u64>().ok()?;
+        // Only a filesystem-bound socket carries a path column; an
+        // abstract-namespace socket has none and never matches an absolute
+        // target. A path containing internal runs of more than one space is
+        // an inherent ambiguity in this whitespace-delimited encoding, not
+        // one this parser can resolve — Chromium's own singleton-socket path
+        // is a single-token generated directory name and never hits it.
+        let rest: Vec<&str> = fields.collect();
+        (!rest.is_empty() && std::path::Path::new(&rest.join(" ")) == target).then_some(inode)
+    })
 }
 
 fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)>) -> HashSet<i64> {
@@ -279,9 +396,38 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => ".config/google-chrome",
         BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
         BrowserProduct::Chromium => ".config/chromium",
+        BrowserProduct::Helium => ".config/net.imput.helium",
         _ => return None,
     };
     Some(home.join(relative))
+}
+
+/// Corroborate a candidate profile directory against the kernel's own view of
+/// the process.
+///
+/// A Chromium profile is not merely named on the command line; the running
+/// browser owns that profile's process-singleton listener. Chromium creates
+/// `<profile>/SingletonSocket` as a symlink to a private AF_UNIX socket and
+/// keeps it bound for the life of the browser, so the kernel's own listing of
+/// live sockets — not the process's ambient working directory or its
+/// unrelated open file descriptors — is what ties a directory to this exact
+/// process. An attacker who controls only argument text can name any path,
+/// including one the process's cwd or some incidental fd happens to fall
+/// under, but cannot inject a socket file descriptor into another process's
+/// fd table; only the kernel can put one there.
+fn process_owns_profile_directory(pid: i64, directory: &std::path::Path) -> bool {
+    let Ok(target) = std::fs::read_link(directory.join("SingletonSocket")) else {
+        return false;
+    };
+    let target = if target.is_absolute() {
+        target
+    } else {
+        directory.join(target)
+    };
+    let Some(inode) = unix_socket_inode(&target) else {
+        return false;
+    };
+    socket_inodes_for_process_tree(pid).is_ok_and(|inodes| inodes.contains(&inode))
 }
 
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
@@ -291,35 +437,30 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
             format!("browser process {pid} is no longer available"),
         )
     })?;
-    let args = bytes
-        .split(|byte| *byte == 0)
-        .filter(|arg| !arg.is_empty())
-        .map(|arg| String::from_utf8_lossy(arg).into_owned())
-        .collect::<Vec<_>>();
-    let mut directories = Vec::new();
-    for (index, arg) in args.iter().enumerate() {
-        if let Some(path) = arg.strip_prefix("--user-data-dir=") {
-            if !path.is_empty() {
-                directories.push(PathBuf::from(path));
-            }
-        } else if arg == "--user-data-dir" {
-            if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
-                directories.push(PathBuf::from(path));
-            }
+    let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    let product = executable
+        .as_deref()
+        .map(browser_product)
+        .unwrap_or(BrowserProduct::Other);
+    let mut directories = user_data_dir_arguments(&command_line_arguments(&bytes));
+    // A NUL-delimited command line carries the kernel's own argument
+    // separators, so its switches are authoritative. A packed record has lost
+    // them: ordinary text inside a file name or URL is then indistinguishable
+    // from a real switch, so anything recovered from it is a candidate to be
+    // corroborated rather than a fact to be trusted.
+    let mut candidate_is_unseparated = false;
+    if directories.is_empty() && product == BrowserProduct::Helium {
+        if let Some(packed) = packed_helium_arguments(&bytes) {
+            directories = user_data_dir_arguments(&packed);
+            candidate_is_unseparated = !directories.is_empty();
         }
     }
     directories.sort();
     directories.dedup();
-    match directories.as_slice() {
-        [] => {
-            let Some(executable) = std::fs::read_link(format!("/proc/{pid}/exe"))
-                .ok()
-                .map(|path| path.to_string_lossy().into_owned())
-            else {
-                return Ok(None);
-            };
-            Ok(default_user_data_dir(browser_product(&executable)))
-        }
+    let resolved = match directories.as_slice() {
+        [] => Ok(default_user_data_dir(product)),
         [path] if path.is_absolute() => Ok(Some(path.clone())),
         [path] => {
             let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
@@ -334,7 +475,19 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "browser process has multiple distinct --user-data-dir arguments",
         )),
+    }?;
+    if candidate_is_unseparated {
+        let Some(directory) = resolved.as_deref() else {
+            return Ok(None);
+        };
+        if !process_owns_profile_directory(pid, directory) {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "the browser's command line has no argument separators, so a --user-data-dir value read from it could not be distinguished from ordinary argument text and the process does not own that directory's SingletonSocket",
+            ));
+        }
     }
+    Ok(resolved)
 }
 
 fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
@@ -755,6 +908,14 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         if let Some(endpoint) = active_port_endpoint(pid)? {
             return Ok(Some(endpoint));
         }
+        // Helium's documented Linux boundary is its own PID-owned
+        // DevToolsActivePort file. Without it, refuse instead of accepting an
+        // arbitrary PID-owned listener through generic /json/version
+        // discovery. Classification is deliberately deferred to here so the
+        // ordinary Chrome/Edge path does not pay a full /proc enumeration.
+        if self.classify_browser(pid).await?.product_kind == BrowserProduct::Helium {
+            return Ok(None);
+        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -808,6 +969,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 ));
             }
             return Ok(Some(endpoint));
+        }
+        if self.classify_browser(pid).await?.product_kind == BrowserProduct::Helium {
+            return Ok(None);
         }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
@@ -1202,6 +1366,12 @@ mod tests {
         assert!(is_chromium("chromium-browser"));
         assert!(is_chromium("msedge --remote-debugging-port=9222"));
         assert!(is_chromium("/opt/microsoft/msedge/msedge"));
+        assert!(is_chromium("helium"));
+        assert!(is_chromium("/opt/helium/helium"));
+        assert!(is_chromium("/opt/helium-browser-bin/helium"));
+        assert!(!is_chromium("/opt/helium/not-a-browser"));
+        assert!(!is_chromium("helium-helper"));
+        assert!(!is_chromium(r"/opt/fake\helium"));
         assert!(!is_chromium("firefox"));
         assert!(!is_chromium("search-worker"));
         assert!(!is_chromium("ledger-service"));
@@ -1220,6 +1390,413 @@ mod tests {
         assert_eq!(
             browser_product("/opt/google/chrome/chrome"),
             BrowserProduct::GoogleChrome
+        );
+        assert_eq!(
+            browser_product("/opt/helium-browser-bin/helium"),
+            BrowserProduct::Helium
+        );
+        assert_eq!(
+            browser_product("/opt/helium/helium"),
+            BrowserProduct::Helium
+        );
+        assert_eq!(
+            browser_product("/opt/chromium/helium"),
+            BrowserProduct::Helium
+        );
+        assert_eq!(
+            browser_product("/opt/helium/not-a-browser"),
+            BrowserProduct::Other
+        );
+        assert_eq!(browser_product("helium-helper"), BrowserProduct::Other);
+    }
+
+    #[test]
+    fn helium_uses_its_branded_default_profile_directory() {
+        assert!(default_user_data_dir(BrowserProduct::Helium)
+            .expect("HOME-backed Helium profile directory")
+            .ends_with(".config/net.imput.helium"));
+    }
+
+    #[test]
+    fn process_type_detection_handles_nul_and_packed_command_lines() {
+        assert!(has_process_type(&command_line_arguments(
+            b"helium\0--type=renderer\0"
+        )));
+        assert!(packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0"
+        ));
+        // Packed records are never split on whitespace by the NUL parser.
+        assert!(!has_process_type(&command_line_arguments(
+            b"/opt/helium-browser-bin/helium --type=gpu-process --utility-sub-type=test\0"
+        )));
+        // A helper is a helper wherever `--type=` appears. Position is not a
+        // load-bearing assumption: an unexpected ordering must not promote a
+        // renderer, GPU, or utility process to the main-browser role.
+        assert!(packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium --enable-logging --type=renderer\0"
+        ));
+        assert!(packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium --load-extension=/tmp/example --type=renderer\0"
+        ));
+        // A real main process carries no `--type=` at all.
+        assert!(!packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --no-first-run\0"
+        ));
+        assert!(!packed_helium_process_type(b"helium --type=\0"));
+        assert!(!packed_helium_process_type(
+            b"/opt/helium-browser-bin/helium\0--type=renderer\0"
+        ));
+    }
+
+    #[test]
+    fn packed_helium_command_line_preserves_profile_arguments() {
+        assert_eq!(
+            command_line_arguments(
+                b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile\0"
+            ),
+            ["/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile"]
+        );
+        assert_eq!(
+            command_line_arguments(
+                b"/opt/helium-browser-bin/helium\0--user-data-dir\0/tmp/helium-profile\0"
+            ),
+            [
+                "/opt/helium-browser-bin/helium",
+                "--user-data-dir",
+                "/tmp/helium-profile"
+            ]
+        );
+    }
+
+    #[test]
+    fn packed_helium_recovery_keeps_switch_boundaries_and_spaced_values() {
+        let packed = packed_helium_arguments(
+            b"/opt/helium-browser-bin/helium --user-data-dir=/tmp/helium profile --remote-debugging-port=0\0",
+        )
+        .expect("packed Helium argv");
+        assert_eq!(
+            packed,
+            [
+                "--user-data-dir=/tmp/helium profile",
+                "--remote-debugging-port=0"
+            ]
+        );
+        assert_eq!(
+            user_data_dir_arguments(&packed),
+            [PathBuf::from("/tmp/helium profile")]
+        );
+        // The separated form resolves through the same shared extractor.
+        assert_eq!(
+            user_data_dir_arguments(
+                &packed_helium_arguments(
+                    b"/opt/helium-browser-bin/helium --user-data-dir /tmp/helium profile --no-first-run\0"
+                )
+                .expect("packed Helium argv")
+            ),
+            [PathBuf::from("/tmp/helium profile")]
+        );
+        // NUL-delimited records are handled by the ordinary parser instead.
+        assert!(
+            packed_helium_arguments(b"/opt/helium-browser-bin/helium\0--no-first-run\0").is_none()
+        );
+        assert!(packed_helium_arguments(b"/opt/helium-browser-bin/helium\0").is_none());
+    }
+
+    #[test]
+    fn unix_socket_inode_resolves_only_a_live_kernel_listener() {
+        let directory = tempfile::tempdir().expect("temporary socket directory");
+        let sock_path = directory.path().join("probe.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&sock_path).expect("bind probe socket");
+        assert!(unix_socket_inode(&sock_path).is_some_and(|inode| inode > 0));
+
+        // Dropping the listener closes its only fd. The bind path remains a
+        // socket special file on disk (Rust's UnixListener never unlinks on
+        // drop), but the live kernel object -- and its /proc/net/unix line
+        // -- is gone. A path that merely exists on disk must not resolve.
+        drop(listener);
+        assert!(sock_path.exists());
+        assert!(unix_socket_inode(&sock_path).is_none());
+
+        assert!(unix_socket_inode(&directory.path().join("never-bound.sock")).is_none());
+    }
+
+    #[test]
+    fn process_owns_profile_directory_requires_this_exact_process_to_hold_the_socket() {
+        let pid = i64::from(std::process::id());
+
+        // No SingletonSocket symlink at all.
+        let bare = tempfile::tempdir().expect("bare candidate directory");
+        assert!(!process_owns_profile_directory(pid, bare.path()));
+
+        // A SingletonSocket symlink present, but its target names no live
+        // kernel socket (nothing currently holds it open).
+        let stale_root = tempfile::tempdir().expect("stale socket directory");
+        let stale_sock = stale_root.path().join("SingletonSocket");
+        drop(std::os::unix::net::UnixListener::bind(&stale_sock).expect("bind then drop"));
+        let stale_candidate = tempfile::tempdir().expect("stale candidate directory");
+        std::os::unix::fs::symlink(&stale_sock, stale_candidate.path().join("SingletonSocket"))
+            .expect("symlink stale SingletonSocket");
+        assert!(!process_owns_profile_directory(pid, stale_candidate.path()));
+
+        // A SingletonSocket symlink resolving to a socket this exact process
+        // genuinely holds open -- the only case that must corroborate.
+        let owned_root = tempfile::tempdir().expect("owned socket directory");
+        let owned_sock = owned_root.path().join("SingletonSocket");
+        let _listener =
+            std::os::unix::net::UnixListener::bind(&owned_sock).expect("bind owned socket");
+        let profile = tempfile::tempdir().expect("real candidate directory");
+        std::os::unix::fs::symlink(&owned_sock, profile.path().join("SingletonSocket"))
+            .expect("symlink real SingletonSocket");
+        assert!(process_owns_profile_directory(pid, profile.path()));
+    }
+
+    /// A disposable stand-in for `/opt/helium-browser-bin/helium`: a real
+    /// child process whose `/proc/<pid>/exe` basename is exactly `helium`
+    /// (satisfying `browser_product`) and whose `cmdline` is exactly one
+    /// packed record under the caller's control via `arg0`, mirroring the
+    /// observed Helium shape without needing a real browser installed.
+    ///
+    /// The stand-in executable is a copy of `cat` invoked with zero
+    /// arguments: `packed_helium_arguments` requires the *entire* recovered
+    /// argv to be a single NUL-terminated record, so the process must reach
+    /// `/proc/<pid>/cmdline` with nothing beyond the spoofed `arg0` in it.
+    /// Any additional positional argument -- e.g. a duration passed to
+    /// `sleep` -- would itself become a second record and silently defeat
+    /// the very packed-parsing path under test. `cat` blocks on its own
+    /// unclosed stdin instead, needing no arguments to stay alive.
+    struct FakeHeliumProcess {
+        child: std::process::Child,
+        // Keeping the child's stdin open is what keeps `cat` blocked; if
+        // this handle is dropped, stdin sees EOF and the process exits.
+        _stdin: std::process::ChildStdin,
+        _executable_directory: tempfile::TempDir,
+    }
+
+    impl FakeHeliumProcess {
+        fn spawn(
+            packed_cmdline: &str,
+            current_dir: &std::path::Path,
+            stdout: std::process::Stdio,
+        ) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            use std::os::unix::process::CommandExt;
+            let executable_directory =
+                tempfile::tempdir().expect("temporary fake-helium executable directory");
+            let executable = executable_directory.path().join("helium");
+            std::fs::copy(cat_executable_path(), &executable)
+                .expect("stage a `cat` stand-in as the fake Helium executable");
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+                .expect("make the fake Helium executable runnable");
+            let mut child = std::process::Command::new(&executable)
+                .arg0(packed_cmdline)
+                .current_dir(current_dir)
+                .stdin(std::process::Stdio::piped())
+                .stdout(stdout)
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn fake Helium process");
+            let stdin = child.stdin.take().expect("piped stdin handle");
+            // Give the kernel a moment to publish /proc/<pid>/{exe,cmdline,fd}
+            // before any assertion reads them.
+            std::thread::sleep(Duration::from_millis(30));
+            Self {
+                child,
+                _stdin: stdin,
+                _executable_directory: executable_directory,
+            }
+        }
+
+        fn pid(&self) -> i64 {
+            i64::from(self.child.id())
+        }
+    }
+
+    impl Drop for FakeHeliumProcess {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    fn cat_executable_path() -> PathBuf {
+        for candidate in ["/usr/bin/cat", "/bin/cat"] {
+            if std::path::Path::new(candidate).is_file() {
+                return PathBuf::from(candidate);
+            }
+        }
+        for directory in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+            let candidate = directory.join("cat");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+        panic!("no `cat` executable found to stage as the fake Helium process")
+    }
+
+    #[test]
+    fn user_data_dir_for_pid_refuses_ordinary_text_naming_the_processs_own_cwd() {
+        // The exact counterexample from review: Helium starts inside a
+        // directory reachable from ordinary argument text -- here a file
+        // positional argument that happens to contain
+        // " --user-data-dir=<that same directory>" -- with no real profile
+        // option ever supplied. The old working-directory check accepted
+        // this because the candidate merely had to prefix-match the
+        // process's ambient cwd, which ordinary argument text can trivially
+        // arrange without the process actually using that directory as its
+        // profile.
+        let attacker_dir = tempfile::tempdir().expect("attacker-reachable directory");
+        let packed = format!(
+            "/opt/helium-browser-bin/helium {}/report --user-data-dir={}",
+            attacker_dir.path().display(),
+            attacker_dir.path().display()
+        );
+        let process =
+            FakeHeliumProcess::spawn(&packed, attacker_dir.path(), std::process::Stdio::null());
+
+        // Precondition: the process's real cwd genuinely is the candidate
+        // directory, which is exactly what made the old cwd-based check
+        // wrongly corroborate it.
+        let cwd = std::fs::read_link(format!("/proc/{}/cwd", process.pid()))
+            .expect("fake Helium process cwd");
+        assert_eq!(cwd, attacker_dir.path());
+        // And no real SingletonSocket exists there.
+        assert!(!attacker_dir.path().join("SingletonSocket").exists());
+
+        let outcome = user_data_dir_for_pid(process.pid());
+        assert!(
+            matches!(
+                &outcome,
+                Err(refusal) if refusal.code == BrowserRefusalCode::BrowserBindingAmbiguous
+            ),
+            "expected a browser_binding_ambiguous refusal, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn user_data_dir_for_pid_corroborates_a_real_owned_singleton_socket() {
+        // The legitimate counterpart: a real `--user-data-dir` switch naming
+        // a profile directory with a space in its path, an unrelated
+        // working directory, and a SingletonSocket this exact process
+        // genuinely owns (mirroring Chromium's real process-singleton
+        // mechanism). This must attach.
+        let profile_root = tempfile::tempdir().expect("profile root");
+        let profile = profile_root.path().join("profile with space");
+        std::fs::create_dir_all(&profile).expect("create spaced profile directory");
+        let singleton_root = tempfile::tempdir().expect("singleton socket root");
+        let singleton_sock = singleton_root.path().join("SingletonSocket");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&singleton_sock).expect("bind singleton");
+        std::os::unix::fs::symlink(&singleton_sock, profile.join("SingletonSocket"))
+            .expect("symlink real SingletonSocket into the profile");
+        let stdout = unsafe {
+            use std::os::fd::{FromRawFd, IntoRawFd};
+            std::process::Stdio::from_raw_fd(listener.into_raw_fd())
+        };
+
+        let unrelated_cwd = tempfile::tempdir().expect("unrelated working directory");
+        let packed = format!(
+            "/opt/helium-browser-bin/helium --user-data-dir={}",
+            profile.display()
+        );
+        let process = FakeHeliumProcess::spawn(&packed, unrelated_cwd.path(), stdout);
+
+        let cwd = std::fs::read_link(format!("/proc/{}/cwd", process.pid()))
+            .expect("fake Helium process cwd");
+        assert_ne!(cwd, profile, "the profile match must not depend on cwd");
+
+        assert_eq!(
+            user_data_dir_for_pid(process.pid()).expect("resolve the owned profile directory"),
+            Some(profile)
+        );
+    }
+
+    #[test]
+    fn user_data_dir_for_pid_refuses_a_singleton_socket_owned_by_a_different_process() {
+        // A directory can carry a real, live SingletonSocket -- just not one
+        // the candidate process holds. Planting someone else's socket must
+        // not be enough, mirroring the same ownership discipline the file
+        // already applies to a DevToolsActivePort's TCP listener.
+        let profile_root = tempfile::tempdir().expect("profile root");
+        let profile = profile_root.path().join("profile");
+        std::fs::create_dir_all(&profile).expect("create profile directory");
+        let singleton_root = tempfile::tempdir().expect("singleton socket root");
+        let singleton_sock = singleton_root.path().join("SingletonSocket");
+        // Bound and held by THIS test process (the harness), not by the
+        // fake Helium child spawned below.
+        let _listener_owned_by_harness =
+            std::os::unix::net::UnixListener::bind(&singleton_sock).expect("bind singleton");
+        std::os::unix::fs::symlink(&singleton_sock, profile.join("SingletonSocket"))
+            .expect("symlink real but foreign-owned SingletonSocket");
+
+        let packed = format!(
+            "/opt/helium-browser-bin/helium --user-data-dir={}",
+            profile.display()
+        );
+        let process =
+            FakeHeliumProcess::spawn(&packed, profile_root.path(), std::process::Stdio::null());
+
+        let outcome = user_data_dir_for_pid(process.pid());
+        assert!(
+            matches!(
+                &outcome,
+                Err(refusal) if refusal.code == BrowserRefusalCode::BrowserBindingAmbiguous
+            ),
+            "expected a browser_binding_ambiguous refusal, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn packed_recovery_survives_leading_positional_arguments() {
+        // Opening a URL or file puts a positional argument before the first
+        // switch. Recovery must still find the profile rather than silently
+        // falling back to the default directory.
+        assert_eq!(
+            user_data_dir_arguments(
+                &packed_helium_arguments(
+                    b"/opt/helium-browser-bin/helium https://example.test --user-data-dir=/tmp/p\0"
+                )
+                .expect("packed Helium argv with a leading positional")
+            ),
+            [PathBuf::from("/tmp/p")]
+        );
+        assert_eq!(
+            user_data_dir_arguments(
+                &packed_helium_arguments(
+                    b"/opt/helium-browser-bin/helium /home/u/a.html --user-data-dir=/tmp/spaced dir\0"
+                )
+                .expect("packed Helium argv with a leading file positional")
+            ),
+            [PathBuf::from("/tmp/spaced dir")]
+        );
+    }
+
+    #[test]
+    fn user_data_dir_extraction_is_shared_by_both_argument_forms() {
+        let joined = ["--user-data-dir=/tmp/a".to_owned()];
+        let separated = ["--user-data-dir".to_owned(), "/tmp/b".to_owned()];
+        assert_eq!(user_data_dir_arguments(&joined), [PathBuf::from("/tmp/a")]);
+        assert_eq!(
+            user_data_dir_arguments(&separated),
+            [PathBuf::from("/tmp/b")]
+        );
+        assert!(user_data_dir_arguments(&["--user-data-dir=".to_owned()]).is_empty());
+        assert!(user_data_dir_arguments(&["--user-data-dir".to_owned()]).is_empty());
+        assert_eq!(
+            user_data_dir_arguments(&[
+                "--user-data-dir=/tmp/a".to_owned(),
+                "--user-data-dir=/tmp/b".to_owned()
+            ])
+            .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn helium_is_a_standalone_consumer_browser() {
+        assert_eq!(
+            process_role_for_pid(i64::from(std::process::id()), BrowserProduct::Helium),
+            BrowserProcessRole::StandaloneConsumer
         );
     }
 

@@ -6,6 +6,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci-image-api.yml"
+CD_WORKFLOW = REPO_ROOT / ".github/workflows/cd-image-api.yml"
 
 
 def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
@@ -27,3 +28,17 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     assert "test_image_build_recipe.py" in commands
     assert "test_image_api_workflows.py" in commands
     assert "test_image.py" in commands
+
+
+def test_image_api_cd_publishes_only_versioned_artifacts() -> None:
+    workflow = yaml.safe_load(CD_WORKFLOW.read_text())
+    assert workflow[True]["push"]["tags"] == ["image-api-v*"]
+    assert workflow["permissions"] == {"contents": "read", "packages": "write"}
+    commands = "\n".join(
+        step.get("run", "") for step in workflow["jobs"]["publish"]["steps"]
+    )
+    assert "flux_2.9.4_linux_amd64.tar.gz" in commands
+    assert "c2c397a52930f52d2005c01d276116b059d062de379386d58e98115380a766a2" in commands
+    assert "flux push artifact" in commands
+    assert "ghcr.io/trycua/cua-image-api:v${VERSION}" in commands
+    assert ":latest" not in commands

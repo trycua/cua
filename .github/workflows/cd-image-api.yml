@@ -1,0 +1,70 @@
+name: "CD: Image API"
+
+on:
+  push:
+    tags:
+      - "image-api-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image API version without the v prefix"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#image-api-v}"
+          fi
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "invalid Image API version: ${VERSION}" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >>"${GITHUB_OUTPUT}"
+
+      - name: Install Flux CLI 2.9.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/flux.tar.gz \
+            https://github.com/fluxcd/flux2/releases/download/v2.9.4/flux_2.9.4_linux_amd64.tar.gz
+          echo "c2c397a52930f52d2005c01d276116b059d062de379386d58e98115380a766a2  /tmp/flux.tar.gz" \
+            | sha256sum -c -
+          tar -xzf /tmp/flux.tar.gz -C /tmp flux
+          sudo install -m 0755 /tmp/flux /usr/local/bin/flux
+          flux version --client
+
+      - name: Authenticate to GHCR
+        shell: bash
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Publish Image API artifact
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flux push artifact "oci://ghcr.io/trycua/cua-image-api:v${VERSION}" \
+            --path=clusters/base/cua-images \
+            --source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --revision="${GITHUB_REF_NAME}@sha1:${GITHUB_SHA}"

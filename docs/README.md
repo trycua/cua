@@ -45,6 +45,11 @@ Public docs live in `content/docs/` and follow the Diátaxis modes:
 
 Place content by what the reader is trying to do, not by topic. Do not mix modes in one page; move reference tables to reference pages and link to them from how-to guides or explanations.
 
+## Maintainer runbooks
+
+- [Release components with Release Please](component-release-workflow.md)
+- [Backfill historical release metadata](release-backfill-runbook.md)
+
 ## Learn More
 
 To learn more about Next.js and Fumadocs, take a look at the following

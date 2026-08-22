@@ -146,7 +146,9 @@ async def run_live_test(args: argparse.Namespace) -> None:
                 if not screenshot.startswith(b"\x89PNG\r\n\x1a\n"):
                     raise AssertionError("screenshot is not a PNG")
                 if len(screenshot) <= 10_000:
-                    raise AssertionError(f"screenshot is suspiciously small: {len(screenshot)} bytes")
+                    raise AssertionError(
+                        f"screenshot is suspiciously small: {len(screenshot)} bytes"
+                    )
                 args.artifact_dir.mkdir(parents=True, exist_ok=True)
                 (args.artifact_dir / "screenshot.png").write_bytes(screenshot)
                 summary["screenshot_bytes"] = len(screenshot)

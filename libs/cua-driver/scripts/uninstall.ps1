@@ -39,7 +39,7 @@
 # Conservative on Claude MCP cleanup: we DON'T auto-edit %USERPROFILE%\
 # .claude.json on Windows (mirrors the macOS uninstall.sh's stance for
 # environments without python3). The closing message prints the
-# `claude mcp remove cua-driver-rs` command for the user to run.
+# `claude mcp remove cua-computer-use` command for the user to run.
 #
 # Env overrides (mirror install.ps1's variable names):
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   visible bin dir to remove
@@ -496,10 +496,10 @@ if (-not $Purge) {
     Write-Host ""
 }
 Write-Host "Claude Code MCP registrations:" -ForegroundColor Yellow
-Write-Host "  We don't auto-edit ~/.claude.json on Windows. If you registered cua-driver-rs"
+Write-Host "  We don't auto-edit ~/.claude.json on Windows. If you registered cua-computer-use"
 Write-Host "  with Claude Code, remove it manually:"
 Write-Host ""
-Write-Host "    claude mcp remove cua-driver-rs"
+Write-Host "    claude mcp remove cua-computer-use -s user"
 Write-Host ""
 Write-Host "  Or edit ~/.claude.json directly and delete entries whose 'command' points at"
 Write-Host "  cua-driver.exe under %LOCALAPPDATA%\Programs\Cua\cua-driver\bin\"

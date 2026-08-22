@@ -6316,6 +6316,46 @@ fn x11_screen_size() -> anyhow::Result<(u32, u32)> {
     Ok((w, h))
 }
 
+/// Put the desktop image in the exact coordinate frame consumed by desktop
+/// actions. Native Wayland capture buffers may use backing pixels while the
+/// compositor's pointer protocol and reported screen geometry use logical
+/// pixels. Returning the backing image alongside logical dimensions violates
+/// the screenshot-to-action contract and makes every vision-grounded action
+/// miss by the output scale.
+fn normalize_desktop_capture_for_action_frame(
+    png: Vec<u8>,
+    action_width: u32,
+    action_height: u32,
+) -> anyhow::Result<(Vec<u8>, u32, u32, f64)> {
+    if action_width == 0 || action_height == 0 {
+        anyhow::bail!("desktop action frame is empty: {action_width}x{action_height}");
+    }
+
+    let (capture_width, capture_height) = crate::capture::png_dimensions_pub(&png)?;
+    let scale_x = f64::from(capture_width) / f64::from(action_width);
+    let scale_y = f64::from(capture_height) / f64::from(action_height);
+    if (scale_x - scale_y).abs() > 0.01 {
+        anyhow::bail!(
+            "desktop capture {capture_width}x{capture_height} cannot be mapped uniformly to \
+             action frame {action_width}x{action_height} (scale {scale_x:.4}x{scale_y:.4})"
+        );
+    }
+
+    if capture_width == action_width && capture_height == action_height {
+        return Ok((png, action_width, action_height, 1.0));
+    }
+
+    let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
+    let resized = image.resize_exact(
+        action_width,
+        action_height,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    resized.write_to(&mut encoded, image::ImageFormat::Png)?;
+    Ok((encoded.into_inner(), action_width, action_height, scale_x))
+}
+
 // ── get_desktop_state ─────────────────────────────────────────────────────────
 
 pub struct GetDesktopStateTool;
@@ -6326,8 +6366,8 @@ impl Tool for GetDesktopStateTool {
     fn def(&self) -> &ToolDef {
         GDS_DEF.get_or_init(|| ToolDef {
             name: "get_desktop_state".into(),
-            description: "Capture the full display in true screen pixels with no downscale. \
-                Use its native-size PNG as the coordinate source for actions whose target is \
+            description: "Capture the full display in the desktop action coordinate frame. \
+                Use the returned PNG directly as the coordinate source for actions whose target is \
                 {kind:\"desktop\",display_id:\"primary\"}. No AT-SPI walk.".into(),
             input_schema: json!({"type":"object","properties":{
                 "session":{"type":"string","description":"For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session."},
@@ -6345,10 +6385,11 @@ impl Tool for GetDesktopStateTool {
         let out_file = input.screenshot_out_file;
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            // Vision-only: capture the FULL DISPLAY at native size. No downscale
-            // so screen-absolute pixels land exactly.
-            let png = crate::capture::screenshot_display_bytes()?;
-            let (shot_w, shot_h) = crate::capture::png_dimensions_pub(&png)?;
+            // Capture the full display at native size first. When the
+            // compositor consumes logical input coordinates, normalize the
+            // image below so screenshot pixels still land exactly.
+            let native_png = crate::capture::screenshot_display_bytes()?;
+            let (native_w, native_h) = crate::capture::png_dimensions_pub(&native_png)?;
             // True screen size. On a pure-Wayland session (native backend
             // opted in, no X11 DISPLAY) the capture above came from the
             // wlroots `zwlr_screencopy` cascade, whose full-display buffer is
@@ -6359,10 +6400,12 @@ impl Tool for GetDesktopStateTool {
             // Only fall back to the X11 root-window geometry off Wayland, so
             // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
             let (screen_w, screen_h) = if crate::wayland::is_wayland() {
-                (shot_w, shot_h)
+                (native_w, native_h)
             } else {
                 x11_screen_size()?
             };
+            let (png, shot_w, shot_h, scale_factor) =
+                normalize_desktop_capture_for_action_frame(native_png, screen_w, screen_h)?;
             // Optional: write PNG to disk instead of returning base64.
             let written = if let Some(path) = out_file.as_deref() {
                 std::fs::write(path, &png)?;
@@ -6376,12 +6419,20 @@ impl Tool for GetDesktopStateTool {
             } else {
                 Some(B64.encode(&png))
             };
-            Ok((b64, shot_w, shot_h, screen_w, screen_h, written))
+            Ok((
+                b64,
+                shot_w,
+                shot_h,
+                screen_w,
+                screen_h,
+                scale_factor,
+                written,
+            ))
         })
         .await;
 
         match result {
-            Ok(Ok((b64_opt, shot_w, shot_h, screen_w, screen_h, written))) => {
+            Ok(Ok((b64_opt, shot_w, shot_h, screen_w, screen_h, scale_factor, written))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({
                     "platform": "linux",
@@ -6390,7 +6441,7 @@ impl Tool for GetDesktopStateTool {
                     "screenshot_height": shot_h,
                     "screen_width": screen_w,
                     "screen_height": screen_h,
-                    "scale_factor": 1.0,
+                    "scale_factor": scale_factor,
                     "screenshot_mime_type": "image/png",
                 });
                 if let Some(b64) = b64_opt {
@@ -8153,5 +8204,37 @@ mod pid_window_target_tests {
             PidWindowTargetResolution::Ambiguous(windows)
                 if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
         ));
+    }
+}
+
+#[cfg(test)]
+mod desktop_capture_frame_tests {
+    use super::normalize_desktop_capture_for_action_frame;
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let rgba = vec![0x7f; (width * height * 4) as usize];
+        cua_driver_core::image_utils::encode_rgba_to_png(&rgba, width, height)
+            .expect("encode fixture")
+    }
+
+    #[test]
+    fn native_wayland_capture_is_resized_to_the_reported_action_frame() {
+        let (normalized, width, height, scale) =
+            normalize_desktop_capture_for_action_frame(png(3200, 2000), 1600, 1000)
+                .expect("normalize 2x capture");
+
+        assert_eq!((width, height), (1600, 1000));
+        assert_eq!(
+            cua_driver_core::image_utils::png_dimensions(&normalized).unwrap(),
+            (1600, 1000)
+        );
+        assert_eq!(scale, 2.0);
+    }
+
+    #[test]
+    fn nonuniform_capture_mapping_fails_instead_of_distorting_coordinates() {
+        let error = normalize_desktop_capture_for_action_frame(png(3200, 2000), 1600, 1200)
+            .expect_err("nonuniform mapping must fail closed");
+        assert!(error.to_string().contains("cannot be mapped uniformly"));
     }
 }

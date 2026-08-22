@@ -114,6 +114,10 @@ fn try_send_x11_message(
     sender.is_some_and(|tx| tx.try_send(msg).is_ok())
 }
 
+fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
+    !wayland_display_present
+}
+
 #[cfg(target_os = "linux")]
 struct X11OverlayThreadCleanup {
     receiver: Option<std::sync::mpsc::Receiver<OverlayMsg>>,
@@ -299,8 +303,11 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         key: key.clone(),
         cmd: cmd.clone(),
     });
-    let x11_queued = try_send_x11_message(CMD_TX.get(), msg.clone());
-    if !x11_queued {
+    let native_wayland = crate::wayland::is_wayland();
+    let x11_overlay_allowed =
+        should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some());
+    let x11_queued = x11_overlay_allowed && try_send_x11_message(CMD_TX.get(), msg.clone());
+    if x11_overlay_allowed && !x11_queued {
         tracing::warn!(
             key = %key,
             sender_missing = CMD_TX.get().is_none(),
@@ -312,7 +319,7 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
     // owner thread isn't started yet (which is the normal X11-only case).
     #[cfg(target_os = "linux")]
     {
-        if crate::wayland::is_wayland() {
+        if native_wayland {
             if crate::wayland::shell_helper::semantic_cursor_available() {
                 crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(
                     &key,
@@ -576,6 +583,17 @@ pub fn run_on_thread() {
     };
 
     if !cfg.enabled {
+        return;
+    }
+
+    // A Wayland session normally also exposes DISPLAY through XWayland, but
+    // that does not make the legacy full-root X11 overlay safe. This decision
+    // must be independent of the experimental native-Wayland feature opt-in:
+    // without that opt-in there is no layer-shell fallback, but showing no
+    // overlay is preferable to mapping an opaque black X11 root window over
+    // the Wayland desktop. With the opt-in enabled, commands are forwarded to
+    // the native layer-shell backend below.
+    if !should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some()) {
         return;
     }
 
@@ -2709,6 +2727,12 @@ fn bgra_and_visible_shape(
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wayland_display_does_not_start_legacy_x11_overlay() {
+        assert!(!should_start_x11_overlay(true));
+        assert!(should_start_x11_overlay(false));
+    }
 
     fn drain_x11_test_events(conn: &impl x11rb::connection::Connection) -> anyhow::Result<()> {
         while conn.poll_for_event()?.is_some() {}

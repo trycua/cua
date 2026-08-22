@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -73,14 +72,6 @@ func (h Handlers) authorizeUsage(w http.ResponseWriter, r *http.Request) (UsageQ
 	tf, iv, ok := parseUsageTimeframe(r.URL.Query().Get("timeframe"))
 	if !ok {
 		writeErr(w, 400, "timeframe must be one of 24h, 7d, or 30d")
-		return UsageQuery{}, "", false
-	}
-	enabled, err := h.usageEnabled(ctx, u)
-	if err != nil || !enabled {
-		if err != nil {
-			slog.WarnContext(r.Context(), "usage access evaluation failed", "err", err)
-		}
-		writeErr(w, 403, "usage preview is not enabled")
 		return UsageQuery{}, "", false
 	}
 	admin, err := h.isAdmin(ctx, u)

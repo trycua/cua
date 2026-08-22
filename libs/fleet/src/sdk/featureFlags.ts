@@ -6,6 +6,7 @@
 // the backend's OPA policy, not just by hiding nav here.
 
 import { getToken } from "../auth/keycloak"
+import { DEFAULT_USAGE_PRICING, type UsagePricing } from "../usagePricing"
 
 export interface FeatureFlags {
   /** Admin users see the full infra UI: Nodes and Operator events. */
@@ -14,8 +15,10 @@ export interface FeatureFlags {
   billing: boolean
   /** Chat users can access persisted browser-bash conversations. */
   chat: boolean
-  /** Internal users can access the preview usage dashboard. */
+  /** True when the backend usage provider is available. */
   usage: boolean
+  /** Backend-resolved reservation prices from OpenFeature. */
+  usagePricing: UsagePricing
 }
 
 let cache: FeatureFlags | null = null
@@ -45,7 +48,12 @@ export async function fetchFeatureFlags(
       throw new Error(`feature flag config request failed: ${response.status}`)
     }
 
-    const data = (await response.json()) as Partial<FeatureFlags>
+    const data = (await response.json()) as Partial<FeatureFlags> & {
+      usage_pricing?: {
+        vcpu_hour_usd?: number
+        memory_gib_hour_usd?: number
+      }
+    }
     if (!data || typeof data !== "object") {
       throw new Error("feature flag config response must be an object")
     }
@@ -54,12 +62,20 @@ export async function fetchFeatureFlags(
       billing: data.billing ?? false,
       chat: data.chat ?? false,
       usage: data.usage ?? false,
+      usagePricing: {
+        vcpuHourUSD: data.usage_pricing?.vcpu_hour_usd ?? DEFAULT_USAGE_PRICING.vcpuHourUSD,
+        memoryGiBHourUSD: data.usage_pricing?.memory_gib_hour_usd ?? DEFAULT_USAGE_PRICING.memoryGiBHourUSD,
+      },
     }
     if (
       typeof flags.admin !== "boolean" ||
       typeof flags.billing !== "boolean" ||
       typeof flags.chat !== "boolean" ||
-      typeof flags.usage !== "boolean"
+      typeof flags.usage !== "boolean" ||
+      !Number.isFinite(flags.usagePricing.vcpuHourUSD) ||
+      flags.usagePricing.vcpuHourUSD <= 0 ||
+      !Number.isFinite(flags.usagePricing.memoryGiBHourUSD) ||
+      flags.usagePricing.memoryGiBHourUSD <= 0
     ) {
       throw new Error("feature flag config response contains invalid values")
     }

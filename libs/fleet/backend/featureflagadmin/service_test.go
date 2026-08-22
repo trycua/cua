@@ -665,3 +665,18 @@ func TestServiceNilStoreFailsClosed(t *testing.T) {
 		assertServiceError(t, err, "unsupported_provider", 501)
 	}
 }
+
+func TestValidateKnownFlagRejectsInvalidUsagePrices(t *testing.T) {
+	for _, typed := range []featureflags.TypedValue{
+		{Type: featureflags.ValueString, Value: "0.1", Raw: "0.1"},
+		{Type: featureflags.ValueNumber, Value: 0.0, Raw: "0"},
+		{Type: featureflags.ValueNumber, Value: -1.0, Raw: "-1"},
+	} {
+		if err := validateKnownFlag("usage-vcpu-hour-price-usd", typed); err == nil {
+			t.Fatalf("validateKnownFlag(%#v) error = nil", typed)
+		}
+	}
+	if err := validateKnownFlag("usage-memory-gib-hour-price-usd", featureflags.TypedValue{Type: featureflags.ValueNumber, Value: 0.2, Raw: "0.2"}); err != nil {
+		t.Fatalf("valid usage price: %v", err)
+	}
+}

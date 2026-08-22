@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,10 +155,8 @@ func (s *Service) Create(ctx context.Context, actor Actor, input CreateInput) (f
 			return errors.Join(invalidValueError(err), err)
 		}
 		event.NewValue = &typed
-		if input.Key == "admin-subs" {
-			if err := validateAdminSubs(typed); err != nil {
-				return err
-			}
+		if err := validateKnownFlag(input.Key, typed); err != nil {
+			return err
 		}
 		parameter, err := s.store.Create(lockCtx, featureflags.Parameter{
 			Name: path, Value: typed.Raw, Type: "String", Description: input.Description,
@@ -213,10 +213,8 @@ func (s *Service) Update(ctx context.Context, actor Actor, key string, input Upd
 			return errors.Join(invalidValueError(err), err)
 		}
 		event.NewValue = &typed
-		if key == "admin-subs" {
-			if err := validateAdminSubs(typed); err != nil {
-				return err
-			}
+		if err := validateKnownFlag(key, typed); err != nil {
+			return err
 		}
 		parameter, err = s.store.Update(lockCtx, path, typed.Raw)
 		if err != nil {
@@ -360,6 +358,31 @@ func keyFromPath(path string) (string, bool) {
 func validateKey(key string) error {
 	if len(key) == 0 || len(key) > 63 || !keyPattern.MatchString(key) {
 		return &ServiceError{Code: "invalid_key", HTTPStatus: 400, Message: "feature flag key must be a lowercase DNS label"}
+	}
+	return nil
+}
+
+func validateKnownFlag(key string, typed featureflags.TypedValue) error {
+	switch key {
+	case "admin-subs":
+		return validateAdminSubs(typed)
+	case "usage-vcpu-hour-price-usd", "usage-memory-gib-hour-price-usd":
+		return validateUsagePrice(typed)
+	default:
+		return nil
+	}
+}
+
+func validateUsagePrice(typed featureflags.TypedValue) error {
+	if typed.Type != featureflags.ValueNumber {
+		return &ServiceError{Code: "invalid_value", HTTPStatus: 422, Message: "usage prices must be positive numbers"}
+	}
+	value, err := strconv.ParseFloat(typed.Raw, 64)
+	if err != nil {
+		return errors.Join(&ServiceError{Code: "invalid_value", HTTPStatus: 422, Message: "usage prices must be positive numbers", Cause: err}, err)
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return &ServiceError{Code: "invalid_value", HTTPStatus: 422, Message: "usage prices must be positive numbers"}
 	}
 	return nil
 }

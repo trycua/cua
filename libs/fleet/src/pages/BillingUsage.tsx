@@ -1,6 +1,9 @@
+import FormField from "@cloudscape-design/components/form-field"
+import Input from "@cloudscape-design/components/input"
 import Select from "@cloudscape-design/components/select"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CuaButton } from "../components/CuaButton"
+import { useFeatureFlags } from "../components/FeatureFlagContext"
 import { PageEmpty, PageError } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
 import {
@@ -9,6 +12,7 @@ import {
   type UsageTimeframe,
 } from "../sdk/usage"
 import "./BillingUsage.css"
+import { reservedResourceCostUSD } from "../usagePricing"
 
 const rangeOptions = [
   { label: "Last 24 hours", value: "24h" },
@@ -29,6 +33,7 @@ const resourceFormatter = new Intl.NumberFormat(undefined, {
 function resourceHours(value: number, unit: "core-h" | "GiB-h") {
   return `${resourceFormatter.format(value)} ${unit}`
 }
+
 function UsageSkeleton() {
   return (
     <div className="usage-skeleton" role="status" aria-label="Loading usage">
@@ -47,18 +52,23 @@ function UsageSkeleton() {
 }
 
 export function BillingUsagePage() {
+  const { admin, usagePricing } = useFeatureFlags()
   const [timeframe, setTimeframe] = useState<UsageTimeframe>("24h")
+  const [subjectInput, setSubjectInput] = useState("")
+  const [activeSubject, setActiveSubject] = useState<string | null>(null)
+  const [subjectError, setSubjectError] = useState("")
   const [overview, setOverview] = useState<UsageOverviewResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const loadStarted = useRef(0)
+  const requestedQuery = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     loadStarted.current = performance.now()
     setLoading(true)
     setError(false)
     try {
-      const value = await usageApi.overview(timeframe)
+      const value = await usageApi.overview(timeframe, activeSubject ?? undefined)
       const initialLoadMS = performance.now() - loadStarted.current
       setOverview(value)
       requestAnimationFrame(() => {
@@ -78,26 +88,58 @@ export function BillingUsagePage() {
     } finally {
       setLoading(false)
     }
-  }, [timeframe])
+  }, [activeSubject, timeframe])
 
   useEffect(() => {
+    const query = `${timeframe}\0${activeSubject ?? ""}`
+    if (requestedQuery.current === query) return
+    requestedQuery.current = query
     load()
-  }, [load])
+  }, [activeSubject, load, timeframe])
+
+  const viewSubjectUsage = () => {
+    const subject = subjectInput.trim()
+    if (!subject) {
+      setSubjectError("Enter a user subject ID.")
+      return
+    }
+    if (subject.length > 255) {
+      setSubjectError("User subject ID must be 255 characters or fewer.")
+      return
+    }
+    setSubjectError("")
+    if (subject === activeSubject) {
+      void load()
+      return
+    }
+    setActiveSubject(subject)
+  }
+
+  const resetSubjectUsage = () => {
+    setSubjectInput("")
+    setSubjectError("")
+    setActiveSubject(null)
+  }
 
   const pools = useMemo(
-    () => [...(overview?.pools ?? [])].sort((left, right) =>
-      right.cpu.provisioned - left.cpu.provisioned ||
-      right.memory.provisioned - left.memory.provisioned ||
-      right.cost_usd - left.cost_usd
-    ),
-    [overview],
+    () => (overview?.pools ?? [])
+      .map(pool => ({
+        ...pool,
+        reservedCostUSD: reservedResourceCostUSD(
+          pool.cpu.provisioned,
+          pool.memory.provisioned,
+          usagePricing,
+        ),
+      }))
+      .sort((left, right) => right.reservedCostUSD - left.reservedCostUSD),
+    [overview, usagePricing],
   )
   const totals = useMemo(
     () => pools.reduce(
       (total, pool) => ({
         cpuProvisioned: total.cpuProvisioned + pool.cpu.provisioned,
         memoryProvisioned: total.memoryProvisioned + pool.memory.provisioned,
-        cost: total.cost + pool.cost_usd,
+        cost: total.cost + pool.reservedCostUSD,
       }),
       { cpuProvisioned: 0, memoryProvisioned: 0, cost: 0 },
     ),
@@ -117,6 +159,40 @@ export function BillingUsagePage() {
         />
       }
     >
+      {admin && (
+        <section className="usage-admin" aria-labelledby="usage-admin-title">
+          <div className="usage-admin__copy">
+            <p className="usage-panel__eyebrow">Admin</p>
+            <h2 id="usage-admin-title">View usage by subject</h2>
+            <p>Load reserved-resource usage for any Keycloak user subject ID.</p>
+          </div>
+          <div className="usage-admin__controls">
+            <FormField
+              label="User subject ID"
+              errorText={subjectError || undefined}
+              description={activeSubject ? `Showing usage for ${activeSubject}` : "Showing your usage"}
+            >
+              <Input
+                value={subjectInput}
+                placeholder="30a53246-881d-4f1a-8005-979f2a07933e"
+                onChange={({ detail }) => {
+                  setSubjectInput(detail.value)
+                  if (subjectError) setSubjectError("")
+                }}
+                onKeyDown={({ detail }) => {
+                  if (detail.key === "Enter") viewSubjectUsage()
+                }}
+              />
+            </FormField>
+            <div className="usage-admin__actions">
+              <CuaButton tone="primary" onClick={viewSubjectUsage}>View usage</CuaButton>
+              {activeSubject && (
+                <CuaButton tone="secondary" onClick={resetSubjectUsage}>Reset to my usage</CuaButton>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
       {loading ? <UsageSkeleton /> : error ? (
         <PageError title="Usage is temporarily unavailable" action={<CuaButton tone="secondary" onClick={load}>Try again</CuaButton>}>
           We could not load resource cost data. Try again in a moment.
@@ -141,9 +217,9 @@ export function BillingUsagePage() {
               <span>GiB-hours across the selected range</span>
             </div>
             <div className="usage-summary__metric">
-              <span className="usage-summary__label">OpenCost incurred</span>
+              <span className="usage-summary__label">Cost</span>
               <strong>{moneyFormatter.format(totals.cost)}</strong>
-              <span>Across {pools.length} {pools.length === 1 ? "pool" : "pools"}</span>
+              <span>Reserved resources across {pools.length} {pools.length === 1 ? "pool" : "pools"}</span>
             </div>
           </section>
 
@@ -151,17 +227,17 @@ export function BillingUsagePage() {
             <div className="usage-panel__heading">
               <div>
                 <p className="usage-panel__eyebrow">Breakdown</p>
-                <h2 id="usage-breakdown-title">Reserved resources by pool</h2>
+                <h2 id="usage-breakdown-title">Cost by pool</h2>
               </div>
             </div>
             <table className="usage-breakdown">
-              <caption className="cua-visually-hidden">Reserved resource hours and OpenCost by pool</caption>
+              <caption className="cua-visually-hidden">Reserved resource hours and cost by pool</caption>
               <thead>
                 <tr className="usage-breakdown__header">
                   <th scope="col">Pool name</th>
                   <th scope="col">Reserved CPU</th>
                   <th scope="col">Reserved memory</th>
-                  <th scope="col">OpenCost</th>
+                  <th scope="col">Cost</th>
                 </tr>
               </thead>
               <tbody>
@@ -170,7 +246,7 @@ export function BillingUsagePage() {
                     <td>{pool.name}</td>
                     <td data-label="Reserved CPU"><strong>{resourceHours(pool.cpu.provisioned, "core-h")}</strong></td>
                     <td data-label="Reserved memory"><strong>{resourceHours(pool.memory.provisioned, "GiB-h")}</strong></td>
-                    <td data-label="OpenCost"><strong>{moneyFormatter.format(pool.cost_usd)}</strong></td>
+                    <td data-label="Cost"><strong>{moneyFormatter.format(pool.reservedCostUSD)}</strong></td>
                   </tr>
                 ))}
               </tbody>

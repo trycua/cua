@@ -154,7 +154,7 @@ function ShellLayout({
   );
   const previousPath = useRef(location.pathname);
   const user = userInfo();
-  const { admin, billing, chat } = useFeatureFlags();
+  const { admin, chat } = useFeatureFlags();
   const threadNavigation = useThreadNavigation();
 
   useEffect(() => {
@@ -258,16 +258,7 @@ function ShellLayout({
               }}
               items={[
                 { type: "link", text: "Pools", href: "#/pools" },
-                ...(billing
-                  ? [
-                      {
-                        type: "link" as const,
-                        text: "Usage",
-                        href: "#/usage",
-                        info: <Badge color="blue">Admin</Badge>,
-                      },
-                    ]
-                  : []),
+                { type: "link", text: "Usage", href: "#/usage" },
                 { type: "link", text: "User API keys", href: "#/user-keys" },
                 { type: "link", text: "Settings", href: "#/settings" },
                 ...(admin
@@ -335,7 +326,7 @@ export function App() {
             <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
             <Route path="/user-keys" element={<UserApiKeys />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="/usage" element={<BillingUsageRoute />} />
+            <Route path="/usage" element={<BillingUsagePage />} />
             <Route path="/agent" element={<ChatRoute />} />
             <Route path="/agent/archived" element={<ArchivedThreadsRoute />} />
             <Route path="/agent/:threadId" element={<ChatRoute />} />
@@ -394,16 +385,4 @@ function ArchivedThreadsRoute() {
       </PageShell>
     );
   return chat ? <ArchivedThreads /> : <Navigate to="/pools" replace />;
-}
-
-function BillingUsageRoute() {
-  const { billing, resolved } = useFeatureFlags();
-  if (!resolved) {
-    return (
-      <PageShell eyebrow="Billing" title="Usage">
-        <div className="usage-layout" />
-      </PageShell>
-    );
-  }
-  return billing ? <BillingUsagePage /> : <Navigate to="/settings" replace />;
 }

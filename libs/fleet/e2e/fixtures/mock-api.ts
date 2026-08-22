@@ -56,6 +56,7 @@ export interface MockFeatureFlags {
   billing?: boolean;
   chat?: boolean;
   usage?: boolean;
+  usagePricing?: { vcpuHourUSD: number; memoryGiBHourUSD: number };
 }
 
 export interface MockAuthOptions {
@@ -168,6 +169,10 @@ export async function mockAuth(
         billing: flags.billing ?? false,
         chat: flags.chat ?? false,
         usage: flags.usage ?? false,
+        usage_pricing: {
+          vcpu_hour_usd: flags.usagePricing?.vcpuHourUSD ?? 0.044625,
+          memory_gib_hour_usd: flags.usagePricing?.memoryGiBHourUSD ?? 0.0223125,
+        },
       }),
     });
   });

@@ -9,8 +9,15 @@ import {
 } from "react"
 import { fetchFeatureFlags, type FeatureFlags } from "../sdk/featureFlags"
 import { isLocalVisualPreview } from "../local-visual-preview"
+import { DEFAULT_USAGE_PRICING } from "../usagePricing"
 
-const DEFAULT_FLAGS: FeatureFlags = { admin: false, billing: false, chat: false, usage: false }
+const DEFAULT_FLAGS: FeatureFlags = {
+  admin: false,
+  billing: false,
+  chat: false,
+  usage: false,
+  usagePricing: DEFAULT_USAGE_PRICING,
+}
 
 interface FeatureFlagContextValue extends FeatureFlags {
   resolved: boolean
@@ -33,7 +40,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const visualPreview = isLocalVisualPreview()
   const [value, setValue] = useState<Omit<FeatureFlagContextValue, "refresh">>({
     ...(visualPreview
-      ? { ...DEFAULT_FLAGS, billing: true, chat: true, usage: true }
+      ? { ...DEFAULT_FLAGS, admin: true, billing: true, chat: true, usage: true }
       : DEFAULT_FLAGS),
     resolved: visualPreview,
   })

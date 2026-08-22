@@ -42,8 +42,8 @@ type Handlers struct {
 	Features *Features
 	Usage    usage.Provider
 
-	usageAccessEvaluator func(context.Context, *auth.User) (bool, error)
-	adminAccessEvaluator func(context.Context, *auth.User) (bool, error)
+	adminAccessEvaluator  func(context.Context, *auth.User) (bool, error)
+	usagePricingEvaluator func(context.Context, *auth.User) (auth.UsagePricing, error)
 
 	FeatureFlags *featureflagadmin.Service
 
@@ -75,10 +75,10 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 	}
 }
 
-func (h Handlers) usageEnabled(ctx context.Context, user *auth.User) (bool, error) {
-	evaluator := h.usageAccessEvaluator
+func (h Handlers) usagePricing(ctx context.Context, user *auth.User) (auth.UsagePricing, error) {
+	evaluator := h.usagePricingEvaluator
 	if evaluator == nil {
-		evaluator = auth.EvalUsageEnabled
+		evaluator = auth.EvalUsagePricing
 	}
 	return evaluator(ctx, user)
 }

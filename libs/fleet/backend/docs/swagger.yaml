@@ -231,6 +231,8 @@ definitions:
         type: boolean
       usage:
         type: boolean
+      usage_pricing:
+        $ref: '#/definitions/handlers.UsagePricingConfig'
     type: object
   handlers.CreateFeatureFlagRequest:
     properties:
@@ -354,6 +356,13 @@ definitions:
       value: {}
       value_type:
         $ref: '#/definitions/featureflags.ValueType'
+    type: object
+  handlers.UsagePricingConfig:
+    properties:
+      memory_gib_hour_usd:
+        type: number
+      vcpu_hour_usd:
+        type: number
     type: object
   handlers.UserKeyResponse:
     properties:

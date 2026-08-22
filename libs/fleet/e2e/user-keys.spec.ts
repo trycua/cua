@@ -139,7 +139,7 @@ test.describe("User API keys", () => {
     ).toBeVisible()
 
     await expect(page.getByText("Token URL")).not.toBeVisible()
-    await expect(page.getByText("Usage")).not.toBeVisible()
+    await expect(page.getByRole("link", { name: "Usage", exact: true })).toBeVisible()
 
     // Dismiss the modal
     await page

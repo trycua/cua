@@ -18,24 +18,28 @@ import (
 type fakeUsageProvider struct {
 	overviewQuery UsageQuery
 	detailQuery   UsagePoolQuery
+	overviewCalls int
+	detailCalls   int
 	overviewErr   error
 	detailErr     error
 }
 
 func (f *fakeUsageProvider) Overview(_ context.Context, q UsageQuery) (UsageOverviewResponse, error) {
+	f.overviewCalls++
 	f.overviewQuery = q
 	return UsageOverviewResponse{}, f.overviewErr
 }
 func (f *fakeUsageProvider) PoolDetail(_ context.Context, q UsagePoolQuery) (UsagePoolDetailResponse, error) {
+	f.detailCalls++
 	f.detailQuery = q
 	return UsagePoolDetailResponse{}, f.detailErr
 }
-func uh(p UsageProvider, e, a bool) Handlers {
-	return Handlers{Usage: p, usageAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return e, nil }, adminAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return a, nil }}
+func uh(p UsageProvider, admin bool) Handlers {
+	return Handlers{Usage: p, adminAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return admin, nil }}
 }
 func TestGetUsageOverviewScopesAndValidates(t *testing.T) {
 	p := &fakeUsageProvider{}
-	h := uh(p, true, false)
+	h := uh(p, false)
 	w := httptest.NewRecorder()
 	h.GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=7d", nil), &auth.User{ID: "user"}))
 	if w.Code != 200 || p.overviewQuery.Subject != "user" || p.overviewQuery.ActorSubject != "user" {
@@ -50,20 +54,38 @@ func TestGetUsageOverviewScopesAndValidates(t *testing.T) {
 func TestUsageAdminViewAsPreservesActor(t *testing.T) {
 	p := &fakeUsageProvider{}
 	w := httptest.NewRecorder()
-	uh(p, true, true).GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=30d&subject=customer", nil), &auth.User{ID: "admin"}))
+	uh(p, true).GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=30d&subject=customer", nil), &auth.User{ID: "admin"}))
 	if w.Code != 200 || p.overviewQuery.ActorSubject != "admin" || p.overviewQuery.Subject != "customer" {
 		t.Fatalf("%d %#v", w.Code, p.overviewQuery)
 	}
 }
-func TestUsageNonAdminOverrideDeniedAndMissingProvider503(t *testing.T) {
+func TestUsageNonAdminOverrideDeniedBeforeProviderAccess(t *testing.T) {
 	p := &fakeUsageProvider{}
 	w := httptest.NewRecorder()
-	uh(p, true, false).GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=24h&subject=other", nil), &auth.User{ID: "user"}))
-	if w.Code != 403 {
-		t.Fatalf("status=%d", w.Code)
+	uh(p, false).GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=24h&subject=other", nil), &auth.User{ID: "user"}))
+	if got, want := w.Code, http.StatusForbidden; got != want {
+		t.Fatalf("status=%d, want %d", got, want)
 	}
+	if got, want := w.Body.String(), "{\"error\":\"only administrators can select another subject\"}\n"; got != want {
+		t.Fatalf("body=%q, want %q", got, want)
+	}
+	if p.overviewCalls != 0 {
+		t.Fatalf("provider overview calls=%d, want 0", p.overviewCalls)
+	}
+
 	w = httptest.NewRecorder()
-	uh(nil, true, false).GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=24h", nil), &auth.User{ID: "user"}))
+	uh(p, false).GetUsagePoolDetail(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=pool-a&subject=other", nil), &auth.User{ID: "user"}))
+	if got, want := w.Code, http.StatusForbidden; got != want {
+		t.Fatalf("pool status=%d, want %d", got, want)
+	}
+	if p.detailCalls != 0 {
+		t.Fatalf("provider detail calls=%d, want 0", p.detailCalls)
+	}
+}
+
+func TestUsageMissingProviderReturns503(t *testing.T) {
+	w := httptest.NewRecorder()
+	uh(nil, false).GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=24h", nil), &auth.User{ID: "user"}))
 	if w.Code != 503 {
 		t.Fatalf("status=%d", w.Code)
 	}
@@ -71,19 +93,19 @@ func TestUsageNonAdminOverrideDeniedAndMissingProvider503(t *testing.T) {
 func TestUsagePoolValidationAndInterval(t *testing.T) {
 	p := &fakeUsageProvider{}
 	w := httptest.NewRecorder()
-	uh(p, true, false).GetUsagePoolDetail(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=pool-a", nil), &auth.User{ID: "user"}))
+	uh(p, false).GetUsagePoolDetail(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=pool-a", nil), &auth.User{ID: "user"}))
 	if w.Code != 200 || p.detailQuery.Interval != UsageIntervalHour {
 		t.Fatalf("%d %#v", w.Code, p.detailQuery)
 	}
 	w = httptest.NewRecorder()
-	uh(p, true, false).GetUsagePoolDetail(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=../../x", nil), &auth.User{ID: "user"}))
+	uh(p, false).GetUsagePoolDetail(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=../../x", nil), &auth.User{ID: "user"}))
 	if w.Code != 400 {
 		t.Fatalf("status=%d", w.Code)
 	}
 }
 
 func TestRecordUsageBrowserTimingsValidatesPayload(t *testing.T) {
-	handler := uh(&fakeUsageProvider{}, true, false)
+	handler := uh(&fakeUsageProvider{}, false)
 	request := withUser(
 		httptest.NewRequest(http.MethodPost, "/api/usage/browser-timings?timeframe=24h", strings.NewReader(`{"initial_load_ms":120,"dashboard_ready_ms":140}`)),
 		&auth.User{ID: "user"},
@@ -109,7 +131,7 @@ func TestUsageProviderErrorsAreRedacted(t *testing.T) {
 	t.Run("mandatory source failure", func(t *testing.T) {
 		p := &fakeUsageProvider{overviewErr: errors.New("postgres://secret@db.example: source unavailable")}
 		w := httptest.NewRecorder()
-		uh(p, true, false).GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=24h", nil), &auth.User{ID: "user"}))
+		uh(p, false).GetUsageOverview(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/overview?timeframe=24h", nil), &auth.User{ID: "user"}))
 		if w.Code != http.StatusBadGateway {
 			t.Fatalf("status = %d, want %d", w.Code, http.StatusBadGateway)
 		}
@@ -124,7 +146,7 @@ func TestUsageProviderErrorsAreRedacted(t *testing.T) {
 	t.Run("missing pool", func(t *testing.T) {
 		p := &fakeUsageProvider{detailErr: usage.ErrPoolNotFound}
 		w := httptest.NewRecorder()
-		uh(p, true, false).GetUsagePoolDetail(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=pool-a", nil), &auth.User{ID: "user"}))
+		uh(p, false).GetUsagePoolDetail(w, withUser(httptest.NewRequest(http.MethodGet, "/api/usage/pool?timeframe=24h&pool=pool-a", nil), &auth.User{ID: "user"}))
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
 		}
@@ -148,7 +170,7 @@ func TestUsagePoolDetailCreatesHandlerAndAuthorizationSpans(t *testing.T) {
 	)
 	response := httptest.NewRecorder()
 
-	uh(&fakeUsageProvider{}, true, false).GetUsagePoolDetail(response, request)
+	uh(&fakeUsageProvider{}, false).GetUsagePoolDetail(response, request)
 	root.End()
 
 	if response.Code != http.StatusOK {

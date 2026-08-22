@@ -373,6 +373,30 @@ func TestEvalBillingEnabledDefaultsFalseAndReadsBooleanFlag(t *testing.T) {
 	}
 }
 
+func TestEvalUsagePricingReadsFlagsAndFallsBackPerValue(t *testing.T) {
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatal(err)
+	}
+	user := &User{ID: "user-1", AZP: "cyclops-cs-spa"}
+
+	t.Setenv("CYCLOPS_CS_USAGE_VCPU_HOUR_PRICE_USD", "0.1")
+	t.Setenv("CYCLOPS_CS_USAGE_MEMORY_GIB_HOUR_PRICE_USD", "0.2")
+	pricing, err := EvalUsagePricing(context.Background(), user)
+	if err != nil || pricing.VCPUHourUSD != 0.1 || pricing.MemoryGiBHourUSD != 0.2 {
+		t.Fatalf("pricing = %#v, err = %v", pricing, err)
+	}
+
+	t.Setenv("CYCLOPS_CS_USAGE_VCPU_HOUR_PRICE_USD", "invalid")
+	t.Setenv("CYCLOPS_CS_USAGE_MEMORY_GIB_HOUR_PRICE_USD", "0")
+	pricing, err = EvalUsagePricing(context.Background(), user)
+	if err == nil {
+		t.Fatal("invalid pricing returned nil error")
+	}
+	if pricing.VCPUHourUSD != DefaultUsageVCPUHourPriceUSD || pricing.MemoryGiBHourUSD != DefaultUsageMemoryGiBHourPriceUSD {
+		t.Fatalf("fallback pricing = %#v", pricing)
+	}
+}
+
 func TestEvalChatEnabledFailsClosedForMalformedAllowlist(t *testing.T) {
 	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`)
 	t.Setenv("CYCLOPS_CS_CHAT_SUBS", `not-json`)

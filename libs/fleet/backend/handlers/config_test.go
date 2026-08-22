@@ -58,37 +58,26 @@ func TestGetConfigReturnsEffectiveChatAccess(t *testing.T) {
 	}
 }
 
-func TestGetConfigReturnsEffectiveUsageAccess(t *testing.T) {
-	tests := []struct {
-		name     string
-		provider UsageProvider
-		allowed  bool
-		want     bool
-	}{
-		{name: "available and allowed", provider: &fakeUsageProvider{}, allowed: true, want: true},
-		{name: "unavailable", allowed: true, want: false},
-		{name: "not allowed", provider: &fakeUsageProvider{}, allowed: false, want: false},
+func TestGetConfigReturnsUsageAvailabilityAndPricing(t *testing.T) {
+	h := Handlers{
+		Usage:                &fakeUsageProvider{},
+		adminAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return false, nil },
+		chatAccessEvaluator:  func(context.Context, *auth.User) (bool, error) { return false, nil },
+		usagePricingEvaluator: func(context.Context, *auth.User) (auth.UsagePricing, error) {
+			return auth.UsagePricing{VCPUHourUSD: 0.1, MemoryGiBHourUSD: 0.2}, nil
+		},
 	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			h := Handlers{
-				Usage: test.provider,
-				usageAccessEvaluator: func(context.Context, *auth.User) (bool, error) {
-					return test.allowed, nil
-				},
-				adminAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return false, nil },
-			}
-			w := httptest.NewRecorder()
-			h.GetConfig(w, withUser(httptest.NewRequest(http.MethodGet, "/api/config", nil), &auth.User{ID: "user", AZP: "cyclops-cs-spa"}))
-			var response ConfigResponse
-			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-				t.Fatal(err)
-			}
-			if response.Usage != test.want {
-				t.Fatalf("usage = %v, want %v", response.Usage, test.want)
-			}
-		})
+	w := httptest.NewRecorder()
+	h.GetConfig(w, withUser(httptest.NewRequest(http.MethodGet, "/api/config", nil), &auth.User{ID: "user", AZP: "cyclops-cs-spa"}))
+	var response ConfigResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Usage {
+		t.Fatal("usage provider was not reported available")
+	}
+	if response.UsagePricing.VCPUHourUSD != 0.1 || response.UsagePricing.MemoryGiBHourUSD != 0.2 {
+		t.Fatalf("usage pricing = %#v", response.UsagePricing)
 	}
 }
 

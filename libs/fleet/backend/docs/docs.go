@@ -1967,6 +1967,9 @@ const docTemplate = `{
                 },
                 "usage": {
                     "type": "boolean"
+                },
+                "usage_pricing": {
+                    "$ref": "#/definitions/handlers.UsagePricingConfig"
                 }
             }
         },
@@ -2155,6 +2158,17 @@ const docTemplate = `{
                 "value": {},
                 "value_type": {
                     "$ref": "#/definitions/featureflags.ValueType"
+                }
+            }
+        },
+        "handlers.UsagePricingConfig": {
+            "type": "object",
+            "properties": {
+                "memory_gib_hour_usd": {
+                    "type": "number"
+                },
+                "vcpu_hour_usd": {
+                    "type": "number"
                 }
             }
         },

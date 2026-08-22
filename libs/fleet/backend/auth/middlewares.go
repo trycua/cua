@@ -4,9 +4,11 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -133,6 +135,8 @@ const (
 	chatAccessFlag                = flagPrefix + "chat-access"
 	chatSubsFlag                  = flagPrefix + "chat-subs"
 	usageSubsFlag                 = flagPrefix + "usage-subs"
+	usageVCPUHourPriceFlag        = flagPrefix + "usage-vcpu-hour-price-usd"
+	usageMemoryGiBHourPriceFlag   = flagPrefix + "usage-memory-gib-hour-price-usd"
 )
 
 type chatAccessMode string
@@ -478,6 +482,47 @@ func evalUserDecision(ctx context.Context, user *User, query *rego.PreparedEvalQ
 	}
 	v, _ := res[0].Expressions[0].Value.(bool)
 	return v, nil
+}
+
+const (
+	DefaultUsageVCPUHourPriceUSD      = 0.044625
+	DefaultUsageMemoryGiBHourPriceUSD = 0.0223125
+)
+
+type UsagePricing struct {
+	VCPUHourUSD      float64
+	MemoryGiBHourUSD float64
+}
+
+// EvalUsagePricing resolves billable reservation rates. Invalid or missing
+// values fall back independently so one malformed flag cannot zero all costs.
+func EvalUsagePricing(ctx context.Context, user *User) (UsagePricing, error) {
+	ffClientOnce.Do(func() {
+		ffClient = openfeature.NewClient("cyclops-cs-auth")
+	})
+	targetingKey := ""
+	if user != nil {
+		targetingKey = user.ID
+	}
+	evaluationContext := openfeature.NewEvaluationContext(targetingKey, nil)
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	vcpu, vcpuErr := ffClient.FloatValue(callCtx, usageVCPUHourPriceFlag, DefaultUsageVCPUHourPriceUSD, evaluationContext)
+	if vcpuErr != nil {
+		vcpu = DefaultUsageVCPUHourPriceUSD
+	} else if math.IsNaN(vcpu) || math.IsInf(vcpu, 0) || vcpu <= 0 {
+		vcpuErr = fmt.Errorf("usage vCPU-hour price must be a positive finite number")
+		vcpu = DefaultUsageVCPUHourPriceUSD
+	}
+	memory, memoryErr := ffClient.FloatValue(callCtx, usageMemoryGiBHourPriceFlag, DefaultUsageMemoryGiBHourPriceUSD, evaluationContext)
+	if memoryErr != nil {
+		memory = DefaultUsageMemoryGiBHourPriceUSD
+	} else if math.IsNaN(memory) || math.IsInf(memory, 0) || memory <= 0 {
+		memoryErr = fmt.Errorf("usage memory GiB-hour price must be a positive finite number")
+		memory = DefaultUsageMemoryGiBHourPriceUSD
+	}
+	return UsagePricing{VCPUHourUSD: vcpu, MemoryGiBHourUSD: memory}, errors.Join(vcpuErr, memoryErr)
 }
 
 // EvalBillingEnabled resolves the billing UI flag for the authenticated user.

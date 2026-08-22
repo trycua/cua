@@ -26,7 +26,10 @@ type PrometheusClient struct {
 
 func NewPrometheusClient(rawURL string, client *http.Client) (*PrometheusClient, error) {
 	baseURL, err := url.Parse(rawURL)
-	if err != nil || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" {
+	if err != nil {
+		return nil, fmt.Errorf("invalid Prometheus URL: %w", err)
+	}
+	if (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" {
 		return nil, fmt.Errorf("invalid Prometheus URL")
 	}
 	if client == nil {

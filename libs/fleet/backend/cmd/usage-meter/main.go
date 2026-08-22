@@ -141,7 +141,10 @@ func loadConfig(now time.Time) (config, error) {
 	cfg.hourStart = now.UTC().Truncate(time.Hour).Add(-time.Hour)
 	if rawHour := os.Getenv("METER_HOUR_START"); rawHour != "" {
 		cfg.hourStart, err = time.Parse(time.RFC3339, rawHour)
-		if err != nil || !cfg.hourStart.Equal(cfg.hourStart.UTC().Truncate(time.Hour)) {
+		if err != nil {
+			return config{}, fmt.Errorf("METER_HOUR_START must be an exact UTC RFC3339 hour: %w", err)
+		}
+		if !cfg.hourStart.Equal(cfg.hourStart.UTC().Truncate(time.Hour)) {
 			return config{}, fmt.Errorf("METER_HOUR_START must be an exact UTC RFC3339 hour")
 		}
 	}
@@ -154,7 +157,10 @@ func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
 		return fallback, nil
 	}
 	value, err := time.ParseDuration(raw)
-	if err != nil || value <= 0 {
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a positive duration: %w", name, err)
+	}
+	if value <= 0 {
 		return 0, fmt.Errorf("%s must be a positive duration", name)
 	}
 	return value, nil

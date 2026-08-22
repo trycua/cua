@@ -10,6 +10,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const hourlyReservationMeterOriginalSHA256 = "fabda9a67ab9323b70a6d189a89be4194e1a76778a8c3afc77a0f1763f82bf4e"
+
+const hourlyReservationMeterPrivilegeSequence = `CREATE SCHEMA billing_meter AUTHORIZATION billing_meter_owner;
+REVOKE CREATE ON SCHEMA billing_meter FROM PUBLIC;
+
+SET LOCAL ROLE billing_meter_owner;`
+
+const hourlyReservationMeterCompatiblePrivilegeSequence = `CREATE SCHEMA billing_meter AUTHORIZATION billing_meter_owner;
+SET LOCAL ROLE billing_meter_owner;
+REVOKE CREATE ON SCHEMA billing_meter FROM PUBLIC;`
+
 const createAppliedMigrationsTableStatement = `create table if not exists cyclops_migrations.applied_migrations (
 	application_order bigint generated always as identity unique,
 	version bigint primary key,
@@ -262,6 +273,20 @@ func staticRoleAlterClauses(contract staticRoleContract, attributes staticRoleAt
 		clauses = append(clauses, "VALID UNTIL 'infinity'")
 	}
 	return strings.Join(clauses, " "), nil
+}
+
+func prepareMigrationExecution(file migrationFile) (migrationFile, error) {
+	if file.SHA256 != hourlyReservationMeterOriginalSHA256 {
+		return file, nil
+	}
+	if file.Name != "000005_hourly_reservation_meter.sql" {
+		return migrationFile{}, fmt.Errorf("legacy reservation meter checksum belongs to unexpected migration %s", file.Name)
+	}
+	if strings.Count(file.SQL, hourlyReservationMeterPrivilegeSequence) != 1 {
+		return migrationFile{}, fmt.Errorf("legacy reservation meter privilege sequence is missing or ambiguous")
+	}
+	file.SQL = strings.Replace(file.SQL, hourlyReservationMeterPrivilegeSequence, hourlyReservationMeterCompatiblePrivilegeSequence, 1)
+	return file, nil
 }
 
 func newRuntimeDDL(transaction pgx.Tx) runtimeDDL {

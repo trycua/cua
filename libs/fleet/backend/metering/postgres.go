@@ -2,7 +2,6 @@ package metering
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +10,21 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const lockReservationHourCompletionStatement = `select pg_advisory_xact_lock(hashtextextended($1, 0))`
+
+const selectReservationHourCompletionStatement = `select
+	coalesce(current.collection_run_id, '00000000-0000-0000-0000-000000000000'::uuid),
+	coalesce(current.revision, 0),
+	coalesce(current.source_sha256, '')
+	from (values (1)) as seed(value)
+	left join billing_meter.reservation_hour_collection_current as current on current.logical_key = $1`
+
+const insertReservationHourCompletionStatement = `insert into billing_meter.reservation_hour_collection (
+	collection_run_id, logical_key, revision, cluster_id, hour_start, hour_end,
+	covered_seconds, discovered_sandboxes, inserted_facts, unchanged_facts,
+	source_sha256, supersedes_collection_run_id
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`
 
 type PostgresStore struct {
 	pool *pgxpool.Pool
@@ -68,26 +82,29 @@ func (s *PostgresStore) AppendFact(ctx context.Context, fact HourFact) (bool, er
 	var previousID uuid.UUID
 	var previousRevision int
 	var previousSHA string
-	err = transaction.QueryRow(ctx, `select fact_id, revision, source_sha256
-		from billing_meter.reservation_hour_current where logical_key = $1`, fact.LogicalKey).
+	queryErr := transaction.QueryRow(ctx, `select
+		coalesce(current.fact_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		coalesce(current.revision, 0),
+		coalesce(current.source_sha256, '')
+		from (values (1)) as seed(value)
+		left join billing_meter.reservation_hour_current as current on current.logical_key = $1`, fact.LogicalKey).
 		Scan(&previousID, &previousRevision, &previousSHA)
-	if err == nil && previousSHA == fact.SourceSHA256 {
+	if queryErr != nil {
+		return false, fmt.Errorf("read current reservation fact: %w", queryErr)
+	}
+	if previousRevision > 0 && previousSHA == fact.SourceSHA256 {
 		if err := transaction.Commit(ctx); err != nil {
 			return false, fmt.Errorf("commit unchanged reservation fact: %w", err)
 		}
 		return false, nil
 	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return false, fmt.Errorf("read current reservation fact: %w", err)
-	}
 
-	revision := 1
+	revision := previousRevision + 1
 	var supersedes any
-	if err == nil {
-		revision = previousRevision + 1
+	if previousRevision > 0 {
 		supersedes = previousID
 	}
-	_, err = transaction.Exec(ctx, `insert into billing_meter.reservation_hour_fact (
+	_, insertErr := transaction.Exec(ctx, `insert into billing_meter.reservation_hour_fact (
 		fact_id, logical_key, revision, cluster_id, capsule_tenant, namespace,
 		sandbox_uid, sandbox_name, pool_name, runtime, hour_start, hour_end,
 		virtual_cpu_core_seconds, virtual_memory_byte_seconds, ready_seconds,
@@ -99,8 +116,8 @@ func (s *PostgresStore) AppendFact(ctx context.Context, fact HourFact) (bool, er
 		fact.VirtualCPUCoreSeconds, fact.VirtualMemoryByteSeconds, fact.ReadySeconds,
 		fact.CoveredSeconds, fact.ScrapeIntervalSeconds, fact.SourceSHA256, fact.CollectionRunID,
 		supersedes)
-	if err != nil {
-		return false, fmt.Errorf("insert reservation fact: %w", err)
+	if insertErr != nil {
+		return false, fmt.Errorf("insert reservation fact: %w", insertErr)
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit reservation fact: %w", err)
@@ -117,41 +134,35 @@ func (s *PostgresStore) CompleteHour(ctx context.Context, completion HourComplet
 		return false, fmt.Errorf("begin hour completion transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	if _, err := transaction.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended(, 0))`, completion.LogicalKey); err != nil {
+	if _, err := transaction.Exec(ctx, lockReservationHourCompletionStatement, completion.LogicalKey); err != nil {
 		return false, fmt.Errorf("lock reservation hour completion: %w", err)
 	}
 	var previousID uuid.UUID
 	var previousRevision int
 	var previousSHA string
-	err = transaction.QueryRow(ctx, `select collection_run_id, revision, source_sha256
-		from billing_meter.reservation_hour_collection_current where logical_key = `, completion.LogicalKey).
+	queryErr := transaction.QueryRow(ctx, selectReservationHourCompletionStatement, completion.LogicalKey).
 		Scan(&previousID, &previousRevision, &previousSHA)
-	if err == nil && previousSHA == completion.SourceSHA256 {
+	if queryErr != nil {
+		return false, fmt.Errorf("read current hour completion: %w", queryErr)
+	}
+	if previousRevision > 0 && previousSHA == completion.SourceSHA256 {
 		if err := transaction.Commit(ctx); err != nil {
 			return false, fmt.Errorf("commit unchanged hour completion: %w", err)
 		}
 		return false, nil
 	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return false, fmt.Errorf("read current hour completion: %w", err)
-	}
-	revision := 1
+	revision := previousRevision + 1
 	var supersedes any
-	if err == nil {
-		revision = previousRevision + 1
+	if previousRevision > 0 {
 		supersedes = previousID
 	}
-	_, err = transaction.Exec(ctx, `insert into billing_meter.reservation_hour_collection (
-		collection_run_id, logical_key, revision, cluster_id, hour_start, hour_end,
-		covered_seconds, discovered_sandboxes, inserted_facts, unchanged_facts,
-		source_sha256, supersedes_collection_run_id
-	) values (,,,,,,,,,,,)`,
+	_, insertErr := transaction.Exec(ctx, insertReservationHourCompletionStatement,
 		completion.CollectionRunID, completion.LogicalKey, revision, completion.ClusterID,
 		completion.HourStart, completion.HourEnd, completion.CoveredSeconds,
 		completion.DiscoveredSandboxes, completion.InsertedFacts, completion.UnchangedFacts,
 		completion.SourceSHA256, supersedes)
-	if err != nil {
-		return false, fmt.Errorf("insert hour completion: %w", err)
+	if insertErr != nil {
+		return false, fmt.Errorf("insert hour completion: %w", insertErr)
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit hour completion: %w", err)

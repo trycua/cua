@@ -398,6 +398,10 @@ func Run(ctx context.Context, config Config) (runErr error) {
 			continue
 		}
 
+		file, err = prepareMigrationExecution(file)
+		if err != nil {
+			return fmt.Errorf("prepare migration %s: %w", file.Name, err)
+		}
 		if _, err := transaction.Exec(ctx, file.SQL); err != nil {
 			return fmt.Errorf("apply migration %s: %w", file.Name, err)
 		}

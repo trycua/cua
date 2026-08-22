@@ -631,6 +631,48 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	}
 }
 
+func TestReservationMeterMigrationRetainsRecordedChecksum(t *testing.T) {
+	files, err := embeddedMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	meter := files[4]
+	if meter.SHA256 != hourlyReservationMeterOriginalSHA256 {
+		t.Fatalf("reservation meter checksum = %s, want recorded %s", meter.SHA256, hourlyReservationMeterOriginalSHA256)
+	}
+}
+
+func TestExecutableMigrationSQLRepairsLegacyPrivilegeOrder(t *testing.T) {
+	file := migrationFile{
+		Version: 5,
+		Name:    "000005_hourly_reservation_meter.sql",
+		SHA256:  hourlyReservationMeterOriginalSHA256,
+		SQL:     hourlyReservationMeterPrivilegeSequence,
+	}
+
+	executable, err := prepareMigrationExecution(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executable.SQL != hourlyReservationMeterCompatiblePrivilegeSequence {
+		t.Fatalf("executable migration SQL = %q", executable.SQL)
+	}
+	if file.SQL != hourlyReservationMeterPrivilegeSequence {
+		t.Fatal("compatibility repair must not mutate immutable migration bytes")
+	}
+}
+
+func TestExecutableMigrationSQLRejectsAmbiguousLegacyMigration(t *testing.T) {
+	_, err := prepareMigrationExecution(migrationFile{
+		Name:   "000005_hourly_reservation_meter.sql",
+		SHA256: hourlyReservationMeterOriginalSHA256,
+		SQL:    hourlyReservationMeterPrivilegeSequence + "\n" + hourlyReservationMeterPrivilegeSequence,
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing or ambiguous") {
+		t.Fatalf("expected ambiguous legacy sequence error, got %v", err)
+	}
+}
+
 func TestAppliedMigrationLedgerUsesApplicationOrder(t *testing.T) {
 	if !strings.Contains(createAppliedMigrationsTableStatement, "application_order bigint generated always as identity unique") {
 		t.Fatalf("ledger schema must define a unique identity application order: %s", createAppliedMigrationsTableStatement)

@@ -130,8 +130,17 @@ const (
 	billingFlag                   = flagPrefix + "billing-enabled"
 	cardAdmissionFlag             = flagPrefix + "require-card-for-custom-resource-creation"
 	cardRequirementExemptSubsFlag = flagPrefix + "card-requirement-exempt-subs"
+	chatAccessFlag                = flagPrefix + "chat-access"
 	chatSubsFlag                  = flagPrefix + "chat-subs"
 	usageSubsFlag                 = flagPrefix + "usage-subs"
+)
+
+type chatAccessMode string
+
+const (
+	chatAccessDisabled   chatAccessMode = "disabled"
+	chatAccessRestricted chatAccessMode = "restricted"
+	chatAccessAll        chatAccessMode = "all"
 )
 
 // flagsTTL bounds how long flagsData returns its last computed result
@@ -402,10 +411,50 @@ func EvalIsAdminFresh(ctx context.Context, user *User) (bool, error) {
 	return evalUserDecision(ctx, user, opaAdminQuery, freshAdminFlags(ctx))
 }
 
-// EvalChatEnabled returns the restricted-mode chat decision: administrators
-// and users listed in input.flags.chat_subs are enabled.
+// EvalChatEnabled resolves the global chat access mode and applies the
+// restricted-mode administrator/chat-subs policy when needed. Missing,
+// malformed, or unsupported values default to restricted.
 func EvalChatEnabled(ctx context.Context, user *User) (bool, error) {
-	return evalUserDecision(ctx, user, opaChatQuery, flagsData())
+	if user == nil || user.ID == "" {
+		return false, nil
+	}
+	switch resolveChatAccessMode(ctx, user.ID) {
+	case chatAccessDisabled:
+		return false, nil
+	case chatAccessAll:
+		return true, nil
+	default:
+		return evalUserDecision(ctx, user, opaChatQuery, flagsData())
+	}
+}
+
+func resolveChatAccessMode(ctx context.Context, targetingKey string) chatAccessMode {
+	ffClientOnce.Do(func() {
+		ffClient = openfeature.NewClient("cyclops-cs-auth")
+	})
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	raw, err := ffClient.StringValue(
+		callCtx,
+		chatAccessFlag,
+		string(chatAccessRestricted),
+		openfeature.NewEvaluationContext(targetingKey, nil),
+	)
+	if err != nil {
+		slog.WarnContext(ctx, "auth: chat access flag eval failed; using restricted", "flag", chatAccessFlag, "err", err)
+		return chatAccessRestricted
+	}
+	switch chatAccessMode(strings.ToLower(strings.TrimSpace(raw))) {
+	case chatAccessDisabled:
+		return chatAccessDisabled
+	case chatAccessRestricted:
+		return chatAccessRestricted
+	case chatAccessAll:
+		return chatAccessAll
+	default:
+		slog.WarnContext(ctx, "auth: invalid chat access flag; using restricted", "flag", chatAccessFlag, "value", raw)
+		return chatAccessRestricted
+	}
 }
 
 func EvalUsageEnabled(ctx context.Context, user *User) (bool, error) {

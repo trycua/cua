@@ -44,6 +44,7 @@ Run the Go backend with chat enabled in a separate terminal:
 
 ```bash
 cd cyclops-cs/backend
+ENVIRONMENT=development \
 CYCLOPS_CS_CHAT_ACCESS=all \
 LITELLM_BASE_URL=http://localhost:4000/v1 \
 LITELLM_MODEL=large \
@@ -57,15 +58,17 @@ storage.
 
 ## Backend configuration
 
-- `CYCLOPS_CS_CHAT_ACCESS` selects `disabled`, `restricted`, or `all`.
-- `CYCLOPS_CS_CHAT_SUBS` is a JSON array of non-admin Keycloak `sub` values used in `restricted` mode; admins are enabled automatically.
+- `/feature-flags/cyclops-cs/chat-access` selects `disabled`, `restricted`, or `all`. Missing or invalid values default to `restricted`.
+- `/feature-flags/cyclops-cs/chat-subs` is a JSON array of non-admin Keycloak `sub` values used in `restricted` mode; admins are enabled automatically.
 - `LITELLM_BASE_URL` is the OpenAI-compatible API base URL, including `/v1`.
 - `LITELLM_MODEL` selects the model alias and defaults to `large`.
 - `LITELLM_API_KEY` is the backend-only LiteLLM virtual key.
 
-In `restricted` and `all` modes, both `LITELLM_BASE_URL` and
-`LITELLM_API_KEY` are required. `CYCLOPS_CS_CHAT_ENABLED=true` remains a
-legacy fallback for `all` only when `CYCLOPS_CS_CHAT_ACCESS` is unset.
+Production resolves both chat flags from AWS SSM through OpenFeature. The
+`SimpleEnvProvider` maps them to `CYCLOPS_CS_CHAT_ACCESS` and
+`CYCLOPS_CS_CHAT_SUBS` for development and previews. Set both
+`LITELLM_BASE_URL` and `LITELLM_API_KEY`, or leave both unset to run without a
+configured chat model.
 
 ## API routes
 

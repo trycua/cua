@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -20,6 +21,68 @@ func resetFlagsCache() {
 	flagsGeneration = 0
 	flagsMu.Unlock()
 	flagsSF.Forget("flags")
+}
+
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	value, present := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		if present {
+			_ = os.Setenv(key, value)
+			return
+		}
+		_ = os.Unsetenv(key)
+	})
+}
+
+func TestEvalChatEnabledResolvesGlobalAccessFlag(t *testing.T) {
+	LoadOpa()
+	tests := []struct {
+		name       string
+		access     *string
+		chatSubs   string
+		user       string
+		wantEnable bool
+	}{
+		{name: "absent defaults to restricted allowed", chatSubs: `["allowed-user"]`, user: "allowed-user", wantEnable: true},
+		{name: "absent defaults to restricted denied", chatSubs: `[]`, user: "other-user", wantEnable: false},
+		{name: "disabled", access: stringPointer("disabled"), chatSubs: `["allowed-user"]`, user: "allowed-user", wantEnable: false},
+		{name: "restricted allowed", access: stringPointer("restricted"), chatSubs: `["allowed-user"]`, user: "allowed-user", wantEnable: true},
+		{name: "restricted denied", access: stringPointer("restricted"), chatSubs: `[]`, user: "other-user", wantEnable: false},
+		{name: "all", access: stringPointer("all"), chatSubs: `[]`, user: "other-user", wantEnable: true},
+		{name: "invalid falls back to restricted allowed", access: stringPointer("not-a-mode"), chatSubs: `["allowed-user"]`, user: "allowed-user", wantEnable: true},
+		{name: "invalid falls back to restricted denied", access: stringPointer("not-a-mode"), chatSubs: `[]`, user: "other-user", wantEnable: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			unsetEnv(t, "CYCLOPS_CS_CHAT_ACCESS")
+			if test.access != nil {
+				t.Setenv("CYCLOPS_CS_CHAT_ACCESS", *test.access)
+			}
+			t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`)
+			t.Setenv("CYCLOPS_CS_CHAT_SUBS", test.chatSubs)
+			if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+				t.Fatalf("setup dev provider: %v", err)
+			}
+			resetFlagsCache()
+
+			got, err := EvalChatEnabled(context.Background(), &User{ID: test.user, AZP: "cyclops-cs-spa"})
+			if err != nil {
+				t.Fatalf("EvalChatEnabled() error = %v", err)
+			}
+			if got != test.wantEnable {
+				t.Fatalf("EvalChatEnabled() = %v, want %v", got, test.wantEnable)
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func TestInvalidateFeatureFlagsPreventsInFlightRefreshFromPublishingStaleData(t *testing.T) {

@@ -105,20 +105,7 @@ type DatabaseConfiguration struct {
 	StateQueryTenantPassword string // STATE_QUERY_TENANT_PASSWORD — shared tenant query login password
 }
 
-type ChatAccessMode string
-
-const (
-	ChatAccessDisabled   ChatAccessMode = "disabled"
-	ChatAccessRestricted ChatAccessMode = "restricted"
-	ChatAccessAll        ChatAccessMode = "all"
-)
-
-func (mode ChatAccessMode) Enabled() bool {
-	return mode == ChatAccessRestricted || mode == ChatAccessAll
-}
-
 type ChatConfiguration struct {
-	Access  ChatAccessMode
 	BaseURL string
 	APIKey  string
 	Model   string
@@ -210,8 +197,6 @@ var specs = []flagSpec{
 	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
 	{"stripe.checkout-cancel-url", "stripe-checkout-cancel-url", "STRIPE_CHECKOUT_CANCEL_URL", "", "Stripe Checkout cancel redirect URL"},
 	{"stripe.portal-return-url", "stripe-portal-return-url", "STRIPE_PORTAL_RETURN_URL", "", "Stripe Billing Portal return URL"},
-	{"chat.access", "chat-access", "CYCLOPS_CS_CHAT_ACCESS", "", "chat access mode: disabled, restricted, or all"},
-	{"chat.enabled", "chat-enabled", "CYCLOPS_CS_CHAT_ENABLED", "false", "legacy browser bash chat toggle"},
 	{"chat.base-url", "litellm-base-url", "LITELLM_BASE_URL", "", "LiteLLM OpenAI-compatible base URL"},
 	{"chat.api-key", "litellm-api-key", "LITELLM_API_KEY", "", "LiteLLM virtual key"},
 	{"chat.model", "litellm-model", "LITELLM_MODEL", "large", "LiteLLM model alias"},
@@ -321,7 +306,6 @@ func LoadConfig() (*Configuration, error) {
 			PortalReturnURL:    viper.GetString("stripe.portal-return-url"),
 		},
 		Chat: ChatConfiguration{
-			Access:  chatAccessMode(viper.GetString("chat.access"), viper.GetBool("chat.enabled")),
 			BaseURL: viper.GetString("chat.base-url"),
 			APIKey:  viper.GetString("chat.api-key"),
 			Model:   viper.GetString("chat.model"),
@@ -351,29 +335,13 @@ func LoadConfig() (*Configuration, error) {
 	if cfg.Keycloak.AdminClientSecret == "" {
 		return nil, fmt.Errorf("KC_ADMIN_CLIENT_SECRET is required")
 	}
-	if cfg.Chat.Access.Enabled() && (cfg.Chat.BaseURL == "" || cfg.Chat.APIKey == "") {
-		return nil, fmt.Errorf("enabled chat access requires LITELLM_BASE_URL and LITELLM_API_KEY")
+	if (cfg.Chat.BaseURL == "") != (cfg.Chat.APIKey == "") {
+		return nil, fmt.Errorf("chat configuration requires both LITELLM_BASE_URL and LITELLM_API_KEY")
 	}
 	if err := validateUsageConfiguration(cfg.Usage); err != nil {
 		return nil, err
 	}
 	return cfg, nil
-}
-
-func chatAccessMode(access string, legacyEnabled bool) ChatAccessMode {
-	switch ChatAccessMode(strings.ToLower(strings.TrimSpace(access))) {
-	case ChatAccessDisabled:
-		return ChatAccessDisabled
-	case ChatAccessRestricted:
-		return ChatAccessRestricted
-	case ChatAccessAll:
-		return ChatAccessAll
-	case "":
-		if legacyEnabled {
-			return ChatAccessAll
-		}
-	}
-	return ChatAccessDisabled
 }
 
 func validateUsageConfiguration(cfg UsageConfiguration) error {

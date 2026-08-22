@@ -47,7 +47,6 @@ type Handlers struct {
 
 	FeatureFlags *featureflagadmin.Service
 
-	ChatAccess          config.ChatAccessMode
 	Conversations       chat.ConversationStore
 	Model               chat.ModelClient
 	chatAccessEvaluator func(context.Context, *auth.User) (bool, error)
@@ -72,7 +71,6 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		AuthCfg:      cfg.Auth,
 		KC:           cfg.Keycloak,
 		Stripe:       cfg.Stripe,
-		ChatAccess:   cfg.Chat.Access,
 		chatLocks:    newConversationLockRegistry(),
 	}
 }
@@ -97,18 +95,11 @@ func (h Handlers) chatEnabled(ctx context.Context, user *auth.User) (bool, error
 	if user == nil || user.ID == "" {
 		return false, nil
 	}
-	switch h.ChatAccess {
-	case config.ChatAccessAll:
-		return true, nil
-	case config.ChatAccessRestricted:
-		evaluator := h.chatAccessEvaluator
-		if evaluator == nil {
-			evaluator = auth.EvalChatEnabled
-		}
-		return evaluator(ctx, user)
-	default:
-		return false, nil
+	evaluator := h.chatAccessEvaluator
+	if evaluator == nil {
+		evaluator = auth.EvalChatEnabled
 	}
+	return evaluator(ctx, user)
 }
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)

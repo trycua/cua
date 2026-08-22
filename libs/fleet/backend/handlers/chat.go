@@ -39,10 +39,6 @@ type turnEvent struct {
 }
 
 func (h Handlers) chatUser(w http.ResponseWriter, r *http.Request) *auth.User {
-	if !h.ChatAccess.Enabled() {
-		writeErr(w, http.StatusNotFound, "chat is disabled")
-		return nil
-	}
 	user := currentUser(r)
 	if user == nil || user.ID == "" {
 		writeErr(w, http.StatusUnauthorized, "missing user")

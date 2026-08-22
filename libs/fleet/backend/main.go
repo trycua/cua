@@ -390,10 +390,12 @@ func run() error {
 	progress := initializeDatabaseFeatures(ctx, cfg.Database, &h, databaseFeatures)
 	go retryDatabaseFeatures(ctx, cfg.Database, &h, databaseFeatures, progress, databaseRetryInterval)
 
-	if cfg.Chat.Access.Enabled() {
+	if cfg.Chat.BaseURL != "" {
 		h.Conversations = chat.NewMemoryConversationStore()
 		h.Model = chat.NewLiteLLMClient(cfg.Chat.BaseURL, cfg.Chat.APIKey, cfg.Chat.Model)
-		slog.Info("chat: enabled", "access", cfg.Chat.Access, "base_url", cfg.Chat.BaseURL, "model", cfg.Chat.Model)
+		slog.Info("chat: configured", "base_url", cfg.Chat.BaseURL, "model", cfg.Chat.Model)
+	} else {
+		slog.Info("chat: not configured (LITELLM_BASE_URL and LITELLM_API_KEY unset)")
 	}
 
 	router := setupRouter(h)

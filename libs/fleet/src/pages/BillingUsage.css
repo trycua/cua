@@ -11,11 +11,14 @@
 
 .usage-summary__metric {
   display: grid;
-  grid-column: 3;
   gap: 5px;
   min-width: 0;
-  padding: 22px 0 22px 24px;
+  padding: 22px 24px;
   border-inline-start: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+
+.usage-summary__metric:first-child {
+  border-inline-start: 0;
 }
 
 .usage-summary__label,
@@ -87,7 +90,7 @@
 .usage-breakdown__header,
 .usage-breakdown__row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(120px, auto);
+  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(150px, 0.42fr)) minmax(110px, 0.32fr);
   gap: 24px;
   align-items: center;
 }
@@ -103,8 +106,8 @@
   text-align: start;
 }
 
-.usage-breakdown__header th:last-child,
-.usage-breakdown__row > :last-child {
+.usage-breakdown__header th:not(:first-child),
+.usage-breakdown__row > :not(:first-child) {
   text-align: end;
 }
 
@@ -151,7 +154,6 @@
 }
 
 .usage-skeleton__block {
-  grid-column: 3;
   height: 112px;
 }
 
@@ -178,28 +180,59 @@
   }
 
   .usage-summary__metric {
-    grid-column: 1;
     padding: 18px 0;
+    border-block-start: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
     border-inline-start: 0;
+  }
+
+  .usage-summary__metric:first-child {
+    border-block-start: 0;
   }
 
   .usage-panel {
     padding: 18px 14px 12px;
   }
 
-  .usage-breakdown__header,
+  .usage-breakdown__header {
+    display: none;
+  }
+
   .usage-breakdown__row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    padding-inline: 0;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px 10px;
+    padding: 16px 0;
+  }
+
+  .usage-breakdown__row > :first-child {
+    grid-column: 1 / -1;
+    font-size: 15px;
+  }
+
+  .usage-breakdown__row > :not(:first-child) {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    text-align: start;
+  }
+
+  .usage-breakdown__row > :not(:first-child)::before {
+    content: attr(data-label);
+    color: var(--cua-color-text-muted, rgba(224, 230, 238, 0.68));
+    font-family: var(--cua-dashboard-font-mono, monospace);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .usage-breakdown__row strong {
+    overflow-wrap: anywhere;
   }
 
   .usage-skeleton__summary {
     grid-template-columns: 1fr;
   }
 
-  .usage-skeleton__block {
-    grid-column: 1;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

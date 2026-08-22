@@ -87,6 +87,7 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
                 "- Window <SAL/VCL — MSAA fallback failed (AccessibleObjectFromWindow hr={hr:?})>\n"
             ),
             nodes: Vec::new(),
+            elements_complete: false,
         };
     }
     let root: IAccessible = IAccessible::from_raw(raw_root);
@@ -110,6 +111,10 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
     UiaTreeResult {
         tree_markdown,
         nodes,
+        // This compatibility path cannot prove the complete UIA search
+        // domain (and intentionally omits UIA-only state), even when its own
+        // bounded MSAA recursion reaches every exposed child.
+        elements_complete: false,
     }
 }
 

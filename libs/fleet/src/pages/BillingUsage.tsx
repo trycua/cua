@@ -88,7 +88,6 @@ export function BillingUsagePage() {
     <PageShell
       eyebrow="Billing"
       title="Usage"
-      description="See OpenCost allocation spend by pool for the selected timeframe."
       actions={
         <Select
           ariaLabel="Usage history range"

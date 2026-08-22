@@ -175,6 +175,7 @@ enum VMError: Error, LocalizedError {
     case notFound(String)
     case notInitialized(String)
     case notRunning(String)
+    case unverifiedProcessOwner(String)
     case alreadyRunning(String)
     case installNotStarted(String)
     case stopTimeout(String)
@@ -196,6 +197,9 @@ enum VMError: Error, LocalizedError {
             return "Virtual machine not initialized: \(name)"
         case .notRunning(let name):
             return "Virtual machine not running: \(name)"
+        case .unverifiedProcessOwner(let name):
+            return "Cannot safely identify the process running virtual machine \(name); "
+                + "stop it from the terminal that started it"
         case .alreadyRunning(let name):
             return "Virtual machine already running: \(name)"
         case .installNotStarted(let name):

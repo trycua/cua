@@ -164,6 +164,20 @@ func assertChatConversationStore(t *testing.T, ctx context.Context, applicationU
 	if len(loaded.Messages) != 2 || loaded.Messages[1].Content != "ready" {
 		t.Fatalf("first store did not observe second store append: %+v", loaded.Messages)
 	}
+	archived, err := second.SetArchived(ctx, "owner-1", conversation.ID, true)
+	if err != nil {
+		t.Fatalf("archive through second store: %v", err)
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatal("archived conversation has nil ArchivedAt")
+	}
+	restored, err := first.SetArchived(ctx, "owner-1", conversation.ID, false)
+	if err != nil {
+		t.Fatalf("restore through first store: %v", err)
+	}
+	if restored.ArchivedAt != nil {
+		t.Fatalf("restored conversation ArchivedAt = %v, want nil", restored.ArchivedAt)
+	}
 }
 
 func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {

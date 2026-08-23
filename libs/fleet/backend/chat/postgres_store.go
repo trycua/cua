@@ -112,7 +112,7 @@ func (store *PostgresConversationStore) SetArchived(ctx context.Context, ownerID
 	now := store.now()
 	conversation, err := scanPostgresConversation(store.pool.QueryRow(ctx, `
 		UPDATE chat_conversations
-		SET archived_at = CASE WHEN $3 THEN $4 ELSE NULL END, updated_at = $4
+		SET archived_at = CASE WHEN $3 THEN $4::timestamptz ELSE NULL::timestamptz END, updated_at = $4
 		WHERE id = $1 AND owner_sub = $2
 		RETURNING `+postgresConversationColumns, conversationID, ownerID, archived, now))
 	if errors.Is(err, pgx.ErrNoRows) {

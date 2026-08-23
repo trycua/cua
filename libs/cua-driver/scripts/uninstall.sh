@@ -20,6 +20,10 @@
 #   - Claude MCP registrations in ~/.claude.json (cua-driver / cua-computer-use)
 #
 # Rust uninstall removes:
+#   All hosts:
+#     - the running `cua-driver serve` daemon is stopped before anything is
+#       deleted (mirrors uninstall.ps1 on Windows). `cua-driver mcp` children
+#       of a live MCP client are reported, not killed.
 #   Linux:
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
@@ -138,6 +142,101 @@ purge_linux_history() {
         printf 'history_purge_incomplete: exact-namespace Secret Service key destruction was not verified; preserved history state and runtime for retry\n' >&2
         return 1
     fi
+}
+
+# Anchor an installed-binary path as an argv[0] match for pkill/pgrep. The
+# path is a literal, so every ERE metacharacter a $HOME or a package path may
+# contain is escaped before it is spliced into the pattern. Anchoring is what
+# keeps a launcher shell that merely mentions the path in its script text out
+# of the match — see the same note in uninstall-local.sh.
+daemon_argv0_pattern() {
+    local binary="$1"
+    local subcommand="${2:-}"
+    local escaped
+    escaped="$(printf '%s' "$binary" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
+    if [[ -n "$subcommand" ]]; then
+        printf '^%s[[:space:]]+%s([[:space:]]|$)' "$escaped" "$subcommand"
+    else
+        printf '^%s([[:space:]]|$)' "$escaped"
+    fi
+}
+
+# Stop the running `cua-driver serve` daemon(s) launched from any of the
+# release install paths passed as arguments.
+#
+# `pkill -x cua-driver` cannot be used: `-x` compares against the 15-character
+# truncated `comm`, so it is unreliable for this binary name. Match argv[0]
+# instead, and require the `serve` subcommand so `cua-driver mcp` — a stdio
+# child of a live MCP client, which exits with that client — is left alone.
+#
+# The uninstaller only ever touches this user's install, and it refuses to run
+# as root, so every match is scoped to the invoking uid: on a shared Mac the
+# same /Applications bundle can be running for someone else, and their daemon
+# is neither ours to signal nor ours to wait for.
+#
+# Returns 0 when at least one process was signalled, 1 when nothing matched,
+# 2 when pkill is unavailable and nothing could be stopped.
+stop_release_serve_daemons() {
+    command -v pkill >/dev/null 2>&1 || return 2
+    local binary pattern
+    local uid
+    uid="$(id -u)"
+    local -a patterns=()
+    for binary in "$@"; do
+        [[ -n "$binary" ]] || continue
+        patterns+=("$(daemon_argv0_pattern "$binary" serve)")
+    done
+    [[ "${#patterns[@]}" -gt 0 ]] || return 1
+
+    local signalled=0
+    for pattern in "${patterns[@]}"; do
+        if pkill -TERM -U "$uid" -f "$pattern" >/dev/null 2>&1; then
+            signalled=1
+        fi
+    done
+    [[ "$signalled" == "1" ]] || return 1
+
+    # SIGTERM lets the daemon close its listening socket and tear down the
+    # agent-cursor overlay. Escalate only for whatever is still alive after a
+    # short grace period, so a wedged daemon cannot outlive the uninstall.
+    local waited=0
+    while [[ "$waited" -lt 10 ]]; do
+        local alive=0
+        for pattern in "${patterns[@]}"; do
+            if pgrep -U "$uid" -f "$pattern" >/dev/null 2>&1; then
+                alive=1
+                break
+            fi
+        done
+        [[ "$alive" == "1" ]] || return 0
+        # Fractional sleep is a BSD/GNU extension; fall back to whole seconds
+        # rather than letting `set -e` abort the uninstall on a host without it.
+        sleep 0.1 2>/dev/null || sleep 1 || true
+        waited=$((waited + 1))
+    done
+    for pattern in "${patterns[@]}"; do
+        pkill -KILL -U "$uid" -f "$pattern" >/dev/null 2>&1 || true
+    done
+    return 0
+}
+
+# Report — never kill — non-`serve` processes still running from the release
+# install paths. Those are `cua-driver mcp` children of a live MCP client
+# (Claude Code, Codex); killing them surfaces to the user as a client-side
+# transport error instead of a clean shutdown, and they exit with their client.
+# Returns 0 when at least one such process is alive.
+report_surviving_release_processes() {
+    command -v pgrep >/dev/null 2>&1 || return 1
+    local binary
+    local uid
+    uid="$(id -u)"
+    for binary in "$@"; do
+        [[ -n "$binary" ]] || continue
+        if pgrep -U "$uid" -f "$(daemon_argv0_pattern "$binary")" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 reject_root_invocation() {
@@ -356,6 +455,57 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         if [[ "$FOUND_LAUNCHAGENT_PLIST" == "0" ]]; then
             log "no current or legacy LaunchAgent found (skipping)"
         fi
+    fi
+
+    # --- Running daemon ---
+    # Unix keeps an unlinked binary mapped, so removing the bundle and the
+    # runtime payloads below leaves a running `cua-driver serve` alive on its
+    # deleted path, still holding its listening socket, its accessibility and
+    # screen-capture connections, and the agent-cursor overlay. uninstall.ps1
+    # already stops every cua-driver process on Windows, where the open handles
+    # make the removal itself fail — on Unix the same leftover is silent.
+    #
+    # Placement: after the autostart teardown above, because a KeepAlive
+    # LaunchAgent or a Restart=on-failure systemd unit would respawn whatever
+    # we stop; and before the history purge, the TCC reset, and the bundle
+    # removal, so `--purge` takes the exclusive writer lease uncontended and
+    # the com.trycua.driver grants are not revoked underneath a live process
+    # signed with that identity.
+    #
+    # Gated on the Rust marker like every other shared-path action: on a
+    # Swift-only Mac the bundle path and the CLI symlink resolve to the retired
+    # Swift driver, whose daemon is not ours to stop.
+    if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
+        DAEMON_BINARIES=(
+            "$USER_BIN_LINK"
+            "$APP_BUNDLE/Contents/MacOS/cua-driver"
+            "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver"
+            "$PACKAGES_DIR/current/cua-driver"
+            "$LEGACY_HOME_DIR/packages/current/cua-driver"
+        )
+        # A daemon the runtime started for itself (an MCP invocation spawning
+        # one on demand) carries the realpath of the active release in argv[0],
+        # because the runtime resolves its own executable through the
+        # packages/current symlink. Match the versioned paths too.
+        for PACKAGES_ROOT in "$PACKAGES_DIR" "$LEGACY_HOME_DIR/packages"; do
+            for RELEASE_BINARY in "$PACKAGES_ROOT"/releases/*/cua-driver; do
+                if [[ -e "$RELEASE_BINARY" ]]; then
+                    DAEMON_BINARIES+=("$RELEASE_BINARY")
+                fi
+            done
+        done
+        if stop_release_serve_daemons "${DAEMON_BINARIES[@]}"; then
+            log "stopped the running cua-driver serve daemon"
+        elif [[ "$?" == "2" ]]; then
+            log "pkill not found; a running cua-driver serve daemon (if any) has to be stopped by hand"
+        else
+            log "no running cua-driver serve daemon (skipping)"
+        fi
+        if report_surviving_release_processes "${DAEMON_BINARIES[@]}"; then
+            log "note: other cua-driver processes are still running; \`cua-driver mcp\` runs as a stdio child of your MCP client and exits when that client closes"
+        fi
+    else
+        log "no Rust install marker; leaving any running cua-driver process untouched"
     fi
 
     # Cryptographic history purge must run while the exact installed helper

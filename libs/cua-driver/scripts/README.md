@@ -94,3 +94,11 @@ libs/cua-driver/scripts/uninstall-local.ps1
 The local uninstaller leaves `cua-driver`, `CuaDriver.app`, release services,
 release state, and release TCC grants untouched. On macOS it revokes only
 `com.trycua.driver.local`; pass `--keep-tcc` to retain that local grant.
+
+Every uninstaller stops the running daemon before it deletes anything:
+`uninstall.ps1` stops each `cua-driver.exe`, and `uninstall.sh` stops
+`cua-driver serve` on macOS and Linux by matching argv[0] over the release
+install paths, gated on the same on-disk Rust marker that guards every other
+shared-path removal. `cua-driver mcp` runs as a stdio child of a live MCP
+client and exits with that client, so a surviving one is reported rather than
+killed.

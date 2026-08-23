@@ -56,6 +56,7 @@ def _sandbox(
     *,
     record_pgrep: bool = False,
     fake_command_line: str | None = None,
+    respawning: bool = False,
     real_uid: bool = False,
 ) -> tuple[Path, Path, dict[str, str]]:
     """Run the uninstaller against a throwaway HOME with shimmed tools.
@@ -94,20 +95,52 @@ def _sandbox(
             f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\nexit 1\n",
         )
     elif fake_command_line is not None:
-        _write_executable(
-            fake_bin / "pgrep",
-            f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\n"
-            f"printf '%s\\n' '{UNREACHABLE_PID}'\n",
-        )
-        # A candidate that answers every liveness probe: signalling
-        # UNREACHABLE_PID reaches nothing, so it never goes away.
+        state_dir = tmp_path / "process-state"
+        state_dir.mkdir()
+        if respawning:
+            # A different unreachable pid every scan: the old one is gone, so
+            # its death confirms, and a new daemon has taken its place.
+            _write_executable(
+                fake_bin / "pgrep",
+                f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\n"
+                f"round=$(cat '{state_dir}/round' 2>/dev/null || printf '0')\n"
+                f"printf '%s' \"$((round + 1))\" > '{state_dir}/round'\n"
+                f"printf '%s\\n' \"$(({UNREACHABLE_PID} - round))\"\n",
+            )
+        else:
+            _write_executable(
+                fake_bin / "pgrep",
+                f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\n"
+                f"printf '%s\\n' '{UNREACHABLE_PID}'\n",
+            )
+        # `kill` is a shell builtin aimed at a pid that cannot exist, so the
+        # fixture's liveness has to come from ps. An immortal candidate answers
+        # every probe. A respawning one answers the first probe for each pid
+        # and is gone by the next: that pid died, and the supervisor's
+        # replacement only shows up on the following scan.
+        if respawning:
+            alive_rule = (
+                f'count=$(cat "{state_dir}/$pid" 2>/dev/null || printf 0)\n'
+                f'        printf %s "$((count + 1))" > "{state_dir}/$pid"\n'
+                '        if [ "$count" -eq 0 ]; then printf \'S\\n\'; fi'
+            )
+        else:
+            alive_rule = "printf 'S\\n'"
         _write_executable(
             fake_bin / "ps",
-            f"""case "$*" in
-    *state*) printf 'S\\n' ;;
-    *) printf '%s\\n' '{fake_command_line}' ;;
-esac
-""",
+            'pid=""\n'
+            'previous=""\n'
+            'for argument in "$@"; do\n'
+            '    if [ "$previous" = "-p" ]; then pid="$argument"; fi\n'
+            '    previous="$argument"\n'
+            "done\n"
+            'case "$*" in\n'
+            "    *state*)\n"
+            f"        {alive_rule}\n"
+            "        ;;\n"
+            f"    *) printf '%s\\n' '{fake_command_line}' ;;\n"
+            "esac\n"
+            "exit 0\n",
         )
 
     # Removal is confined to the sandbox HOME: anything the uninstaller asks to
@@ -145,7 +178,9 @@ def _install_rust_marker(home: Path) -> None:
     release_binary.chmod(0o755)
 
 
-def _run_uninstall(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_uninstall(
+    env: dict[str, str], expected_returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         ["/bin/bash", str(UNINSTALL)],
         cwd=REPO_ROOT,
@@ -154,7 +189,7 @@ def _run_uninstall(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == expected_returncode, result.stdout + result.stderr
     return result
 
 
@@ -184,6 +219,16 @@ def _source_only(
         capture_output=True,
         check=False,
     )
+
+
+# The stop helpers read their candidate lists from the globals the uninstall
+# branch sets up, so a direct call has to declare them the same way. argv[0] is
+# the install path under test; the bare-name pass is exercised separately.
+_CANDIDATE_SETUP = (
+    'DAEMON_ARGV0_REGEXES=("$(escape_path_regex "${argv[0]}")")\n'
+    'DAEMON_BARE_ARGV0_REGEXES=()\n'
+    'DAEMON_ORIGIN_PREFIXES=()\n'
+)
 
 
 def _issued_patterns(calls: Path) -> list[str]:
@@ -447,8 +492,15 @@ class _Fixtures:
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
 
     def spawn(self, name: str, argv0: Path | str, *arguments: str) -> int:
+        return self.spawn_with(name, self._sleeper, str(argv0), *arguments)
+
+    def spawn_with(
+        self, name: str, executable: Path, argv0: str, *arguments: str
+    ) -> int:
+        """Spawn with argv[0] and the executable chosen independently — which
+        is exactly the case a bare argv[0] cannot distinguish."""
         process = subprocess.Popen(
-            [str(argv0), *arguments], executable=str(self._sleeper)
+            [argv0, *arguments], executable=str(executable)
         )
         self.processes[name] = process
         return process.pid
@@ -511,11 +563,11 @@ def test_only_serve_invocations_are_stopped(tmp_path: Path, fixtures) -> None:
     fixtures.wait_started()
 
     stop = _source_only(
+        f'{_CANDIDATE_SETUP}'
         'status=0\n'
-        'regex="$(escape_path_regex "${argv[0]}")"\n'
-        'stop_release_serve_daemons "$regex" || status=$?\n'
+        'stop_release_serve_daemons || status=$?\n'
         'printf "stopped=%s\\n" "$status"\n'
-        'report_surviving_release_processes "$regex" && printf "survivors=yes\\n"\n',
+        'report_surviving_release_processes && printf "survivors=yes\\n"\n',
         os.environ.copy(),
         str(binary),
     )
@@ -546,11 +598,11 @@ def test_whitespace_in_an_argument_does_not_move_the_subcommand(
     fixtures.wait_started()
 
     stop = _source_only(
+        f'{_CANDIDATE_SETUP}'
         'status=0\n'
-        'regex="$(escape_path_regex "${argv[0]}")"\n'
-        'stop_release_serve_daemons "$regex" || status=$?\n'
+        'stop_release_serve_daemons || status=$?\n'
         'printf "stopped=%s\\n" "$status"\n'
-        'report_undetermined_release_processes "$regex" && printf "undetermined=yes\\n"\n',
+        'report_undetermined_release_processes && printf "undetermined=yes\\n"\n',
         os.environ.copy(),
         str(binary),
     )
@@ -568,6 +620,79 @@ def test_whitespace_in_an_argument_does_not_move_the_subcommand(
         assert "stopped=1" in stop.stdout, stop.stdout + stop.stderr
         assert fixtures.alive("daemon with a spaced socket")
         assert "undetermined=yes" in stop.stdout
+
+
+def test_a_foreign_binary_named_cua_driver_is_not_killed(
+    tmp_path: Path, fixtures, sleeper: Path
+) -> None:
+    """argv[0] `cua-driver` says nothing about which build is behind it.
+
+    A vendored or hand-built binary started from PATH looks exactly like ours
+    on the command line, so the executable behind the pid is what decides.
+    """
+    install_home = tmp_path / "home/.cua-driver"
+    (install_home / "packages/current").mkdir(parents=True)
+    ours = install_home / "packages/current/cua-driver"
+    shutil.copy2(sleeper, ours)
+    foreign = tmp_path / "vendor/cua-driver"
+    foreign.parent.mkdir()
+    shutil.copy2(sleeper, foreign)
+
+    # Both are `cua-driver serve` in ps; only one is the release install's.
+    fixtures.spawn_with("ours", ours, "cua-driver", "serve")
+    fixtures.spawn_with("foreign", foreign, "cua-driver", "serve")
+    fixtures.wait_started()
+
+    stop = _source_only(
+        'DAEMON_ARGV0_REGEXES=()\n'
+        'DAEMON_BARE_ARGV0_REGEXES=("cua-driver")\n'
+        'DAEMON_ORIGIN_PREFIXES=("${argv[0]}")\n'
+        'status=0\n'
+        'stop_release_serve_daemons || status=$?\n'
+        'printf "stopped=%s\\n" "$status"\n',
+        os.environ.copy(),
+        str(install_home),
+    )
+
+    assert "stopped=0" in stop.stdout, stop.stdout + stop.stderr
+    assert not fixtures.alive("ours")
+    assert fixtures.alive("foreign")
+
+
+def test_a_respawning_daemon_is_never_reported_as_stopped(tmp_path: Path) -> None:
+    """The autostart teardown swallows its errors, so a KeepAlive agent or a
+    `Restart=on-failure` unit can still be there. Each round has to re-scan:
+    the first pid dying is not the daemon stopping."""
+    home, _calls, env = _sandbox(
+        tmp_path,
+        "Linux",
+        fake_command_line=f"{BUNDLE_BINARY} serve",
+        respawning=True,
+    )
+    _install_rust_marker(home)
+
+    result = _run_uninstall(env, expected_returncode=1)
+
+    assert "daemon_stop_incomplete" in result.stderr
+    assert "supervisor keeps restarting" in result.stdout
+    assert STOPPED not in result.stdout
+
+
+def test_a_failed_stop_is_visible_in_the_closing_line_and_exit_code(
+    tmp_path: Path,
+) -> None:
+    """Everything on disk is still removed, but "uninstalled." on its own would
+    be a lie, and a chained reinstall would run against a live daemon."""
+    home, _calls, env = _sandbox(
+        tmp_path, "Linux", fake_command_line=f"{BUNDLE_BINARY} serve"
+    )
+    _install_rust_marker(home)
+
+    result = _run_uninstall(env, expected_returncode=1)
+
+    assert "uninstalled, but a cua-driver process is still running" in result.stdout
+    # The rest of the uninstall still ran.
+    assert "removed runtime payloads" in result.stdout
 
 
 def test_uninstall_stops_a_live_daemon_and_reports_it(
@@ -682,7 +807,7 @@ def test_a_daemon_that_survives_sigkill_is_never_reported_as_stopped(
     )
     _install_rust_marker(home)
 
-    result = _run_uninstall(env)
+    result = _run_uninstall(env, expected_returncode=1)
 
     assert "daemon_stop_incomplete" in result.stderr
     assert "warning: could not stop the running cua-driver serve daemon" in result.stdout
@@ -700,7 +825,7 @@ def test_unresolvable_command_line_is_reported_not_guessed(tmp_path: Path) -> No
     )
     _install_rust_marker(home)
 
-    result = _run_uninstall(env)
+    result = _run_uninstall(env, expected_returncode=1)
 
     assert "daemon_stop_undetermined" in result.stderr
     assert "could not be resolved" in result.stdout
@@ -715,10 +840,14 @@ def test_process_tools_are_required_before_signalling(tmp_path: Path) -> None:
     _write_executable(fake_bin / "id", f"printf '%s\\n' '{FAKE_UID}'\n")
     env = {**os.environ, "PATH": str(fake_bin), "HOME": str(tmp_path)}
 
+    # Declared literally: PATH has neither sed nor a candidate to escape.
     # `set -e` is live in the sourced script, so the status has to be caught.
     result = _source_only(
+        'DAEMON_ARGV0_REGEXES=("/opt/cua/cua-driver")\n'
+        'DAEMON_BARE_ARGV0_REGEXES=()\n'
+        'DAEMON_ORIGIN_PREFIXES=()\n'
         'status=0\n'
-        'stop_release_serve_daemons "/opt/cua/cua-driver" || status=$?\n'
+        'stop_release_serve_daemons || status=$?\n'
         'printf "status=%s" "$status"',
         env,
     )

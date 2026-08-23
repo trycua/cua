@@ -118,8 +118,21 @@ process alone rather than guessing. Daemons started the way the product starts
 them are unaffected: the LaunchAgent, the systemd unit, `install-local.sh
 --autostart` and the runtime's own relaunch all put `serve` ahead of any flag.
 
+A daemon started from PATH has argv[0] `cua-driver`, which any build on the
+machine can have, so those candidates are kept only when the executable behind
+the pid resolves into the install — a vendored or hand-built `cua-driver serve`
+is not the uninstaller's to stop.
+
 `cua-driver mcp` runs as a stdio child of a live MCP client and exits with that
-client, so a surviving one is reported rather than killed. A daemon that
-outlives SIGTERM and SIGKILL is reported on stderr as
-`daemon_stop_incomplete`; the uninstaller never reports a stop it did not
-achieve.
+client, so a surviving one is reported rather than killed.
+
+Stopping a pid is not the same as stopping the daemon: the autostart teardown
+is best-effort, so after the pids are confirmed gone the scan runs again and a
+supervisor that survived it is caught by the new pid it started. A daemon that
+outlives SIGTERM and SIGKILL, or one that keeps coming back, is reported on
+stderr as `daemon_stop_incomplete`; a process whose subcommand could not be
+resolved is reported as `daemon_stop_undetermined`. In either case the removal
+still completes, but the closing line says a cua-driver process is still
+running and the script exits non-zero — the uninstaller never reports a stop it
+did not achieve, and a script that chains a reinstall should not proceed against
+a live daemon holding the old socket.

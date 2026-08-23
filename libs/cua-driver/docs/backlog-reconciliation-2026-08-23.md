@@ -2,6 +2,9 @@
 
 Status: point-in-time, read-only maintainer recommendation
 
+For operating-system lanes, session classes, and safe sequential VM reuse, see
+the companion [platform and test-batching plan](backlog-by-platform-and-test-batching-2026-08-23.md).
+
 This report reconciles the historical backlog review recovered from commit
 `3251536e645fa148c7cd9bfdba42575f47a1a19c` with `trycua/cua` at
 2026-08-23 02:14 CDT. The historical document is context only: every issue,

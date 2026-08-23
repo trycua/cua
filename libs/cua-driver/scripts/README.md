@@ -107,8 +107,19 @@ not by pattern: flags may precede the subcommand (`cua-driver --no-overlay
 serve` is a daemon) and only a value-taking flag consumes the token after it,
 so `cua-driver --socket serve mcp` is an MCP child whose socket is named
 `serve`, and `cua-driver --no-overlay call serve` is a `call`. Neither is
-signalled. `cua-driver mcp` runs as
-a stdio child of a live MCP client and exits with that client, so a surviving
-one is reported rather than killed. A daemon that outlives SIGTERM and SIGKILL
-is reported on stderr as `daemon_stop_incomplete`; the uninstaller never
-reports a stop it did not achieve.
+signalled.
+
+That scan needs real argument boundaries, which Linux provides through
+`/proc/<pid>/cmdline`. macOS exposes no equivalent to a shell — `ps` joins the
+arguments with spaces — so when a value-taking flag precedes the subcommand
+there, the uninstaller cannot tell `--socket "/tmp/a serve" mcp` from
+`--socket /tmp/a serve`. It reports `daemon_stop_undetermined` and leaves the
+process alone rather than guessing. Daemons started the way the product starts
+them are unaffected: the LaunchAgent, the systemd unit, `install-local.sh
+--autostart` and the runtime's own relaunch all put `serve` ahead of any flag.
+
+`cua-driver mcp` runs as a stdio child of a live MCP client and exits with that
+client, so a surviving one is reported rather than killed. A daemon that
+outlives SIGTERM and SIGKILL is reported on stderr as
+`daemon_stop_incomplete`; the uninstaller never reports a stop it did not
+achieve.

@@ -41,6 +41,8 @@ BUNDLE_BINARY = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
 # Above pid_max on Linux and macOS, so signalling it can never reach a process.
 UNREACHABLE_PID = "2147483646"
 STOPPED = "stopped the running cua-driver serve daemon"
+# Linux exposes real argument boundaries through /proc; macOS does not.
+HAS_PROC = Path("/proc/self/cmdline").exists()
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -53,15 +55,16 @@ def _sandbox(
     os_name: str,
     *,
     record_pgrep: bool = False,
-    immortal_command_line: str | None = None,
+    fake_command_line: str | None = None,
     real_uid: bool = False,
 ) -> tuple[Path, Path, dict[str, str]]:
     """Run the uninstaller against a throwaway HOME with shimmed tools.
 
     By default pgrep, ps and kill are the real ones, so process tests exercise
     the same code path a user gets. `record_pgrep` logs the patterns and
-    reports no matches; `immortal_command_line` fakes a candidate that never
-    dies, which is the one outcome a real process cannot be made to produce.
+    reports no matches; `fake_command_line` fakes a candidate whose pid cannot be
+    signalled, for the two outcomes a real process cannot produce: surviving
+    SIGKILL, and having unrecoverable argument boundaries on a /proc host.
     """
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
@@ -90,7 +93,7 @@ def _sandbox(
             fake_bin / "pgrep",
             f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\nexit 1\n",
         )
-    elif immortal_command_line is not None:
+    elif fake_command_line is not None:
         _write_executable(
             fake_bin / "pgrep",
             f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\n"
@@ -102,7 +105,7 @@ def _sandbox(
             fake_bin / "ps",
             f"""case "$*" in
     *state*) printf 'S\\n' ;;
-    *) printf '%s\\n' '{immortal_command_line}' ;;
+    *) printf '%s\\n' '{fake_command_line}' ;;
 esac
 """,
         )
@@ -161,18 +164,16 @@ def _source_only(
     """Call the uninstaller's helpers directly through its source-only seam.
 
     Sourcing runs the script's own flag parser, which shifts the positional
-    parameters away, so extra arguments are copied into `arg1`, `arg2`, … for
-    the caller's snippet before the source.
+    parameters away, so extra arguments are saved into an `argv` array — with
+    their boundaries intact — before the source.
     """
     env = {**env, "CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY": "1"}
-    prologue = "".join(
-        f'arg{index}="${index + 1}"\n' for index in range(1, len(args) + 1)
-    )
+    prologue = 'uninstall="$1"\nshift\nargv=("$@")\n'
     return subprocess.run(
         [
             "/bin/bash",
             "-c",
-            f'{prologue}source "$1"\n{script}',
+            f'{prologue}source "$uninstall"\n{script}',
             "bash",
             str(UNINSTALL),
             *args,
@@ -293,36 +294,53 @@ def test_foreign_paths_are_not_candidates(tmp_path: Path, name: str) -> None:
 # --- subcommand resolution --------------------------------------------------
 
 
-SUBCOMMAND_CASES = {
-    "plain": (f"{BUNDLE_BINARY} serve", "serve"),
-    "bare flag first": (f"{BUNDLE_BINARY} --no-overlay serve", "serve"),
-    "value flag first": (f"{BUNDLE_BINARY} --cursor-theme cua.default serve", "serve"),
-    "socket value": (f"{BUNDLE_BINARY} --socket /tmp/cua.sock serve", "serve"),
+SUBCOMMAND_CASES: dict[str, tuple[list[str], str]] = {
+    "plain": ([BUNDLE_BINARY, "serve"], "serve"),
+    "bare flag first": ([BUNDLE_BINARY, "--no-overlay", "serve"], "serve"),
+    "value flag first": (
+        [BUNDLE_BINARY, "--cursor-theme", "cua.default", "serve"],
+        "serve",
+    ),
+    "socket value": ([BUNDLE_BINARY, "--socket", "/tmp/cua.sock", "serve"], "serve"),
     # `--flag=value` is not in VALUE_FLAGS' exact-match list, so it swallows
     # nothing.
-    "joined value": (f"{BUNDLE_BINARY} --socket=/tmp/cua.sock serve", "serve"),
+    "joined value": ([BUNDLE_BINARY, "--socket=/tmp/cua.sock", "serve"], "serve"),
     "flags after the subcommand": (
-        f"{BUNDLE_BINARY} --no-overlay serve --permission-mode bounded",
+        [BUNDLE_BINARY, "--no-overlay", "serve", "--permission-mode", "bounded"],
         "serve",
     ),
     # A value flag consumes its token, so the word `serve` here is a socket
     # name and the invocation is an MCP child of a live client.
-    "serve as a socket value": (f"{BUNDLE_BINARY} --socket serve mcp", "mcp"),
-    "serve as a grant value": (f"{BUNDLE_BINARY} --grant serve mcp", "mcp"),
-    "serve as a socket value, status": (f"{BUNDLE_BINARY} --socket serve status", "status"),
-    # A bare flag consumes nothing, so the next token is the subcommand and
-    # `serve` is that command's argument.
-    "serve as a call argument": (f"{BUNDLE_BINARY} --no-overlay call serve", "call"),
-    "serve as a describe argument": (
-        f"{BUNDLE_BINARY} --no-overlay describe serve",
-        "describe",
+    "serve as a socket value": ([BUNDLE_BINARY, "--socket", "serve", "mcp"], "mcp"),
+    "serve as a grant value": ([BUNDLE_BINARY, "--grant", "serve", "mcp"], "mcp"),
+    "serve as a socket value, status": (
+        [BUNDLE_BINARY, "--socket", "serve", "status"],
+        "status",
     ),
-    "flagless call": (f"{BUNDLE_BINARY} call serve", "call"),
-    "mcp with trailing flag": (
-        f"{BUNDLE_BINARY} mcp --claude-code-computer-use-compat",
+    # An argument with whitespace inside it is one argument. Real argv keeps
+    # that boundary, so the socket is named "/tmp/foo serve" and this is an
+    # MCP child — the flattened command line cannot tell.
+    "serve inside a socket value": (
+        [BUNDLE_BINARY, "--socket", "/tmp/foo serve", "mcp"],
         "mcp",
     ),
-    "no subcommand at all": (BUNDLE_BINARY, ""),
+    "whitespace value before serve": (
+        [BUNDLE_BINARY, "--socket", "/tmp/foo bar", "serve"],
+        "serve",
+    ),
+    # A bare flag consumes nothing, so the next token is the subcommand and
+    # `serve` is that command's argument.
+    "serve as a call argument": ([BUNDLE_BINARY, "--no-overlay", "call", "serve"], "call"),
+    "serve as a describe argument": (
+        [BUNDLE_BINARY, "--no-overlay", "describe", "serve"],
+        "describe",
+    ),
+    "flagless call": ([BUNDLE_BINARY, "call", "serve"], "call"),
+    "mcp with trailing flag": (
+        [BUNDLE_BINARY, "mcp", "--claude-code-computer-use-compat"],
+        "mcp",
+    ),
+    "no subcommand at all": ([BUNDLE_BINARY], ""),
 }
 
 
@@ -331,11 +349,50 @@ def test_subcommand_scan_matches_the_cli(tmp_path: Path, name: str) -> None:
     """The scan has to agree with `positionals()` in cli.rs, in both
     directions: a missed daemon is the bug this phase fixes, and a false
     daemon is a process the uninstaller kills that it must not touch."""
-    command_line, expected = SUBCOMMAND_CASES[name]
+    argv, expected = SUBCOMMAND_CASES[name]
+    _home, _calls, env = _sandbox(tmp_path, "Linux", record_pgrep=True)
+
+    result = _source_only('daemon_subcommand exact "${argv[@]}" || true', env, *argv)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+
+
+FLATTENED_CASES: dict[str, tuple[str, str]] = {
+    # Nothing has been lost while no value flag has been seen: the product
+    # itself always puts `serve` ahead of any flag (the LaunchAgent, the
+    # systemd unit and the runtime's own relaunch all do).
+    "serve first": (f"{BUNDLE_BINARY} serve", "serve"),
+    "bare flags only": (f"{BUNDLE_BINARY} --no-overlay serve", "serve"),
+    "subcommand first, flags after": (
+        f"{BUNDLE_BINARY} serve --socket /tmp/cua.sock",
+        "serve",
+    ),
+    "call first": (f"{BUNDLE_BINARY} --no-overlay call serve", "call"),
+    # Past a value flag the argument boundaries are gone: this line is what
+    # both `--socket "/tmp/foo serve" mcp` and `--socket /tmp/foo serve` (with
+    # a trailing mcp) flatten to. Guessing would either kill an MCP child or
+    # miss a daemon, so the scan says so instead.
+    "value flag hides the boundary": (
+        f"{BUNDLE_BINARY} --socket /tmp/foo serve mcp",
+        "?",
+    ),
+    "value flag before serve": (f"{BUNDLE_BINARY} --socket /tmp/x serve", "?"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(FLATTENED_CASES))
+def test_flattened_scan_declines_to_guess(tmp_path: Path, name: str) -> None:
+    """On a host without real argument boundaries (macOS), the scan resolves
+    what it still can and refuses to invent the rest."""
+    command_line, expected = FLATTENED_CASES[name]
     _home, _calls, env = _sandbox(tmp_path, "Linux", record_pgrep=True)
 
     result = _source_only(
-        'daemon_subcommand "$arg1" || true', env, command_line
+        'read -r -a tokens <<< "${argv[0]}"\n'
+        'daemon_subcommand flattened "${tokens[@]}" || true',
+        env,
+        command_line,
     )
 
     assert result.returncode == 0, result.stderr
@@ -455,7 +512,7 @@ def test_only_serve_invocations_are_stopped(tmp_path: Path, fixtures) -> None:
 
     stop = _source_only(
         'status=0\n'
-        'regex="$(escape_path_regex "$arg1")"\n'
+        'regex="$(escape_path_regex "${argv[0]}")"\n'
         'stop_release_serve_daemons "$regex" || status=$?\n'
         'printf "stopped=%s\\n" "$status"\n'
         'report_surviving_release_processes "$regex" && printf "survivors=yes\\n"\n',
@@ -471,6 +528,46 @@ def test_only_serve_invocations_are_stopped(tmp_path: Path, fixtures) -> None:
     assert fixtures.alive("call with serve argument")
     assert fixtures.alive("plain mcp")
     assert "survivors=yes" in stop.stdout
+
+
+def test_whitespace_in_an_argument_does_not_move_the_subcommand(
+    tmp_path: Path, fixtures
+) -> None:
+    """An argument that contains whitespace is still one argument.
+
+    `--socket "/tmp/foo serve" mcp` is an MCP child whose socket is named
+    `/tmp/foo serve`, and `--socket "/tmp/foo bar" serve` is a daemon. Both
+    flatten to command lines a whitespace split cannot tell apart, so the
+    decision has to come from the real argv.
+    """
+    binary = tmp_path / "packages/current/cua-driver"
+    fixtures.spawn("mcp with a serve-suffixed socket", binary, "--socket", "/tmp/foo serve", "mcp")
+    fixtures.spawn("daemon with a spaced socket", binary, "--socket", "/tmp/foo bar", "serve")
+    fixtures.wait_started()
+
+    stop = _source_only(
+        'status=0\n'
+        'regex="$(escape_path_regex "${argv[0]}")"\n'
+        'stop_release_serve_daemons "$regex" || status=$?\n'
+        'printf "stopped=%s\\n" "$status"\n'
+        'report_undetermined_release_processes "$regex" && printf "undetermined=yes\\n"\n',
+        os.environ.copy(),
+        str(binary),
+    )
+
+    # The MCP child is never signalled, on any host.
+    assert fixtures.alive("mcp with a serve-suffixed socket"), stop.stdout + stop.stderr
+    if HAS_PROC:
+        # Real argv is readable, so the daemon is resolved exactly and stopped.
+        assert "stopped=0" in stop.stdout, stop.stdout + stop.stderr
+        assert not fixtures.alive("daemon with a spaced socket")
+        assert "undetermined=yes" not in stop.stdout
+    else:
+        # Without it the uninstaller declines to guess and says so, rather
+        # than killing the MCP child to reach the daemon.
+        assert "stopped=1" in stop.stdout, stop.stdout + stop.stderr
+        assert fixtures.alive("daemon with a spaced socket")
+        assert "undetermined=yes" in stop.stdout
 
 
 def test_uninstall_stops_a_live_daemon_and_reports_it(
@@ -581,7 +678,7 @@ def test_a_daemon_that_survives_sigkill_is_never_reported_as_stopped(
     home, _calls, env = _sandbox(
         tmp_path,
         "Linux",
-        immortal_command_line=f"{BUNDLE_BINARY} serve",
+        fake_command_line=f"{BUNDLE_BINARY} serve",
     )
     _install_rust_marker(home)
 
@@ -589,6 +686,24 @@ def test_a_daemon_that_survives_sigkill_is_never_reported_as_stopped(
 
     assert "daemon_stop_incomplete" in result.stderr
     assert "warning: could not stop the running cua-driver serve daemon" in result.stdout
+    assert STOPPED not in result.stdout
+
+
+def test_unresolvable_command_line_is_reported_not_guessed(tmp_path: Path) -> None:
+    """Faked because /proc exists on the CI host: a candidate whose flattened
+    command line hides its argument boundaries must be left alone and
+    reported, not killed on a guess."""
+    home, _calls, env = _sandbox(
+        tmp_path,
+        "Linux",
+        fake_command_line=f"{BUNDLE_BINARY} --socket /tmp/foo serve mcp",
+    )
+    _install_rust_marker(home)
+
+    result = _run_uninstall(env)
+
+    assert "daemon_stop_undetermined" in result.stderr
+    assert "could not be resolved" in result.stdout
     assert STOPPED not in result.stdout
 
 

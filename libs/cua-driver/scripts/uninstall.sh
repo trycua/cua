@@ -26,8 +26,11 @@
 #       argv[0]; whether one is a daemon is decided by scanning its command
 #       line the way the CLI does, so `cua-driver mcp` children of a live MCP
 #       client are reported, not killed, even when a flag value happens to be
-#       the word `serve`. A daemon that outlives SIGKILL is reported as
-#       `daemon_stop_incomplete` rather than counted as stopped.
+#       the word `serve`. That scan reads real argv from /proc where the host
+#       has it; where it does not (macOS) an unrecoverable command line is
+#       reported as `daemon_stop_undetermined` instead of guessed at. A daemon
+#       that outlives SIGKILL is reported as `daemon_stop_incomplete` rather
+#       than counted as stopped.
 #   Linux:
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
@@ -176,7 +179,7 @@ is_daemon_value_flag() {
     return 1
 }
 
-# Print the subcommand a command line resolves to, or nothing when it has none.
+# Print the subcommand a token list resolves to, or nothing when it has none.
 #
 # This is a scan rather than a pattern because the two are not the same
 # language. The CLI takes the first NON-FLAG argument as the subcommand, and
@@ -191,14 +194,30 @@ is_daemon_value_flag() {
 # also matches `--socket`, so the last two lines above match as daemons and get
 # killed. Mirror `positionals()` in cli.rs instead, and let the regex do only
 # what it is unambiguous at: pinning argv[0].
+#
+# $1 selects how much the tokens can be trusted:
+#
+#   exact      the tokens are the real argv, one element each.
+#   flattened  the tokens came from a whitespace-joined command line, where an
+#              argument that itself contains whitespace is indistinguishable
+#              from the arguments after it. That is recoverable only until a
+#              value-taking flag appears: `--socket "/tmp/a serve" mcp` and
+#              `--socket /tmp/a serve` flatten to command lines whose token
+#              lists differ by nothing a scan can see. Print `?` there —
+#              guessing would either kill an MCP child or miss a daemon.
 daemon_subcommand() {
-    local -a tokens=()
-    read -r -a tokens <<< "$1"
+    local mode="$1"
+    shift
+    local -a tokens=("$@")
     local index=1
     local token
     while [[ "$index" -lt "${#tokens[@]}" ]]; do
         token="${tokens[index]}"
         if is_daemon_value_flag "$token"; then
+            if [[ "$mode" == "flattened" ]]; then
+                printf '?'
+                return 0
+            fi
             index=$((index + 2))
         elif [[ "$token" == -* ]]; then
             index=$((index + 1))
@@ -208,6 +227,36 @@ daemon_subcommand() {
         fi
     done
     return 1
+}
+
+# Print the subcommand of a running process, or `?` when its argument
+# boundaries cannot be recovered.
+#
+# Linux exposes the real argv through /proc/<pid>/cmdline, NUL-separated, so the
+# scan is exact there. macOS has no equivalent a shell can read: `ps -o args=`
+# joins the arguments with spaces and the original boundaries are gone, so the
+# scan falls back to `flattened` and declines to guess. A daemon started the way
+# the product starts one — `serve` ahead of any flag, as install-local.sh, the
+# LaunchAgent, the systemd unit and the runtime's own relaunch all do — is
+# unaffected, because no value flag precedes the subcommand.
+daemon_pid_subcommand() {
+    local pid="$1"
+    local -a argv=()
+    local token
+    if [[ -r "/proc/$pid/cmdline" ]]; then
+        while IFS= read -r -d "" token; do
+            argv+=("$token")
+        done < "/proc/$pid/cmdline"
+        [[ "${#argv[@]}" -gt 0 ]] || return 1
+        daemon_subcommand exact "${argv[@]}"
+        return
+    fi
+    local command_line
+    command_line="$(ps -ww -o args= -p "$pid" 2>/dev/null || true)"
+    [[ -n "$command_line" ]] || return 1
+    read -r -a argv <<< "$command_line"
+    [[ "${#argv[@]}" -gt 0 ]] || return 1
+    daemon_subcommand flattened "${argv[@]}"
 }
 
 # Anchor an argv[0] regex fragment as a whole-command-line match for pgrep.
@@ -242,7 +291,8 @@ daemon_pids_alive() {
 
 # Print the pids, one per line, of this uid's live processes whose argv[0] is
 # one of the release install paths and whose subcommand is $2. An empty
-# subcommand matches any invocation. Returns 1 when there are none.
+# subcommand matches any invocation, and `?` selects the ones whose argument
+# boundaries could not be recovered. Returns 1 when there are none.
 #
 # pgrep narrows the candidates by argv[0]; every kill decision is then made by
 # reading the process's real command line, so a flag value that happens to be
@@ -251,7 +301,7 @@ release_daemon_pids() {
     local uid="$1"
     local subcommand="$2"
     shift 2
-    local binary_regex pid command_line
+    local binary_regex pid
     local seen=" "
     local found=1
     for binary_regex in "$@"; do
@@ -262,9 +312,7 @@ release_daemon_pids() {
             seen="$seen$pid "
             daemon_pid_alive "$pid" || continue
             if [[ -n "$subcommand" ]]; then
-                command_line="$(ps -ww -o args= -p "$pid" 2>/dev/null || true)"
-                [[ -n "$command_line" ]] || continue
-                [[ "$(daemon_subcommand "$command_line" || true)" == "$subcommand" ]] \
+                [[ "$(daemon_pid_subcommand "$pid" || true)" == "$subcommand" ]] \
                     || continue
             fi
             printf '%s\n' "$pid"
@@ -350,6 +398,19 @@ report_surviving_release_processes() {
     local uid
     uid="$(id -u)"
     release_daemon_pids "$uid" "" "$@" >/dev/null
+}
+
+# Report — never kill — processes whose subcommand could not be resolved
+# because the host does not expose real argument boundaries (macOS). Saying so
+# is the honest outcome: the alternative is guessing, which either kills an MCP
+# child or silently leaves the daemon this uninstaller is meant to stop.
+# Returns 0 when at least one such process is alive.
+report_undetermined_release_processes() {
+    command -v pgrep >/dev/null 2>&1 || return 1
+    command -v ps >/dev/null 2>&1 || return 1
+    local uid
+    uid="$(id -u)"
+    release_daemon_pids "$uid" "?" "$@" >/dev/null
 }
 
 reject_root_invocation() {
@@ -621,6 +682,10 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
                 ;;
             *) log "no running cua-driver serve daemon (skipping)" ;;
         esac
+        if report_undetermined_release_processes "${DAEMON_ARGV0_REGEXES[@]}"; then
+            printf 'daemon_stop_undetermined: a running cua-driver process has an argument containing whitespace, and this host does not expose real argument boundaries to a shell, so it could not be told apart from an MCP client child; it was left alone. Inspect it with ps and stop it by hand if it is a serve daemon.\n' >&2
+            log "warning: left a cua-driver process alone because its subcommand could not be resolved (see stderr)"
+        fi
         if report_surviving_release_processes "${DAEMON_ARGV0_REGEXES[@]}"; then
             log "note: other cua-driver processes are still running; \`cua-driver mcp\` runs as a stdio child of your MCP client and exits when that client closes"
         fi

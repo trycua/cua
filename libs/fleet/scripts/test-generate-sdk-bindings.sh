@@ -8,6 +8,8 @@ compat_generator="$workspace_dir/scripts/generate-compat-sdk-bindings.sh"
 compat_normalizer="$workspace_dir/scripts/normalize-compat-sdk-bindings.py"
 bindings_dir="$workspace_dir/sdk-bindings"
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-sdk-bindings-test.XXXXXX")"
+regression_target_root="${CYCLOPS_SDK_BINDINGS_REGRESSION_TARGET_ROOT:-$workspace_dir/target/sdk-bindings-regression}"
+mkdir -p "$regression_target_root"
 if cargo_bin="$(command -v cargo)" && [ -n "$cargo_bin" ]; then
   :
 else
@@ -236,7 +238,8 @@ host_triple="$(rustc -vV | sed -n 's/^host: //p')"
 run_resolver_fixture_regressions
 
 run_target_layout_regressions() {
-  build_target_directory="$temporary_directory/build-target-env"
+  shared_target_directory="$regression_target_root/shared"
+  build_target_directory="$shared_target_directory"
   CARGO_TARGET_DIR="$build_target_directory" CARGO_BUILD_TARGET="$host_triple" "$generator"
   CARGO_TARGET_DIR="$build_target_directory" CARGO_BUILD_TARGET="$host_triple" "$generator" --check
 
@@ -254,7 +257,7 @@ target = "$host_triple"
 EOF_CONFIG
   cargo_config_active=true
 
-  config_target_directory="$temporary_directory/build-target-config"
+  config_target_directory="$shared_target_directory"
   CARGO_TARGET_DIR="$config_target_directory" "$generator"
   CARGO_TARGET_DIR="$config_target_directory" "$generator" --check
 

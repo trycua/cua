@@ -6,6 +6,7 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
   retries: 0,
+  workers: process.env.CI ? 2 : undefined,
   use: {
     baseURL: "http://localhost:5180",
     headless: true,

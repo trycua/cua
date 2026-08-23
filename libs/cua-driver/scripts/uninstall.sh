@@ -23,7 +23,9 @@
 #   All hosts:
 #     - the running `cua-driver serve` daemon is stopped before anything is
 #       deleted (mirrors uninstall.ps1 on Windows). `cua-driver mcp` children
-#       of a live MCP client are reported, not killed.
+#       of a live MCP client are reported, not killed, and a daemon that
+#       outlives SIGKILL is reported as `daemon_stop_incomplete` rather than
+#       counted as stopped.
 #   Linux:
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
@@ -144,25 +146,58 @@ purge_linux_history() {
     fi
 }
 
-# Anchor an installed-binary path as an argv[0] match for pkill/pgrep. The
-# path is a literal, so every ERE metacharacter a $HOME or a package path may
-# contain is escaped before it is spliced into the pattern. Anchoring is what
-# keeps a launcher shell that merely mentions the path in its script text out
-# of the match — see the same note in uninstall-local.sh.
+# Turn a literal installed-binary path into an argv[0] regex fragment: every
+# ERE metacharacter a $HOME or a package path may contain is escaped so the
+# path matches itself and nothing else.
+escape_path_regex() {
+    printf '%s' "$1" | sed 's/[][(){}.^$*+?|\\]/\\&/g'
+}
+
+# The CLI takes the FIRST NON-FLAG argument as the subcommand (see
+# `positionals()` in cli.rs), so flags legitimately precede it:
+#
+#   cua-driver --no-overlay serve
+#   cua-driver --cursor-theme cua.default serve
+#
+# Anything ahead of the subcommand is therefore a flag, optionally followed by
+# the single value token a value-taking flag consumes. Matching only
+# `<binary> serve` would miss those daemons and leave exactly the process this
+# uninstaller exists to stop.
+DAEMON_LEADING_FLAGS='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
+
+# Anchor an argv[0] regex fragment as a whole-command-line match for
+# pkill/pgrep, optionally requiring a subcommand. Anchoring is what keeps a
+# launcher shell that merely mentions the path in its script text out of the
+# match — see the same note in uninstall-local.sh.
 daemon_argv0_pattern() {
-    local binary="$1"
+    local binary_regex="$1"
     local subcommand="${2:-}"
-    local escaped
-    escaped="$(printf '%s' "$binary" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
     if [[ -n "$subcommand" ]]; then
-        printf '^%s[[:space:]]+%s([[:space:]]|$)' "$escaped" "$subcommand"
+        printf '^%s%s[[:space:]]+%s([[:space:]]|$)' \
+            "$binary_regex" "$DAEMON_LEADING_FLAGS" "$subcommand"
     else
-        printf '^%s([[:space:]]|$)' "$escaped"
+        printf '^%s([[:space:]]|$)' "$binary_regex"
     fi
 }
 
+# True when any process matching one of the argv[0] regexes (with the given
+# subcommand, if any) is alive for this uid.
+daemon_processes_alive() {
+    local uid="$1"
+    local subcommand="$2"
+    shift 2
+    local binary_regex
+    for binary_regex in "$@"; do
+        if pgrep -U "$uid" -f "$(daemon_argv0_pattern "$binary_regex" "$subcommand")" \
+            >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Stop the running `cua-driver serve` daemon(s) launched from any of the
-# release install paths passed as arguments.
+# release install argv[0] regexes passed as arguments.
 #
 # `pkill -x cua-driver` cannot be used: `-x` compares against the 15-character
 # truncated `comm`, so it is unreliable for this binary name. Match argv[0]
@@ -174,23 +209,25 @@ daemon_argv0_pattern() {
 # same /Applications bundle can be running for someone else, and their daemon
 # is neither ours to signal nor ours to wait for.
 #
-# Returns 0 when at least one process was signalled, 1 when nothing matched,
-# 2 when pkill is unavailable and nothing could be stopped.
+# Returns 0 only when every matched daemon is confirmed gone, 1 when nothing
+# matched, 2 when pkill is unavailable, and 3 when a daemon survived SIGKILL —
+# the caller must not report a stop it did not achieve.
 stop_release_serve_daemons() {
     command -v pkill >/dev/null 2>&1 || return 2
-    local binary pattern
+    local binary_regex
     local uid
     uid="$(id -u)"
-    local -a patterns=()
-    for binary in "$@"; do
-        [[ -n "$binary" ]] || continue
-        patterns+=("$(daemon_argv0_pattern "$binary" serve)")
+    local -a regexes=()
+    for binary_regex in "$@"; do
+        [[ -n "$binary_regex" ]] || continue
+        regexes+=("$binary_regex")
     done
-    [[ "${#patterns[@]}" -gt 0 ]] || return 1
+    [[ "${#regexes[@]}" -gt 0 ]] || return 1
 
     local signalled=0
-    for pattern in "${patterns[@]}"; do
-        if pkill -TERM -U "$uid" -f "$pattern" >/dev/null 2>&1; then
+    for binary_regex in "${regexes[@]}"; do
+        if pkill -TERM -U "$uid" -f "$(daemon_argv0_pattern "$binary_regex" serve)" \
+            >/dev/null 2>&1; then
             signalled=1
         fi
     done
@@ -201,23 +238,27 @@ stop_release_serve_daemons() {
     # short grace period, so a wedged daemon cannot outlive the uninstall.
     local waited=0
     while [[ "$waited" -lt 10 ]]; do
-        local alive=0
-        for pattern in "${patterns[@]}"; do
-            if pgrep -U "$uid" -f "$pattern" >/dev/null 2>&1; then
-                alive=1
-                break
-            fi
-        done
-        [[ "$alive" == "1" ]] || return 0
+        daemon_processes_alive "$uid" serve "${regexes[@]}" || return 0
         # Fractional sleep is a BSD/GNU extension; fall back to whole seconds
         # rather than letting `set -e` abort the uninstall on a host without it.
         sleep 0.1 2>/dev/null || sleep 1 || true
         waited=$((waited + 1))
     done
-    for pattern in "${patterns[@]}"; do
-        pkill -KILL -U "$uid" -f "$pattern" >/dev/null 2>&1 || true
+    for binary_regex in "${regexes[@]}"; do
+        pkill -KILL -U "$uid" -f "$(daemon_argv0_pattern "$binary_regex" serve)" \
+            >/dev/null 2>&1 || true
     done
-    return 0
+    # SIGKILL is not a guarantee — an uninterruptible wait, or a process this
+    # uid may match but not signal, both survive it. The whole point of this
+    # phase is that no daemon outlives the uninstall, so confirm it instead of
+    # assuming it; the caller turns a survivor into a warning, not a success.
+    waited=0
+    while [[ "$waited" -lt 5 ]]; do
+        daemon_processes_alive "$uid" serve "${regexes[@]}" || return 0
+        sleep 0.1 2>/dev/null || sleep 1 || true
+        waited=$((waited + 1))
+    done
+    return 3
 }
 
 # Report — never kill — non-`serve` processes still running from the release
@@ -227,16 +268,9 @@ stop_release_serve_daemons() {
 # Returns 0 when at least one such process is alive.
 report_surviving_release_processes() {
     command -v pgrep >/dev/null 2>&1 || return 1
-    local binary
     local uid
     uid="$(id -u)"
-    for binary in "$@"; do
-        [[ -n "$binary" ]] || continue
-        if pgrep -U "$uid" -f "$(daemon_argv0_pattern "$binary")" >/dev/null 2>&1; then
-            return 0
-        fi
-    done
-    return 1
+    daemon_processes_alive "$uid" "" "$@"
 }
 
 reject_root_invocation() {
@@ -476,32 +510,39 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # Swift-only Mac the bundle path and the CLI symlink resolve to the retired
     # Swift driver, whose daemon is not ours to stop.
     if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
-        DAEMON_BINARIES=(
-            "$USER_BIN_LINK"
-            "$APP_BUNDLE/Contents/MacOS/cua-driver"
-            "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver"
-            "$PACKAGES_DIR/current/cua-driver"
-            "$LEGACY_HOME_DIR/packages/current/cua-driver"
+        DAEMON_ARGV0_REGEXES=(
+            "$(escape_path_regex "$USER_BIN_LINK")"
+            "$(escape_path_regex "$APP_BUNDLE/Contents/MacOS/cua-driver")"
+            "$(escape_path_regex "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver")"
+            "$(escape_path_regex "$PACKAGES_DIR/current/cua-driver")"
+            "$(escape_path_regex "$LEGACY_HOME_DIR/packages/current/cua-driver")"
+            # A daemon the runtime started for itself carries the realpath of a
+            # release in argv[0], because it resolves its own executable
+            # through the packages/current symlink. Match that namespace as a
+            # pattern rather than enumerating what is on disk: the installer
+            # prunes old release directories, so a daemon that survived an
+            # upgrade is running from a path that no longer exists — exactly
+            # the unlinked-binary case this phase is here for.
+            "$(escape_path_regex "$PACKAGES_DIR")/releases/[^[:space:]/]+/cua-driver"
+            "$(escape_path_regex "$LEGACY_HOME_DIR/packages")/releases/[^[:space:]/]+/cua-driver"
+            # Started from a shell with the install dir on PATH: the shell
+            # passes the word as typed, so argv[0] is the bare binary name.
+            # `cua-driver-local` cannot match — the pattern requires a
+            # separator right after the name.
+            "cua-driver"
         )
-        # A daemon the runtime started for itself (an MCP invocation spawning
-        # one on demand) carries the realpath of the active release in argv[0],
-        # because the runtime resolves its own executable through the
-        # packages/current symlink. Match the versioned paths too.
-        for PACKAGES_ROOT in "$PACKAGES_DIR" "$LEGACY_HOME_DIR/packages"; do
-            for RELEASE_BINARY in "$PACKAGES_ROOT"/releases/*/cua-driver; do
-                if [[ -e "$RELEASE_BINARY" ]]; then
-                    DAEMON_BINARIES+=("$RELEASE_BINARY")
-                fi
-            done
-        done
-        if stop_release_serve_daemons "${DAEMON_BINARIES[@]}"; then
-            log "stopped the running cua-driver serve daemon"
-        elif [[ "$?" == "2" ]]; then
-            log "pkill not found; a running cua-driver serve daemon (if any) has to be stopped by hand"
-        else
-            log "no running cua-driver serve daemon (skipping)"
-        fi
-        if report_surviving_release_processes "${DAEMON_BINARIES[@]}"; then
+        DAEMON_STOP_STATUS=0
+        stop_release_serve_daemons "${DAEMON_ARGV0_REGEXES[@]}" || DAEMON_STOP_STATUS=$?
+        case "$DAEMON_STOP_STATUS" in
+            0) log "stopped the running cua-driver serve daemon" ;;
+            2) log "pkill not found; a running cua-driver serve daemon (if any) has to be stopped by hand" ;;
+            3)
+                printf 'daemon_stop_incomplete: a cua-driver serve daemon survived SIGTERM and SIGKILL and is still running; stop it by hand before reinstalling.\n' >&2
+                log "warning: could not stop the running cua-driver serve daemon (see stderr)"
+                ;;
+            *) log "no running cua-driver serve daemon (skipping)" ;;
+        esac
+        if report_surviving_release_processes "${DAEMON_ARGV0_REGEXES[@]}"; then
             log "note: other cua-driver processes are still running; \`cua-driver mcp\` runs as a stdio child of your MCP client and exits when that client closes"
         fi
     else

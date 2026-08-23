@@ -99,6 +99,11 @@ Every uninstaller stops the running daemon before it deletes anything:
 `uninstall.ps1` stops each `cua-driver.exe`, and `uninstall.sh` stops
 `cua-driver serve` on macOS and Linux by matching argv[0] over the release
 install paths, gated on the same on-disk Rust marker that guards every other
-shared-path removal. `cua-driver mcp` runs as a stdio child of a live MCP
-client and exits with that client, so a surviving one is reported rather than
-killed.
+shared-path removal. The match allows the flags the CLI accepts ahead of a
+subcommand (`cua-driver --no-overlay serve`) and covers versioned release
+paths the installer has already pruned, since a daemon that survived an
+upgrade runs from a directory that no longer exists. `cua-driver mcp` runs as
+a stdio child of a live MCP client and exits with that client, so a surviving
+one is reported rather than killed. A daemon that outlives SIGTERM and SIGKILL
+is reported on stderr as `daemon_stop_incomplete`; the uninstaller never
+reports a stop it did not achieve.

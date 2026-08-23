@@ -18,30 +18,217 @@ different SHA.
 Evidence was rechecked at 2026-08-23 11:54 CDT against `origin/main` at
 `737dc2a069528abadee67526d138a907e1c52061` and live GitHub state. Evidence
 levels use the reconciliation report's **Deep**, **Standard**, and **Inventory**
-scale.
+scale. The five public Cua Sandbox and Fleet pages cited below were rechecked at
+2026-08-23 12:40 CDT.
 
-## Recommended first batch
+## Public Cua Fleet pilot
 
-If Francesco selects priority Windows reproduction, reuse one clean interactive
-Windows GUI VM for batch **W1**:
+If Francesco selects priority Windows reproduction, use one reusable public Cua
+Fleet pool for the two sequential **W1** candidate segments. Reuse the pool and
+its configuration, not candidate state. Candidate B must start from the pinned
+image independently of every filesystem, registry, process, account, profile,
+daemon, and GUI mutation made by candidate A.
 
-1. At current main `737dc2a069528abadee67526d138a907e1c52061`, run a
-   focused protocol/session reproduction for
-   [#3329](https://github.com/trycua/cua/issues/3329). Record the daemon, MCP
-   shim, session label, owner disconnect, process generation, and next-call
-   result in a candidate-specific ledger.
-2. End the segment, collect artifacts, and fully revert the VM to its named clean
-   snapshot. The reported failure mutates the exact daemon, shim, process, and
-   session state that a later test would otherwise inherit.
-3. Check out [#3275](https://github.com/trycua/cua/pull/3275) at exact head
-   `1429831d5a27246ea241f55b4f0f991884e43f5b`. In a separate ledger, replay
-   focused diagnostics for both exact-head failing owners: shared
-   Electron/Tauri and native WPF/WinUI3/WebView2.
-4. Revert the VM again when the candidate segment ends. Run the selector-free
-   complete Windows harness only after a repaired, stable exact candidate SHA
-   exists.
+### What the public documentation establishes
 
-This revises the initial suggestion in one important respect: the exact-head
+A Cua Sandbox is one isolated computer whose code and GUI interfaces share the
+same filesystem, processes, and operating-system state.[1] An image is the
+immutable contract for a fresh sandbox's starting state; a running sandbox then
+accumulates its own writable state. Snapshots can create images, and forks from
+one snapshot have independent writable disks.[1]
+
+The public Terraform provider documents reusable Linux and Windows pools on
+`run.cua.ai`, with either a static warm-replica target or claim-driven
+autoscaling.[3] Its Windows example uses KubeVirt, EFI, the public
+`cua-windows-2022` image, computer-server port `8000`, and a TCP readiness probe.
+Those settings establish the public example's boot and service shape; readiness
+does not prove a clean candidate boundary.[3]
+
+The public Python guide uses `Pool.apply()` to create or reconcile a pool and
+`pool.claim()` to create or reconnect to a claim. Exiting the claim context
+releases the claim while leaving the pool and its one warm replica available.[4]
+The lifecycle guide likewise distinguishes disconnecting from destroying a
+sandbox: disconnect preserves the running machine and its state, while destroy
+deletes it.[2]
+
+These public pages do **not** say that releasing a Fleet claim cleans, reimages,
+or replaces its replica. A new claim identity is therefore not proof of a new
+sandbox, and neither release-plus-rewarm nor claim recreation is a documented
+clean boundary. Autoscaling with `min_pool_size=0` is also not such proof: the
+Python guide says it scales an idle pool to zero and makes the next claim cold
+start, but does not promise a wipe or reimage.[4]
+
+### Recommended W1 shape
+
+Prefer one static Windows pool with `replicas=1`. It is the smallest reusable
+shape documented by the Python guide and keeps the two-item pilot sequential.[4]
+Broad parallel scale-out is unnecessary: the public concurrency guide supports
+multiple asynchronous sandboxes but recommends starting with low concurrency
+and increasing it only after observing resource use.[5]
+
+Infrastructure reuse and state reuse are separate decisions:
+
+- keep one reviewed pool name, image digest, replica target, service definition,
+  and teardown owner for the bounded pilot;
+- give candidate A and candidate B separate claim and sandbox identities and
+  separate evidence ledgers; and
+- before candidate B runs, prove that its sandbox was freshly created from the
+  pinned image digest and cannot contain candidate A state. If the selected
+  public Fleet operation cannot prove that boundary, abort W1. Do not substitute
+  a released claim, a cold start, or an absent known artifact for that proof.
+
+The pilot therefore validates the clean boundary before it executes either
+backlog candidate. Pool reuse is the proposed optimization; fresh candidate
+state is a non-negotiable acceptance condition.
+
+### Phase 0: no-cost preparation
+
+Phase 0 is documentation and read-only preparation only. It must not authenticate
+to Fleet, inspect credentials, create or reconcile a pool, claim a sandbox, run
+contributor code, or create billable capacity.
+
+1. Revalidate and pin candidate A to current main
+   `737dc2a069528abadee67526d138a907e1c52061`, candidate B to #3275 head
+   `1429831d5a27246ea241f55b4f0f991884e43f5b`, and each candidate's base SHA.
+2. Select the reviewed Windows image and record its immutable digest. Do not use
+   the public example's mutable `:latest` tag as candidate evidence.
+3. Review the following Terraform and Python shapes against the selected account
+   and current public SDK/provider versions. They are drafts, not executed
+   commands or committed configuration.
+4. Define the strict Windows interactive-desktop preflight, clean-boundary
+   rehearsal, candidate-specific ledgers, abort conditions, artifact hashing,
+   cost observation, and teardown checklist.
+
+Draft Terraform shape, adapted from the public Windows example:[3]
+
+```hcl
+resource "fleets_pool" "w1_windows" {
+  name                 = var.pool_name
+  cpu_cores            = 4
+  memory               = "4Gi"
+  container_disk_image = var.windows_image_digest
+  runtime              = "kubevirt"
+  firmware             = "efi"
+  replicas             = 1
+
+  readiness_probe_json = jsonencode({
+    tcpSocket          = { port = 8000 }
+    initialDelaySeconds = 60
+    periodSeconds       = 5
+    timeoutSeconds      = 3
+    failureThreshold    = 120
+  })
+
+  service {
+    name        = "computer-server"
+    target_port = 8000
+    protocol    = "TCP"
+  }
+}
+```
+
+Draft SDK control-flow shape, adapted from the public `Pool.apply()` and
+`pool.claim()` example:[4]
+
+```python
+import os
+
+from cua_sandbox import Image, Pool
+
+pool = await Pool.apply(
+    Image.from_registry(os.environ["CUA_WINDOWS_IMAGE_DIGEST"]),
+    name=os.environ["CUA_POOL_NAME"],
+    replicas=1,
+    cpu=4,
+    memory_mb=4096,
+    services={"computer-server": 8000},
+)
+
+async with pool.claim(
+    name=os.environ["CUA_CLAIM_NAME"],
+    service="computer-server",
+    time_to_start=900,
+) as sandbox:
+    # Record identity and preflight only after the clean boundary is proven.
+    ...
+```
+
+Phase 0 does not assert that this control flow creates a clean second sandbox.
+That unresolved behavior is the first Phase 1 acceptance question.
+
+### Phase 1: billable and human-gated
+
+Do not apply the pool or claim a sandbox until a human records all of these
+approvals:
+
+- accountable Fleet account owner and budget ceiling;
+- maximum wall-clock duration and cost/spend observation method;
+- globally unique pool name and immutable Windows image digest;
+- credential source, without copying credentials into this report, source
+  control, Terraform state, shell history, or logs;
+- teardown authority, teardown deadline, and an alternate owner if the operator
+  becomes unavailable; and
+- explicit approval to execute untrusted contributor pull-request code for
+  candidate B.
+
+Approval to prepare this report is not approval to spend money, create Fleet
+resources, retrieve credentials, or execute either candidate.
+
+### Acceptance, candidate order, and aborts
+
+1. **Prove the clean boundary first.** In a harmless rehearsal, record the pool,
+   claim, and sandbox identities; pinned image digest; boot and uptime evidence;
+   claim times; and a preflight designed to detect prior-segment state. Obtain a
+   public or repository contract for the operation that creates the fresh
+   sandbox. Abort before candidate execution if the evidence cannot prove a
+   newly created sandbox from the pinned image.
+2. **Candidate A:** in its own claim, sandbox, and ledger, reproduce
+   [#3329](https://github.com/trycua/cua/issues/3329) at current main. Record the
+   daemon, MCP shim, session label, owner disconnect, process generation, and
+   next-call result. Collect and hash artifacts, then end the segment.
+3. **Revalidate the boundary:** candidate B receives a different claim and
+   sandbox identity and must repeat the clean-boundary proof. Abort if candidate
+   A state cannot be excluded.
+4. **Candidate B:** at exact #3275 head
+   `1429831d5a27246ea241f55b4f0f991884e43f5b`, replay focused diagnostics for
+   both failing owners: shared Electron/Tauri and native
+   WPF/WinUI3/WebView2. Keep its ledger and artifacts separate.
+5. Run the selector-free complete Windows harness only after a repaired, stable
+   exact candidate SHA exists. Destroy the pool by the approved deadline; do not
+   infer successful cleanup from claim release alone.
+
+Abort the pilot on an unproven clean boundary, failed interactive-desktop
+preflight, stale candidate SHA, image-digest drift, missing ledger identity,
+credential leakage, budget or wall-clock limit, teardown-owner loss, or any
+unexpected cross-candidate state.
+
+For every segment, record pool, claim, and sandbox identity; image digest;
+candidate and base SHA; boot and uptime evidence; claim start and release times;
+preflight; exact commands; exit status; artifact hashes and paths; cleanup state;
+and cost/spend observation. End each ledger with: “This evidence applies only to
+candidate SHA `<SHA>` in session class `WIN-GUI`.”
+
+### Cleanup and teardown evidence
+
+The Phase 0 checklist must define these Phase 1 records before any resource is
+created:
+
+- claim-release time and result, recorded as lifecycle evidence rather than
+  proof that the replica was cleaned;
+- the approved deletion path—`await pool.delete()` or `terraform destroy`—plus
+  its operator, start and completion times, exit status, and redacted error if
+  it fails.[3][4]
+- post-delete verification that the pool and its documented backing namespace
+  and template no longer exist, with the verification method and time; and
+- final cost/spend observation, cleanup deadline result, and escalation owner and
+  evidence if deletion or verification is incomplete.
+
+The public Python guide says `pool.delete()` deletes the pool and template, and
+the Terraform guide says `terraform destroy` deletes the pool and same-named
+namespace.[3][4] Record the observed result; do not mark teardown complete from
+the requested operation alone.
+
+The exact-head
 [#3275 Windows E2E run](https://github.com/trycua/cua/actions/runs/32428179703)
 failed both the shared and native jobs, not only the native jobs. Its current PR
 check rollup shows 21 successes and two skips but omits that failed E2E workflow;
@@ -54,9 +241,14 @@ PR `statusCheckRollup` returned 21 successes and two skips because it omitted
 that workflow. The difference is API scope, not a new candidate or a recovered
 E2E result.
 
-[#3318](https://github.com/trycua/cua/pull/3318) should remain in the no-VM review
-queue. Its exact head is green, but it has no human review. A VM slot becomes
+[#3318](https://github.com/trycua/cua/pull/3318) remains in the no-VM review
+queue. Its exact head is green, but it has no human review. A Fleet slot becomes
 useful only if focused review identifies a confirmation gap.
+
+The public Fleet pool guide documents Linux and Windows pool examples.[3] This
+pilot covers only the Windows W1 diagnostic shape. It does not provide or replace
+the logged-in, TCC-authorized macOS Lume harness, and it does not certify any
+Linux or macOS lane.
 
 ## Evidence authority and batching rules
 
@@ -120,15 +312,17 @@ Use two reset levels:
   sentinel, and rerun the strict environment preflight. Record every retained
   package, profile, permission, account, portal grant, and compositor setting.
 - **Full snapshot revert** returns to a named, verified clean snapshot and reruns
-  provisioning and strict preflight. Use it between different candidate SHAs,
+  provisioning and strict preflight. Use it between different candidate SHAs
+  only where the environment documents and proves that operation,
   after an unrecoverable or intentionally corrupted session, after install,
   upgrade, rollback, account, permission, browser-profile, portal, compositor,
   or remote-desktop mutation, and whenever contamination cannot be disproved.
 
 A session-class change requires the image or snapshot that defines the new
-class, not a light reset. Release certification starts from a fresh
-`RELEASE-SOLO` environment and runs alone. Record the full-revert snapshot ID
-and time in both adjacent candidate ledgers.
+class, not a light reset. Public Fleet claim release is not a documented full
+snapshot revert; W1 uses the clean-boundary acceptance gate above. Release
+certification starts from a fresh `RELEASE-SOLO` environment and runs alone.
+Record the proven boundary identity and time in both adjacent candidate ledgers.
 
 ## Windows lane
 
@@ -186,9 +380,9 @@ actually approaching readiness. One sibling's result does not certify another.
 ### Proposed Windows batches
 
 - **`W0-REVIEW`:** #3318 source and contract review, with no VM reservation.
-- **`W1`:** #3329 current-main reproduction, full revert, then #3275 exact-head
-  shared and native diagnostics. This is the recommended first provisioned VM
-  batch if selected.
+- **`W1`:** #3329 current-main reproduction, a proven fresh-sandbox boundary,
+  then #3275 exact-head shared and native diagnostics. This is the recommended
+  first public Fleet pilot if selected and billable execution is approved.
 - **`W2-UIA`:** #3263, #3264, and #3265 as separate, full-revert-delimited
   segments after the landing-order decision. Draft or soon-to-be-rebased heads
   receive focused diagnostics, not premature certification.
@@ -340,9 +534,9 @@ another.
 
 | Item                                               | OS                | Area                  | Contributor or reporter | Candidate                                  | Session class        | Persistent mutation                      | Reset                             | Gate                                                                        | Batch          | Blocker                                     | Evidence  |
 | -------------------------------------------------- | ----------------- | --------------------- | ----------------------- | ------------------------------------------ | -------------------- | ---------------------------------------- | --------------------------------- | --------------------------------------------------------------------------- | -------------- | ------------------------------------------- | --------- |
-| [#3329](https://github.com/trycua/cua/issues/3329) | Windows           | Session/daemon        | `bzthm964yk-dotcom`     | Main@737dc2a                               | `WIN-GUI`            | Daemon, shim, labels, processes          | Full after                        | Focused protocol first; Windows complete only if GUI ownership changes      | `W1`           | Current-main reproduction                   | Standard  |
+| [#3329](https://github.com/trycua/cua/issues/3329) | Windows           | Session/daemon        | `bzthm964yk-dotcom`     | Main@737dc2a                               | `WIN-GUI`            | Daemon, shim, labels, processes          | Proven fresh sandbox after        | Focused protocol first; Windows complete only if GUI ownership changes      | `W1`           | Current-main reproduction                   | Standard  |
 | [#3318](https://github.com/trycua/cua/pull/3318)   | Windows           | Session/daemon        | `injaneity`             | `bbebabcd59090e7e7f64b4e9bdb937a3ba8db3ce` | `WIN-REVIEW`         | None for review                          | None                              | Maintainer review; focused pipe confirmation if needed                      | `W0-REVIEW`    | No human review                             | Deep      |
-| [#3275](https://github.com/trycua/cua/pull/3275)   | Windows           | Discovery/transport   | `injaneity`             | `1429831d5a27246ea241f55b4f0f991884e43f5b` | `WIN-GUI`            | Builds, apps, browser/listener processes | Full before/after                 | Failed-owner diagnostics; complete Windows at repaired SHA                  | `W1`           | Exact-head shared and native E2E failures   | Deep      |
+| [#3275](https://github.com/trycua/cua/pull/3275)   | Windows           | Discovery/transport   | `injaneity`             | `1429831d5a27246ea241f55b4f0f991884e43f5b` | `WIN-GUI`            | Builds, apps, browser/listener processes | Proven fresh sandbox before/after | Failed-owner diagnostics; complete Windows at repaired SHA                  | `W1`           | Exact-head shared and native E2E failures   | Deep      |
 | [#3263](https://github.com/trycua/cua/pull/3263)   | Windows           | Accessibility/enabled | Ethan Blake             | `c5cabe28e1d6c9ab7bdec280ea531a222653f537` | `WIN-GUI`            | Builds and UIA fixtures                  | Full between SHAs                 | Focused WPF/UIA; complete Windows when stable                               | `W2-UIA`       | Draft; landing order                        | Standard  |
 | [#3264](https://github.com/trycua/cua/pull/3264)   | Windows           | Tree completeness     | Ethan Blake             | `15d7e63f7b99beecc76eb333639692310f81fb36` | `WIN-GUI`            | Builds and UIA fixtures                  | Full between SHAs                 | Native WPF confirmation; complete Windows when stable                       | `W2-UIA`       | Landing order and production error coverage | Standard  |
 | [#3265](https://github.com/trycua/cua/pull/3265)   | Windows           | Coordinates/input     | Ethan Blake             | `359d5d98beacecf0a79ff4841e548486e1fdfcab` | `WIN-GUI`            | Builds and UIA fixtures                  | Full between SHAs                 | Focused coordinate oracle; complete Windows when stable                     | `W2-UIA`       | Draft; landing order                        | Standard  |
@@ -404,9 +598,10 @@ Record at least these fields for every candidate segment:
 
 ## Decisions required from Francesco
 
-1. Select or decline **`W1`** as the first provisioned VM batch: priority
-   current-main #3329 reproduction, full revert, then #3275 exact-head shared
-   and native diagnostics.
+1. Select or decline **`W1`** as a public Fleet pilot and, separately, approve or
+   withhold its billable Phase 1 gates: priority current-main #3329 reproduction,
+   a proven fresh-sandbox boundary, then #3275 exact-head shared and native
+   diagnostics.
 2. Confirm whether #3318 should enter formal maintainer review now. Keep it out
    of the VM queue unless that review identifies a focused confirmation gap.
 3. Decide the landing order and acceptance bar for #3263, #3264, and #3265
@@ -428,3 +623,11 @@ GitHub metadata, checks, reviews, heads, and direct action-run evidence. It does
 not rerun Windows, Linux, or macOS desktop behavior. No backlog issue, pull
 request, assignment, label, review, merge, release, or workflow was mutated to
 produce this plan.
+
+## Sources
+
+[1] https://cua.ai/docs/concepts/how-sandboxes-work — How sandboxes work | Cua docs
+[2] https://cua.ai/docs/how-to-guides/sandbox/lifecycle — Sandbox lifecycle | Cua docs
+[3] https://cua.ai/docs/how-to-guides/sandbox/configure-pool-with-terraform — Configure a sandbox pool with Terraform | Cua docs
+[4] https://cua.ai/docs/how-to-guides/sandbox/create-pool-with-python — Create a sandbox pool with Python | Cua docs
+[5] https://cua.ai/docs/how-to-guides/sandbox/scale-out — Run sandboxes in parallel | Cua docs

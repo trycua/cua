@@ -632,9 +632,11 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
     if prepare_desktop_environment {
         platform_linux::xauth::ensure_xauthority_discovered();
         platform_linux::session_bus::ensure_session_bus_discovered();
-        platform_linux::a11y::ensure_chromium_accessibility_enabled();
-        if let Err(error) = platform_linux::atspi::ensure_listener_active() {
-            tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+        if std::env::var_os("NO_AT_BRIDGE").as_deref() != Some(std::ffi::OsStr::new("1")) {
+            platform_linux::a11y::ensure_chromium_accessibility_enabled();
+            if let Err(error) = platform_linux::atspi::ensure_listener_active() {
+                tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+            }
         }
     }
     cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {

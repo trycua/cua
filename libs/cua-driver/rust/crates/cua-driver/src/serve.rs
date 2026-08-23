@@ -992,6 +992,7 @@ pub async fn run_serve(
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
     let trusted_resume_registry: TrustedResumeRegistry =
         std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let mut connection_tasks = tokio::task::JoinSet::new();
     let parent_liveness = async {
         if cua_driver_core::parent_liveness_stdin_enabled() {
             wait_for_parent_stdin_eof().await;
@@ -1022,7 +1023,7 @@ pub async fn run_serve(
                 let shutdown_tx2 = shutdown_tx.clone();
                 let trusted_resume_registry = trusted_resume_registry.clone();
 
-                tokio::spawn(async move {
+                connection_tasks.spawn(async move {
                     let (reader, mut writer) = stream.into_split();
                     let mut lines = BufReader::new(reader).lines();
 
@@ -1394,6 +1395,10 @@ pub async fn run_serve(
             }
         }
     }
+
+    // Accepted connections may still own SDK/session state after the listener
+    // stops. Abort and join them before tearing down the SDK runtime.
+    connection_tasks.shutdown().await;
 
     // Do not unlink a replacement socket created after this listener was bound.
     remove_owned_socket(socket_path, bound_socket);
@@ -2212,7 +2217,10 @@ pub fn run_serve_cmd(
             std::process::exit(1);
         }
     };
-    if let Err(e) = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref())) {
+    let result = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref()));
+    rt.shutdown_timeout(std::time::Duration::from_secs(5));
+    cua_driver_core::session::release_process_state_for_shutdown();
+    if let Err(e) = result {
         eprintln!("cua-driver serve error: {e}");
         std::process::exit(1);
     }

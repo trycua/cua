@@ -48,7 +48,7 @@ jobs:
           fi
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends \
-            valgrind xvfb xauth dbus-x11 at-spi2-core clang pkg-config libdbus-1-dev \
+            valgrind xvfb xauth dbus-x11 clang pkg-config libdbus-1-dev \
             libpipewire-0.3-dev libspa-0.2-dev libei-dev libxkbcommon-dev \
             libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Build cua-driver
@@ -58,6 +58,7 @@ jobs:
         env:
           CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
           CUA_DRIVER_RS_UPDATE_CHECK: "false"
+          NO_AT_BRIDGE: "1"
           CUA_VALGRIND_ARTIFACT_DIR: ${{ runner.temp }}/cua-driver-valgrind
         run: dbus-run-session -- xvfb-run -a uv run --script scripts/ci/linux/run-valgrind-e2e.py libs/cua-driver/rust/target/debug/cua-driver
       - name: Upload Memcheck diagnostics

@@ -595,9 +595,9 @@ test("renders and sanitizes Markdown in user and assistant messages", async ({
             id: "markdown-assistant",
             role: "assistant",
             content: [
-              "| Pool | Phase |",
-              "| --- | --- |",
-              "| demo | Ready |",
+              "| Pool | Replicas | Available | Phase |",
+              "| --- | ---: | ---: | --- |",
+              "| [demo](/pools/team/demo) | 2 | 1 | Ready |",
               "",
               "```ts",
               "const ready = true",
@@ -627,6 +627,11 @@ test("renders and sanitizes Markdown in user and assistant messages", async ({
     /.+/,
   );
   await expect(assistantBubble.getByRole("table")).toBeVisible();
+  await expect(assistantBubble.getByRole("columnheader", { name: "Namespace" })).toHaveCount(0);
+  await expect(assistantBubble.getByRole("link", { name: "demo" })).toHaveAttribute(
+    "href",
+    "/pools/team/demo",
+  );
   await expect(assistantBubble.locator("pre code")).toContainText(
     "const ready = true",
   );

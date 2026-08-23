@@ -3,7 +3,9 @@
 Cyclops includes an authenticated chat UI whose agent loop runs inside the
 browser. The model may request a single `bash` function tool implemented with
 `just-bash/browser`; the browser executes it in a temporary virtual filesystem
-and returns the result to the backend for the next model turn.
+and returns the result to the backend for the next model turn. Registered Bash
+commands bridge that isolated shell to the authenticated Cyclops SDK and the
+read-only CUA documentation and versioned code MCP service.
 
 The Go backend owns conversation history, authentication, authorization, and
 LiteLLM access. The current conversation store is in memory, so history is lost
@@ -27,8 +29,27 @@ The bash runtime is browser-local and isolated:
   output at 128 KiB. The in-memory backend also caps each owner at 100
   conversations and the process-wide transcript store at 64 MiB.
 
-There is no MCP integration, Playwright tool, browser automation, Chromium
-process, or Node sidecar. The frontend does not receive LiteLLM credentials.
+There is no Playwright tool, browser automation, Chromium process, Node
+sidecar, or arbitrary Bash networking. Four explicit read-only MCP commands are
+registered for CUA documentation and code lookup. The frontend does not receive
+LiteLLM credentials.
+
+## Command help skills
+
+Every registered SDK and MCP command supports `-h` and `--help`. Help is the
+command's progressively disclosed skill: it describes purpose, usage,
+arguments, output shape, user-facing presentation, safety, and examples without
+calling the backing SDK or MCP service.
+
+The system prompt contains only the compact command catalog. Before first use
+of a command in a conversation, the agent runs `<command> -h` in a separate
+Bash call and follows the returned guidance. It does not repeat help for that
+command in the same conversation unless it needs a refresher.
+
+Presentation rules live with command execution metadata. For example,
+`listPools -h` requires a Markdown table with `Pool`, `Replicas`, `Available`,
+and `Phase`; omits the redundant Namespace column; and links each pool name to
+`/pools/<namespace>/<name>` using URL-encoded path segments.
 
 ## Local development
 

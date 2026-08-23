@@ -65,6 +65,32 @@ const BTN_LEFT: u32 = 0x110;
 
 use crate::x11::WindowInfo;
 
+thread_local! {
+    /// Exact foreground target currently held by an outer compositor guard.
+    /// Focus-bound helpers use this only to re-enter the guard after a blocking
+    /// portal/libei readiness wait, so the actual input is preceded by a fresh
+    /// compositor verification rather than relying on a stale pre-wait check.
+    static CURRENT_FOREGROUND_TARGET: std::cell::Cell<Option<(u32, u64)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+struct ForegroundTargetGuard(Option<(u32, u64)>);
+
+impl Drop for ForegroundTargetGuard {
+    fn drop(&mut self) {
+        CURRENT_FOREGROUND_TARGET.with(|target| target.set(self.0));
+    }
+}
+
+fn bind_foreground_target(pid: u32, window_id: u64) -> ForegroundTargetGuard {
+    let previous = CURRENT_FOREGROUND_TARGET.with(|target| target.replace(Some((pid, window_id))));
+    ForegroundTargetGuard(previous)
+}
+
+fn current_foreground_target() -> Option<(u32, u64)> {
+    CURRENT_FOREGROUND_TARGET.with(std::cell::Cell::get)
+}
+
 /// Name of the opt-in env var that unlocks the experimental native-Wayland
 /// backend.
 pub const ENABLE_WAYLAND_ENV: &str = "CUA_DRIVER_RS_ENABLE_WAYLAND";
@@ -1360,6 +1386,7 @@ pub fn with_target_foreground<T>(
     window_id: u64,
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
+    let _target_guard = bind_foreground_target(pid, window_id);
     if let Some(window) = sway_ipc::window_for_id(window_id) {
         if window.pid != pid {
             anyhow::bail!(
@@ -1454,18 +1481,31 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
     )
 }
 
-/// Click through the current compositor focus. The caller must already hold a
-/// verified foreground target transaction; this function never activates a
-/// window by itself.
+/// Click through a foreground target already guarded by
+/// [`with_target_foreground`]. wlroots keeps its native virtual-pointer path.
+/// If that path is unavailable and libei needs a potentially blocking portal
+/// readiness wait, re-enter the exact foreground guard *after* readiness so
+/// KWin/GNOME/Sway ownership and focus are freshly verified immediately before
+/// the actual libei dispatch.
 #[cfg(feature = "portal-input")]
 pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
-    libei_wait_pointer_ready()?;
-    libei_click(x, y, count, button)
+    with_libei_fallback(
+        || click_vptr(None, x, y, count, button),
+        || {
+            libei_wait_pointer_ready()?;
+            if let Some((pid, window_id)) = current_foreground_target() {
+                return with_target_foreground(pid, window_id, || {
+                    libei_click(x, y, count, button)
+                });
+            }
+            libei_click(x, y, count, button)
+        },
+    )
 }
 
 #[cfg(not(feature = "portal-input"))]
-pub fn click_focused(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
-    anyhow::bail!("portal/libei pointer input is not compiled in")
+pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    click_vptr(None, x, y, count, button)
 }
 
 /// Click a desktop-absolute point without selecting or activating a toplevel.
@@ -2375,7 +2415,7 @@ fn key_to_evdev(key: &str) -> Option<u32> {
         "delete" | "del" => 111,         // KEY_DELETE
         "up" => 103,                     // KEY_UP
         "down" => 108,                   // KEY_DOWN
-        "left" => 105,                   // KEY_LEFT
+        "left" => 105,                    // KEY_LEFT
         "right" => 106,                  // KEY_RIGHT
         "home" => 102,                   // KEY_HOME
         "end" => 107,                    // KEY_END
@@ -3075,11 +3115,18 @@ fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     windows
 }
 
+fn apply_pid_filter(mut windows: Vec<WindowInfo>, filter_pid: Option<u32>) -> Vec<WindowInfo> {
+    if let Some(pid) = filter_pid {
+        windows.retain(|window| window.pid == Some(pid));
+    }
+    windows
+}
+
 /// Window-enumeration dispatcher: native Wayland when available, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
         if let Some(ws) = kwin_helper::list_window_infos() {
-            return listed_windows(ws);
+            return listed_windows(apply_pid_filter(ws, filter_pid));
         }
         // Prefer the richer wlroots protocol when no trusted KWin helper is available.
         // only consulted when wlroots yields no windows (including when its
@@ -3390,6 +3437,21 @@ mod tests {
         assert_eq!(windows[0].xid, 10);
         assert_eq!(windows[1].pid, Some(200));
         assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn pid_filter_excludes_other_process_windows() {
+        let filtered = apply_pid_filter(
+            vec![
+                window(10, Some(100), "wanted"),
+                window(20, Some(200), "other"),
+                window(30, None, "unknown"),
+            ],
+            Some(100),
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].pid, Some(100));
+        assert_eq!(filtered[0].xid, 10);
     }
 
     #[test]

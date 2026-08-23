@@ -22,10 +22,12 @@
 # Rust uninstall removes:
 #   All hosts:
 #     - the running `cua-driver serve` daemon is stopped before anything is
-#       deleted (mirrors uninstall.ps1 on Windows). `cua-driver mcp` children
-#       of a live MCP client are reported, not killed, and a daemon that
-#       outlives SIGKILL is reported as `daemon_stop_incomplete` rather than
-#       counted as stopped.
+#       deleted (mirrors uninstall.ps1 on Windows). Candidates are selected by
+#       argv[0]; whether one is a daemon is decided by scanning its command
+#       line the way the CLI does, so `cua-driver mcp` children of a live MCP
+#       client are reported, not killed, even when a flag value happens to be
+#       the word `serve`. A daemon that outlives SIGKILL is reported as
+#       `daemon_stop_incomplete` rather than counted as stopped.
 #   Linux:
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
@@ -153,68 +155,130 @@ escape_path_regex() {
     printf '%s' "$1" | sed 's/[][(){}.^$*+?|\\]/\\&/g'
 }
 
-# The CLI takes the FIRST NON-FLAG argument as the subcommand (see
-# `positionals()` in cli.rs), so flags legitimately precede it:
-#
-#   cua-driver --no-overlay serve
-#   cua-driver --cursor-theme cua.default serve
-#
-# Matching only `<binary> serve` would miss those daemons and leave exactly the
-# process this uninstaller exists to stop. Mirror the scanner instead: ONLY a
-# value-taking flag swallows the token after it — every other flag leaves the
-# next token as the subcommand. That distinction is load-bearing in both
-# directions, because `cua-driver --no-overlay call serve` is a `call`
-# invocation whose argument happens to be the word `serve`, and killing it
-# would be killing a process that is not a daemon.
-#
-# Kept in lockstep with VALUE_FLAGS in
+# Flags whose next token is a value rather than the subcommand. Kept in
+# lockstep with VALUE_FLAGS in
 # libs/cua-driver/rust/crates/cua-driver/src/cli.rs — the test suite fails when
 # the two lists drift apart.
-DAEMON_VALUE_FLAGS='--cursor-theme|--cursor-reduced-motion|--glide-ms|--dwell-ms'
-DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--idle-hide-ms|--screenshot-out-file|--client"
-DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--socket|--permission-mode|--grant|--session-policy"
-DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--capability-manifest|--pid-file|--type"
-DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--host-bundle-id|--pid|--strategy|--window-id"
-DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--session|--profile-mode|--profile-name"
-DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--experimental-pip-geometry"
-DAEMON_LEADING_FLAGS="([[:space:]]+($DAEMON_VALUE_FLAGS)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]*)*"
+DAEMON_VALUE_FLAGS="--cursor-theme --cursor-reduced-motion --glide-ms --dwell-ms
+--idle-hide-ms --screenshot-out-file --client --socket --permission-mode --grant
+--session-policy --capability-manifest --pid-file --type --host-bundle-id --pid
+--strategy --window-id --session --profile-mode --profile-name
+--experimental-pip-geometry"
 
-# Anchor an argv[0] regex fragment as a whole-command-line match for
-# pkill/pgrep, optionally requiring a subcommand. Anchoring is what keeps a
-# launcher shell that merely mentions the path in its script text out of the
-# match — see the same note in uninstall-local.sh.
-daemon_argv0_pattern() {
-    local binary_regex="$1"
-    local subcommand="${2:-}"
-    if [[ -n "$subcommand" ]]; then
-        printf '^%s%s[[:space:]]+%s([[:space:]]|$)' \
-            "$binary_regex" "$DAEMON_LEADING_FLAGS" "$subcommand"
-    else
-        printf '^%s([[:space:]]|$)' "$binary_regex"
-    fi
-}
-
-# True when any process matching one of the argv[0] regexes (with the given
-# subcommand, if any) is alive for this uid.
-daemon_processes_alive() {
-    local uid="$1"
-    local subcommand="$2"
-    shift 2
-    local binary_regex
-    for binary_regex in "$@"; do
-        if pgrep -U "$uid" -f "$(daemon_argv0_pattern "$binary_regex" "$subcommand")" \
-            >/dev/null 2>&1; then
+is_daemon_value_flag() {
+    local candidate="$1"
+    local flag
+    for flag in $DAEMON_VALUE_FLAGS; do
+        if [[ "$candidate" == "$flag" ]]; then
             return 0
         fi
     done
     return 1
 }
 
+# Print the subcommand a command line resolves to, or nothing when it has none.
+#
+# This is a scan rather than a pattern because the two are not the same
+# language. The CLI takes the first NON-FLAG argument as the subcommand, and
+# only a value-taking flag swallows the token after it:
+#
+#   cua-driver --no-overlay serve      → serve  (a daemon)
+#   cua-driver --socket /tmp/x serve   → serve  (a daemon)
+#   cua-driver --no-overlay call serve → call   (a finite CLI call)
+#   cua-driver --socket serve mcp      → mcp    (an MCP child, socket "serve")
+#
+# A regex that tries to express this is ambiguous — its generic-flag branch
+# also matches `--socket`, so the last two lines above match as daemons and get
+# killed. Mirror `positionals()` in cli.rs instead, and let the regex do only
+# what it is unambiguous at: pinning argv[0].
+daemon_subcommand() {
+    local -a tokens=()
+    read -r -a tokens <<< "$1"
+    local index=1
+    local token
+    while [[ "$index" -lt "${#tokens[@]}" ]]; do
+        token="${tokens[index]}"
+        if is_daemon_value_flag "$token"; then
+            index=$((index + 2))
+        elif [[ "$token" == -* ]]; then
+            index=$((index + 1))
+        else
+            printf '%s' "$token"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Anchor an argv[0] regex fragment as a whole-command-line match for pgrep.
+# Anchoring is what keeps a launcher shell that merely mentions the path in its
+# script text out of the match — see the same note in uninstall-local.sh.
+daemon_argv0_pattern() {
+    printf '^%s([[:space:]]|$)' "$1"
+}
+
+# True when a pid is still running and not just an unreaped zombie. A zombie
+# holds no socket, no window and no TCC connection — treating one as alive
+# would turn a successful stop into a false `daemon_stop_incomplete`.
+daemon_pid_alive() {
+    local state
+    state="$(ps -o state= -p "$1" 2>/dev/null || true)"
+    state="${state//[[:space:]]/}"
+    case "$state" in
+        ""|Z*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+daemon_pids_alive() {
+    local pid
+    for pid in "$@"; do
+        if daemon_pid_alive "$pid"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Print the pids, one per line, of this uid's live processes whose argv[0] is
+# one of the release install paths and whose subcommand is $2. An empty
+# subcommand matches any invocation. Returns 1 when there are none.
+#
+# pgrep narrows the candidates by argv[0]; every kill decision is then made by
+# reading the process's real command line, so a flag value that happens to be
+# the word `serve` can never be mistaken for the subcommand.
+release_daemon_pids() {
+    local uid="$1"
+    local subcommand="$2"
+    shift 2
+    local binary_regex pid command_line
+    local seen=" "
+    local found=1
+    for binary_regex in "$@"; do
+        [[ -n "$binary_regex" ]] || continue
+        while read -r pid; do
+            [[ -n "$pid" ]] || continue
+            case "$seen" in *" $pid "*) continue ;; esac
+            seen="$seen$pid "
+            daemon_pid_alive "$pid" || continue
+            if [[ -n "$subcommand" ]]; then
+                command_line="$(ps -ww -o args= -p "$pid" 2>/dev/null || true)"
+                [[ -n "$command_line" ]] || continue
+                [[ "$(daemon_subcommand "$command_line" || true)" == "$subcommand" ]] \
+                    || continue
+            fi
+            printf '%s\n' "$pid"
+            found=0
+        done < <(pgrep -U "$uid" -f "$(daemon_argv0_pattern "$binary_regex")" 2>/dev/null || true)
+    done
+    return "$found"
+}
+
 # Stop the running `cua-driver serve` daemon(s) launched from any of the
 # release install argv[0] regexes passed as arguments.
 #
 # `pkill -x cua-driver` cannot be used: `-x` compares against the 15-character
-# truncated `comm`, so it is unreliable for this binary name. Match argv[0]
+# truncated `comm`, so it is unreliable for this binary name. Select by argv[0]
 # instead, and require the `serve` subcommand so `cua-driver mcp` — a stdio
 # child of a live MCP client, which exits with that client — is left alone.
 #
@@ -224,49 +288,43 @@ daemon_processes_alive() {
 # is neither ours to signal nor ours to wait for.
 #
 # Returns 0 only when every matched daemon is confirmed gone, 1 when nothing
-# matched, 2 when pkill or pgrep is unavailable, and 3 when a daemon survived
+# matched, 2 when pgrep or ps is unavailable, and 3 when a daemon survived
 # SIGKILL — the caller must not report a stop it did not achieve.
 #
-# pgrep is as required as pkill: it is what turns "signalled" into "confirmed
-# gone", and without it a daemon that ignored both signals would be reported as
-# stopped. They ship together on every supported host (procps-ng on Linux,
-# proctools on macOS), so demanding both costs nothing real.
+# ps is as required as pgrep: it is what resolves a candidate pid to the
+# command line the subcommand decision needs, and what turns "signalled" into
+# "confirmed gone". They ship together on every supported host, so demanding
+# both costs nothing real.
 stop_release_serve_daemons() {
-    command -v pkill >/dev/null 2>&1 || return 2
     command -v pgrep >/dev/null 2>&1 || return 2
-    local binary_regex
+    command -v ps >/dev/null 2>&1 || return 2
     local uid
     uid="$(id -u)"
-    local -a regexes=()
-    for binary_regex in "$@"; do
-        [[ -n "$binary_regex" ]] || continue
-        regexes+=("$binary_regex")
-    done
-    [[ "${#regexes[@]}" -gt 0 ]] || return 1
+    local -a pids=()
+    local pid
+    while read -r pid; do
+        [[ -n "$pid" ]] || continue
+        pids+=("$pid")
+    done < <(release_daemon_pids "$uid" serve "$@" || true)
+    [[ "${#pids[@]}" -gt 0 ]] || return 1
 
-    local signalled=0
-    for binary_regex in "${regexes[@]}"; do
-        if pkill -TERM -U "$uid" -f "$(daemon_argv0_pattern "$binary_regex" serve)" \
-            >/dev/null 2>&1; then
-            signalled=1
-        fi
+    for pid in "${pids[@]}"; do
+        kill -TERM "$pid" 2>/dev/null || true
     done
-    [[ "$signalled" == "1" ]] || return 1
 
     # SIGTERM lets the daemon close its listening socket and tear down the
     # agent-cursor overlay. Escalate only for whatever is still alive after a
     # short grace period, so a wedged daemon cannot outlive the uninstall.
     local waited=0
     while [[ "$waited" -lt 10 ]]; do
-        daemon_processes_alive "$uid" serve "${regexes[@]}" || return 0
+        daemon_pids_alive "${pids[@]}" || return 0
         # Fractional sleep is a BSD/GNU extension; fall back to whole seconds
         # rather than letting `set -e` abort the uninstall on a host without it.
         sleep 0.1 2>/dev/null || sleep 1 || true
         waited=$((waited + 1))
     done
-    for binary_regex in "${regexes[@]}"; do
-        pkill -KILL -U "$uid" -f "$(daemon_argv0_pattern "$binary_regex" serve)" \
-            >/dev/null 2>&1 || true
+    for pid in "${pids[@]}"; do
+        kill -KILL "$pid" 2>/dev/null || true
     done
     # SIGKILL is not a guarantee — an uninterruptible wait, or a process this
     # uid may match but not signal, both survive it. The whole point of this
@@ -274,7 +332,7 @@ stop_release_serve_daemons() {
     # assuming it; the caller turns a survivor into a warning, not a success.
     waited=0
     while [[ "$waited" -lt 5 ]]; do
-        daemon_processes_alive "$uid" serve "${regexes[@]}" || return 0
+        daemon_pids_alive "${pids[@]}" || return 0
         sleep 0.1 2>/dev/null || sleep 1 || true
         waited=$((waited + 1))
     done
@@ -288,9 +346,10 @@ stop_release_serve_daemons() {
 # Returns 0 when at least one such process is alive.
 report_surviving_release_processes() {
     command -v pgrep >/dev/null 2>&1 || return 1
+    command -v ps >/dev/null 2>&1 || return 1
     local uid
     uid="$(id -u)"
-    daemon_processes_alive "$uid" "" "$@"
+    release_daemon_pids "$uid" "" "$@" >/dev/null
 }
 
 reject_root_invocation() {
@@ -555,7 +614,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         stop_release_serve_daemons "${DAEMON_ARGV0_REGEXES[@]}" || DAEMON_STOP_STATUS=$?
         case "$DAEMON_STOP_STATUS" in
             0) log "stopped the running cua-driver serve daemon" ;;
-            2) log "pkill/pgrep not found; a running cua-driver serve daemon (if any) has to be stopped by hand" ;;
+            2) log "pgrep/ps not found; a running cua-driver serve daemon (if any) has to be stopped by hand" ;;
             3)
                 printf 'daemon_stop_incomplete: a cua-driver serve daemon survived SIGTERM and SIGKILL and is still running; stop it by hand before reinstalling.\n' >&2
                 log "warning: could not stop the running cua-driver serve daemon (see stderr)"

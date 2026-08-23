@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - "libs/cua-driver/rust/**"
+      - ".github/scripts/cua-driver-valgrind-e2e.sh"
       - ".github/workflows/ci-cua-driver-valgrind.yml"
   push:
     branches: [main]
     paths:
       - "libs/cua-driver/rust/**"
+      - ".github/scripts/cua-driver-valgrind-e2e.sh"
       - ".github/workflows/ci-cua-driver-valgrind.yml"
   workflow_dispatch:
 
@@ -21,9 +23,9 @@ concurrency:
 
 jobs:
   memcheck:
-    name: Driver CLI manifest Memcheck
+    name: Driver server E2E Memcheck
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,59 +34,27 @@ jobs:
           workspaces: "libs/cua-driver/rust -> target"
       - name: Install Linux build and Memcheck dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            valgrind clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends \
+            valgrind xvfb xauth dbus-x11 clang pkg-config libdbus-1-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libei-dev libxkbcommon-dev \
+            libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Build cua-driver
         working-directory: libs/cua-driver/rust
         run: cargo build --locked -p cua-driver --features cua-driver/portal-input
-      - name: Run CLI manifest smoke under Memcheck
-        working-directory: libs/cua-driver/rust
+      - name: Run server E2E under Memcheck
         env:
           CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
           CUA_DRIVER_RS_UPDATE_CHECK: "false"
-        run: |
-          set -euo pipefail
-          smoke_dir=$(mktemp -d)
-          trap 'rm -rf "$smoke_dir"' EXIT
-          export HOME="$smoke_dir/home"
-          export XDG_CACHE_HOME="$smoke_dir/cache"
-          export XDG_CONFIG_HOME="$smoke_dir/config"
-          export XDG_DATA_HOME="$smoke_dir/data"
-          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
-
-          set +e
-          valgrind \
-            --leak-check=full \
-            --show-leak-kinds=definite,possible \
-            --errors-for-leak-kinds=definite,possible \
-            --error-exitcode=99 \
-            --log-file="$smoke_dir/valgrind.log" \
-            target/debug/cua-driver manifest --pretty \
-            >"$smoke_dir/manifest.json"
-          memcheck_status=$?
-          set -e
-          cat "$smoke_dir/valgrind.log"
-          if ((memcheck_status != 0)); then
-            exit "$memcheck_status"
-          fi
-
-          python3 - "$smoke_dir/manifest.json" ../compat-fixtures/cli.json <<'PY'
-          import json
-          import pathlib
-          import re
-          import sys
-
-          manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          fixture = json.loads(pathlib.Path(sys.argv[2]).read_text())["manifest"]
-          assert manifest["schema_version"] == fixture["schema_version"]
-          assert re.fullmatch(r"\d+\.\d+\.\d+(?:[-+].+)?", manifest["binary_version"])
-          assert manifest["mcp_invocation"]["args"] == fixture["mcp_args"]
-          assert manifest["mcp_invocation"]["command"]
-
-          subcommands = {entry["name"]: entry for entry in manifest["subcommands"]}
-          for name, expected_args in fixture["subcommands"].items():
-              actual_args = {(entry["name"], entry["type"]) for entry in subcommands[name]["args"]}
-              assert all(tuple(expected) in actual_args for expected in expected_args), name
-          PY
+          CUA_VALGRIND_ARTIFACT_DIR: ${{ runner.temp }}/cua-driver-valgrind
+        run: dbus-run-session -- xvfb-run -a .github/scripts/cua-driver-valgrind-e2e.sh libs/cua-driver/rust/target/debug/cua-driver
+      - name: Upload Memcheck diagnostics
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-driver-valgrind-${{ github.run_id }}
+          path: ${{ runner.temp }}/cua-driver-valgrind
+          if-no-files-found: warn

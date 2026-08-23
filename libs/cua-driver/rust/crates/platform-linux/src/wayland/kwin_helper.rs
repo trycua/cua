@@ -5,6 +5,7 @@
 //! window token is active. The helper never exposes KWin's UUID directly: Cua's
 //! public `window_id` is a u64, so the effect owns a KWin-lifetime token map.
 
+use std::collections::HashSet;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::process::Command;
 use std::time::Duration;
@@ -185,6 +186,11 @@ fn next_transaction_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// The final read-back is immediately before `body`, but portal/libei input is
+/// still compositor-global. A compositor focus change after that read and
+/// before EIS processing is a bounded TOCTOU limitation; callers must not
+/// claim atomic target binding. The helper fails closed on every race it can
+/// observe before dispatch and restores the previous focus afterward.
 pub fn with_focused_window<T>(
     pid: u32,
     token: u64,
@@ -257,6 +263,20 @@ pub fn with_focused_window<T>(
         stage = "final_pre_dispatch_verify",
         "target verified immediately before dispatch"
     );
+
+    #[cfg(debug_assertions)]
+    if let Some(steal_token) = std::env::var("CUA_KWIN_TEST_POST_VERIFY_STEAL_TOKEN")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        tracing::debug!(
+            tx,
+            steal_token,
+            stage = "test_post_verify_focus_steal",
+            "debug-only post-verification focus-steal hook"
+        );
+        activate_and_verify(&owner, steal_token)?;
+    }
 
     tracing::debug!(tx, stage = "dispatch_begin", "foreground operation begins");
     let body_result = body();
@@ -588,13 +608,31 @@ fn parse_snapshot_detailed(raw: &str) -> Result<Vec<KwinWindow>, TransactionFail
             TransactionFailure::SnapshotParseFailed
         })?;
 
+    let mut tokens = HashSet::new();
+    let mut active_count = 0usize;
     values
         .into_iter()
         .enumerate()
         .map(|(index, value)| {
+            let token = value
+                .get("token")
+                .and_then(serde_json::Value::as_u64)
+                .filter(|token| *token > 0)
+                .ok_or(TransactionFailure::SnapshotInvalid)?;
+            if !tokens.insert(token) {
+                tracing::debug!(index, token, "duplicate KWin snapshot token");
+                return Err(TransactionFailure::SnapshotInvalid);
+            }
+            if value.get("active").and_then(serde_json::Value::as_bool) == Some(true) {
+                active_count += 1;
+                if active_count > 1 {
+                    tracing::debug!(index, token, "multiple active KWin snapshot records");
+                    return Err(TransactionFailure::SnapshotInvalid);
+                }
+            }
             let parsed: Option<KwinWindow> = (|| {
                 Some(KwinWindow {
-                    token: value.get("token")?.as_u64()?.max(1),
+                    token,
                     pid: u32::try_from(value.get("pid")?.as_u64()?).ok()?,
                     title: value
                         .get("title")

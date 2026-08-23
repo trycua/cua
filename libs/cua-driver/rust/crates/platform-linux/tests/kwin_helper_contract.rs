@@ -92,6 +92,30 @@ fn refuses_minimized_same_pid_window() {
 }
 
 #[test]
+fn rejects_zero_token() {
+    assert!(parse_snapshot(
+        r#"('[{"token":0,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":false,"minimized":false,"stacking":0}]',)"#,
+    )
+    .is_none());
+}
+
+#[test]
+fn rejects_duplicate_tokens() {
+    assert!(parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":false,"minimized":false,"stacking":0},{"token":41,"pid":1300,"x":20,"y":20,"w":10,"h":10,"active":false,"minimized":false,"stacking":1}]',)"#,
+    )
+    .is_none());
+}
+
+#[test]
+fn rejects_multiple_active_records() {
+    assert!(parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":true,"minimized":false,"stacking":0},{"token":42,"pid":1300,"x":20,"y":20,"w":10,"h":10,"active":true,"minimized":false,"stacking":1}]',)"#,
+    )
+    .is_none());
+}
+
+#[test]
 fn refuses_when_a_different_token_is_active() {
     let snapshot = parse_snapshot(
         r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3},{"token":42,"pid":1300,"x":0,"y":0,"w":800,"h":600,"active":true,"minimized":false,"stacking":4}]',)"#,

@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QtMath>
 #include <QUuid>
 
@@ -34,8 +35,24 @@ public slots:
 
     Q_SCRIPTABLE QString GetWindows()
     {
+        const auto liveWindows = KWin::Workspace::self()->windows();
+        QSet<QUuid> liveIds;
+        for (KWin::Window *window : liveWindows) {
+            if (window && window->isClient() && !window->isDeleted()) {
+                liveIds.insert(window->internalId());
+            }
+        }
+        for (auto it = m_tokens.begin(); it != m_tokens.end();) {
+            if (!liveIds.contains(it.key())) {
+                m_ids.remove(it.value());
+                it = m_tokens.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
         QJsonArray windows;
-        for (KWin::Window *window : KWin::Workspace::self()->windows()) {
+        for (KWin::Window *window : liveWindows) {
             if (!window || !window->isClient() || window->isDeleted()) {
                 continue;
             }

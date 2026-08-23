@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 UNINSTALL = REPO_ROOT / "libs/cua-driver/scripts/uninstall.sh"
+CLI_SOURCE = "libs/cua-driver/rust/crates/cua-driver/src/cli.rs"
 RELEASE_DIR_NAME = "0.19.3-aarch64-apple-darwin"
 # Non-root uid the sandbox pins, so a root container behaves like a developer
 # machine; the root refusal itself is covered by uninstall-history-purge-test.sh.
@@ -205,6 +207,13 @@ def _daemon_command_lines(home: Path) -> dict[str, str]:
             f"{BUNDLE_BINARY} --no-overlay --socket /tmp/cua.sock serve"
             " --permission-mode bounded"
         ),
+        # A value flag ahead of the subcommand consumes its own token, so the
+        # subcommand is still `serve`.
+        "bundle with socket flag": f"{BUNDLE_BINARY} --socket /tmp/cua.sock serve",
+        "bundle with numeric value flag": f"{BUNDLE_BINARY} --glide-ms 250 serve",
+        # `--flag=value` is not in VALUE_FLAGS' exact-match list, so it is an
+        # ordinary flag token that consumes nothing.
+        "bundle with joined value": f"{BUNDLE_BINARY} --socket=/tmp/cua.sock serve",
         "legacy bundle": (
             "/Applications/CuaDriverRs.app/Contents/MacOS/cua-driver serve"
         ),
@@ -251,6 +260,17 @@ def _untouchable_command_lines(home: Path) -> dict[str, str]:
         "uninstaller itself": f"/bin/bash {UNINSTALL}",
         # A finite CLI call that merely names the daemon's path.
         "finite cli": f"{BUNDLE_BINARY} status --socket /tmp/cua.sock",
+        # Only a VALUE_FLAGS flag swallows the token after it. `--no-overlay`
+        # does not, so the subcommand here is `call` / `describe` / `status`
+        # and the trailing `serve` is that command's argument — a finite CLI
+        # process, not a daemon, and killing it would be a false positive.
+        "call with serve argument": f"{BUNDLE_BINARY} --no-overlay call serve",
+        "describe with serve argument": (
+            f"{BUNDLE_BINARY} --no-overlay describe serve"
+        ),
+        "status with serve argument": f"{BUNDLE_BINARY} --no-overlay status serve",
+        "bare flagless call": f"{BUNDLE_BINARY} call serve",
+        "bare-flag call": f"{BUNDLE_BINARY} --experimental-pip call serve",
         # Another user's product outside the release install paths.
         "foreign path": "/opt/vendor/cua-driver-shim serve",
     }
@@ -390,6 +410,42 @@ def test_daemon_that_ignores_sigterm_is_killed_and_survival_is_reported(
     assert "daemon_stop_incomplete" in result.stderr
     assert "warning: could not stop the running cua-driver serve daemon" in result.stdout
     assert "stopped the running cua-driver serve daemon" not in result.stdout
+
+
+def test_value_flag_list_matches_the_rust_cli(tmp_path: Path) -> None:
+    """The matcher can only tell a daemon from a finite CLI call if it knows
+    which flags swallow the token after them. Fail loudly when the CLI grows a
+    value flag the uninstaller has not been taught about."""
+    _home, _calls, env = _sandbox(tmp_path, "Linux")
+    shell_flags = _source_only('printf "%s" "$DAEMON_VALUE_FLAGS"', env)
+    assert shell_flags.returncode == 0, shell_flags.stderr
+
+    source = (REPO_ROOT / CLI_SOURCE).read_text(encoding="utf-8")
+    declaration = source.split("const VALUE_FLAGS: &[&str] = &[", 1)[1].split("];", 1)[0]
+    rust_flags = re.findall(r'"([^"]+)"', declaration)
+
+    assert rust_flags, "VALUE_FLAGS could not be read from the Rust CLI"
+    assert shell_flags.stdout.split("|") == rust_flags
+
+
+def test_verification_tool_is_required_before_signalling(tmp_path: Path) -> None:
+    """Without pgrep a stop cannot be confirmed, and the phase must decline
+    rather than claim one."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(fake_bin / "id", f"printf '%s\\n' '{FAKE_UID}'\n")
+    _write_executable(fake_bin / "pkill", "exit 0\n")
+    env = {**os.environ, "PATH": str(fake_bin), "HOME": str(tmp_path)}
+
+    # `set -e` is live in the sourced script, so the status has to be caught.
+    result = _source_only(
+        'status=0\n'
+        'stop_release_serve_daemons "/opt/cua/cua-driver" || status=$?\n'
+        'printf "status=%s" "$status"',
+        env,
+    )
+
+    assert result.stdout.endswith("status=2"), result.stdout + result.stderr
 
 
 def test_argv0_patterns_escape_regex_metacharacters(tmp_path: Path) -> None:

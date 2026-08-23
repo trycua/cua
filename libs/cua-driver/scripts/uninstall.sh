@@ -159,11 +159,25 @@ escape_path_regex() {
 #   cua-driver --no-overlay serve
 #   cua-driver --cursor-theme cua.default serve
 #
-# Anything ahead of the subcommand is therefore a flag, optionally followed by
-# the single value token a value-taking flag consumes. Matching only
-# `<binary> serve` would miss those daemons and leave exactly the process this
-# uninstaller exists to stop.
-DAEMON_LEADING_FLAGS='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
+# Matching only `<binary> serve` would miss those daemons and leave exactly the
+# process this uninstaller exists to stop. Mirror the scanner instead: ONLY a
+# value-taking flag swallows the token after it — every other flag leaves the
+# next token as the subcommand. That distinction is load-bearing in both
+# directions, because `cua-driver --no-overlay call serve` is a `call`
+# invocation whose argument happens to be the word `serve`, and killing it
+# would be killing a process that is not a daemon.
+#
+# Kept in lockstep with VALUE_FLAGS in
+# libs/cua-driver/rust/crates/cua-driver/src/cli.rs — the test suite fails when
+# the two lists drift apart.
+DAEMON_VALUE_FLAGS='--cursor-theme|--cursor-reduced-motion|--glide-ms|--dwell-ms'
+DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--idle-hide-ms|--screenshot-out-file|--client"
+DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--socket|--permission-mode|--grant|--session-policy"
+DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--capability-manifest|--pid-file|--type"
+DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--host-bundle-id|--pid|--strategy|--window-id"
+DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--session|--profile-mode|--profile-name"
+DAEMON_VALUE_FLAGS="$DAEMON_VALUE_FLAGS|--experimental-pip-geometry"
+DAEMON_LEADING_FLAGS="([[:space:]]+($DAEMON_VALUE_FLAGS)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]*)*"
 
 # Anchor an argv[0] regex fragment as a whole-command-line match for
 # pkill/pgrep, optionally requiring a subcommand. Anchoring is what keeps a
@@ -210,10 +224,16 @@ daemon_processes_alive() {
 # is neither ours to signal nor ours to wait for.
 #
 # Returns 0 only when every matched daemon is confirmed gone, 1 when nothing
-# matched, 2 when pkill is unavailable, and 3 when a daemon survived SIGKILL —
-# the caller must not report a stop it did not achieve.
+# matched, 2 when pkill or pgrep is unavailable, and 3 when a daemon survived
+# SIGKILL — the caller must not report a stop it did not achieve.
+#
+# pgrep is as required as pkill: it is what turns "signalled" into "confirmed
+# gone", and without it a daemon that ignored both signals would be reported as
+# stopped. They ship together on every supported host (procps-ng on Linux,
+# proctools on macOS), so demanding both costs nothing real.
 stop_release_serve_daemons() {
     command -v pkill >/dev/null 2>&1 || return 2
+    command -v pgrep >/dev/null 2>&1 || return 2
     local binary_regex
     local uid
     uid="$(id -u)"
@@ -535,7 +555,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         stop_release_serve_daemons "${DAEMON_ARGV0_REGEXES[@]}" || DAEMON_STOP_STATUS=$?
         case "$DAEMON_STOP_STATUS" in
             0) log "stopped the running cua-driver serve daemon" ;;
-            2) log "pkill not found; a running cua-driver serve daemon (if any) has to be stopped by hand" ;;
+            2) log "pkill/pgrep not found; a running cua-driver serve daemon (if any) has to be stopped by hand" ;;
             3)
                 printf 'daemon_stop_incomplete: a cua-driver serve daemon survived SIGTERM and SIGKILL and is still running; stop it by hand before reinstalling.\n' >&2
                 log "warning: could not stop the running cua-driver serve daemon (see stderr)"

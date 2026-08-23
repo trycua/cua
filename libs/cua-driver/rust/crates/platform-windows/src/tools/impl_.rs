@@ -1221,19 +1221,18 @@ impl Tool for GetWindowStateTool {
         let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
 
         let state = self.state.clone();
+        // UIA providers are implemented by the target process and can stop
+        // responding entirely. Capture must therefore run in a separate job:
+        // the screenshot is the visual fallback precisely when the UIA job
+        // reaches its timeout.
         let q = query.clone();
+        let tree_task = tokio::task::spawn_blocking(move || {
+            do_tree
+                .then(|| crate::uia::walk_tree_bounded(hwnd, q.as_deref(), max_elements, max_depth))
+        });
+
         let out_file = screenshot_out_file.clone();
-        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let tree_result = if do_tree {
-                Some(crate::uia::walk_tree_bounded(
-                    hwnd,
-                    q.as_deref(),
-                    max_elements,
-                    max_depth,
-                ))
-            } else {
-                None
-            };
+        let screenshot_task = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Capture screenshot AND any error message so the response can
             // surface *why* there's no image (the iconic-window guard from
             // #1973 / PR #1974 is the load-bearing case: minimized windows
@@ -1266,36 +1265,42 @@ impl Tool for GetWindowStateTool {
             } else {
                 (None, None)
             };
-            Ok((tree_result, screenshot, screenshot_err))
+            Ok((screenshot, screenshot_err))
         });
-        // Timeout: Chrome's UIA provider can block indefinitely on property reads.
-        let result: Result<anyhow::Result<_>, _> =
-            match tokio::time::timeout(std::time::Duration::from_secs(4), blocking).await {
-                Ok(join_result) => join_result.map_err(|e| anyhow::anyhow!("task panic: {e}")),
+
+        // Timeout: Chrome and game UIA providers can block indefinitely on
+        // property reads. This timeout no longer discards an independently
+        // captured frame.
+        let (tree_result, tree_error) =
+            match tokio::time::timeout(std::time::Duration::from_secs(4), tree_task).await {
+                Ok(Ok(tree)) => (tree, None),
+                Ok(Err(error)) => (None, Some(format!("UIA task panic: {error}"))),
                 Err(_elapsed) => {
-                    // Surface the target's window class + an actionable hint
-                    // instead of just "UIA provider unresponsive". The class
-                    // points the caller at the right workaround (e.g. SALFRAME
-                    // → screenshot + pixel coords + delivery_mode:"foreground"; UWP
-                    // class → re-call with a depth-limited scan and act by pixel
-                    // off the screenshot if the tree stays unusable).
                     let class = crate::input::delivery::read_class_name(hwnd);
-                    Err(anyhow::anyhow!(
-                        "get_window_state timed out after 4s (UIA provider unresponsive on \
-                     hwnd 0x{hwnd:x}, class '{class}'). Fallback options: \
-                     (a) re-call this tool with a depth-limited scan \
-                     (`max_elements` / `max_depth`) — if the tree stays unusable, act \
-                     by pixel `click(x, y)` off the screenshot in the response; \
-                     (b) if the target is a transient VCL / message-box dialog, send \
-                     `press_key` with `delivery_mode:\"foreground\"` (SendInput) to fire the \
-                     default accelerator (Esc / Enter / Y / N) without needing the tree."
-                    ))
+                    (
+                        None,
+                        Some(format!(
+                            "get_window_state timed out after 4s (UIA provider unresponsive on \
+                             hwnd 0x{hwnd:x}, class '{class}'). Act by pixel `click(x, y)` off \
+                             the screenshot in this response, or send `press_key` with \
+                             `delivery_mode:\"foreground\"` for a transient native dialog."
+                        )),
+                    )
                 }
             };
-        let result = result.and_then(|r| r);
+
+        let (screenshot, screenshot_err) =
+            match tokio::time::timeout(std::time::Duration::from_secs(4), screenshot_task).await {
+                Ok(Ok(Ok(capture))) => capture,
+                Ok(Ok(Err(error))) => (None, Some(format!("{error}"))),
+                Ok(Err(error)) => (None, Some(format!("screenshot task panic: {error}"))),
+                Err(_elapsed) => (None, Some("screenshot capture timed out after 4s".into())),
+            };
+
+        let result: anyhow::Result<_> = Ok((tree_result, screenshot, screenshot_err, tree_error));
 
         match result {
-            Ok((tree_opt, screenshot_opt, screenshot_err)) => {
+            Ok((tree_opt, screenshot_opt, screenshot_err, tree_error)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
 
@@ -1504,9 +1509,23 @@ impl Tool for GetWindowStateTool {
                     ),
                 );
 
+                if let Some(error) = tree_error.as_deref() {
+                    content.insert(
+                        0,
+                        cua_driver_core::protocol::Content::text(format!("Error: {error}")),
+                    );
+                    structured["degraded"] = json!(true);
+                    structured["degraded_reason"] = json!("uia_provider_unresponsive");
+                    structured["uia_error"] = json!(error);
+                    structured["escalation"] = json!({
+                        "recommended": "px",
+                        "reason": "The accessibility provider did not respond. Act in the screenshot coordinate space."
+                    });
+                }
+
                 ToolResult {
                     content,
-                    is_error: None,
+                    is_error: tree_error.map(|_| true),
                     structured_content: Some(structured),
                     action_record: None,
                 }

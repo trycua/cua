@@ -1,0 +1,11 @@
+{
+  "KPlugin": {
+    "Name": "Cua KWin Target Helper",
+    "Description": "Provides verified target activation for Cua Driver on KWin Wayland.",
+    "License": "MIT",
+    "EnabledByDefault": false
+  },
+  "org.kde.kwin.effect": {
+    "enabledByDefaultMethod": false
+  }
+}

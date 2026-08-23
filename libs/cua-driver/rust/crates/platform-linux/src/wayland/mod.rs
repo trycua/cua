@@ -11,6 +11,7 @@
 
 pub mod ext_screencopy;
 pub mod ext_toplevel;
+pub mod kwin_helper;
 pub mod overlay;
 pub mod persistent_vptr;
 pub(crate) mod portal;
@@ -1333,6 +1334,11 @@ pub fn activate_window_for_input_target(
         return Ok(());
     }
 
+    if kwin_helper::activate_window(target_pid.unwrap_or_default(), window_id) {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
     if shell_helper::activate_window(window_id) {
         std::thread::sleep(std::time::Duration::from_millis(60));
         return Ok(());
@@ -1362,6 +1368,9 @@ pub fn with_target_foreground<T>(
             );
         }
         return sway_ipc::with_focused_container(window_id, body);
+    }
+    if kwin_helper::trusted_window_for_id(pid, window_id).is_some() {
+        return kwin_helper::with_focused_window(pid, window_id, body);
     }
     if shell_helper::trusted_window_for_id(pid, window_id).is_some() {
         return shell_helper::with_focused_window(pid, window_id, body);
@@ -1443,6 +1452,20 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
             libei_click(x, y, count, button)
         },
     )
+}
+
+/// Click through the current compositor focus. The caller must already hold a
+/// verified foreground target transaction; this function never activates a
+/// window by itself.
+#[cfg(feature = "portal-input")]
+pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    libei_wait_pointer_ready()?;
+    libei_click(x, y, count, button)
+}
+
+#[cfg(not(feature = "portal-input"))]
+pub fn click_focused(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
+    anyhow::bail!("portal/libei pointer input is not compiled in")
 }
 
 /// Click a desktop-absolute point without selecting or activating a toplevel.
@@ -3055,7 +3078,10 @@ fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
 /// Window-enumeration dispatcher: native Wayland when available, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        // Prefer the richer wlroots protocol. The generic staging protocol is
+        if let Some(ws) = kwin_helper::list_window_infos() {
+            return listed_windows(ws);
+        }
+        // Prefer the richer wlroots protocol when no trusted KWin helper is available.
         // only consulted when wlroots yields no windows (including when its
         // manager global is absent).
         let native = match list_windows() {

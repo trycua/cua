@@ -1,0 +1,105 @@
+use platform_linux::wayland::kwin_helper::{
+    correlate_atspi_window, parse_snapshot, require_active_target, CorrelationError,
+};
+use platform_linux::x11::WindowInfo;
+
+fn atspi_window(pid: u32, x: i32, y: i32, width: u32, height: u32) -> WindowInfo {
+    WindowInfo {
+        xid: 99,
+        pid: Some(pid),
+        app_name: "org.example.Editor".into(),
+        title: "Editor".into(),
+        is_on_screen: true,
+        z_index: None,
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+#[test]
+fn parses_versioned_kwin_snapshot() {
+    let snapshot = parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3}]',)"#,
+    )
+    .expect("valid KWin helper snapshot");
+
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].token, 41);
+    assert_eq!(snapshot[0].pid, 1200);
+    assert_eq!((snapshot[0].x, snapshot[0].y), (100, 80));
+}
+
+#[test]
+fn parses_snapshot_when_title_contains_closing_bracket() {
+    let snapshot = parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3,"title":"A ] title","app_id":"org.example.Editor"}]',)"#,
+    )
+    .expect("title brackets must not break snapshot parsing");
+
+    assert_eq!(snapshot[0].title, "A ] title");
+}
+
+#[test]
+fn parses_fractional_plasma_geometry() {
+    let snapshot = parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":332,"h":99.33333333333336,"active":false,"minimized":false,"stacking":3}]',)"#,
+    )
+    .expect("finite fractional geometry is valid metadata");
+
+    assert_eq!(snapshot[0].height, 99);
+}
+
+#[test]
+fn correlates_one_same_pid_window_with_bounded_frame_delta() {
+    let snapshot = parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3}]',)"#,
+    )
+    .unwrap();
+
+    // AT-SPI reports client geometry; KWin reports frame geometry. A normal
+    // decoration inset is accepted, but identity still requires one candidate.
+    let target = correlate_atspi_window(&atspi_window(1200, 104, 112, 792, 560), &snapshot)
+        .expect("one bounded geometry match");
+    assert_eq!(target.token, 41);
+}
+
+#[test]
+fn rejects_duplicate_same_pid_geometry_candidates() {
+    let snapshot = parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3},{"token":42,"pid":1200,"x":102,"y":82,"w":798,"h":598,"active":false,"minimized":false,"stacking":4}]',)"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        correlate_atspi_window(&atspi_window(1200, 104, 112, 792, 560), &snapshot),
+        Err(CorrelationError::Ambiguous)
+    );
+}
+
+#[test]
+fn refuses_minimized_same_pid_window() {
+    let snapshot = parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":true,"stacking":3}]',)"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        correlate_atspi_window(&atspi_window(1200, 104, 112, 792, 560), &snapshot),
+        Err(CorrelationError::NoMatch)
+    );
+}
+
+#[test]
+fn refuses_when_a_different_token_is_active() {
+    let snapshot = parse_snapshot(
+        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3},{"token":42,"pid":1300,"x":0,"y":0,"w":800,"h":600,"active":true,"minimized":false,"stacking":4}]',)"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        require_active_target(&snapshot, 41),
+        Err(CorrelationError::WrongActiveTarget)
+    );
+}

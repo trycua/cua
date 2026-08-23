@@ -2619,7 +2619,9 @@ impl Tool for ClickTool {
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
-                crate::wayland::click(xid, output_x, output_y, count as u32, button)?;
+                crate::wayland::with_target_foreground(pid, xid, || {
+                    crate::wayland::click_focused(output_x, output_y, count as u32, button)
+                })?;
                 return Ok("wayland_activate");
             }
             // X11 injection. Tiered no-focus-steal delivery (background):

@@ -1,0 +1,94 @@
+name: "CI: cua-driver Valgrind"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/**"
+      - ".github/workflows/ci-cua-driver-valgrind.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/rust/**"
+      - ".github/workflows/ci-cua-driver-valgrind.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-driver-valgrind-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memcheck:
+    name: Driver direct-MCP Memcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+      - name: Install Linux build and Memcheck dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            valgrind clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Build cua-driver
+        working-directory: libs/cua-driver/rust
+        run: cargo build --locked -p cua-driver --features cua-driver/portal-input
+      - name: Run direct-MCP smoke under Memcheck
+        working-directory: libs/cua-driver/rust
+        env:
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+          CUA_DRIVER_RS_UPDATE_CHECK: "false"
+        run: |
+          set -euo pipefail
+          smoke_dir=$(mktemp -d)
+          trap 'rm -rf "$smoke_dir"' EXIT
+          export HOME="$smoke_dir/home"
+          export XDG_CACHE_HOME="$smoke_dir/cache"
+          export XDG_CONFIG_HOME="$smoke_dir/config"
+          export XDG_DATA_HOME="$smoke_dir/data"
+          export XDG_RUNTIME_DIR="$smoke_dir/runtime"
+          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+
+          cat >"$smoke_dir/requests.jsonl" <<'JSONL'
+          {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"valgrind-smoke","version":"0"}}}
+          {"jsonrpc":"2.0","method":"notifications/initialized"}
+          {"jsonrpc":"2.0","id":2,"method":"tools/list"}
+          JSONL
+
+          set +e
+          valgrind \
+            --leak-check=full \
+            --show-leak-kinds=definite,possible \
+            --errors-for-leak-kinds=definite,possible \
+            --error-exitcode=99 \
+            --log-file="$smoke_dir/valgrind.log" \
+            target/debug/cua-driver mcp \
+            <"$smoke_dir/requests.jsonl" \
+            >"$smoke_dir/responses.jsonl"
+          memcheck_status=$?
+          set -e
+          cat "$smoke_dir/valgrind.log"
+          if ((memcheck_status != 0)); then
+            exit "$memcheck_status"
+          fi
+
+          python3 - "$smoke_dir/responses.jsonl" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          responses = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+          by_id = {response.get("id"): response for response in responses}
+          assert by_id[1]["result"]["serverInfo"]["name"] == "cua-driver"
+          tools = by_id[2]["result"]["tools"]
+          tool_names = {tool["name"] for tool in tools}
+          required = {"list_apps", "list_windows", "get_window_state", "click", "type_text", "press_key"}
+          assert required <= tool_names, f"missing tools: {sorted(required - tool_names)}"
+          PY

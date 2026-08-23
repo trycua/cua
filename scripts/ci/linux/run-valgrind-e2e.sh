@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-driver=${1:?usage: cua-driver-valgrind-e2e.sh /path/to/cua-driver}
+driver=${1:?usage: run-valgrind-e2e.sh /path/to/cua-driver}
 driver=$(realpath "$driver")
 artifact_dir=${CUA_VALGRIND_ARTIFACT_DIR:-"${RUNNER_TEMP:-/tmp}/cua-driver-valgrind"}
 rm -rf "$artifact_dir"
@@ -45,6 +45,8 @@ trap cleanup EXIT INT TERM
 server_command=(
   valgrind
   --leak-check=full
+  --gen-suppressions=all
+  --num-callers=40
   --show-leak-kinds=definite,possible
   --errors-for-leak-kinds=definite,possible
   --error-exitcode=99

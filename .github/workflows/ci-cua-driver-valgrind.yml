@@ -4,13 +4,13 @@ on:
   pull_request:
     paths:
       - "libs/cua-driver/rust/**"
-      - ".github/scripts/cua-driver-valgrind-e2e.sh"
+      - "scripts/ci/linux/run-valgrind-e2e.sh"
       - ".github/workflows/ci-cua-driver-valgrind.yml"
   push:
     branches: [main]
     paths:
       - "libs/cua-driver/rust/**"
-      - ".github/scripts/cua-driver-valgrind-e2e.sh"
+      - "scripts/ci/linux/run-valgrind-e2e.sh"
       - ".github/workflows/ci-cua-driver-valgrind.yml"
   workflow_dispatch:
 
@@ -39,7 +39,7 @@ jobs:
           fi
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends \
-            valgrind xvfb xauth dbus-x11 clang pkg-config libdbus-1-dev \
+            valgrind xvfb xauth dbus-x11 at-spi2-core clang pkg-config libdbus-1-dev \
             libpipewire-0.3-dev libspa-0.2-dev libei-dev libxkbcommon-dev \
             libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Build cua-driver
@@ -50,7 +50,7 @@ jobs:
           CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
           CUA_DRIVER_RS_UPDATE_CHECK: "false"
           CUA_VALGRIND_ARTIFACT_DIR: ${{ runner.temp }}/cua-driver-valgrind
-        run: dbus-run-session -- xvfb-run -a .github/scripts/cua-driver-valgrind-e2e.sh libs/cua-driver/rust/target/debug/cua-driver
+        run: dbus-run-session -- xvfb-run -a scripts/ci/linux/run-valgrind-e2e.sh libs/cua-driver/rust/target/debug/cua-driver
       - name: Upload Memcheck diagnostics
         if: failure()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4

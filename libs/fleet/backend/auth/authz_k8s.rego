@@ -185,6 +185,20 @@ k8s_request_allowed {
 	fleet_crud_shape(parts)
 }
 
+# ── Fleet Images ─────────────────────────────────────────────────────────────
+#
+# apis/images.cua.ai/v1alpha1/namespaces/{ns}/images
+#
+# Image recipes are managed through the generic Kubernetes proxy. This permits
+# only the namespaced Image collection and objects; the cluster-scoped form and
+# every other resource in images.cua.ai remain absent from the allowlist.
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	apis_namespaced_group(parts, "images.cua.ai", "v1alpha1")
+	parts[5] == "images"
+	image_crud_shape(parts)
+}
+
 # ── Fleet CRDs, legacy group ────────────────────────────────────────────────
 #
 # apis/cua.ai/v1/namespaces/{ns}/osgymworkspacepools
@@ -393,6 +407,17 @@ fleet_crud_shape(parts) {
 fleet_crud_shape(parts) {
 	apis_subresource(parts, "status")
 	input.method == "PATCH"
+}
+
+# Images use Kubernetes replace as well as the existing fleet CRUD verbs. Keep
+# PUT out of fleet_crud_shape so this policy addition cannot widen native CRDs.
+image_crud_shape(parts) {
+	fleet_crud_shape(parts)
+}
+
+image_crud_shape(parts) {
+	apis_item(parts)
+	input.method == "PUT"
 }
 
 legacy_pool_shape(parts) {

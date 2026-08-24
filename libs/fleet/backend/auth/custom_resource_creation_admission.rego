@@ -17,6 +17,10 @@ custom_api_group(group) {
 	group == "osgym.cua.ai"
 }
 
+custom_api_group(group) {
+	group == "images.cua.ai"
+}
+
 is_custom_resource_create {
 	input.method == "POST"
 	parts := split(input.params.path, "/")

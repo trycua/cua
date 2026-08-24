@@ -660,6 +660,22 @@ test_legacy_pool_crud_allowed if {
 	route_allow with input as spa_request("PUT", item)
 }
 
+# Images use the standard Kubernetes CRUD split: POST addresses the collection;
+# GET, PUT, PATCH, and DELETE address a named object. A collection GET also
+# covers the generic proxy's watch request, whose query string is not policy
+# input.
+test_image_namespaced_crud_allowed if {
+	collection := "apis/images.cua.ai/v1alpha1/namespaces/ns-a/images"
+	item := sprintf("%s/image-demo", [collection])
+
+	route_allow with input as spa_request("GET", collection)
+	route_allow with input as spa_request("POST", collection)
+	route_allow with input as spa_request("GET", item)
+	route_allow with input as spa_request("PUT", item)
+	route_allow with input as spa_request("PATCH", item)
+	route_allow with input as spa_request("DELETE", item)
+}
+
 # Core reads: pods, pod logs, services.
 test_core_reads_allowed if {
 	route_allow with input as spa_request("GET", "api/v1/namespaces/ns-a/pods")
@@ -734,6 +750,7 @@ test_unenumerated_groups_denied if {
 	not route_allow with input as spa_request("GET", "apis/storage.k8s.io/v1/storageclasses")
 	not route_allow with input as spa_request("GET", "apis/external-secrets.io/v1beta1/namespaces/ns-a/externalsecrets")
 	not route_allow with input as spa_request("GET", "apis/cdi.kubevirt.io/v1beta1/namespaces/ns-a/datavolumes")
+	not route_allow with input as spa_request("GET", "apis/snapshot.storage.k8s.io/v1/namespaces/ns-a/volumesnapshots/snapshot-1")
 }
 
 # KubeVirt is readable, not drivable.
@@ -746,6 +763,7 @@ test_kubevirt_writes_denied if {
 # above requires the namespaces/{ns} segment.
 test_cluster_scoped_forms_denied if {
 	not route_allow with input as spa_request("GET", "apis/osgym.cua.ai/v1alpha1/osgymsandboxclaims")
+	not route_allow with input as spa_request("GET", "apis/images.cua.ai/v1alpha1/images")
 	not route_allow with input as spa_request("GET", "api/v1/pods")
 	not route_allow with input as spa_request("GET", "apis/metrics.k8s.io/v1beta1/nodes")
 }
@@ -865,4 +883,8 @@ watch_admin_subs(admin) := ["admin-1"] if {
 
 watch_admin_subs(admin) := [] if {
 	not admin
+}
+
+test_other_image_group_resource_denied if {
+	not route_allow with input as spa_request("GET", "apis/images.cua.ai/v1alpha1/namespaces/ns-a/builders")
 }

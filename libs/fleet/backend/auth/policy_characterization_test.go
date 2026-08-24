@@ -252,6 +252,9 @@ func characterizationCases() map[string][]routeCase {
 		{name: "granted-ns-pools", path: "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools"},
 		{name: "ungranted-ns-pools", path: "apis/cua.ai/v1/namespaces/ns-b/osgymworkspacepools"},
 		{name: "granted-ns-claims", path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims"},
+		{name: "namespaced-images", path: "apis/images.cua.ai/v1alpha1/namespaces/ns-a/images"},
+		{name: "cluster-images", path: "apis/images.cua.ai/v1alpha1/images"},
+		{name: "image-group-builders", path: "apis/images.cua.ai/v1alpha1/namespaces/ns-a/builders"},
 		// The event feed, in each of the four addressing forms the apiserver
 		// serves it under, crossed with the two API groups that serve it. These
 		// are the only k8s paths every principal shape is denied on — including

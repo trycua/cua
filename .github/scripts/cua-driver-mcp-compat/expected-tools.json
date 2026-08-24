@@ -1,9 +1,9 @@
 {
   "serverName": "cua-driver",
   "outputSchemaCountByPlatform": {
-    "darwin": 32,
-    "linux": 36,
-    "win32": 32
+    "darwin": 34,
+    "linux": 38,
+    "win32": 34
   },
   "baseTools": [
     "bring_to_front",
@@ -24,6 +24,7 @@
     "drag",
     "end_session",
     "escalate_session",
+    "find_credentials",
     "get_accessibility_tree",
     "get_agent_cursor_state",
     "get_browser_state",
@@ -59,6 +60,7 @@
     "start_recording",
     "start_session",
     "stop_recording",
+    "type_secret",
     "type_text",
     "verify_state",
     "zoom"

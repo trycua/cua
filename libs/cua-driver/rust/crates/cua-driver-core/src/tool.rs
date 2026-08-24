@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::Value;
 
 thread_local! {
@@ -640,6 +641,7 @@ pub struct ToolRegistry {
     approval_broker: Arc<crate::consent::ApprovalBroker>,
     protected_resource_grants: Arc<crate::consent::ProtectedResourceGrants>,
     protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+    browser_engine: Option<Arc<crate::browser::BrowserEngine>>,
 }
 
 impl ToolRegistry {
@@ -703,6 +705,7 @@ impl ToolRegistry {
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
+            browser_engine: None,
         }
     }
 
@@ -788,6 +791,10 @@ impl ToolRegistry {
         let name = tool.def().name.clone();
         self.order.push(name.clone());
         self.tools.insert(name, tool);
+    }
+
+    pub(crate) fn set_browser_engine(&mut self, engine: Arc<crate::browser::BrowserEngine>) {
+        self.browser_engine = Some(engine);
     }
 
     pub fn retain_session_end_hook(
@@ -1646,26 +1653,90 @@ impl ToolRegistry {
             );
         }
 
-        // Experimental PiP push — only when --experimental-pip is on argv
-        // (otherwise `pip_enabled()` is false and we skip the screenshot
-        // entirely to avoid wasted capture work). We push for the same set
-        // of action tools the recording pipeline cares about (non-read-only,
-        // not the recording-control meta-tools) so the live view matches
-        // what the recorder would have captured for the turn.
-        if pip_hook::pip_enabled() && should_record && !private_consent_turn {
-            let window_id = args.opt_u64("window_id");
-            let pid = args.opt_i64("pid");
-            if let Some(png_bytes) = screenshot_for(window_id, pid) {
-                let label = synthesize_action_label(name, &public_args);
-                pip_hook::push_pip_frame(pip_hook::PipHookFrame {
-                    png_bytes,
-                    action_label: label,
-                    timestamp_ms: now_ms(),
-                });
+        // Agent View keeps one latest frame per exact native window or browser
+        // tab. Exact read-side snapshots seed cards as well as action tools,
+        // so a user can inspect several targets before any mutation occurs.
+        if pip_hook::pip_enabled()
+            && !private_consent_turn
+            && (should_record || is_exact_visual_snapshot(name, &args))
+        {
+            if let Some(frame) = self
+                .capture_pip_frame(name, &args, &public_args, runtime_session.as_deref())
+                .await
+            {
+                pip_hook::push_pip_frame(frame);
             }
+        }
+        if pip_hook::pip_enabled()
+            && result.is_error != Some(true)
+            && name == "end_session"
+            && runtime_session.is_some()
+        {
+            pip_hook::remove_pip_workspace(runtime_session.as_deref().unwrap_or_default());
         }
 
         result
+    }
+
+    async fn capture_pip_frame(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        public_args: &Value,
+        runtime_session: Option<&str>,
+    ) -> Option<pip_hook::PipHookFrame> {
+        let workspace_id = runtime_session?.to_owned();
+        let workspace_label = pip_workspace_label(public_args, runtime_session?);
+        let action_label = synthesize_action_label(tool_name, public_args);
+        let timestamp_ms = now_ms();
+
+        if let (PipCaptureTarget::Browser { target_id, tab_id }, Some(engine)) =
+            (pip_capture_target(args)?, self.browser_engine.as_ref())
+        {
+            let browser_session = args
+                .get("session")
+                .and_then(Value::as_str)
+                .or(runtime_session)?;
+            let preview = engine
+                .capture_tab_preview(browser_session, &target_id, &tab_id)
+                .await
+                .ok()?;
+            let png_bytes = BASE64.decode(preview.screenshot.data_base64).ok()?;
+            let target_label = if preview.title.trim().is_empty() {
+                preview.url
+            } else {
+                preview.title
+            };
+            return Some(pip_hook::PipHookFrame {
+                target: pip_hook::PipHookTarget {
+                    workspace_id,
+                    workspace_label,
+                    target_id: format!("browser:{target_id}:{tab_id}"),
+                    target_kind: pip_hook::PipHookTargetKind::BrowserTab,
+                    target_label,
+                },
+                png_bytes,
+                action_label,
+                timestamp_ms,
+            });
+        }
+
+        let PipCaptureTarget::NativeWindow { pid, window_id } = pip_capture_target(args)? else {
+            return None;
+        };
+        let png_bytes = screenshot_for(Some(window_id), Some(pid))?;
+        Some(pip_hook::PipHookFrame {
+            target: pip_hook::PipHookTarget {
+                workspace_id,
+                workspace_label,
+                target_id: format!("window:{pid}:{window_id}"),
+                target_kind: pip_hook::PipHookTargetKind::NativeWindow,
+                target_label: format!("Window {window_id}"),
+            },
+            png_bytes,
+            action_label,
+            timestamp_ms,
+        })
     }
 
     async fn authorize_private_observation(
@@ -4731,7 +4802,66 @@ impl Default for ToolRegistry {
     }
 }
 
-/// Build a short, human-friendly label for the PiP overlay from the
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PipCaptureTarget {
+    NativeWindow { pid: i64, window_id: u64 },
+    Browser { target_id: String, tab_id: String },
+}
+
+fn pip_capture_target(args: &Value) -> Option<PipCaptureTarget> {
+    if let (Some(target_id), Some(tab_id)) = (
+        args.get("target_id").and_then(Value::as_str),
+        args.get("tab_id").and_then(Value::as_str),
+    ) {
+        return Some(PipCaptureTarget::Browser {
+            target_id: target_id.to_owned(),
+            tab_id: tab_id.to_owned(),
+        });
+    }
+    Some(PipCaptureTarget::NativeWindow {
+        pid: args.opt_i64("pid")?,
+        window_id: args.opt_u64("window_id")?,
+    })
+}
+
+fn is_exact_visual_snapshot(tool_name: &str, args: &Value) -> bool {
+    matches!(
+        (tool_name, pip_capture_target(args)),
+        (
+            "get_window_state",
+            Some(PipCaptureTarget::NativeWindow { .. })
+        ) | ("get_browser_state", Some(PipCaptureTarget::Browser { .. }))
+    )
+}
+
+fn pip_workspace_label(public_args: &Value, runtime_session: &str) -> String {
+    if let Some(label) = public_args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|label| !label.is_empty() && *label != "default")
+    {
+        return label.to_owned();
+    }
+    let suffix = runtime_session
+        .rsplit(':')
+        .next()
+        .unwrap_or(runtime_session)
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .rev()
+        .take(6)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    if suffix.is_empty() {
+        "Agent".to_owned()
+    } else {
+        format!("Agent {suffix}")
+    }
+}
+
+/// Build a short, human-friendly label for the Agent View from the
 /// tool name + raw args. Kept under ~60 chars so the macOS NSTextField
 /// has room without truncation at default geometry.
 fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
@@ -4775,6 +4905,72 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
         tool_name.to_owned()
     } else {
         format!("{tool_name}: {summary}")
+    }
+}
+
+#[cfg(test)]
+mod pip_routing_tests {
+    use super::*;
+
+    #[test]
+    fn browser_tab_identity_wins_over_its_native_container_window() {
+        let target = pip_capture_target(&serde_json::json!({
+            "pid": 42,
+            "window_id": 7,
+            "target_id": "bt-one",
+            "tab_id": "tab-two",
+        }));
+        assert_eq!(
+            target,
+            Some(PipCaptureTarget::Browser {
+                target_id: "bt-one".to_owned(),
+                tab_id: "tab-two".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn native_window_identity_requires_the_exact_pair() {
+        assert_eq!(
+            pip_capture_target(&serde_json::json!({"pid": 42, "window_id": 7})),
+            Some(PipCaptureTarget::NativeWindow {
+                pid: 42,
+                window_id: 7,
+            })
+        );
+        assert!(pip_capture_target(&serde_json::json!({"pid": 42})).is_none());
+        assert!(pip_capture_target(&serde_json::json!({"window_id": 7})).is_none());
+    }
+
+    #[test]
+    fn only_exact_state_reads_seed_agent_view_cards() {
+        assert!(is_exact_visual_snapshot(
+            "get_window_state",
+            &serde_json::json!({"pid": 42, "window_id": 7})
+        ));
+        assert!(is_exact_visual_snapshot(
+            "get_browser_state",
+            &serde_json::json!({"target_id": "bt-one", "tab_id": "tab-two"})
+        ));
+        assert!(!is_exact_visual_snapshot(
+            "get_browser_state",
+            &serde_json::json!({"pid": 42, "window_id": 7})
+        ));
+    }
+
+    #[test]
+    fn public_session_label_is_preferred_for_presentation() {
+        assert_eq!(
+            pip_workspace_label(
+                &serde_json::json!({"session": "research"}),
+                "__cua_runtime_x:private"
+            ),
+            "research"
+        );
+        assert_eq!(
+            pip_workspace_label(&serde_json::json!({}), "__cua_runtime_x:agent-123456"),
+            "Agent 123456"
+        );
     }
 }
 

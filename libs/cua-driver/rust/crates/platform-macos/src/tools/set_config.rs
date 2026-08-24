@@ -26,7 +26,7 @@ fn def() -> &'static ToolDef {
         description: "Update cua-driver-rs configuration. Changes to \
             max_image_dimension take effect immediately. The \
             experimental_pip keys are persisted to ~/.cua-driver/config.json and \
-            take effect on the next daemon restart (the PiP backend is \
+            take effect on the next daemon restart (Agent View is \
             initialised once at startup).\n\nNote: capture_mode is a per-call \
             param (on get_window_state / click), not a stored setting. Capture \
             modality is selected by each action's target; the old \
@@ -49,12 +49,13 @@ fn def() -> &'static ToolDef {
                 },
                 "experimental_pip": {
                     "type": "boolean",
-                    "description": "Enable the experimental picture-in-picture preview window. \
-                        Applies on next daemon restart."
+                    "description": "Enable the experimental multi-target Agent View. Exact native \
+                        windows and Chrome tabs are grouped automatically by session; no target \
+                        claiming is involved. Applies on next daemon restart."
                 },
                 "experimental_pip_geometry": {
                     "type": "string",
-                    "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` \
+                    "description": "Agent View size + optional position in `WxH` or `WxH+X+Y` \
                         form (e.g. `320x200+24+24`). Applies on next daemon restart."
                 }
             },

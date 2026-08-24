@@ -1,8 +1,7 @@
-//! macOS picture-in-picture preview window.
+//! macOS multi-target Agent View.
 //!
-//! Floating NSWindow with an NSImageView showing the most recent
-//! post-action screenshot and an NSTextField with a one-line label
-//! describing the action that produced it.
+//! Floating NSWindow containing a bounded grid of exact native-window and
+//! browser-tab cards, grouped by the existing lifecycle session.
 //!
 //! ## Threading model
 //!
@@ -44,7 +43,7 @@
 use std::ffi::c_void;
 use std::sync::Mutex;
 
-use pip_preview::{PipBackend, PipBackendFactory, PipConfig, PipFrame};
+use pip_preview::{PipBackend, PipBackendFactory, PipConfig, PipFrame, PipViewModel};
 
 // ── CGColor objc2 encoding shim ────────────────────────────────────────────
 //
@@ -78,11 +77,11 @@ unsafe impl objc2::RefEncode for CGColor {
 
 struct NativeHandles {
     window: usize,
-    image_view: usize,
-    label: usize,
+    content_view: usize,
 }
 
 static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
+static VIEW_MODEL: Mutex<Option<PipViewModel>> = Mutex::new(None);
 
 // ── libdispatch glue — same shape as cursor::overlay ──────────────────────
 
@@ -119,58 +118,235 @@ impl PipBackend for MacosPipBackend {
         dispatch_to_main(frame, push_frame_cb);
     }
 
+    fn remove_workspace(&self, workspace_id: &str) {
+        dispatch_to_main(workspace_id.to_owned(), remove_workspace_cb);
+    }
+
     fn shutdown(self: Box<Self>) {
         dispatch_to_main((), shutdown_cb);
     }
 }
 
 unsafe extern "C" fn push_frame_cb(ctx: *mut c_void) {
+    let frame: PipFrame = *Box::from_raw(ctx as *mut PipFrame);
+    let frames = {
+        let mut model = VIEW_MODEL.lock().unwrap();
+        let model = model.get_or_insert_with(|| PipViewModel::new(12));
+        model.upsert(frame);
+        model
+            .ordered_frames()
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    render_frames(&frames);
+}
+
+unsafe extern "C" fn remove_workspace_cb(ctx: *mut c_void) {
+    let workspace_id: String = *Box::from_raw(ctx as *mut String);
+    let frames = {
+        let mut model = VIEW_MODEL.lock().unwrap();
+        let model = model.get_or_insert_with(|| PipViewModel::new(12));
+        model.remove_workspace(&workspace_id);
+        model
+            .ordered_frames()
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    render_frames(&frames);
+}
+
+unsafe fn ns_string(value: &str) -> *mut objc2::runtime::AnyObject {
+    use objc2::{class, msg_send};
+
+    let sanitized = value.replace('\0', " ");
+    let Ok(cstr) = std::ffi::CString::new(sanitized) else {
+        return std::ptr::null_mut();
+    };
+    msg_send![
+        class!(NSString),
+        stringWithUTF8String: cstr.as_ptr() as *const u8
+    ]
+}
+
+unsafe fn add_text_label(
+    parent: *mut objc2::runtime::AnyObject,
+    frame: objc2_foundation::NSRect,
+    text: &str,
+    font_size: f64,
+    bold: bool,
+    secondary: bool,
+) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
-    let frame: PipFrame = *Box::from_raw(ctx as *mut PipFrame);
+    let label: *mut AnyObject = {
+        let alloc: *mut AnyObject = msg_send![class!(NSTextField), alloc];
+        msg_send![alloc, initWithFrame: frame]
+    };
+    let _: () = msg_send![label, setBezeled: false];
+    let _: () = msg_send![label, setDrawsBackground: false];
+    let _: () = msg_send![label, setEditable: false];
+    let _: () = msg_send![label, setSelectable: false];
+    let color: *mut AnyObject = if secondary {
+        msg_send![
+            class!(NSColor),
+            colorWithCalibratedWhite: 0.78_f64
+            alpha: 1.0_f64
+        ]
+    } else {
+        msg_send![class!(NSColor), whiteColor]
+    };
+    let _: () = msg_send![label, setTextColor: color];
+    let font: *mut AnyObject = if bold {
+        msg_send![class!(NSFont), boldSystemFontOfSize: font_size]
+    } else {
+        msg_send![class!(NSFont), systemFontOfSize: font_size]
+    };
+    let _: () = msg_send![label, setFont: font];
+    let value = ns_string(text);
+    if !value.is_null() {
+        let _: () = msg_send![label, setStringValue: value];
+    }
+    let _: () = msg_send![parent, addSubview: label];
+}
 
-    let (image_view_ptr, label_ptr) = {
+unsafe fn render_frames(frames: &[PipFrame]) {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    let content_view = {
         let guard = HANDLES.lock().unwrap();
         match guard.as_ref() {
-            Some(h) => (h.image_view, h.label),
+            Some(handles) => handles.content_view as *mut AnyObject,
             None => return,
         }
     };
+    let empty: *mut AnyObject = msg_send![class!(NSArray), array];
+    let _: () = msg_send![content_view, setSubviews: empty];
 
-    // Construct NSData from the PNG bytes, then NSImage from NSData.
-    // `dataWithBytes:length:` copies into a fresh NSData so the input
-    // `Vec<u8>` can be freed at the end of this block.
-    let png_ptr = frame.png_bytes.as_ptr() as *const c_void;
-    let png_len = frame.png_bytes.len();
-    let ns_data: *mut AnyObject = msg_send![
-        class!(NSData),
-        dataWithBytes: png_ptr
-        length: png_len
-    ];
-    if ns_data.is_null() {
+    let bounds: NSRect = msg_send![content_view, bounds];
+    if frames.is_empty() {
+        add_text_label(
+            content_view,
+            NSRect::new(
+                NSPoint::new(16.0, (bounds.size.height - 24.0) / 2.0),
+                NSSize::new((bounds.size.width - 32.0).max(40.0), 24.0),
+            ),
+            "Waiting for an exact window or browser tab...",
+            12.0,
+            false,
+            true,
+        );
         return;
     }
-    let img: *mut AnyObject = {
-        let alloc: *mut AnyObject = msg_send![class!(NSImage), alloc];
-        msg_send![alloc, initWithData: ns_data]
-    };
-    if !img.is_null() {
-        let image_view = image_view_ptr as *mut AnyObject;
-        let _: () = msg_send![image_view, setImage: img];
-    }
 
-    // Update the label. NSString::stringWithUTF8String requires NUL
-    // termination; copy into a CString so we hand a clean buffer.
-    if let Ok(cstr) = std::ffi::CString::new(frame.action_label) {
-        let ns_str: *mut AnyObject = msg_send![
-            class!(NSString),
-            stringWithUTF8String: cstr.as_ptr() as *const u8
+    let count = frames.len();
+    let cols = match count {
+        1 => 1,
+        2..=4 => 2,
+        _ => 3,
+    };
+    let rows = count.div_ceil(cols);
+    let gap = 6.0_f64;
+    let card_width = ((bounds.size.width - gap * (cols as f64 + 1.0)) / cols as f64).max(40.0);
+    let card_height = ((bounds.size.height - gap * (rows as f64 + 1.0)) / rows as f64).max(40.0);
+    let header_height = 20.0_f64.min(card_height * 0.22);
+    let footer_height = 19.0_f64.min(card_height * 0.20);
+
+    for (index, frame) in frames.iter().enumerate() {
+        let col = index % cols;
+        let row = index / cols;
+        let x = gap + col as f64 * (card_width + gap);
+        let y = bounds.size.height - gap - (row as f64 + 1.0) * card_height - row as f64 * gap;
+        let card_rect = NSRect::new(NSPoint::new(x, y), NSSize::new(card_width, card_height));
+        let card: *mut AnyObject = {
+            let alloc: *mut AnyObject = msg_send![class!(NSView), alloc];
+            msg_send![alloc, initWithFrame: card_rect]
+        };
+        let _: () = msg_send![card, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![card, layer];
+        let _: () = msg_send![layer, setCornerRadius: 9.0_f64];
+        let _: () = msg_send![layer, setMasksToBounds: true];
+        let bg: *mut AnyObject = msg_send![
+            class!(NSColor),
+            colorWithCalibratedRed: 0.055_f64
+            green: 0.065_f64
+            blue: 0.075_f64
+            alpha: 1.0_f64
         ];
-        if !ns_str.is_null() {
-            let label = label_ptr as *mut AnyObject;
-            let _: () = msg_send![label, setStringValue: ns_str];
+        let bg_cg: *mut CGColor = msg_send![bg, CGColor];
+        let _: () = msg_send![layer, setBackgroundColor: bg_cg];
+        let accent: *mut AnyObject = match frame.target.target_kind {
+            pip_preview::PipTargetKind::BrowserTab => msg_send![
+                class!(NSColor),
+                colorWithCalibratedRed: 0.15_f64
+                green: 0.78_f64
+                blue: 0.65_f64
+                alpha: 0.95_f64
+            ],
+            pip_preview::PipTargetKind::NativeWindow => msg_send![
+                class!(NSColor),
+                colorWithCalibratedRed: 0.98_f64
+                green: 0.52_f64
+                blue: 0.20_f64
+                alpha: 0.95_f64
+            ],
+        };
+        let accent_cg: *mut CGColor = msg_send![accent, CGColor];
+        let _: () = msg_send![layer, setBorderColor: accent_cg];
+        let _: () = msg_send![layer, setBorderWidth: 1.5_f64];
+
+        let image_height = (card_height - header_height - footer_height).max(1.0);
+        let image_rect = NSRect::new(
+            NSPoint::new(0.0, footer_height),
+            NSSize::new(card_width, image_height),
+        );
+        let image_view: *mut AnyObject = {
+            let alloc: *mut AnyObject = msg_send![class!(NSImageView), alloc];
+            msg_send![alloc, initWithFrame: image_rect]
+        };
+        let _: () = msg_send![image_view, setImageScaling: 3u64];
+        let ns_data: *mut AnyObject = msg_send![
+            class!(NSData),
+            dataWithBytes: frame.png_bytes.as_ptr() as *const c_void
+            length: frame.png_bytes.len()
+        ];
+        if !ns_data.is_null() {
+            let alloc: *mut AnyObject = msg_send![class!(NSImage), alloc];
+            let image: *mut AnyObject = msg_send![alloc, initWithData: ns_data];
+            if !image.is_null() {
+                let _: () = msg_send![image_view, setImage: image];
+            }
         }
+        let _: () = msg_send![card, addSubview: image_view];
+
+        add_text_label(
+            card,
+            NSRect::new(
+                NSPoint::new(8.0, card_height - header_height),
+                NSSize::new((card_width - 16.0).max(20.0), header_height),
+            ),
+            &frame.target.workspace_label,
+            10.5,
+            true,
+            false,
+        );
+        let footer = format!("{} · {}", frame.target.target_label, frame.action_label);
+        add_text_label(
+            card,
+            NSRect::new(
+                NSPoint::new(8.0, 0.0),
+                NSSize::new((card_width - 16.0).max(20.0), footer_height),
+            ),
+            &footer,
+            9.5,
+            false,
+            true,
+        );
+        let _: () = msg_send![content_view, addSubview: card];
     }
 }
 
@@ -179,6 +355,7 @@ unsafe extern "C" fn shutdown_cb(_ctx: *mut c_void) {
     use objc2::runtime::AnyObject;
 
     let handles = HANDLES.lock().unwrap().take();
+    VIEW_MODEL.lock().unwrap().take();
     if let Some(h) = handles {
         let win = h.window as *mut AnyObject;
         if !win.is_null() {
@@ -337,89 +514,15 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let black_cg: *mut CGColor = msg_send![black, CGColor];
     let _: () = msg_send![content_layer, setBackgroundColor: black_cg];
 
-    // ── NSImageView: fills the entire content view ──
-    let image_rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(w, h));
-    let image_view: *mut AnyObject = {
-        let alloc: *mut AnyObject = msg_send![class!(NSImageView), alloc];
-        msg_send![alloc, initWithFrame: image_rect]
-    };
-    // NSImageScaleProportionallyUpOrDown = 3 (preserve aspect ratio).
-    // AppKit types this as NSUInteger — passing signed i64 triggers
-    // an objc2 type-encoding panic on macOS 26+.
-    let _: () = msg_send![image_view, setImageScaling: 3u64];
-
-    // ── Label overlay: pill at bottom-center ──
-    // Container NSView with semi-transparent black backing + rounded
-    // corners (half its height for a fully rounded pill). NSTextField
-    // sits inside, centered, white text on the dark backing.
-    let pill_height = 22.0_f64;
-    let pill_inset_x = 16.0_f64;
-    let pill_inset_bottom = 10.0_f64;
-    let pill_w = (w - pill_inset_x * 2.0).max(60.0);
-    let pill_rect = NSRect::new(
-        NSPoint::new(pill_inset_x, pill_inset_bottom),
-        NSSize::new(pill_w, pill_height),
-    );
-    let pill: *mut AnyObject = {
-        let alloc: *mut AnyObject = msg_send![class!(NSView), alloc];
-        msg_send![alloc, initWithFrame: pill_rect]
-    };
-    let _: () = msg_send![pill, setWantsLayer: true];
-    let pill_layer: *mut AnyObject = msg_send![pill, layer];
-    let _: () = msg_send![pill_layer, setCornerRadius: pill_height / 2.0];
-    let _: () = msg_send![pill_layer, setMasksToBounds: true];
-    let pill_bg: *mut AnyObject = msg_send![
-        class!(NSColor),
-        colorWithCalibratedRed: 0.0_f64
-        green: 0.0_f64
-        blue: 0.0_f64
-        alpha: 0.62_f64
-    ];
-    let pill_bg_cg: *mut CGColor = msg_send![pill_bg, CGColor];
-    let _: () = msg_send![pill_layer, setBackgroundColor: pill_bg_cg];
-
-    // NSTextField inside the pill — horizontal padding via frame inset.
-    let label_rect = NSRect::new(
-        NSPoint::new(10.0, 0.0),
-        NSSize::new(pill_w - 20.0, pill_height),
-    );
-    let label: *mut AnyObject = {
-        let alloc: *mut AnyObject = msg_send![class!(NSTextField), alloc];
-        msg_send![alloc, initWithFrame: label_rect]
-    };
-    let _: () = msg_send![label, setBezeled: false];
-    let _: () = msg_send![label, setDrawsBackground: false];
-    let _: () = msg_send![label, setEditable: false];
-    let _: () = msg_send![label, setSelectable: false];
-    // NSTextAlignment.center = 2 (NSInteger).
-    let _: () = msg_send![label, setAlignment: 2i64];
-    let white: *mut AnyObject = msg_send![class!(NSColor), whiteColor];
-    let _: () = msg_send![label, setTextColor: white];
-    let font: *mut AnyObject = msg_send![class!(NSFont), systemFontOfSize: 11.0_f64];
-    let _: () = msg_send![label, setFont: font];
-    // Initial placeholder text — overwritten on the first frame.
-    if let Ok(cstr) = std::ffi::CString::new("waiting for first action…") {
-        let ns_str: *mut AnyObject = msg_send![
-            class!(NSString),
-            stringWithUTF8String: cstr.as_ptr() as *const u8
-        ];
-        if !ns_str.is_null() {
-            let _: () = msg_send![label, setStringValue: ns_str];
-        }
-    }
-
-    let _: () = msg_send![content_view, addSubview: image_view];
-    let _: () = msg_send![pill, addSubview: label];
-    let _: () = msg_send![content_view, addSubview: pill];
-
     // Show the window without making it key or activating the app.
     let _: () = msg_send![win, orderFrontRegardless];
 
     *HANDLES.lock().unwrap() = Some(NativeHandles {
         window: win as usize,
-        image_view: image_view as usize,
-        label: label as usize,
+        content_view: content_view as usize,
     });
+    *VIEW_MODEL.lock().unwrap() = Some(PipViewModel::new(12));
+    render_frames(&[]);
 
-    tracing::info!(target: "pip", "PiP window initialised ({}x{})", cfg.geometry.width, cfg.geometry.height);
+    tracing::info!(target: "pip", "Agent View initialised ({}x{})", cfg.geometry.width, cfg.geometry.height);
 }

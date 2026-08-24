@@ -1,5 +1,5 @@
-//! PiP frame-push hook — registered once by `main.rs` when the
-//! `--experimental-pip` flag is on argv.
+//! Agent View event hook, registered once by `main.rs` when the legacy
+//! `--experimental-pip` compatibility flag is enabled.
 //!
 //! The trait + factory live in the `pip-preview` crate so the platform
 //! backends can implement them without depending on `cua-driver-core`.
@@ -19,31 +19,61 @@ use std::sync::OnceLock;
 /// to `pip_preview::PipFrame` — duplicated here to keep `cua-driver-core`
 /// from importing `pip-preview` (the dependency would be circular once
 /// platform backends pull both crates in).
+#[derive(Clone, Copy)]
+pub enum PipHookTargetKind {
+    NativeWindow,
+    BrowserTab,
+}
+
+pub struct PipHookTarget {
+    pub workspace_id: String,
+    pub workspace_label: String,
+    pub target_id: String,
+    pub target_kind: PipHookTargetKind,
+    pub target_label: String,
+}
+
 pub struct PipHookFrame {
+    pub target: PipHookTarget,
     pub png_bytes: Vec<u8>,
     pub action_label: String,
     pub timestamp_ms: u64,
 }
 
-type PipPushFnBox = Box<dyn Fn(PipHookFrame) + Send + Sync>;
-static PIP_PUSH_FN: OnceLock<PipPushFnBox> = OnceLock::new();
+pub enum PipHookEvent {
+    Upsert(PipHookFrame),
+    RemoveWorkspace { workspace_id: String },
+}
+
+type PipEventFnBox = Box<dyn Fn(PipHookEvent) + Send + Sync>;
+static PIP_EVENT_FN: OnceLock<PipEventFnBox> = OnceLock::new();
 
 /// Register the platform-side push callback. `main.rs` calls this
 /// once after starting the PiP backend.
-pub fn set_pip_push_fn(f: impl Fn(PipHookFrame) + Send + Sync + 'static) {
-    let _ = PIP_PUSH_FN.set(Box::new(f));
+pub fn set_pip_event_fn(f: impl Fn(PipHookEvent) + Send + Sync + 'static) {
+    let _ = PIP_EVENT_FN.set(Box::new(f));
 }
 
 /// True when a PiP backend is wired up. Tool dispatcher uses this to
 /// skip the screenshot-bytes path when nothing would consume the
 /// frame (avoiding wasted capture work in the common --pip-off case).
 pub fn pip_enabled() -> bool {
-    PIP_PUSH_FN.get().is_some()
+    PIP_EVENT_FN.get().is_some()
 }
 
-/// Push a frame to the PiP window. No-op when no backend is registered.
+/// Upsert one exact-target frame. No-op when no backend is registered.
 pub fn push_pip_frame(frame: PipHookFrame) {
-    if let Some(f) = PIP_PUSH_FN.get() {
-        f(frame);
+    if let Some(f) = PIP_EVENT_FN.get() {
+        f(PipHookEvent::Upsert(frame));
+    }
+}
+
+/// Remove presentation state for an ended workspace. This never closes the
+/// workspace's native windows or browser tabs.
+pub fn remove_pip_workspace(workspace_id: impl Into<String>) {
+    if let Some(f) = PIP_EVENT_FN.get() {
+        f(PipHookEvent::RemoveWorkspace {
+            workspace_id: workspace_id.into(),
+        });
     }
 }

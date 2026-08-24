@@ -1,13 +1,10 @@
-//! pip-preview — shared types + trait for the experimental
-//! picture-in-picture agent preview window.
+//! Shared model and platform contract for the experimental Agent View.
 //!
-//! The PiP window is an opt-in, always-on-top floating window that
-//! shows what the cua-driver agent just did: a post-action screenshot
-//! of the target window plus a one-line label summarising the tool
-//! call. It mirrors the architecture used by `cursor-overlay` (shared
-//! config/types here, platform-specific renderer in each `platform-*`
-//! crate) and the registration pattern used by `cua_driver_core::video`
-//! (a `OnceLock` factory set once at startup by `main.rs`).
+//! The existing PiP flags remain the compatibility entry point, but the
+//! surface is no longer modeled as one process-global "latest screenshot".
+//! Frames carry an existing session/workspace identity and an exact native
+//! window or browser-tab identity. Platform backends can therefore keep
+//! several target cards visible without introducing target claims or leases.
 //!
 //! macOS is the first working implementation (NSWindow + NSImageView).
 //! Windows + Linux ship as compile-clean stubs whose `start()` returns
@@ -15,6 +12,8 @@
 //! continues without a PiP window.
 
 use std::sync::OnceLock;
+
+use std::collections::HashMap;
 
 /// Canonical `~/.cua-driver/config.json` path matching what the per-platform
 /// `set_config` tools write to. Resolves `$HOME` first (Unix/macOS) and falls
@@ -164,7 +163,7 @@ impl Default for PipConfig {
         Self {
             enabled: false,
             geometry: PipGeometry::default(),
-            title: "cua-driver — agent view (experimental)".to_owned(),
+            title: "Cua Agent View (experimental)".to_owned(),
         }
     }
 }
@@ -250,7 +249,43 @@ impl PipConfig {
     }
 }
 
-/// A single frame pushed into the PiP window after a tool call lands.
+/// The exact surface represented by an Agent View card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipTargetKind {
+    NativeWindow,
+    BrowserTab,
+}
+
+impl PipTargetKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NativeWindow => "native_window",
+            Self::BrowserTab => "browser_tab",
+        }
+    }
+}
+
+/// Stable target metadata used to group frames in the Agent View.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipTarget {
+    /// Runtime-unique session key. This is grouping metadata, not an ownership
+    /// or authorization claim.
+    pub workspace_id: String,
+    /// Short public session label shown to the user.
+    pub workspace_label: String,
+    /// Stable exact-target key within the workspace.
+    pub target_id: String,
+    pub target_kind: PipTargetKind,
+    pub target_label: String,
+}
+
+impl PipTarget {
+    pub fn view_id(&self) -> String {
+        format!("{}:{}", self.workspace_id, self.target_id)
+    }
+}
+
+/// A single exact-target frame pushed into the Agent View after a tool call.
 ///
 /// `png_bytes` are the raw PNG bytes produced by the platform
 /// screenshot callback — the same path that powers `screenshot.png`
@@ -258,6 +293,7 @@ impl PipConfig {
 /// sees.
 #[derive(Debug, Clone)]
 pub struct PipFrame {
+    pub target: PipTarget,
     pub png_bytes: Vec<u8>,
     /// One-line summary shown overlayed on the frame, e.g.
     /// `click element_index=2` or `type_text "hello world"`.
@@ -265,6 +301,76 @@ pub struct PipFrame {
     /// Wall-clock timestamp (ms since Unix epoch) — used by backends
     /// that want to show "last update Xs ago" in the title bar.
     pub timestamp_ms: u64,
+}
+
+/// Platform-neutral latest-frame model with bounded target retention.
+///
+/// Backends use this to keep one card per exact target. The oldest-updated
+/// card is evicted when the configured limit is reached; ending a workspace
+/// removes all of its cards without closing the underlying applications.
+pub struct PipViewModel {
+    max_targets: usize,
+    frames: HashMap<String, PipFrame>,
+}
+
+impl PipViewModel {
+    pub fn new(max_targets: usize) -> Self {
+        Self {
+            max_targets: max_targets.max(1),
+            frames: HashMap::new(),
+        }
+    }
+
+    pub fn upsert(&mut self, frame: PipFrame) -> Option<String> {
+        let view_id = frame.target.view_id();
+        self.frames.insert(view_id.clone(), frame);
+        if self.frames.len() <= self.max_targets {
+            return None;
+        }
+        let evicted = self
+            .frames
+            .iter()
+            .filter(|(id, _)| *id != &view_id)
+            .min_by_key(|(_, frame)| frame.timestamp_ms)
+            .map(|(id, _)| id.clone());
+        if let Some(id) = evicted.as_ref() {
+            self.frames.remove(id);
+        }
+        evicted
+    }
+
+    pub fn remove_workspace(&mut self, workspace_id: &str) -> Vec<String> {
+        let removed = self
+            .frames
+            .iter()
+            .filter(|(_, frame)| frame.target.workspace_id == workspace_id)
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in &removed {
+            self.frames.remove(id);
+        }
+        removed
+    }
+
+    pub fn ordered_frames(&self) -> Vec<&PipFrame> {
+        let mut frames = self.frames.values().collect::<Vec<_>>();
+        frames.sort_by(|a, b| {
+            a.target
+                .workspace_label
+                .cmp(&b.target.workspace_label)
+                .then_with(|| b.timestamp_ms.cmp(&a.timestamp_ms))
+                .then_with(|| a.target.target_id.cmp(&b.target.target_id))
+        });
+        frames
+    }
+
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
 }
 
 /// A live PiP window. Owned by `main.rs` for the lifetime of the
@@ -275,6 +381,10 @@ pub trait PipBackend: Send + Sync {
     /// its UI toolkit requires (the macOS impl dispatches to the main
     /// queue via `dispatch_async`).
     fn push_frame(&self, frame: PipFrame);
+
+    /// Remove every card associated with an ended session/workspace. This
+    /// changes only Agent View presentation; it does not close applications.
+    fn remove_workspace(&self, workspace_id: &str);
 
     /// Close the window and release native resources. Called from
     /// `main.rs` on shutdown.
@@ -305,4 +415,64 @@ pub fn start_pip(cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>> {
         .get()
         .ok_or_else(|| anyhow::anyhow!("no PiP backend registered for this platform"))?;
     factory.start(cfg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(workspace: &str, target: &str, timestamp_ms: u64) -> PipFrame {
+        PipFrame {
+            target: PipTarget {
+                workspace_id: workspace.to_owned(),
+                workspace_label: workspace.to_owned(),
+                target_id: target.to_owned(),
+                target_kind: PipTargetKind::NativeWindow,
+                target_label: target.to_owned(),
+            },
+            png_bytes: vec![1],
+            action_label: "click".to_owned(),
+            timestamp_ms,
+        }
+    }
+
+    #[test]
+    fn keeps_distinct_targets_in_the_same_workspace() {
+        let mut model = PipViewModel::new(4);
+        model.upsert(frame("agent-a", "window:1:2", 1));
+        model.upsert(frame("agent-a", "browser:bt:tab", 2));
+        assert_eq!(model.len(), 2);
+    }
+
+    #[test]
+    fn updating_one_target_does_not_replace_another() {
+        let mut model = PipViewModel::new(4);
+        model.upsert(frame("agent-a", "window:1:2", 1));
+        model.upsert(frame("agent-a", "browser:bt:tab", 2));
+        model.upsert(frame("agent-a", "window:1:2", 3));
+        assert_eq!(model.len(), 2);
+        assert_eq!(model.ordered_frames()[0].target.target_id, "window:1:2");
+    }
+
+    #[test]
+    fn ending_a_workspace_removes_only_its_cards() {
+        let mut model = PipViewModel::new(4);
+        model.upsert(frame("agent-a", "window:1:2", 1));
+        model.upsert(frame("agent-b", "window:3:4", 2));
+        assert_eq!(model.remove_workspace("agent-a").len(), 1);
+        assert_eq!(model.len(), 1);
+        assert_eq!(model.ordered_frames()[0].target.workspace_id, "agent-b");
+    }
+
+    #[test]
+    fn evicts_the_oldest_other_target_at_capacity() {
+        let mut model = PipViewModel::new(2);
+        model.upsert(frame("agent-a", "old", 1));
+        model.upsert(frame("agent-a", "newer", 2));
+        assert_eq!(
+            model.upsert(frame("agent-b", "newest", 3)),
+            Some("agent-a:old".to_owned())
+        );
+        assert_eq!(model.len(), 2);
+    }
 }

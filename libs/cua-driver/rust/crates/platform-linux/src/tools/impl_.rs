@@ -6927,15 +6927,15 @@ impl Tool for SetConfigTool {
                   — single leaf write.\n\
                 - **Legacy per-field**: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n\
                 The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next \
-                daemon restart (the PiP backend is initialised once at startup; \
+                daemon restart (Agent View is initialised once at startup; \
                 Linux ships only the trait stub today — see issue #1729).".into(),
             input_schema: json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
-                "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
-                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
+                "experimental_pip":{"type":"boolean","description":"Enable the experimental multi-target Agent View (applies next restart; Linux backend stubbed)."},
+                "experimental_pip_geometry":{"type":"string","description":"Agent View size + optional position in `WxH` or `WxH+X+Y` form."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })

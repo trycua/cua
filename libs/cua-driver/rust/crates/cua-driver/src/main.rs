@@ -215,14 +215,15 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-/// Wire up the experimental picture-in-picture preview window.
+/// Wire up the experimental multi-target Agent View.
 ///
 /// Called from every long-running entry point (Serve and Mcp on all
 /// platforms; the `Call` arm intentionally skips PiP since the
 /// per-call binaries don't keep an AppKit/event loop alive long
 /// enough to be useful).
 ///
-/// No-op when `--experimental-pip` is not on argv. On Windows / Linux
+/// The legacy `--experimental-pip` flag remains the compatibility switch.
+/// On Windows / Linux
 /// the factory returns "not yet implemented" — we log and continue
 /// without a window so the rest of the daemon keeps working.
 fn maybe_init_pip() {
@@ -255,24 +256,47 @@ fn maybe_init_pip() {
                 StdMutex<Option<Box<dyn pip_preview::PipBackend>>>,
             > = std::sync::OnceLock::new();
             let _ = BACKEND.set(StdMutex::new(Some(backend)));
-            cua_driver_core::pip_hook::set_pip_push_fn(|frame| {
+            cua_driver_core::pip_hook::set_pip_event_fn(|event| {
                 if let Some(slot) = BACKEND.get() {
                     if let Some(b) = slot.lock().unwrap().as_ref() {
-                        b.push_frame(pip_preview::PipFrame {
-                            png_bytes: frame.png_bytes,
-                            action_label: frame.action_label,
-                            timestamp_ms: frame.timestamp_ms,
-                        });
+                        match event {
+                            cua_driver_core::pip_hook::PipHookEvent::Upsert(frame) => {
+                                let target_kind = match frame.target.target_kind {
+                                    cua_driver_core::pip_hook::PipHookTargetKind::NativeWindow => {
+                                        pip_preview::PipTargetKind::NativeWindow
+                                    }
+                                    cua_driver_core::pip_hook::PipHookTargetKind::BrowserTab => {
+                                        pip_preview::PipTargetKind::BrowserTab
+                                    }
+                                };
+                                b.push_frame(pip_preview::PipFrame {
+                                    target: pip_preview::PipTarget {
+                                        workspace_id: frame.target.workspace_id,
+                                        workspace_label: frame.target.workspace_label,
+                                        target_id: frame.target.target_id,
+                                        target_kind,
+                                        target_label: frame.target.target_label,
+                                    },
+                                    png_bytes: frame.png_bytes,
+                                    action_label: frame.action_label,
+                                    timestamp_ms: frame.timestamp_ms,
+                                });
+                            }
+                            cua_driver_core::pip_hook::PipHookEvent::RemoveWorkspace {
+                                workspace_id,
+                            } => b.remove_workspace(&workspace_id),
+                        }
                     }
                 }
             });
             eprintln!(
-                "⚗️  PiP preview enabled (experimental — macOS only today; \
+                "⚗️  Agent View enabled via experimental PiP compatibility flag \
+                 (macOS only today; \
                  see https://github.com/trycua/cua/issues for follow-up)"
             );
         }
         Err(e) => {
-            eprintln!("⚗️  PiP preview requested but unavailable: {e}");
+            eprintln!("⚗️  Agent View requested but unavailable: {e}");
         }
     }
 }

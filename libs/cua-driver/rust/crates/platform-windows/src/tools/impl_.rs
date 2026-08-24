@@ -8076,16 +8076,16 @@ impl Tool for SetConfigTool {
                   `get_window_state` always returns both the UIA tree and a screenshot. Still \
                   accepted/persisted for back-compat but has no effect.\n\
                 - `max_image_dimension` (integer)\n\
-                - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
-                - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
+                - `experimental_pip` (boolean; enables the multi-target Agent View after restart — Windows backend stubbed today, see issue #1729)\n\
+                - `experimental_pip_geometry` (Agent View size as `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
-                "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
-                "experimental_pip_geometry":{"type":"string","description":"Legacy per-field shape. PiP window size + optional position."}
+                "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables the multi-target Agent View (applies next restart)."},
+                "experimental_pip_geometry":{"type":"string","description":"Legacy per-field shape. Agent View size + optional position."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })

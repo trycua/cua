@@ -5,7 +5,10 @@ import ChatBubble from "@cloudscape-design/chat-components/chat-bubble";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import Container from "@cloudscape-design/components/container";
+import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
+import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
 import PromptInput from "@cloudscape-design/components/prompt-input";
 import SpaceBetween from "@cloudscape-design/components/space-between";
@@ -39,6 +42,7 @@ import {
   type ToolCall,
 } from "../browser-agent";
 import { createBrowserMcpCommands } from "../browser-mcp-commands";
+import { SensitiveOutputBuffer, type SensitiveOutput, type UserApiKeyCredentials } from "../sensitive-output";
 import { useChatThreads } from "../chat/ChatThreadsContext";
 import { localVisualPreviewPath } from "../local-visual-preview";
 import {
@@ -56,6 +60,7 @@ interface CommandStep {
   id: string;
   arguments: NormalizedBashArguments;
   result?: BashToolResult;
+  sensitiveOutputs?: SensitiveOutput[];
   running?: boolean;
 }
 
@@ -161,6 +166,7 @@ function parseStoredCommand(
   toolCall: ChatToolCall,
   messages: ChatMessage[],
   index: number,
+  sensitiveOutputsByToolCall: Record<string, SensitiveOutput[]>,
 ): CommandStep | undefined {
   if (toolCall.function.name !== "bash") return undefined;
   try {
@@ -187,13 +193,17 @@ function parseStoredCommand(
             : 20_000,
       },
       result: toolMessage ? parseStoredResult(toolMessage.content) : undefined,
+      sensitiveOutputs: sensitiveOutputsByToolCall[toolCall.id],
     };
   } catch {
     return undefined;
   }
 }
 
-function reconstructTranscript(messages: ChatMessage[]): TranscriptItem[] {
+function reconstructTranscript(
+  messages: ChatMessage[],
+  sensitiveOutputsByToolCall: Record<string, SensitiveOutput[]>,
+): TranscriptItem[] {
   return messages.flatMap((message, index) => {
     if (message.role === "tool") return [];
     const items: TranscriptItem[] = [];
@@ -206,7 +216,12 @@ function reconstructTranscript(messages: ChatMessage[]): TranscriptItem[] {
     }
     if (message.role === "assistant") {
       for (const toolCall of message.tool_calls ?? []) {
-        const command = parseStoredCommand(toolCall, messages, index);
+        const command = parseStoredCommand(
+          toolCall,
+          messages,
+          index,
+          sensitiveOutputsByToolCall,
+        );
         if (command) items.push({ type: "command", command });
       }
     }
@@ -266,6 +281,59 @@ function MessageBubble({
   );
 }
 
+function UserApiKeyCredentialCard({
+  credentials,
+}: {
+  credentials: UserApiKeyCredentials;
+}) {
+  return (
+    <Container header={<Header variant="h3">API key created</Header>}>
+      <SpaceBetween size="m">
+        <Alert type="warning">
+          These credentials are held only in this page's memory. Copy them
+          before reloading or closing the page.
+        </Alert>
+        <FormField label="Client ID">
+          <CopyToClipboard
+            variant="inline"
+            textToCopy={credentials.clientId}
+            textToDisplay={<code>{credentials.clientId}</code>}
+            copyButtonAriaLabel="Copy client ID"
+            copySuccessText="Client ID copied"
+            copyErrorText="Failed to copy"
+          />
+        </FormField>
+        <FormField label="Client Secret">
+          <CopyToClipboard
+            variant="inline"
+            textToCopy={credentials.clientSecret}
+            textToDisplay={<code>{credentials.clientSecret}</code>}
+            copyButtonAriaLabel="Copy client secret"
+            copySuccessText="Client secret copied"
+            copyErrorText="Failed to copy"
+          />
+        </FormField>
+        <FormField label="Token URL">
+          <CopyToClipboard
+            variant="inline"
+            textToCopy={credentials.tokenUrl}
+            textToDisplay={<code>{credentials.tokenUrl}</code>}
+            copyButtonAriaLabel="Copy token URL"
+            copySuccessText="Token URL copied"
+            copyErrorText="Failed to copy"
+          />
+        </FormField>
+        <FormField label="Name">
+          <Box>{credentials.name}</Box>
+        </FormField>
+        <FormField label="Scopes">
+          <Box>{credentials.scope.join(", ") || "Unrestricted"}</Box>
+        </FormField>
+      </SpaceBetween>
+    </Container>
+  );
+}
+
 function CommandStatus({ command }: { command: CommandStep }) {
   const { result } = command;
   const running = command.running ?? !result;
@@ -304,6 +372,13 @@ function CommandStatus({ command }: { command: CommandStep }) {
           )}
         </SpaceBetween>
       </ExpandableSection>
+      {command.sensitiveOutputs?.map((output, index) =>
+        output.kind === "user_api_key" ? (
+          <div className="agent-chat-credential" key={index}>
+            <UserApiKeyCredentialCard credentials={output.value} />
+          </div>
+        ) : null,
+      )}
     </div>
   );
 }
@@ -334,6 +409,7 @@ export function AgentChat() {
   const [draft, setDraft] = useState("");
   const [liveItems, setLiveItems] = useState<TranscriptItem[]>([]);
   const [liveAssistant, setLiveAssistant] = useState<ChatMessage>();
+  const [sensitiveOutputsByToolCall, setSensitiveOutputsByToolCall] = useState<Record<string, SensitiveOutput[]>>({});
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [abortable, setAbortable] = useState(false);
@@ -345,6 +421,7 @@ export function AgentChat() {
   const pageRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLElement>(null);
   const agentRef = useRef<BrowserBashAgent>();
+  const sensitiveOutputBufferRef = useRef<SensitiveOutputBuffer>();
   const abortControllerRef = useRef<AbortController>();
   const loadSequenceRef = useRef(0);
   const nextRunIdRef = useRef(0);
@@ -378,7 +455,12 @@ export function AgentChat() {
     };
   }, []);
 
+  if (!sensitiveOutputBufferRef.current) {
+    sensitiveOutputBufferRef.current = new SensitiveOutputBuffer();
+  }
+
   if (!agentRef.current) {
+    const sensitiveOutputs = sensitiveOutputBufferRef.current;
     agentRef.current = new BrowserBashAgent(
       async (conversationID, messages, signal, onDelta) => {
         const message = await streamTurn(
@@ -395,7 +477,11 @@ export function AgentChat() {
           ),
         };
       },
-      [...createBrowserSdkCommands(browserSdk), ...createBrowserMcpCommands()],
+      [
+        ...createBrowserSdkCommands(browserSdk, sensitiveOutputs),
+        ...createBrowserMcpCommands(),
+      ],
+      sensitiveOutputs,
     );
   }
 
@@ -584,6 +670,12 @@ export function AgentChat() {
               },
             ]);
           } else if (event.type === "tool_result") {
+            if (event.sensitiveOutputs.length > 0) {
+              setSensitiveOutputsByToolCall((current) => ({
+                ...current,
+                [event.toolCall.id]: event.sensitiveOutputs,
+              }));
+            }
             setLiveItems((current) =>
               current.map((item) =>
                 item.type === "command" && item.command.id === event.toolCall.id
@@ -592,6 +684,7 @@ export function AgentChat() {
                       command: {
                         ...item.command,
                         result: event.result,
+                        sensitiveOutputs: event.sensitiveOutputs,
                         running: true,
                       },
                     }
@@ -803,7 +896,7 @@ export function AgentChat() {
   const archived = Boolean(conversation?.archived_at);
   const canRecoverLoad = conversationErrorStatus === 401 || conversationErrorStatus === 404;
   const transcript = conversation
-    ? reconstructTranscript(conversation.messages)
+    ? reconstructTranscript(conversation.messages, sensitiveOutputsByToolCall)
     : [];
   const visibleItems = [...transcript, ...liveItems];
   const showPendingAssistant =

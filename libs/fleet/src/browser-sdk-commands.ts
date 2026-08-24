@@ -4,6 +4,7 @@ import {
   renderCommandHelp,
   type BrowserCommandHelp,
 } from "./browser-command-help.js"
+import type { SensitiveOutputBuffer, UserApiKeyCredentials } from "./sensitive-output.js"
 
 export type BrowserSdkMethod = (...args: never[]) => Promise<unknown>
 
@@ -183,13 +184,13 @@ const SDK_COMMAND_HELP: Record<BrowserSdkCommandName, BrowserCommandHelp> = {
     summary: "Create a user API key whose secret is shown once.",
     usage: "createUserKey '[\"name\",[\"scope\"]]'",
     arguments: ["name: Human-readable key name.", "scopes: Optional array of scopes."],
-    output: "A JSON object containing clientId, clientSecret, tokenUrl, name, and scopes.",
+    output: "A safe confirmation. The credential values are displayed directly to the user in the chat UI and are unavailable to the model.",
     presentation: [
       "Warn before execution that a new credential will be created.",
-      "After success, clearly state that the client secret is shown once and render the credential fields in a fenced text block.",
-      "Do not repeat the client secret later in the response or include it in a table.",
+      "After success, state that the credentials are shown directly in the chat and must be copied before the page is reloaded.",
+      "Do not ask the user to paste the client secret back into chat.",
     ],
-    safety: "Sensitive mutation. Create only with the user's requested name and scopes; never expose the secret beyond the immediate result.",
+    safety: "Sensitive mutation. Create only with the user's requested name and scopes; credential values never enter model context or server-side chat history.",
     examples: ["createUserKey '[\"automation\",[\"fleets:read\"]]'"],
   },
   deleteUserKey: {
@@ -230,7 +231,23 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "SDK command failed"
 }
 
-export function createBrowserSdkCommands(sdk: BrowserSdk): Command[] {
+function isUserApiKeyCredentials(value: unknown): value is UserApiKeyCredentials {
+  if (!value || typeof value !== "object") return false
+  const credentials = value as Partial<UserApiKeyCredentials>
+  return (
+    typeof credentials.clientId === "string" &&
+    typeof credentials.clientSecret === "string" &&
+    typeof credentials.tokenUrl === "string" &&
+    typeof credentials.name === "string" &&
+    Array.isArray(credentials.scope) &&
+    credentials.scope.every(scope => typeof scope === "string")
+  )
+}
+
+export function createBrowserSdkCommands(
+  sdk: BrowserSdk,
+  sensitiveOutputs?: SensitiveOutputBuffer,
+): Command[] {
   return BROWSER_SDK_COMMAND_NAMES.map(name =>
     defineCommand(name, async (args, context) => {
       if (isHelpRequest(args)) {
@@ -240,6 +257,17 @@ export function createBrowserSdkCommands(sdk: BrowserSdk): Command[] {
         const methodArguments = parseArguments(args, decodeStdin(context.stdin))
         const method = sdk[name] as (...args: unknown[]) => Promise<unknown>
         const result = await method(...methodArguments)
+        if (name === "createUserKey") {
+          if (!isUserApiKeyCredentials(result)) {
+            throw new Error("createUserKey returned invalid credentials")
+          }
+          sensitiveOutputs?.push({ kind: "user_api_key", value: result })
+          return {
+            stdout: '{"status":"created","credentials":"shown directly to the user"}\n',
+            stderr: "",
+            exitCode: 0,
+          }
+        }
         return {
           stdout: result === undefined ? "" : `${JSON.stringify(result)}\n`,
           stderr: "",

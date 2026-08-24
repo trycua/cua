@@ -281,3 +281,8 @@
 .agent-chat-prompt textarea {
   min-height: 48px;
 }
+
+.agent-chat-credential {
+  margin-block-start: 12px;
+  max-width: 720px;
+}

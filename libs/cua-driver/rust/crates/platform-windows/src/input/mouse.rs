@@ -588,19 +588,38 @@ fn send_click_synthesized_mods_impl(
         } else {
             None
         };
+        let mut activation_via_click = false;
         if activate && !crate::input::force_foreground_assisted(target).0 {
             let actual = GetForegroundWindow();
             if !crate::win32::foreground_matches_target_owner(
                 foreground_target.expect("foreground target captured before activation"),
                 actual.0 as usize as u64,
             ) {
-                bail!(
-                    "foreground_unavailable: Windows did not activate exact target HWND {:?} \
-                     or retain its verified same-process owner (actual foreground HWND {:?}); \
-                     no mouse input was sent",
-                    target.0,
-                    actual.0
-                );
+                // A system-routed pointer press on a visible top-level window is
+                // itself allowed to establish foreground ownership. Raise only
+                // the already-verified target, then let the requested click make
+                // that transition. The post-action foreground check below still
+                // fails closed if Windows routes the input anywhere else.
+                let raised = SetWindowPos(
+                    target,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                )
+                .is_ok();
+                if !raised {
+                    bail!(
+                        "foreground_unavailable: Windows did not activate exact target HWND {:?} \
+                         or retain its verified same-process owner (actual foreground HWND {:?}); \
+                         target could not be raised for click-assisted activation",
+                        target.0,
+                        actual.0
+                    );
+                }
+                activation_via_click = true;
             }
         }
         let noactivate = (!activate).then(|| crate::input::NoActivateGuard::arm(target));
@@ -668,7 +687,7 @@ fn send_click_synthesized_mods_impl(
         // lose the click if the real cursor is warped away while those queued
         // messages are still being dispatched.
         sleep(Duration::from_millis(if activate { 120 } else { 40 }));
-        if !was_topmost && !activate {
+        if !was_topmost && (!activate || activation_via_click) {
             let _ = SetWindowPos(
                 target,
                 HWND_NOTOPMOST,

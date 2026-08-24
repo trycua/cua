@@ -14,8 +14,8 @@ from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_fleet_client,
     build_namespace_name,
-    collect_resource_inventory,
     wait_claims_absent,
+    wait_resource_inventory_empty,
     write_summary,
 )
 
@@ -162,7 +162,7 @@ async def run_fleet_ephemeral_live() -> None:
                 except BaseException as error:
                     record_cleanup_error(error)
                 try:
-                    inventory = await collect_resource_inventory(fleet, resource_namespace)
+                    inventory = await wait_resource_inventory_empty(fleet, resource_namespace)
                     summary["persistent_resources"] = inventory
                 except BaseException as error:
                     record_cleanup_error(error)

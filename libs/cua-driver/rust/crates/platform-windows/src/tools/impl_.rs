@@ -9703,6 +9703,7 @@ pub fn build_registry_with_provider(
     let _ = compat; // formerly drove the ScreenshotCompatTool branch
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetDesktopStateTool));
+    r.register(Box::new(WaitForScreenTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
@@ -10321,3 +10322,301 @@ mod value_write_readback_tests {
         );
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// wait_for_screen  (DEV-LOOP PERCEPTION, 2026-08-24)
+//
+// Wait for the screen to settle (stop changing) or to change from a baseline.
+// Replaces hand-rolled capture -> sleep -> capture -> vision polling loops.
+// Full-display GDI capture (same path as get_desktop_state); an optional
+// screen-absolute [x,y,w,h] region keeps the comparison cheap.
+// ---------------------------------------------------------------------------
+
+pub struct WaitForScreenTool;
+static WFS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[derive(Clone)]
+struct WfsFrame {
+    buf: Vec<u8>, // raw RGB, 3 bytes per pixel
+    w: u32,
+    h: u32,
+}
+
+fn wfs_decode_rgb(png: &[u8]) -> anyhow::Result<WfsFrame> {
+    use image::{codecs::png::PngDecoder, ColorType, ImageDecoder};
+    let cursor = std::io::Cursor::new(png);
+    let decoder = PngDecoder::new(cursor)?;
+    let (w, h) = decoder.dimensions();
+    let color = decoder.color_type();
+    let mut buf = vec![0u8; decoder.total_bytes() as usize];
+    decoder.read_image(&mut buf)?;
+    let rgb: Vec<u8> = match color {
+        ColorType::Rgba8 => buf.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect(),
+        ColorType::Rgb8 => buf,
+        other => anyhow::bail!("wait_for_screen: unsupported PNG color type {other:?}"),
+    };
+    Ok(WfsFrame { buf: rgb, w, h })
+}
+
+fn wfs_crop(frame: &WfsFrame, region: [i64; 4]) -> anyhow::Result<WfsFrame> {
+    if frame.w == 0 || frame.h == 0 {
+        anyhow::bail!("wait_for_screen: empty baseline capture");
+    }
+    let [rx, ry, rw, rh] = region;
+    let w = frame.w as i64;
+    let h = frame.h as i64;
+    let x0 = rx.clamp(0, w - 1);
+    let y0 = ry.clamp(0, h - 1);
+    let x1 = (x0 + rw.max(1)).min(w);
+    let y1 = (y0 + rh.max(1)).min(h);
+    if x1 <= x0 || y1 <= y0 {
+        anyhow::bail!("wait_for_screen: region {region:?} is empty or outside the {w}x{h} capture");
+    }
+    let cw = (x1 - x0) as usize;
+    let ch = (y1 - y0) as usize;
+    let mut out = Vec::with_capacity(cw * ch * 3);
+    for row in y0..y1 {
+        let start = ((row * w + x0) * 3) as usize;
+        out.extend_from_slice(&frame.buf[start..start + cw * 3]);
+    }
+    Ok(WfsFrame { buf: out, w: cw as u32, h: ch as u32 })
+}
+
+/// Fraction of pixels whose per-channel max difference exceeds 24
+/// (tolerates antialiasing jitter and minor compression noise).
+fn wfs_diff(a: &WfsFrame, b: &WfsFrame) -> anyhow::Result<f64> {
+    if a.w != b.w || a.h != b.h {
+        anyhow::bail!(
+            "wait_for_screen: frame size mismatch {}x{} vs {}x{}",
+            a.w, a.h, b.w, b.h
+        );
+    }
+    let total = a.w as u64 * a.h as u64;
+    if total == 0 {
+        return Ok(0.0);
+    }
+    let mut changed = 0u64;
+    let mut i = 0usize;
+    while i + 2 < a.buf.len() {
+        if a.buf[i].abs_diff(b.buf[i]) > 24
+            || a.buf[i + 1].abs_diff(b.buf[i + 1]) > 24
+            || a.buf[i + 2].abs_diff(b.buf[i + 2]) > 24
+        {
+            changed += 1;
+        }
+        i += 3;
+    }
+    Ok(changed as f64 / total as f64)
+}
+
+fn wfs_encode_png(frame: &WfsFrame) -> anyhow::Result<Vec<u8>> {
+    use image::{ImageBuffer, ImageFormat};
+    let img = image::DynamicImage::ImageRgb8(
+        ImageBuffer::from_raw(frame.w, frame.h, frame.buf.clone())
+            .ok_or_else(|| anyhow::anyhow!("wait_for_screen: invalid RGB buffer"))?,
+    );
+    let mut out = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)?;
+    Ok(out)
+}
+
+#[async_trait]
+impl Tool for WaitForScreenTool {
+    fn def(&self) -> &ToolDef {
+        WFS_DEF.get_or_init(|| ToolDef {
+            name: "wait_for_screen".into(),
+            description: "Wait for the screen to settle or change. mode=stabilize (default) returns \
+                once the capture stops changing (N consecutive frames within threshold); \
+                mode=change returns once the screen differs from the initial baseline by at least \
+                threshold (e.g. wait for a UI to react to a click). Captures the full primary \
+                display; pass region [x,y,w,h] (screen-absolute physical pixels, same space as \
+                get_desktop_state) to watch a rectangle instead. Returns the final capture so it \
+                can be visioned without an extra call.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session": cua_driver_core::tool_schema::session_schema(),
+                    "mode": { "type": "string", "enum": ["stabilize", "change"], "description": "stabilize: wait until the screen stops changing (default). change: wait until the screen differs from the baseline by at least threshold." },
+                    "region": { "type": "array", "items": { "type": "integer" }, "minItems": 4, "maxItems": 4, "description": "Optional [x, y, w, h] screen-absolute rectangle in physical pixels. Omit to watch the whole primary display." },
+                    "timeout_ms": { "type": "integer", "minimum": 500, "maximum": 120000, "description": "Give up after this long (default 15000)." },
+                    "poll_ms": { "type": "integer", "minimum": 100, "maximum": 5000, "description": "Capture interval in ms (default 500)." },
+                    "threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "Fraction of differing pixels. stabilize: below this counts as stable (default 0.005). change: at or above this counts as changed (default 0.002)." },
+                    "settle_samples": { "type": "integer", "minimum": 1, "maximum": 10, "description": "stabilize: consecutive stable captures required (default 2)." },
+                    "baseline_file": { "type": "string", "description": "mode=change: compare against this PNG file instead of the first capture." },
+                    "screenshot_out_file": { "type": "string", "description": "Write the final capture PNG here instead of returning base64." }
+                },
+                "additionalProperties": false
+            }),
+            read_only: true, destructive: false, idempotent: true, open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+        use cua_driver_core::protocol::Content;
+
+        let get_str = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_owned);
+        let get_i64 = |k: &str| args.get(k).and_then(Value::as_i64);
+        let get_f64 = |k: &str| args.get(k).and_then(Value::as_f64);
+
+        let mode = get_str("mode").unwrap_or_else(|| "stabilize".to_owned());
+        if mode != "stabilize" && mode != "change" {
+            return ToolResult::error(format!(
+                "wait_for_screen: mode must be stabilize or change, got {mode:?}"
+            ));
+        }
+        let timeout_ms = get_i64("timeout_ms").unwrap_or(15000).clamp(500, 120000);
+        let poll_ms = get_i64("poll_ms").unwrap_or(500).clamp(100, 5000);
+        let threshold = get_f64("threshold")
+            .unwrap_or(if mode == "change" { 0.002 } else { 0.005 })
+            .clamp(0.0, 1.0);
+        let settle = get_i64("settle_samples").unwrap_or(2).clamp(1, 10) as u64;
+        let out_file = get_str("screenshot_out_file");
+        let region: Option<[i64; 4]> = args
+            .get("region")
+            .and_then(|v| v.as_array())
+            .filter(|a| a.len() == 4)
+            .and_then(|a| {
+                let mut r = [0i64; 4];
+                let mut ok = true;
+                for (i, v) in a.iter().enumerate() {
+                    match v.as_i64() {
+                        Some(x) => r[i] = x,
+                        None => ok = false,
+                    }
+                }
+                if ok { Some(r) } else { None }
+            });
+        if args.get("region").is_some() && region.is_none() {
+            return ToolResult::error("wait_for_screen: region must be an array of 4 integers");
+        }
+
+        let baseline_path = get_str("baseline_file");
+        let baseline_region = region;
+        let baseline = match tokio::task::spawn_blocking(
+            move || -> anyhow::Result<WfsFrame> {
+                let png = match baseline_path {
+                    Some(ref path) => std::fs::read(path)?,
+                    None => crate::capture::screenshot_display_bytes()?,
+                };
+                let mut frame = wfs_decode_rgb(&png)?;
+                if let Some(r) = baseline_region {
+                    frame = wfs_crop(&frame, r)?;
+                }
+                Ok(frame)
+            },
+        )
+        .await
+        {
+            Ok(Ok(f)) => f,
+            Ok(Err(e)) => return ToolResult::error(format!("wait_for_screen: baseline capture failed: {e}")),
+            Err(e) => return ToolResult::error(format!("wait_for_screen: baseline task error: {e}")),
+        };
+
+        let start = std::time::Instant::now();
+        let mut prev = baseline.clone();
+        let mut stable_count: u64 = 0;
+        let mut frames = 0u64;
+        let mut last_diff = f64::NAN;
+        let mut reason = None;
+
+        loop {
+            if start.elapsed().as_millis() as i64 >= timeout_ms {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(poll_ms as u64)).await;
+            let captured_region = region;
+            let frame = match tokio::task::spawn_blocking(
+                move || -> anyhow::Result<WfsFrame> {
+                    let png = crate::capture::screenshot_display_bytes()?;
+                    let mut frame = wfs_decode_rgb(&png)?;
+                    if let Some(r) = captured_region {
+                        frame = wfs_crop(&frame, r)?;
+                    }
+                    Ok(frame)
+                },
+            )
+            .await
+            {
+                Ok(Ok(f)) => f,
+                Ok(Err(e)) => return ToolResult::error(format!("wait_for_screen: capture failed: {e}")),
+                Err(e) => return ToolResult::error(format!("wait_for_screen: capture task error: {e}")),
+            };
+            frames += 1;
+            let d = match wfs_diff(if mode == "change" { &baseline } else { &prev }, &frame) {
+                Ok(d) => d,
+                Err(e) => return ToolResult::error(format!("wait_for_screen: {e}")),
+            };
+            last_diff = d;
+            prev = frame;
+            if mode == "stabilize" {
+                if d <= threshold {
+                    stable_count += 1;
+                    if stable_count >= settle {
+                        reason = Some(format!(
+                            "stable: {stable_count} consecutive captures within threshold {threshold}"
+                        ));
+                        break;
+                    }
+                } else {
+                    stable_count = 0;
+                }
+            } else if d >= threshold {
+                reason = Some(format!(
+                    "changed: diff {d:.4} reached threshold {threshold} after {frames} capture(s)"
+                ));
+                break;
+            }
+        }
+
+        let satisfied = reason.is_some();
+        let elapsed_ms = start.elapsed().as_millis() as i64;
+        let final_png = match wfs_encode_png(&prev) {
+            Ok(p) => p,
+            Err(e) => return ToolResult::error(format!("wait_for_screen: encoding final capture failed: {e}")),
+        };
+
+        let mut content: Vec<Content> = Vec::new();
+        if let Some(ref path) = out_file {
+            if let Err(e) = std::fs::write(path, &final_png) {
+                return ToolResult::error(format!("wait_for_screen: failed to write {path}: {e}"));
+            }
+        } else {
+            content.push(Content::image_png(BASE64.encode(&final_png)));
+        }
+        let summary = format!(
+            "wait_for_screen({mode}): {} {} frame(s) in {}ms; last diff {last_diff:.4}; region {:?}",
+            if satisfied { "SATISFIED" } else { "TIMEOUT" },
+            frames,
+            elapsed_ms,
+            region
+        );
+        content.push(Content::text(summary));
+
+        let mut structured = json!({
+            "tool": "wait_for_screen",
+            "platform": "windows",
+            "mode": mode,
+            "satisfied": satisfied,
+            "reason": reason.unwrap_or_else(|| format!("timeout after {timeout_ms}ms; last diff {last_diff:.4}")),
+            "frames": frames,
+            "elapsed_ms": elapsed_ms,
+            "last_diff": last_diff,
+            "region": region,
+            "screenshot_width": prev.w,
+            "screenshot_height": prev.h,
+            "screenshot_mime_type": "image/png",
+        });
+        if let Some(ref path) = out_file {
+            structured["screenshot_file_path"] = json!(path);
+        }
+        ToolResult {
+            content,
+            is_error: None,
+            structured_content: Some(structured),
+            action_record: None,
+        }
+    }
+}
+

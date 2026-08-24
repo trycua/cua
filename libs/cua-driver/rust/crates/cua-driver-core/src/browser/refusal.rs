@@ -64,6 +64,16 @@ pub enum BrowserRefusalCode {
     /// The live top-level document left the origin set approved in the
     /// capability manifest. Further browser input is paused.
     BrowserOriginOutsideScope,
+    /// The target-bound credential resource did not pass the trusted R3
+    /// authorization boundary.
+    SecretReleaseNotAuthorized,
+    /// The credential broker or provider could not produce a usable release.
+    SecretDeliveryUnavailable,
+    /// Delivery could not be proven to have remained on the exact secure node.
+    SecretDeliveryMisdirected,
+    /// Chromium may have accepted the secret, but the runtime could not prove
+    /// the final delivery state. Agents must never retry automatically.
+    SecretDeliveryUnverified,
 }
 
 impl BrowserRefusalCode {
@@ -86,6 +96,10 @@ impl BrowserRefusalCode {
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
             Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
+            Self::SecretReleaseNotAuthorized => "secret_release_not_authorized",
+            Self::SecretDeliveryUnavailable => "secret_delivery_unavailable",
+            Self::SecretDeliveryMisdirected => "secret_delivery_misdirected",
+            Self::SecretDeliveryUnverified => "secret_delivery_unverified",
         }
     }
 }
@@ -193,6 +207,22 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserOriginOutsideScope,
                 "browser_origin_outside_scope",
+            ),
+            (
+                BrowserRefusalCode::SecretReleaseNotAuthorized,
+                "secret_release_not_authorized",
+            ),
+            (
+                BrowserRefusalCode::SecretDeliveryUnavailable,
+                "secret_delivery_unavailable",
+            ),
+            (
+                BrowserRefusalCode::SecretDeliveryMisdirected,
+                "secret_delivery_misdirected",
+            ),
+            (
+                BrowserRefusalCode::SecretDeliveryUnverified,
+                "secret_delivery_unverified",
             ),
         ];
         for (code, wire) in all {

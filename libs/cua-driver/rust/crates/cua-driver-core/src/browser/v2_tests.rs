@@ -18,11 +18,12 @@ use serde_json::{json, Value};
 
 use crate::action_record::ActionExecutionRecord;
 use crate::credentials::{
-    BrowserSecretTargetConstraint, CredentialBindingSpec, CredentialField, CredentialProvider,
-    CredentialProviderClass, CredentialProviderError, CredentialProviderId, PrivateCredentialField,
-    PrivateCredentialFieldLocator, ProviderHealth, ProviderHealthState, ProviderReleaseId,
+    BrowserSecretTargetConstraint, CredentialBindingSpec, CredentialDeliveryOutcome,
+    CredentialField, CredentialProvider, CredentialProviderClass, CredentialProviderError,
+    CredentialProviderId, PrivateCredentialField, PrivateCredentialFieldLocator,
+    ProviderFillSession, ProviderHealth, ProviderHealthState, ProviderReleaseId,
     ProviderReleaseRequest, ReleasePlan, SafeCredentialLabel, SecretBroker, SecretBrokerBuilder,
-    SecretReleaseAuthorization, SecretTargetConstraint,
+    SecretLease, SecretReleaseAuthorization, SecretTargetConstraint, UserPresenceHandle,
 };
 use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
@@ -72,6 +73,11 @@ struct FixtureState {
     viewport_css_height: f64,
     tab_visible: bool,
     password_target_live: bool,
+    secret_beforeinput_observed: bool,
+    secret_input_observed: bool,
+    secret_focus_exact: bool,
+    secret_insert_seen: bool,
+    secret_insert_error: bool,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -99,9 +105,18 @@ impl Default for FixtureState {
             viewport_css_height: 600.0,
             tab_visible: true,
             password_target_live: true,
+            secret_beforeinput_observed: true,
+            secret_input_observed: true,
+            secret_focus_exact: true,
+            secret_insert_seen: false,
+            secret_insert_error: false,
             calls: Vec::new(),
         }
     }
+}
+
+fn synthetic_delivery_secret() -> String {
+    ["CUA_", "DELIVERY_", "CANARY_", "4J8M2Q"].concat()
 }
 
 fn screenshot_png_base64(width: u32, height: u32) -> String {
@@ -473,10 +488,17 @@ fn oopif_document() -> Value {
 fn fixture_handler(state: SharedState) -> MockHandler {
     Arc::new(move |call| {
         let mut st = state.lock().unwrap();
+        let mut recorded_params = call.params.clone();
+        if call.method == "Input.insertText"
+            && call.params["text"].as_str() == Some(synthetic_delivery_secret().as_str())
+        {
+            st.secret_insert_seen = true;
+            recorded_params["text"] = Value::String("[secret omitted]".to_owned());
+        }
         st.calls.push((
             call.session_id.clone(),
             call.method.clone(),
-            call.params.clone(),
+            recorded_params,
         ));
         let sess = call.session_id.clone().unwrap_or_default();
         let is_tab = sess.starts_with("tab-sess-");
@@ -714,12 +736,24 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::ok(json!({}))
                 }
             }
+            "Input.insertText"
+                if call.params["text"].as_str() == Some(synthetic_delivery_secret().as_str()) =>
+            {
+                if st.secret_insert_error {
+                    MockReply::err(-32000, "fixture secret insertion failure")
+                } else {
+                    MockReply::ok(json!({}))
+                }
+            }
             "DOM.focus"
             | "Emulation.setFocusEmulationEnabled"
             | "Input.dispatchMouseEvent"
             | "Input.insertText" => MockReply::ok(json!({})),
             "DOM.resolveNode"
-                if call.params["objectGroup"].as_str() == Some("__cua_secret_target_v1") =>
+                if matches!(
+                    call.params["objectGroup"].as_str(),
+                    Some("__cua_secret_target_v1" | "__cua_secret_delivery_v1")
+                ) =>
             {
                 let backend = call.params["backendNodeId"].as_i64().unwrap_or_default();
                 let expected_context = match backend {
@@ -738,6 +772,64 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| {
+                        function.contains("cua_secret_delivery_observer_install_v1")
+                    }) =>
+            {
+                MockReply::ok(json!({ "result": { "value": st.password_target_live } }))
+            }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| {
+                        function.contains("cua_secret_delivery_focus_ready_v1")
+                    }) =>
+            {
+                MockReply::ok(json!({
+                    "result": {
+                        "value": st.password_target_live && st.secret_focus_exact
+                    }
+                }))
+            }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| function.contains("cua_secret_delivery_select_v1")) =>
+            {
+                MockReply::ok(json!({
+                    "result": {
+                        "value": st.password_target_live && st.secret_focus_exact
+                    }
+                }))
+            }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| {
+                        function.contains("cua_secret_delivery_observer_verify_v1")
+                    }) =>
+            {
+                MockReply::ok(json!({
+                    "result": {
+                        "value": st.password_target_live
+                            && st.secret_focus_exact
+                            && st.secret_beforeinput_observed
+                            && st.secret_input_observed
+                    }
+                }))
+            }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| {
+                        function.contains("cua_secret_delivery_observer_cleanup_v1")
+                    }) =>
+            {
+                MockReply::ok(json!({ "result": { "value": true } }))
+            }
             "Runtime.callFunctionOn"
                 if call.params["functionDeclaration"]
                     .as_str()
@@ -1018,15 +1110,43 @@ struct DiscoveryCredentialProvider {
     id: CredentialProviderId,
     releases: AtomicUsize,
     cancellations: AtomicUsize,
+    state: SharedState,
+    plan: StdMutex<DiscoveryReleasePlan>,
+    post_release_mutation: StdMutex<Option<DiscoveryPostReleaseMutation>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DiscoveryReleasePlan {
+    RuntimeDelivers,
+    ProviderFills,
+    NeedsUserPresence,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DiscoveryPostReleaseMutation {
+    NavigateMainFrame,
+    ChangePasswordType,
+    ChangeOrigin,
 }
 
 impl DiscoveryCredentialProvider {
-    fn new() -> Arc<Self> {
+    fn new(state: SharedState) -> Arc<Self> {
         Arc::new(Self {
             id: CredentialProviderId::new("fixture-credential-provider").unwrap(),
             releases: AtomicUsize::new(0),
             cancellations: AtomicUsize::new(0),
+            state,
+            plan: StdMutex::new(DiscoveryReleasePlan::RuntimeDelivers),
+            post_release_mutation: StdMutex::new(None),
         })
+    }
+
+    fn set_plan(&self, plan: DiscoveryReleasePlan) {
+        *self.plan.lock().unwrap() = plan;
+    }
+
+    fn mutate_after_release(&self, mutation: DiscoveryPostReleaseMutation) {
+        *self.post_release_mutation.lock().unwrap() = Some(mutation);
     }
 }
 
@@ -1045,9 +1165,31 @@ impl CredentialProvider for DiscoveryCredentialProvider {
         _request: &ProviderReleaseRequest,
     ) -> Result<ReleasePlan, CredentialProviderError> {
         self.releases.fetch_add(1, Ordering::SeqCst);
-        Err(CredentialProviderError::new(
-            crate::credentials::CredentialProviderErrorKind::Unavailable,
-        ))
+        if let Some(mutation) = self.post_release_mutation.lock().unwrap().take() {
+            let mut state = self.state.lock().unwrap();
+            match mutation {
+                DiscoveryPostReleaseMutation::NavigateMainFrame => {
+                    state.main_loader = "L_MAIN_AFTER_PROVIDER".to_owned();
+                }
+                DiscoveryPostReleaseMutation::ChangePasswordType => {
+                    state.password_target_live = false;
+                }
+                DiscoveryPostReleaseMutation::ChangeOrigin => {
+                    state.main_url = "https://other.fixture.test/login".to_owned();
+                }
+            }
+        }
+        match *self.plan.lock().unwrap() {
+            DiscoveryReleasePlan::RuntimeDelivers => Ok(ReleasePlan::RuntimeDelivers(
+                SecretLease::from_utf8_bytes(synthetic_delivery_secret().into_bytes()).unwrap(),
+            )),
+            DiscoveryReleasePlan::ProviderFills => Ok(ReleasePlan::ProviderFills(
+                ProviderFillSession::from_opaque_bytes(vec![1]).unwrap(),
+            )),
+            DiscoveryReleasePlan::NeedsUserPresence => Ok(ReleasePlan::NeedsUserPresence(
+                UserPresenceHandle::from_opaque_bytes(vec![1]).unwrap(),
+            )),
+        }
     }
 
     async fn cancel(&self, _release: ProviderReleaseId) -> Result<(), CredentialProviderError> {
@@ -1096,7 +1238,7 @@ async fn credential_discovery_fixture() -> CredentialDiscoveryFixture {
     let context = crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
         .compatibility_context(crate::authorization::PermissionMode::Unrestricted, None)
         .unwrap();
-    let provider = DiscoveryCredentialProvider::new();
+    let provider = DiscoveryCredentialProvider::new(state.clone());
     let mut builder = SecretBrokerBuilder::new(context.runtime_scope_key()).unwrap();
     let session = builder.runtime_session_key("credential-discovery").unwrap();
     builder.add_provider(provider.clone()).unwrap();
@@ -1401,6 +1543,301 @@ async fn credential_discovery_reproves_current_password_semantics_before_minting
     );
     assert_eq!(fixture.broker.active_handle_count(), 0);
     assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
+}
+
+async fn discover_fixture_credential(
+    fixture: &CredentialDiscoveryFixture,
+) -> crate::credentials::CredentialHandle {
+    fixture
+        .engine
+        .discover_credentials_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+        )
+        .await
+        .unwrap()
+        .remove(0)
+        .handle
+}
+
+#[tokio::test]
+async fn credential_delivery_inserts_once_with_boolean_only_exact_node_evidence() {
+    let fixture = credential_discovery_fixture().await;
+    let handle = discover_fixture_credential(&fixture).await;
+    let outcome = fixture
+        .engine
+        .deliver_credential_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+            &handle,
+            CredentialField::Password,
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome, CredentialDeliveryOutcome::Delivered);
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.broker.active_handle_count(), 0);
+
+    let calls = fixture.state.lock().unwrap().calls.clone();
+    let inserts = calls
+        .iter()
+        .filter(|(_, method, _)| method == "Input.insertText")
+        .collect::<Vec<_>>();
+    assert_eq!(inserts.len(), 1);
+    assert_eq!(inserts[0].2["text"], "[secret omitted]");
+    assert!(calls.iter().any(|(_, method, params)| {
+        method == "Runtime.callFunctionOn"
+            && params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|function| function.contains("cua_secret_delivery_observer_verify_v1"))
+    }));
+    for (_, method, params) in &calls {
+        if method != "Runtime.callFunctionOn" {
+            continue;
+        }
+        let declaration = params["functionDeclaration"].as_str().unwrap_or_default();
+        if !declaration.contains("cua_secret_delivery_") {
+            continue;
+        }
+        for forbidden in [
+            "event.data",
+            "this.value",
+            "selectionStart",
+            "selectionEnd",
+            "textContent",
+        ] {
+            assert!(
+                !declaration.contains(forbidden),
+                "secret delivery inspected forbidden content via {forbidden}"
+            );
+        }
+    }
+    assert!(
+        calls
+            .iter()
+            .all(|(_, method, _)| method != "Input.dispatchKeyEvent"),
+        "credential delivery must never fall back to generic key events"
+    );
+
+    let canary = synthetic_delivery_secret();
+    let retained = serde_json::to_string(&calls).unwrap();
+    assert!(
+        !retained.contains(&canary),
+        "CDP fixture retained the secret"
+    );
+    assert!(!format!("{handle:?} {outcome:?}").contains(&canary));
+
+    let replay = fixture
+        .engine
+        .deliver_credential_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+            &handle,
+            CredentialField::Password,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        replay.code,
+        super::refusal::BrowserRefusalCode::SecretDeliveryUnavailable
+    );
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|(_, method, _)| method == "Input.insertText")
+            .count(),
+        1,
+        "a consumed handle must never retry insertion"
+    );
+}
+
+#[tokio::test]
+async fn credential_delivery_rejects_target_drift_before_provider_work() {
+    let fixture = credential_discovery_fixture().await;
+    let handle = discover_fixture_credential(&fixture).await;
+    fixture.state.lock().unwrap().main_loader = "L_MAIN_BEFORE_PROVIDER".to_owned();
+
+    let error = fixture
+        .engine
+        .deliver_credential_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+            &handle,
+            CredentialField::Password,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        super::refusal::BrowserRefusalCode::BrowserRefStale
+    );
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.broker.active_handle_count(), 1);
+    assert!(!fixture.state.lock().unwrap().secret_insert_seen);
+}
+
+#[tokio::test]
+async fn credential_delivery_consumes_without_inserting_when_target_drifts_after_provider_work() {
+    for mutation in [
+        DiscoveryPostReleaseMutation::NavigateMainFrame,
+        DiscoveryPostReleaseMutation::ChangePasswordType,
+        DiscoveryPostReleaseMutation::ChangeOrigin,
+    ] {
+        let fixture = credential_discovery_fixture().await;
+        let handle = discover_fixture_credential(&fixture).await;
+        fixture.provider.mutate_after_release(mutation);
+
+        let error = fixture
+            .engine
+            .deliver_credential_for_ref_with_context(
+                fixture.context.as_ref(),
+                &fixture.session,
+                &fixture.target_id,
+                &fixture.tab_id,
+                &fixture.password_ref,
+                &handle,
+                CredentialField::Password,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.code,
+            super::refusal::BrowserRefusalCode::SecretDeliveryMisdirected,
+            "post-provider mutation {mutation:?} was not collapsed to a fixed outcome"
+        );
+        assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.broker.active_handle_count(), 0);
+        assert!(!fixture.state.lock().unwrap().secret_insert_seen);
+    }
+}
+
+#[tokio::test]
+async fn credential_delivery_maps_non_runtime_plans_without_provider_metadata() {
+    for (plan, expected) in [
+        (
+            DiscoveryReleasePlan::ProviderFills,
+            CredentialDeliveryOutcome::ProviderFillUnavailable,
+        ),
+        (
+            DiscoveryReleasePlan::NeedsUserPresence,
+            CredentialDeliveryOutcome::UserPresenceRequired,
+        ),
+    ] {
+        let fixture = credential_discovery_fixture().await;
+        let handle = discover_fixture_credential(&fixture).await;
+        fixture.provider.set_plan(plan);
+        let outcome = fixture
+            .engine
+            .deliver_credential_for_ref_with_context(
+                fixture.context.as_ref(),
+                &fixture.session,
+                &fixture.target_id,
+                &fixture.tab_id,
+                &fixture.password_ref,
+                &handle,
+                CredentialField::Password,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, expected);
+        assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.broker.active_handle_count(), 0);
+        assert!(!fixture.state.lock().unwrap().secret_insert_seen);
+    }
+}
+
+#[tokio::test]
+async fn credential_delivery_missing_events_is_misdirected_and_never_retried() {
+    let fixture = credential_discovery_fixture().await;
+    let handle = discover_fixture_credential(&fixture).await;
+    fixture.state.lock().unwrap().secret_input_observed = false;
+    let error = fixture
+        .engine
+        .deliver_credential_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+            &handle,
+            CredentialField::Password,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        super::refusal::BrowserRefusalCode::SecretDeliveryMisdirected
+    );
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.broker.active_handle_count(), 0);
+    assert!(fixture.state.lock().unwrap().secret_insert_seen);
+
+    let replay = fixture
+        .engine
+        .deliver_credential_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+            &handle,
+            CredentialField::Password,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        replay.code,
+        super::refusal::BrowserRefusalCode::SecretDeliveryUnavailable
+    );
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn credential_delivery_insert_error_is_unverified_and_scrubbed() {
+    let fixture = credential_discovery_fixture().await;
+    let handle = discover_fixture_credential(&fixture).await;
+    fixture.state.lock().unwrap().secret_insert_error = true;
+    let error = fixture
+        .engine
+        .deliver_credential_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+            &handle,
+            CredentialField::Password,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        super::refusal::BrowserRefusalCode::SecretDeliveryUnverified
+    );
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.broker.active_handle_count(), 0);
+    let state = fixture.state.lock().unwrap();
+    assert!(state.secret_insert_seen);
+    let retained = serde_json::to_string(&state.calls).unwrap();
+    assert!(!retained.contains(&synthetic_delivery_secret()));
+    assert!(!format!("{error:?}").contains(&synthetic_delivery_secret()));
 }
 
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {

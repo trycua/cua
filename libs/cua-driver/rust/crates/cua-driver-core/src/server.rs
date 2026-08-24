@@ -181,6 +181,10 @@ pub enum ToolRefusalCode {
     BrowserInputIncomplete,
     BrowserActionUnavailable,
     BrowserOriginOutsideScope,
+    SecretReleaseNotAuthorized,
+    SecretDeliveryUnavailable,
+    SecretDeliveryMisdirected,
+    SecretDeliveryUnverified,
     Other,
 }
 
@@ -204,6 +208,10 @@ impl ToolRefusalCode {
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
             Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
+            Self::SecretReleaseNotAuthorized => "secret_release_not_authorized",
+            Self::SecretDeliveryUnavailable => "secret_delivery_unavailable",
+            Self::SecretDeliveryMisdirected => "secret_delivery_misdirected",
+            Self::SecretDeliveryUnverified => "secret_delivery_unverified",
             Self::Other => "other",
         }
     }
@@ -230,6 +238,10 @@ impl ToolRefusalCode {
             Some("browser_input_incomplete") => Self::BrowserInputIncomplete,
             Some("browser_action_unavailable") => Self::BrowserActionUnavailable,
             Some("browser_origin_outside_scope") => Self::BrowserOriginOutsideScope,
+            Some("secret_release_not_authorized") => Self::SecretReleaseNotAuthorized,
+            Some("secret_delivery_unavailable") => Self::SecretDeliveryUnavailable,
+            Some("secret_delivery_misdirected") => Self::SecretDeliveryMisdirected,
+            Some("secret_delivery_unverified") => Self::SecretDeliveryUnverified,
             Some(_) | None => Self::Other,
         }
     }
@@ -255,6 +267,10 @@ impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
             BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
             BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
             BrowserRefusalCode::BrowserOriginOutsideScope => Self::BrowserOriginOutsideScope,
+            BrowserRefusalCode::SecretReleaseNotAuthorized => Self::SecretReleaseNotAuthorized,
+            BrowserRefusalCode::SecretDeliveryUnavailable => Self::SecretDeliveryUnavailable,
+            BrowserRefusalCode::SecretDeliveryMisdirected => Self::SecretDeliveryMisdirected,
+            BrowserRefusalCode::SecretDeliveryUnverified => Self::SecretDeliveryUnverified,
         }
     }
 }

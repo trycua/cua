@@ -682,6 +682,25 @@ pub enum ReleasePlanKind {
     NeedsUserPresence,
 }
 
+/// Content-free result of a target-bound credential delivery request.
+/// Provider-specific metadata never crosses this boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialDeliveryOutcome {
+    Delivered,
+    ProviderFillUnavailable,
+    UserPresenceRequired,
+}
+
+impl CredentialDeliveryOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Delivered => "delivered",
+            Self::ProviderFillUnavailable => "provider_fill_unavailable",
+            Self::UserPresenceRequired => "user_presence_required",
+        }
+    }
+}
+
 impl ReleasePlan {
     pub fn kind(&self) -> ReleasePlanKind {
         match self {

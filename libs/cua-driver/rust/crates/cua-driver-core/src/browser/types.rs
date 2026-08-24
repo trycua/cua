@@ -59,6 +59,7 @@ pub enum BrowserEngineFamily {
 pub enum BrowserProduct {
     GoogleChrome,
     Chromium,
+    Helium,
     MicrosoftEdge,
     Brave,
     Vivaldi,
@@ -345,6 +346,14 @@ mod tests {
         assert_eq!(
             serde_json::to_value(with_listener).expect("serialize listener proof")["listener_pid"],
             43
+        );
+    }
+
+    #[test]
+    fn browser_product_helium_has_stable_public_name() {
+        assert_eq!(
+            serde_json::to_value(BrowserProduct::Helium).expect("serialize Helium product"),
+            "helium"
         );
     }
 

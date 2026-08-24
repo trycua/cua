@@ -2057,7 +2057,7 @@ impl ToolRegistry {
                     format!("Allow Cua to read this exact local {content_kind} into the clipboard"),
                 )
             }
-            "get_desktop_state" | "get_window_state" => {
+            "get_desktop_state" | "get_window_state" | "wait_for_screen" => {
                 let output =
                     canonical_proposed_path(required_path_arg(args, "screenshot_out_file")?)?;
                 args["screenshot_out_file"] = Value::String(output.clone());

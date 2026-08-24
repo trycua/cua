@@ -27,6 +27,9 @@ import (
 	"os"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/spf13/cobra"
 
 	"cyclops-cs-backend/auth"
@@ -147,6 +150,9 @@ func setupRouter(c handlers.Handlers) http.Handler {
 
 	r.Handle("QUERY /api/state/query",
 		withAuthenticatedMiddlewares("/api/state/query", c.QueryState))
+
+	r.Handle("POST /api/image-uploads/presign",
+		withAuthenticatedMiddlewares("/api/image-uploads/presign", c.PresignImageUploads))
 
 	// Stripe-hosted billing. Browser routes require the normal SPA JWT; the
 	// webhook uses Stripe signature verification as its authentication boundary.
@@ -320,6 +326,16 @@ func run() error {
 	}
 
 	h := handlers.New(admin, cfg)
+	if cfg.ImageUploads.Bucket != "" {
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.ImageUploads.Region))
+		if err != nil {
+			return fmt.Errorf("load image upload AWS config: %w", err)
+		}
+		h.ImageObjects = handlers.NewS3ImageObjectStore(s3.NewFromConfig(awsCfg), cfg.ImageUploads.Bucket)
+		slog.Info("image uploads: presigning enabled", "bucket", cfg.ImageUploads.Bucket, "region", cfg.ImageUploads.Region)
+	} else {
+		slog.Info("image uploads: disabled (IMAGE_UPLOAD_BUCKET unset)")
+	}
 	if cfg.Stripe.SecretKey != "" {
 		h.Billing = billing.NewService(billing.NewStripeGateway(cfg.Stripe.SecretKey))
 		slog.Info("stripe billing: hosted flows enabled")

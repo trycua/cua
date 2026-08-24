@@ -1,6 +1,7 @@
 mod claims;
 mod client;
 mod error;
+mod image_uploads;
 mod images;
 mod namespaces;
 mod pools;
@@ -16,6 +17,10 @@ pub use cyclops_sdk_schema::PreservedJson;
 pub use error::{
     AccessTokenProviderError, HttpError, MAX_STATUS_BODY_BYTES, SdkBuildError, SdkError,
     bounded_body,
+};
+pub use image_uploads::{
+    ImageUploadFileRequest, ImageUploadInstruction, ImageUploadRequest, ImageUploadResponse,
+    PresignedPut,
 };
 pub use routes::validate_dns_label;
 pub use transport::{AccessTokenProvider, HttpClient};

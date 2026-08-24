@@ -60,17 +60,18 @@ var surfacePolicySources = map[string]struct {
 	filename string
 	source   string
 }{
-	"authz-base":         {"authz_base.rego", authzBasePolicy},
-	"authz-keys":         {"authz_keys.rego", authzKeysPolicy},
-	"authz-config":       {"authz_config.rego", authzConfigPolicy},
-	"authz-chat":         {"authz_chat.rego", authzChatPolicy},
-	"authz-billing":      {"authz_billing.rego", authzBillingPolicy},
-	"authz-namespaces":   {"authz_namespaces.rego", authzNamespacesPolicy},
-	"authz-github-trust": {"authz_github_trust.rego", authzGitHubTrustPolicy},
-	"authz-user-keys":    {"authz_user_keys.rego", authzUserKeysPolicy},
-	"authz-k8s":          {"authz_k8s.rego", authzK8sPolicy},
-	"authz-svc":          {"authz_svc.rego", authzSvcPolicy},
-	"authz-state-query":  {"authz_state_query.rego", authzStateQueryPolicy},
+	"authz-base":          {"authz_base.rego", authzBasePolicy},
+	"authz-keys":          {"authz_keys.rego", authzKeysPolicy},
+	"authz-config":        {"authz_config.rego", authzConfigPolicy},
+	"authz-chat":          {"authz_chat.rego", authzChatPolicy},
+	"authz-billing":       {"authz_billing.rego", authzBillingPolicy},
+	"authz-namespaces":    {"authz_namespaces.rego", authzNamespacesPolicy},
+	"authz-image-uploads": {"authz_image_uploads.rego", authzImageUploadsPolicy},
+	"authz-github-trust":  {"authz_github_trust.rego", authzGitHubTrustPolicy},
+	"authz-user-keys":     {"authz_user_keys.rego", authzUserKeysPolicy},
+	"authz-k8s":           {"authz_k8s.rego", authzK8sPolicy},
+	"authz-svc":           {"authz_svc.rego", authzSvcPolicy},
+	"authz-state-query":   {"authz_state_query.rego", authzStateQueryPolicy},
 }
 
 //go:embed authz_base.rego
@@ -90,6 +91,9 @@ var authzBillingPolicy string
 
 //go:embed authz_namespaces.rego
 var authzNamespacesPolicy string
+
+//go:embed authz_image_uploads.rego
+var authzImageUploadsPolicy string
 
 //go:embed authz_github_trust.rego
 var authzGitHubTrustPolicy string

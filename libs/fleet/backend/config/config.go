@@ -15,21 +15,23 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
 type Configuration struct {
-	WebServer WebServerConfiguration
-	Auth      AuthConfiguration
-	Keycloak  KeycloakConfiguration
-	Gateway   GatewayConfiguration
-	Database  DatabaseConfiguration
-	Stripe    StripeConfiguration
-	Chat      ChatConfiguration
-	Metrics   MetricsConfiguration
-	Telemetry TelemetryConfiguration
+	WebServer    WebServerConfiguration
+	Auth         AuthConfiguration
+	Keycloak     KeycloakConfiguration
+	Gateway      GatewayConfiguration
+	Database     DatabaseConfiguration
+	Stripe       StripeConfiguration
+	Chat         ChatConfiguration
+	Metrics      MetricsConfiguration
+	Telemetry    TelemetryConfiguration
+	ImageUploads ImageUploadConfiguration
 }
 
 type WebServerConfiguration struct {
@@ -121,6 +123,14 @@ type MetricsConfiguration struct {
 	Addr string // METRICS_ADDR — Prometheus listen addr
 }
 
+type ImageUploadConfiguration struct {
+	Bucket             string
+	Region             string
+	URLLifetime        time.Duration
+	MaxFileBytes       int64
+	MaxFilesPerRequest int
+}
+
 type TelemetryConfiguration struct {
 	Endpoint         string // OTEL_EXPORTER_OTLP_ENDPOINT
 	Protocol         string // OTEL_EXPORTER_OTLP_PROTOCOL
@@ -172,6 +182,11 @@ var specs = []flagSpec{
 	{"chat.api-key", "litellm-api-key", "LITELLM_API_KEY", "", "LiteLLM virtual key"},
 	{"chat.model", "litellm-model", "LITELLM_MODEL", "large", "LiteLLM model alias"},
 	{"metrics.addr", "metrics-addr", "METRICS_ADDR", ":9091", "Prometheus metrics listen address"},
+	{"image-uploads.bucket", "image-upload-bucket", "IMAGE_UPLOAD_BUCKET", "", "S3 bucket for presigned image uploads"},
+	{"image-uploads.region", "image-upload-region", "IMAGE_UPLOAD_REGION", "us-east-1", "AWS region for presigned image uploads"},
+	{"image-uploads.url-lifetime", "image-upload-url-lifetime", "IMAGE_UPLOAD_URL_LIFETIME", "15m", "Lifetime for presigned image upload URLs"},
+	{"image-uploads.max-file-bytes", "image-upload-max-file-bytes", "IMAGE_UPLOAD_MAX_FILE_BYTES", "5368709120", "Maximum bytes in one image upload file"},
+	{"image-uploads.max-files-per-request", "image-upload-max-files-per-request", "IMAGE_UPLOAD_MAX_FILES_PER_REQUEST", "32", "Maximum image files in one signing request"},
 	{"telemetry.endpoint", "otel-endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.cua.ai", "OTLP HTTP traces endpoint"},
 	{"telemetry.protocol", "otel-protocol", "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf", "OTLP exporter protocol"},
 	{"telemetry.service-name", "otel-service-name", "OTEL_SERVICE_NAME", "cyclops-cs-backend", "OTEL service.name"},
@@ -204,6 +219,11 @@ func splitCommaSeparated(value string) []string {
 }
 
 func LoadConfig() (*Configuration, error) {
+	imageUploadURLLifetime, err := time.ParseDuration(viper.GetString("image-uploads.url-lifetime"))
+	if err != nil {
+		return nil, fmt.Errorf("parse IMAGE_UPLOAD_URL_LIFETIME: %w", err)
+	}
+
 	base := strings.TrimRight(viper.GetString("kc.base-url"), "/")
 	realm := viper.GetString("kc.realm")
 	realmPath := fmt.Sprintf("%s/realms/%s", base, realm)
@@ -270,6 +290,13 @@ func LoadConfig() (*Configuration, error) {
 			Model:   viper.GetString("chat.model"),
 		},
 		Metrics: MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
+		ImageUploads: ImageUploadConfiguration{
+			Bucket:             viper.GetString("image-uploads.bucket"),
+			Region:             viper.GetString("image-uploads.region"),
+			URLLifetime:        imageUploadURLLifetime,
+			MaxFileBytes:       viper.GetInt64("image-uploads.max-file-bytes"),
+			MaxFilesPerRequest: viper.GetInt("image-uploads.max-files-per-request"),
+		},
 		Telemetry: TelemetryConfiguration{
 			Endpoint:         viper.GetString("telemetry.endpoint"),
 			Protocol:         viper.GetString("telemetry.protocol"),
@@ -284,6 +311,9 @@ func LoadConfig() (*Configuration, error) {
 	}
 	if cfg.Chat.Access.Enabled() && (cfg.Chat.BaseURL == "" || cfg.Chat.APIKey == "") {
 		return nil, fmt.Errorf("enabled chat access requires LITELLM_BASE_URL and LITELLM_API_KEY")
+	}
+	if cfg.ImageUploads.URLLifetime <= 0 || cfg.ImageUploads.MaxFileBytes <= 0 || cfg.ImageUploads.MaxFilesPerRequest <= 0 {
+		return nil, fmt.Errorf("image upload bounds must be positive")
 	}
 	return cfg, nil
 }

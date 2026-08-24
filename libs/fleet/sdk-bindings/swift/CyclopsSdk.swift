@@ -1394,6 +1394,8 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func waitClaim(claim: Claim) async throws  -> Sandbox
 
+    func presignImageUploads(request: ImageUploadRequest) async throws  -> ImageUploadResponse
+
     func createImage(namespace: String, manifest: PreservedJson) async throws  -> PreservedJson
 
     func deleteImage(namespace: String, name: String) async throws
@@ -1666,6 +1668,23 @@ open func waitClaim(claim: Claim)async throws  -> Sandbox  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSandbox_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func presignImageUploads(request: ImageUploadRequest)async throws  -> ImageUploadResponse  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeImageUploadRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeImageUploadResponse_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -3606,6 +3625,230 @@ public func FfiConverterTypeHttpResponse_lower(_ value: HttpResponse) -> RustBuf
 }
 
 
+public struct ImageUploadFileRequest: Equatable, Hashable {
+    public var digest: String
+    public var sizeBytes: UInt64
+    public var name: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(digest: String, sizeBytes: UInt64, name: String) {
+        self.digest = digest
+        self.sizeBytes = sizeBytes
+        self.name = name
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ImageUploadFileRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageUploadFileRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageUploadFileRequest {
+        return
+            try ImageUploadFileRequest(
+                digest: FfiConverterString.read(from: &buf),
+                sizeBytes: FfiConverterUInt64.read(from: &buf),
+                name: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageUploadFileRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.digest, into: &buf)
+        FfiConverterUInt64.write(value.sizeBytes, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageUploadFileRequest_lift(_ buf: RustBuffer) throws -> ImageUploadFileRequest {
+    return try FfiConverterTypeImageUploadFileRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageUploadFileRequest_lower(_ value: ImageUploadFileRequest) -> RustBuffer {
+    return FfiConverterTypeImageUploadFileRequest.lower(value)
+}
+
+
+public struct ImageUploadInstruction: Equatable, Hashable {
+    public var digest: String
+    public var sizeBytes: UInt64
+    public var reference: String
+    public var upload: PresignedPut?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(digest: String, sizeBytes: UInt64, reference: String, upload: PresignedPut?) {
+        self.digest = digest
+        self.sizeBytes = sizeBytes
+        self.reference = reference
+        self.upload = upload
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ImageUploadInstruction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageUploadInstruction: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageUploadInstruction {
+        return
+            try ImageUploadInstruction(
+                digest: FfiConverterString.read(from: &buf),
+                sizeBytes: FfiConverterUInt64.read(from: &buf),
+                reference: FfiConverterString.read(from: &buf),
+                upload: FfiConverterOptionTypePresignedPut.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageUploadInstruction, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.digest, into: &buf)
+        FfiConverterUInt64.write(value.sizeBytes, into: &buf)
+        FfiConverterString.write(value.reference, into: &buf)
+        FfiConverterOptionTypePresignedPut.write(value.upload, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageUploadInstruction_lift(_ buf: RustBuffer) throws -> ImageUploadInstruction {
+    return try FfiConverterTypeImageUploadInstruction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageUploadInstruction_lower(_ value: ImageUploadInstruction) -> RustBuffer {
+    return FfiConverterTypeImageUploadInstruction.lower(value)
+}
+
+
+public struct ImageUploadRequest: Equatable, Hashable {
+    public var namespace: String
+    public var files: [ImageUploadFileRequest]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(namespace: String, files: [ImageUploadFileRequest]) {
+        self.namespace = namespace
+        self.files = files
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ImageUploadRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageUploadRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageUploadRequest {
+        return
+            try ImageUploadRequest(
+                namespace: FfiConverterString.read(from: &buf),
+                files: FfiConverterSequenceTypeImageUploadFileRequest.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageUploadRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.namespace, into: &buf)
+        FfiConverterSequenceTypeImageUploadFileRequest.write(value.files, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageUploadRequest_lift(_ buf: RustBuffer) throws -> ImageUploadRequest {
+    return try FfiConverterTypeImageUploadRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageUploadRequest_lower(_ value: ImageUploadRequest) -> RustBuffer {
+    return FfiConverterTypeImageUploadRequest.lower(value)
+}
+
+
+public struct ImageUploadResponse: Equatable, Hashable {
+    public var files: [ImageUploadInstruction]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(files: [ImageUploadInstruction]) {
+        self.files = files
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ImageUploadResponse: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageUploadResponse: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageUploadResponse {
+        return
+            try ImageUploadResponse(
+                files: FfiConverterSequenceTypeImageUploadInstruction.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageUploadResponse, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeImageUploadInstruction.write(value.files, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageUploadResponse_lift(_ buf: RustBuffer) throws -> ImageUploadResponse {
+    return try FfiConverterTypeImageUploadResponse.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageUploadResponse_lower(_ value: ImageUploadResponse) -> RustBuffer {
+    return FfiConverterTypeImageUploadResponse.lower(value)
+}
+
+
 public struct Namespace: Equatable, Hashable {
     public var name: String
     public var status: String
@@ -3806,6 +4049,64 @@ public func FfiConverterTypePool_lift(_ buf: RustBuffer) throws -> Pool {
 #endif
 public func FfiConverterTypePool_lower(_ value: Pool) -> RustBuffer {
     return FfiConverterTypePool.lower(value)
+}
+
+
+public struct PresignedPut: Equatable, Hashable {
+    public var method: String
+    public var url: String
+    public var headers: [String: String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(method: String, url: String, headers: [String: String]) {
+        self.method = method
+        self.url = url
+        self.headers = headers
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PresignedPut: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePresignedPut: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PresignedPut {
+        return
+            try PresignedPut(
+                method: FfiConverterString.read(from: &buf),
+                url: FfiConverterString.read(from: &buf),
+                headers: FfiConverterDictionaryStringString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PresignedPut, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.method, into: &buf)
+        FfiConverterString.write(value.url, into: &buf)
+        FfiConverterDictionaryStringString.write(value.headers, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePresignedPut_lift(_ buf: RustBuffer) throws -> PresignedPut {
+    return try FfiConverterTypePresignedPut.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePresignedPut_lower(_ value: PresignedPut) -> RustBuffer {
+    return FfiConverterTypePresignedPut.lower(value)
 }
 
 
@@ -4547,6 +4848,30 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypePresignedPut: FfiConverterRustBuffer {
+    typealias SwiftType = PresignedPut?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypePresignedPut.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypePresignedPut.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeClaimSpec: FfiConverterRustBuffer {
     typealias SwiftType = ClaimSpec?
 
@@ -4735,6 +5060,56 @@ fileprivate struct FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeHttpHeader.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageUploadFileRequest: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageUploadFileRequest]
+
+    public static func write(_ value: [ImageUploadFileRequest], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageUploadFileRequest.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageUploadFileRequest] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageUploadFileRequest]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageUploadFileRequest.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImageUploadInstruction: FfiConverterRustBuffer {
+    typealias SwiftType = [ImageUploadInstruction]
+
+    public static func write(_ value: [ImageUploadInstruction], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImageUploadInstruction.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImageUploadInstruction] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImageUploadInstruction]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImageUploadInstruction.read(from: &buf))
         }
         return seq
     }
@@ -5035,6 +5410,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() != 53280) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() != 51053) {

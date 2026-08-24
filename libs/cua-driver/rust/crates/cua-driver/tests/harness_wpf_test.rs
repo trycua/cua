@@ -858,6 +858,53 @@ fn harness_wpf_set_value_commits_combo_selection() {
 
 #[test]
 #[ignore]
+fn harness_wpf_set_value_commits_list_selection() {
+    execute_case(
+        background_case("set_value_list", DriverRoute::Composite),
+        |evidence| {
+            with_named_session(
+                "windows-wpf-set-value-list-background",
+                |pid, wid, driver| {
+                    *evidence = recording_evidence(driver.recording_dir());
+                    let snap = snapshot(driver, pid, wid);
+                    let idx = ax::element_index_by_id(snap.text(), "lst-items")
+                        .expect("lst-items not in snapshot");
+                    let (response, passed) = observe_background(driver, pid, wid, |driver| {
+                        driver.call(
+                            "set_value",
+                            serde_json::json!({
+                                "pid": pid as i64, "window_id": wid, "element_index": idx,
+                                "snapshot_id": snap.snapshot_id(), "value": "cherry"
+                            }),
+                        )
+                    });
+                    assert!(
+                        !response.is_error(),
+                        "list set_value failed: {}",
+                        response.text()
+                    );
+                    assert!(
+                        response.text().contains("SelectionItemPattern"),
+                        "list set_value did not use committed selection: {}",
+                        response.text()
+                    );
+                    std::thread::sleep(Duration::from_millis(400));
+                    let post = snapshot(driver, pid, wid);
+                    assert!(
+                        post.text().contains("selected=cherry"),
+                        "list selection handler did not run: {}",
+                        post.text().chars().take(500).collect::<String>()
+                    );
+                    delivered_with_fixture_state(passed)
+                },
+            )
+            .expect("required WPF session did not start")
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_deferred_type_text_requires_fresh_snapshot_before_retry() {
     execute_case(
         background_case("deferred-type-text", DriverRoute::UiaValue),

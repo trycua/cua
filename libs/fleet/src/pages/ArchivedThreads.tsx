@@ -7,7 +7,7 @@ import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import { displayThreadTitle, useChatThreads } from "../chat/ChatThreadsContext";
 import { localVisualPreviewPath } from "../local-visual-preview";
-import { listConversations, type ConversationSummary } from "../sdk/chat";
+import { listConversations, type ConversationSummary } from "../api/chat";
 import { PageShell } from "../components/PageShell";
 import "./AgentChat.css";
 

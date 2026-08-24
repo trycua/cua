@@ -29,7 +29,7 @@ import {
   type GitHubTrustPolicy,
   githubTrustPoliciesApi,
   namespacesApi,
-} from "../sdk/githubTrustPolicies"
+} from "../api/githubTrustPolicies"
 import { BillingSettings } from "./Billing"
 
 export function Settings() {

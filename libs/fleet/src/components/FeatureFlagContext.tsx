@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { fetchFeatureFlags, type FeatureFlags } from "../sdk/featureFlags"
+import { fetchFeatureFlags, type FeatureFlags } from "../api/featureFlags"
 import { isLocalVisualPreview } from "../local-visual-preview"
 import { DEFAULT_USAGE_PRICING } from "../usagePricing"
 

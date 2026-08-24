@@ -174,6 +174,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+.usage-pool-name {
+  display: inline-flex;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+}
+
 .usage-empty {
   padding: 48px 0;
   border-block: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));

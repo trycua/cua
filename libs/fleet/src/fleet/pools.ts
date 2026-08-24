@@ -5,6 +5,7 @@ import {
   OsGymSandboxTemplateSpecBuilder,
   OsGymSandboxWarmPoolSpecBuilder,
   PreservedJson,
+  poolDisplayStatus,
   SandboxServiceBuilder,
   SandboxTemplateRefBuilder,
   ServiceProtocol,
@@ -23,9 +24,9 @@ import {
   type VmTemplateBuilderLike,
   type WarmPoolAutoscaling,
   type WarmPoolAutoscalingBuilderLike,
-} from "./generated"
-import { withClient } from "./client"
-import { deriveWarmPoolPhase } from "./status"
+} from "../../sdk-bindings/ts-uniffi-browser/ts/index.web"
+import { ensureSdkInitialized, withClient } from "../auth/cyclops-client"
+import { applyPoolTombstones } from "./status"
 import type {
   PoolData,
   PoolService,
@@ -58,8 +59,8 @@ function poolSummary(pool: Pool): PoolSummary {
     name: pool.metadata.name,
     namespace: pool.metadata.namespace,
     replicas: pool.spec.replicas,
-    phase: deriveWarmPoolPhase(pool.spec.replicas, pool.status),
     availableCount: pool.status?.readyReplicas ?? 0,
+    status: poolDisplayStatus(pool),
   }
 }
 
@@ -106,7 +107,10 @@ export async function listNamespaces(): Promise<Namespace[]> {
 }
 
 export async function listPools(): Promise<PoolSummary[]> {
-  if (isLocalVisualPreview()) return listLocalVisualPreviewPools()
+  if (isLocalVisualPreview()) {
+    await ensureSdkInitialized()
+    return applyPoolTombstones(await listLocalVisualPreviewPools())
+  }
   return withClient(async client => {
     const namespaces = await listNamespacesWith(client)
     const pools = await Promise.all(
@@ -118,7 +122,9 @@ export async function listPools(): Promise<PoolSummary[]> {
         }
       }),
     )
-    return pools.flat().map(poolSummary).sort((a, b) => a.name.localeCompare(b.name))
+    return applyPoolTombstones(
+      pools.flat().map(poolSummary).sort((a, b) => a.name.localeCompare(b.name)),
+    )
   })
 }
 
@@ -140,6 +146,7 @@ async function getPoolWith(
 
 export async function getPool(namespace: string, name: string): Promise<PoolData> {
   if (isLocalVisualPreview()) {
+    await ensureSdkInitialized()
     const pool = getLocalVisualPreviewPool(namespace, name)
     if (!pool) throw new Error(`Preview pool ${namespace}/${name} was not found`)
     return pool

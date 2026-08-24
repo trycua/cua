@@ -57,9 +57,9 @@ const SDK_COMMAND_HELP: Record<BrowserSdkCommandName, BrowserCommandHelp> = {
   listPools: {
     summary: "List all pools visible to the current user.",
     usage: "listPools",
-    output: "A JSON array with name, namespace, replicas, availableCount, and phase for each pool.",
+    output: "A JSON array with name, namespace, replicas, availableCount, and status for each pool.",
     presentation: [
-      "Use a concise Markdown table with exactly these columns: Pool | Replicas | Available | Phase.",
+      "Use a concise Markdown table with exactly these columns: Pool | Replicas | Available | Status.",
       "Omit Namespace; it is implementation detail and redundant in this listing.",
       "Render each pool name as a Markdown link to /pools/<URL-encoded namespace>/<URL-encoded pool name>.",
       "After the table, summarize the total pool count and total available sandboxes in one sentence.",

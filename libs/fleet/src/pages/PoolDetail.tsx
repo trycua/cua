@@ -15,11 +15,11 @@ import Table from "@cloudscape-design/components/table"
 import Tabs from "@cloudscape-design/components/tabs"
 import { useFlash } from "../components/FlashContext"
 import { PoolStatusPill } from "../components/PoolStatus"
-import { createClaim as createSdkClaim, deleteClaim, listClaims } from "../sdk/claims"
-import { listPoolInstances } from "../sdk/instances"
-import type { Claim, PoolData, PoolInstance } from "../sdk/models"
-import { deletePool, getPool, updatePoolServices } from "../sdk/pools"
-import { derivePoolStatus, tombstonePool } from "../sdk/status"
+import { createClaim as createSdkClaim, deleteClaim, listClaims } from "../fleet/claims"
+import { listPoolInstances } from "../fleet/instances"
+import type { Claim, PoolData, PoolInstance } from "../fleet/models"
+import { deletePool, getPool, updatePoolServices } from "../fleet/pools"
+import { tombstonePool } from "../fleet/status"
 import { CuaButton } from "../components/CuaButton"
 import { PageEmpty, PageError } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
@@ -95,13 +95,11 @@ export function PoolDetail() {
     )
   }
 
-  const status = derivePoolStatus(pool)
-
   return (
     <PageShell
       eyebrow="Fleet / Pool"
       title={pool.name}
-      description={<PoolStatusPill status={status} />}
+      description={<PoolStatusPill status={pool.status} />}
       secondaryActions={
         <SpaceBetween direction="horizontal" size="xs">
           <CuaButton

@@ -27,8 +27,8 @@ import {
   listUserKeys,
   type NewUserApiKey,
   type UserApiKey,
-} from "../sdk/userKeys"
-import { listNamespaces } from "../sdk/pools"
+} from "../fleet/userKeys"
+import { listNamespaces } from "../fleet/pools"
 import { errorMessage } from "../error-message"
 import { CuaButton } from "../components/CuaButton"
 import { useFlash } from "../components/FlashContext"

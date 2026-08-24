@@ -1,10 +1,10 @@
-import { getToken } from "../auth/keycloak"
+import { getToken } from "./keycloak"
 import {
   CyclopsClient,
   CyclopsTokenProviderConfigurationBuilder,
   uniffiInitAsync,
   type CyclopsTokenProviderConfiguration,
-} from "./generated"
+} from "../../sdk-bindings/ts-uniffi-browser/ts/index.web"
 
 const sdkInitialization = uniffiInitAsync()
 

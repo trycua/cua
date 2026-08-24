@@ -122,9 +122,9 @@ test("dashboard activates the shared theme through supported boundaries", async 
 test("account preview data stays behind the fail-closed visual-preview gate", async () => {
   const files = await Promise.all(
     [
-      "src/sdk/userKeys.ts",
-      "src/sdk/githubTrustPolicies.ts",
-      "src/sdk/billing.ts",
+      "src/fleet/userKeys.ts",
+      "src/api/githubTrustPolicies.ts",
+      "src/api/billing.ts",
       "src/components/FeatureFlagContext.tsx",
     ].map(relativePath =>
       readFile(path.join(cyclopsRoot, relativePath), "utf8"),
@@ -145,4 +145,30 @@ test("account preview data stays behind the fail-closed visual-preview gate", as
   assert.match(files[0], /withClient\(client => client\.listUserApiKeys\(\)\)/)
   assert.match(files[1], /request<GitHubTrustPolicyListResponse>/)
   assert.match(files[2], /billingRequest<BillingSummary>/)
+})
+
+test("frontend imports the generated UniFFI SDK without an src/sdk proxy", async () => {
+  await assert.rejects(
+    readdir(path.join(cyclopsRoot, "src/sdk")),
+    error => error?.code === "ENOENT",
+  )
+
+  const sources = await Promise.all(
+    [
+      "src/auth/cyclops-client.ts",
+      "src/fleet/claims.ts",
+      "src/fleet/pools.ts",
+      "src/fleet/userKeys.ts",
+    ].map(relativePath =>
+      readFile(path.join(cyclopsRoot, relativePath), "utf8"),
+    ),
+  )
+
+  for (const source of sources) {
+    assert.match(
+      source,
+      /sdk-bindings\/ts-uniffi-browser\/ts\/index\.web/,
+    )
+    assert.doesNotMatch(source, /src\/sdk|\.\/generated/)
+  }
 })

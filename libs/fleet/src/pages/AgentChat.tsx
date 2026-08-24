@@ -15,7 +15,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { MarkdownMessage } from "../components/MarkdownMessage";
 import { PageShell } from "../components/PageShell";
-import { createClaim, deleteClaim, getClaim, listClaims } from "../sdk/claims";
+import { createClaim, deleteClaim, getClaim, listClaims } from "../fleet/claims";
 import {
   createPool,
   deletePool,
@@ -23,8 +23,8 @@ import {
   listNamespaces,
   listPools,
   updatePoolServices,
-} from "../sdk/pools";
-import { createUserKey, deleteUserKey, listUserKeys } from "../sdk/userKeys";
+} from "../fleet/pools";
+import { createUserKey, deleteUserKey, listUserKeys } from "../fleet/userKeys";
 import {
   ChatApiError,
   getConversation,
@@ -33,7 +33,7 @@ import {
   type ChatToolCall,
   type Conversation,
   type ConversationSummary,
-} from "../sdk/chat";
+} from "../api/chat";
 import {
   BrowserBashAgent,
   type BashToolResult,

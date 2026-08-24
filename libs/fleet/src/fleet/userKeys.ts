@@ -3,11 +3,11 @@ import {
   type CreateUserApiKeyRequest,
   type NewUserApiKey,
   type UserApiKey,
-} from "./generated"
-import { withClient } from "./client"
+} from "../../sdk-bindings/ts-uniffi-browser/ts/index.web"
+import { withClient } from "../auth/cyclops-client"
 import { isLocalVisualPreview } from "../local-visual-preview"
 
-export type { NewUserApiKey, UserApiKey } from "./generated"
+export type { NewUserApiKey, UserApiKey } from "../../sdk-bindings/ts-uniffi-browser/ts/index.web"
 
 let localVisualPreviewKeys: UserApiKey[] = [
   {

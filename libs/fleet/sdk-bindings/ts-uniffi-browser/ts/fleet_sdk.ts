@@ -43,6 +43,7 @@ import {
   FfiConverterUInt8,
   RustBuffer,
   UniffiAbstractObject,
+  UniffiEnum,
   UniffiError,
   UniffiInternalError,
   UniffiResult,
@@ -85,6 +86,102 @@ const uniffiIsDebug =
   false;
 
 // Public interface members begin here.
+
+export function healthyPoolDisplayStatus(): PoolDisplayStatus {
+  return ((__rb: Uint8Array) => {
+    try {
+      return FfiConverterTypePoolDisplayStatus.lift(__rb);
+    } finally {
+      nativeModule().rustbuffer_free(__rb);
+    }
+  })(
+    uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ),
+  );
+}
+
+export function poolDisplayStatus(pool: Pool): PoolDisplayStatus {
+  return ((__rb: Uint8Array) => {
+    try {
+      return FfiConverterTypePoolDisplayStatus.lift(__rb);
+    } finally {
+      nativeModule().rustbuffer_free(__rb);
+    }
+  })(
+    uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_pool_display_status(
+          FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc),
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ),
+  );
+}
+
+export function removedPoolDisplayStatus(): PoolDisplayStatus {
+  return ((__rb: Uint8Array) => {
+    try {
+      return FfiConverterTypePoolDisplayStatus.lift(__rb);
+    } finally {
+      nativeModule().rustbuffer_free(__rb);
+    }
+  })(
+    uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_removed_pool_display_status(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ),
+  );
+}
+
+export function terminatingPoolDisplayStatus(): PoolDisplayStatus {
+  return ((__rb: Uint8Array) => {
+    try {
+      return FfiConverterTypePoolDisplayStatus.lift(__rb);
+    } finally {
+      nativeModule().rustbuffer_free(__rb);
+    }
+  })(
+    uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_terminating_pool_display_status(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ),
+  );
+}
+
+export function unknownPoolDisplayStatus(): PoolDisplayStatus {
+  return ((__rb: Uint8Array) => {
+    try {
+      return FfiConverterTypePoolDisplayStatus.lift(__rb);
+    } finally {
+      nativeModule().rustbuffer_free(__rb);
+    }
+  })(
+    uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_unknown_pool_display_status(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ),
+  );
+}
 
 const stringConverter = (() => {
   const encoder = new TextEncoder();
@@ -995,6 +1092,104 @@ const FfiConverterTypeNewUserApiKey = (() => {
         FfiConverterString.allocationSize(value.tokenUrl) +
         FfiConverterString.allocationSize(value.name) +
         FfiConverterSequenceString.allocationSize(value.scope)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export enum PoolDisplayStatusKind {
+  Healthy,
+  ScaledToZero,
+  Removed,
+  Terminating,
+  Unknown,
+}
+
+const FfiConverterTypePoolDisplayStatusKind = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = PoolDisplayStatusKind;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return PoolDisplayStatusKind.Healthy;
+        case 2:
+          return PoolDisplayStatusKind.ScaledToZero;
+        case 3:
+          return PoolDisplayStatusKind.Removed;
+        case 4:
+          return PoolDisplayStatusKind.Terminating;
+        case 5:
+          return PoolDisplayStatusKind.Unknown;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case PoolDisplayStatusKind.Healthy:
+          return ordinalConverter.write(1, into);
+        case PoolDisplayStatusKind.ScaledToZero:
+          return ordinalConverter.write(2, into);
+        case PoolDisplayStatusKind.Removed:
+          return ordinalConverter.write(3, into);
+        case PoolDisplayStatusKind.Terminating:
+          return ordinalConverter.write(4, into);
+        case PoolDisplayStatusKind.Unknown:
+          return ordinalConverter.write(5, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type PoolDisplayStatus = {
+  kind: PoolDisplayStatusKind;
+  label: string;
+  indicator: string;
+};
+
+/**
+ * Generated factory for {@link PoolDisplayStatus} record objects.
+ */
+export const PoolDisplayStatus = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<PoolDisplayStatus, ReturnType<typeof defaults>>(
+      defaults,
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<PoolDisplayStatus>,
+  });
+})();
+
+const FfiConverterTypePoolDisplayStatus = (() => {
+  type TypeName = PoolDisplayStatus;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        kind: FfiConverterTypePoolDisplayStatusKind.read(from),
+        label: FfiConverterString.read(from),
+        indicator: FfiConverterString.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterTypePoolDisplayStatusKind.write(value.kind, into);
+      FfiConverterString.write(value.label, into);
+      FfiConverterString.write(value.indicator, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterTypePoolDisplayStatusKind.allocationSize(value.kind) +
+        FfiConverterString.allocationSize(value.label) +
+        FfiConverterString.allocationSize(value.indicator)
       );
     }
   }
@@ -5549,6 +5744,46 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() !==
+    3094
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_pool_display_status() !==
+    8587
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_func_pool_display_status",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() !==
+    48761
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_func_removed_pool_display_status",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status() !==
+    41320
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status() !==
+    39929
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() !==
     1180
   ) {
@@ -6173,6 +6408,8 @@ export default Object.freeze({
     FfiConverterTypeNamespace,
     FfiConverterTypeNewUserApiKey,
     FfiConverterTypePool,
+    FfiConverterTypePoolDisplayStatus,
+    FfiConverterTypePoolDisplayStatusKind,
     FfiConverterTypeResourceMetadata,
     FfiConverterTypeSandbox,
     FfiConverterTypeSdkBuildError,

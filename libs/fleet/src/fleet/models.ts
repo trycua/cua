@@ -1,3 +1,5 @@
+import type { PoolDisplayStatus } from "../../sdk-bindings/ts-uniffi-browser/ts/index.web"
+
 export interface PoolService {
   name: string
   targetPort: number
@@ -28,8 +30,8 @@ export interface PoolSummary {
   name: string
   namespace: string
   replicas: number
-  phase: string
   availableCount: number
+  status: PoolDisplayStatus
 }
 
 export interface PoolData extends PoolSummary, PoolTemplateConfig {

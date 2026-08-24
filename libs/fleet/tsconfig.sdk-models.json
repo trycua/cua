@@ -18,7 +18,6 @@
   },
   "files": [
     "e2e/sdk-models.unit.ts",
-    "e2e/mock-chat-api.spec.ts",
-    "src/sdk/status.ts"
+    "e2e/mock-chat-api.spec.ts"
   ]
 }

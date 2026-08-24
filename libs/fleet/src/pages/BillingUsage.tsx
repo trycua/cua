@@ -3,14 +3,18 @@ import Input from "@cloudscape-design/components/input"
 import Select from "@cloudscape-design/components/select"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CuaButton } from "../components/CuaButton"
+import { PoolStatusDot } from "../components/PoolStatus"
 import { useFeatureFlags } from "../components/FeatureFlagContext"
 import { PageEmpty, PageError } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
+import type { PoolSummary } from "../fleet/models"
+import { listPools } from "../fleet/pools"
+import { historicalPoolStatus } from "../fleet/status"
 import {
   usageApi,
   type UsageOverviewResponse,
   type UsageTimeframe,
-} from "../sdk/usage"
+} from "../api/usage"
 import "./BillingUsage.css"
 import { reservedResourceCostUSD } from "../usagePricing"
 
@@ -58,6 +62,7 @@ export function BillingUsagePage() {
   const [activeSubject, setActiveSubject] = useState<string | null>(null)
   const [subjectError, setSubjectError] = useState("")
   const [overview, setOverview] = useState<UsageOverviewResponse | null>(null)
+  const [currentPools, setCurrentPools] = useState<PoolSummary[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const loadStarted = useRef(0)
@@ -68,9 +73,13 @@ export function BillingUsagePage() {
     setLoading(true)
     setError(false)
     try {
-      const value = await usageApi.overview(timeframe, activeSubject ?? undefined)
+      const [value, poolsResult] = await Promise.all([
+        usageApi.overview(timeframe, activeSubject ?? undefined),
+        listPools().catch(() => null),
+      ])
       const initialLoadMS = performance.now() - loadStarted.current
       setOverview(value)
+      setCurrentPools(poolsResult)
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           performance.mark("usage-dashboard-ready")
@@ -241,14 +250,22 @@ export function BillingUsagePage() {
                 </tr>
               </thead>
               <tbody>
-                {pools.map(pool => (
-                  <tr className="usage-breakdown__row" key={pool.id}>
-                    <td>{pool.name}</td>
-                    <td data-label="Reserved CPU"><strong>{resourceHours(pool.cpu.provisioned, "core-h")}</strong></td>
-                    <td data-label="Reserved memory"><strong>{resourceHours(pool.memory.provisioned, "GiB-h")}</strong></td>
-                    <td data-label="Cost"><strong>{moneyFormatter.format(pool.reservedCostUSD)}</strong></td>
-                  </tr>
-                ))}
+                {pools.map(pool => {
+                  const status = historicalPoolStatus(pool.id, currentPools)
+                  return (
+                    <tr className="usage-breakdown__row" key={pool.id}>
+                      <td>
+                        <span className="usage-pool-name">
+                          <PoolStatusDot status={status} />
+                          <span>{pool.name}</span>
+                        </span>
+                      </td>
+                      <td data-label="Reserved CPU"><strong>{resourceHours(pool.cpu.provisioned, "core-h")}</strong></td>
+                      <td data-label="Reserved memory"><strong>{resourceHours(pool.memory.provisioned, "GiB-h")}</strong></td>
+                      <td data-label="Cost"><strong>{moneyFormatter.format(pool.reservedCostUSD)}</strong></td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </section>

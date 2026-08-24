@@ -19,7 +19,7 @@ import {
   setConversationArchived,
   type Conversation,
   type ConversationSummary,
-} from "../sdk/chat"
+} from "../api/chat"
 
 interface ChatThreadsContextValue {
   activeThreads: ConversationSummary[]

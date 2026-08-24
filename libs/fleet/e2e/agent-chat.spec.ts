@@ -595,7 +595,7 @@ test("renders and sanitizes Markdown in user and assistant messages", async ({
             id: "markdown-assistant",
             role: "assistant",
             content: [
-              "| Pool | Replicas | Available | Phase |",
+              "| Pool | Replicas | Available | Status |",
               "| --- | ---: | ---: | --- |",
               "| [demo](/pools/team/demo) | 2 | 1 | Ready |",
               "",
@@ -1371,7 +1371,7 @@ test("parses fragmented unterminated NDJSON and rejects malformed final events",
   await page.goto("/pools");
 
   const result = await page.evaluate(async () => {
-    const api = await import("/src/sdk/chat.ts");
+    const api = await import("/src/api/chat.ts");
     const originalFetch = window.fetch;
     const encode = (value: string) => new TextEncoder().encode(value);
     const stream = (chunks: string[]) =>

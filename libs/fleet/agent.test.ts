@@ -115,7 +115,7 @@ test("listPools help defines the linked table presentation", async () => {
   const result = await sdkShell().exec("listPools -h")
 
   assert.equal(result.exitCode, 0)
-  assert.match(result.stdout, /Pool \| Replicas \| Available \| Phase/)
+  assert.match(result.stdout, /Pool \| Replicas \| Available \| Status/)
   assert.match(result.stdout, /Omit Namespace/)
   assert.match(result.stdout, /Markdown link/)
   assert.match(result.stdout, /\/pools\/<URL-encoded namespace>\/<URL-encoded pool name>/)
@@ -124,8 +124,8 @@ test("listPools help defines the linked table presentation", async () => {
 test("exposes SDK methods as composable bash commands", async () => {
   const shell = sdkShell({
     listPools: async () => [
-      { name: "beta", namespace: "team", phase: "Ready" },
-      { name: "alpha", namespace: "team", phase: "Pending" },
+      { name: "beta", namespace: "team", status: { label: "Healthy" } },
+      { name: "alpha", namespace: "team", status: { label: "Unknown" } },
     ],
   })
 

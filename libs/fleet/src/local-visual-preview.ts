@@ -1,14 +1,15 @@
-import type { PoolData, PoolSummary } from "./sdk/models"
+import type { PoolData, PoolSummary } from "./fleet/models"
+import { healthyPoolDisplayStatus } from "../sdk-bindings/ts-uniffi-browser/ts/index.web"
 import type {
   BillingUsage,
   UsagePoint,
   UsageRangeMonths,
-} from "./sdk/billing"
+} from "./api/billing"
 import type {
   ChatMessage,
   Conversation,
   ConversationSummary,
-} from "./sdk/chat"
+} from "./api/chat"
 
 export function isLocalVisualPreview(): boolean {
   const localPreview =
@@ -28,20 +29,23 @@ export function localVisualPreviewPath(path: string): string {
   return `${path}${path.includes("?") ? "&" : "?"}cua-visual-preview`
 }
 
-export const localVisualPreviewPools: PoolSummary[] = [
-  { name: "prod-web-fleet", namespace: "preview", replicas: 120, availableCount: 118, phase: "Ready" },
-  { name: "prod-api-fleet", namespace: "preview", replicas: 80, availableCount: 79, phase: "Ready" },
-  { name: "staging-web-fleet", namespace: "preview", replicas: 40, availableCount: 38, phase: "Ready" },
-  { name: "staging-api-fleet", namespace: "preview", replicas: 30, availableCount: 28, phase: "Scaling" },
-  { name: "dev-tools-fleet", namespace: "preview", replicas: 20, availableCount: 20, phase: "Ready" },
-  { name: "eval-runner-fleet", namespace: "preview", replicas: 16, availableCount: 14, phase: "Scaling" },
-  { name: "batch-jobs-fleet", namespace: "preview", replicas: 64, availableCount: 60, phase: "Degraded" },
-  { name: "canary-fleet", namespace: "preview", replicas: 8, availableCount: 8, phase: "Ready" },
-  { name: "infra-maint-fleet", namespace: "preview", replicas: 12, availableCount: 10, phase: "Degraded" },
-  { name: "data-pipeline-fleet", namespace: "preview", replicas: 24, availableCount: 22, phase: "Ready" },
-  { name: "browser-agent-fleet", namespace: "preview", replicas: 32, availableCount: 31, phase: "Ready" },
-  { name: "desktop-agent-fleet", namespace: "preview", replicas: 18, availableCount: 17, phase: "Ready" },
-]
+function localVisualPreviewPools(): PoolSummary[] {
+  const status = healthyPoolDisplayStatus()
+  return [
+    { name: "prod-web-fleet", namespace: "preview", replicas: 120, availableCount: 118, status },
+    { name: "prod-api-fleet", namespace: "preview", replicas: 80, availableCount: 79, status },
+    { name: "staging-web-fleet", namespace: "preview", replicas: 40, availableCount: 38, status },
+    { name: "staging-api-fleet", namespace: "preview", replicas: 30, availableCount: 28, status },
+    { name: "dev-tools-fleet", namespace: "preview", replicas: 20, availableCount: 20, status },
+    { name: "eval-runner-fleet", namespace: "preview", replicas: 16, availableCount: 14, status },
+    { name: "batch-jobs-fleet", namespace: "preview", replicas: 64, availableCount: 60, status },
+    { name: "canary-fleet", namespace: "preview", replicas: 8, availableCount: 8, status },
+    { name: "infra-maint-fleet", namespace: "preview", replicas: 12, availableCount: 10, status },
+    { name: "data-pipeline-fleet", namespace: "preview", replicas: 24, availableCount: 22, status },
+    { name: "browser-agent-fleet", namespace: "preview", replicas: 32, availableCount: 31, status },
+    { name: "desktop-agent-fleet", namespace: "preview", replicas: 18, availableCount: 17, status },
+  ]
+}
 
 export async function listLocalVisualPreviewPools(): Promise<PoolSummary[]> {
   const state = new URLSearchParams(window.location.search).get(
@@ -52,14 +56,14 @@ export async function listLocalVisualPreviewPools(): Promise<PoolSummary[]> {
   }
   if (state === "empty") return []
   if (state === "error") throw new Error("Synthetic preview error")
-  return localVisualPreviewPools
+  return localVisualPreviewPools()
 }
 
 export function getLocalVisualPreviewPool(
   namespace: string,
   name: string,
 ): PoolData | undefined {
-  const summary = localVisualPreviewPools.find(
+  const summary = localVisualPreviewPools().find(
     pool => pool.namespace === namespace && pool.name === name,
   )
   if (!summary) return undefined

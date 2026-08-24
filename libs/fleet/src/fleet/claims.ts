@@ -4,8 +4,8 @@ import {
   type CreateClaimRequest,
   type CyclopsClient,
   type Pool,
-} from "./generated"
-import { withClient } from "./client"
+} from "../../sdk-bindings/ts-uniffi-browser/ts/index.web"
+import { withClient } from "../auth/cyclops-client"
 import type { Claim } from "./models"
 import { isLocalVisualPreview } from "../local-visual-preview"
 

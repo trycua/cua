@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client"
 import { BrowserRouter, Route, Routes } from "react-router-dom"
 import { useState } from "react"
 import { AdminRoute } from "../../src/components/AdminRoute"
-import { fetchFeatureFlags } from "../../src/sdk/featureFlags"
+import { fetchFeatureFlags } from "../../src/api/featureFlags"
 import {
   FeatureFlagProvider,
   useFeatureFlags,

@@ -30,7 +30,7 @@ import {
   type FeatureFlagOwnership,
   type FeatureFlagValueType,
   type JSONValue,
-} from "../sdk/adminFeatureFlags"
+} from "../api/adminFeatureFlags"
 
 const TERRAFORM_FEATURE_FLAGS_URL =
   "https://github.com/trycua/cloud/tree/main/terraform/aws/feature-flags"

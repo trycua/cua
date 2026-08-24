@@ -714,7 +714,7 @@ fn secure_field_kind(
     backend_node_id: Option<i64>,
     dom: Option<&DomMeta>,
 ) -> Option<SecureFieldKind> {
-    let dom = backend_node_id.and_then(|_| dom)?;
+    let dom = backend_node_id.and(dom)?;
     (dom.tag == "input"
         && dom
             .attrs

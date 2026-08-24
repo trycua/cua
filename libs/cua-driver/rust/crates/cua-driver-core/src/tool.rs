@@ -509,6 +509,13 @@ pub enum ProtectedResourceOwnership {
 pub trait Tool: Send + Sync {
     fn def(&self) -> &ToolDef;
 
+    /// Return the explicit argument projection retained when deterministic
+    /// recording is active. Host-registered mutable tools can opt in without
+    /// weakening the fail-closed policy for unclassified built-in tools.
+    fn recording_projection(&self, _args: &Value) -> Option<Value> {
+        None
+    }
+
     /// Trusted implementation-side provenance for prompt-light disposable
     /// resources. The default is deliberately conservative: caller arguments
     /// never establish ownership, and an adapter may skip protected consent
@@ -635,6 +642,10 @@ pub struct ToolRegistry {
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
+    /// Trusted Rust hosts may register administrative mutations whose public
+    /// arguments are not part of the canonical contract. Their recordings are
+    /// fixed and content-free rather than inheriting pass-through behavior.
+    fixed_recording_tools: HashSet<String>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -702,6 +713,7 @@ impl ToolRegistry {
             cursor_outcome_readers: Vec::new(),
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
+            fixed_recording_tools: HashSet::new(),
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -725,6 +737,15 @@ impl ToolRegistry {
         &self,
     ) -> Arc<crate::consent::ProtectedResourceOwnershipStore> {
         self.protected_resource_ownership.clone()
+    }
+
+    /// Give a trusted host-registered tool a privacy-suppressed, content-free
+    /// recording policy. Unknown built-in mutations remain fail closed.
+    #[doc(hidden)]
+    pub fn mark_fixed_recording_policy(&mut self, tool_name: &str) {
+        if self.tools.contains_key(tool_name) {
+            self.fixed_recording_tools.insert(tool_name.to_owned());
+        }
     }
 
     async fn snapshot_running_pids(&self) -> Option<std::collections::BTreeSet<i64>> {
@@ -1288,7 +1309,13 @@ impl ToolRegistry {
             args = public_args.clone();
             namespace_runtime_args(&mut args, context, evidence);
         }
-        let recording_args = recording_args_for(resolved_name, &public_args);
+        let host_fixed_recording = self.fixed_recording_tools.contains(resolved_name);
+        let recording_args = if host_fixed_recording {
+            Some(serde_json::json!({}))
+        } else {
+            recording_args_for(resolved_name, &public_args)
+                .or_else(|| tool.recording_projection(&public_args))
+        };
         if has_adapter("desktop_input")
             && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
         {
@@ -1507,7 +1534,7 @@ impl ToolRegistry {
                     }
                 }));
         }
-        let fixed_recording_turn = resolved_name == "type_secret";
+        let fixed_recording_turn = resolved_name == "type_secret" || host_fixed_recording;
         let private_recording_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if is_physical_desktop_action(resolved_name) {
             let coordinator = desktop_action_coordinator();

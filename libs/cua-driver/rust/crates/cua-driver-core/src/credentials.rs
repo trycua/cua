@@ -27,6 +27,7 @@ use crate::session::{
 pub const MAX_SECRET_BYTES: usize = 4 * 1024;
 pub const MAX_BOOTSTRAP_SECRET_BYTES: usize = 64 * 1024;
 pub const DEFAULT_CREDENTIAL_HANDLE_TTL: Duration = Duration::from_secs(60);
+pub const DEFAULT_PROVIDER_RELEASE_TIMEOUT: Duration = Duration::from_secs(30);
 const BOOTSTRAP_RECORD_MAGIC: &[u8; 4] = b"CBS1";
 const BOOTSTRAP_RECORD_HEADER_BYTES: usize = BOOTSTRAP_RECORD_MAGIC.len() + 8;
 const MAX_ACTIVE_HANDLES: usize = 4_096;
@@ -1451,11 +1452,16 @@ impl SecretBroker {
     ) -> Result<BrokeredRelease, SecretBrokerError> {
         let release_id = ProviderReleaseId(Uuid::new_v4());
         let revoked = Arc::new(AtomicBool::new(false));
-        let (provider, request) = {
+        let (provider, request, release_timeout) = {
             let mut state = self.state.lock().unwrap();
             self.prune_handle_state(&mut state, now);
             let (record, binding_index) =
                 self.validate_release_state(&state, handle, field, target, now)?;
+            let release_timeout = record
+                .expires_at
+                .duration_since(now)
+                .map_err(|_| SecretBrokerError::HandleExpired)?
+                .min(DEFAULT_PROVIDER_RELEASE_TIMEOUT);
             let resource = secret_release_resource(
                 handle,
                 &record,
@@ -1511,6 +1517,7 @@ impl SecretBroker {
                     target: target.clone(),
                     cancelled: revoked.clone(),
                 },
+                release_timeout,
             )
         };
 
@@ -1527,13 +1534,18 @@ impl SecretBroker {
         if let Err(error) = permit.ensure_live() {
             return Err(SecretBrokerError::Authorization(error));
         }
-        let plan = match provider.release(&request).await {
-            Ok(plan) => plan,
-            Err(_) if request.is_cancelled() || cancellation.is_revoked() => {
+        let plan = match tokio::time::timeout(release_timeout, provider.release(&request)).await {
+            Ok(Ok(plan)) => plan,
+            Ok(Err(_)) if request.is_cancelled() || cancellation.is_revoked() => {
                 cancellation.disarm();
                 return Err(SecretBrokerError::HandleRevoked);
             }
-            Err(error) => return Err(SecretBrokerError::Provider(error.kind())),
+            Ok(Err(error)) => return Err(SecretBrokerError::Provider(error.kind())),
+            Err(_) => {
+                return Err(SecretBrokerError::Provider(
+                    CredentialProviderErrorKind::Timeout,
+                ))
+            }
         };
         if request.is_cancelled() || cancellation.is_revoked() {
             drop(plan);
@@ -2345,6 +2357,19 @@ mod tests {
         String,
         Arc<crate::session_authorization::EffectiveAuthorizationContext>,
     ) {
+        broker_with_ttl(provider, max_releases, DEFAULT_CREDENTIAL_HANDLE_TTL)
+    }
+
+    fn broker_with_ttl(
+        provider: Arc<FakeProvider>,
+        max_releases: Option<u32>,
+        handle_ttl: Duration,
+    ) -> (
+        Arc<SecretBroker>,
+        BindingRegistrationId,
+        String,
+        Arc<crate::session_authorization::EffectiveAuthorizationContext>,
+    ) {
         static NEXT_SESSION: AtomicUsize = AtomicUsize::new(1);
         let ceiling = crate::session_authorization::SessionModeCeiling::for_trusted_sessions(
             [crate::authorization::PermissionMode::Unrestricted],
@@ -2357,7 +2382,10 @@ mod tests {
             crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
                 .compatibility_context(crate::authorization::PermissionMode::Unrestricted, None)
                 .unwrap();
-        let mut builder = SecretBrokerBuilder::new(context.runtime_scope_key()).unwrap();
+        let mut builder = SecretBrokerBuilder::new(context.runtime_scope_key())
+            .unwrap()
+            .with_handle_ttl(handle_ttl)
+            .unwrap();
         let public_session = format!("agent-{}", NEXT_SESSION.fetch_add(1, Ordering::Relaxed));
         let session = builder.runtime_session_key(&public_session).unwrap();
         builder.add_provider(provider).unwrap();
@@ -2945,6 +2973,57 @@ allow:
         assert_eq!(provider.releases.load(Ordering::SeqCst), 1);
         resume.notify_waiters();
         pending.await.unwrap().unwrap().complete();
+    }
+
+    #[tokio::test]
+    async fn provider_resolution_times_out_and_cancels_before_effect() {
+        let entered = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let provider = FakeProvider::new([FakeOutcome::Wait {
+            entered: entered.clone(),
+            resume,
+            value: b"synthetic-secret".to_vec(),
+        }]);
+        let (broker, _, session, context) =
+            broker_with_ttl(provider.clone(), Some(1), Duration::from_millis(25));
+        let target = target(
+            broker.runtime_scope(),
+            &session,
+            "https://accounts.example.test/login",
+            "p4:3",
+        );
+        let descriptor = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let release_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
+
+        let result = broker
+            .release(
+                &descriptor.handle,
+                CredentialField::Password,
+                &target,
+                now(),
+                release_permit,
+            )
+            .await;
+        assert_eq!(
+            result.unwrap_err(),
+            SecretBrokerError::Provider(CredentialProviderErrorKind::Timeout)
+        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while provider.cancellations.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed-out provider release must be cancelled");
+        assert_eq!(provider.effects.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.releases.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

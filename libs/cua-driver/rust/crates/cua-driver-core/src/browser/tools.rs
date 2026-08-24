@@ -90,6 +90,49 @@ fn target_bound_credential_refusal(refusal: BrowserRefusal) -> ToolResult {
             "secret_release_not_authorized",
             "credential delivery is not authorized",
         ),
+        BrowserRefusalCode::SecretBindingExpired => {
+            fixed_credential_refusal("secret_binding_expired", "the credential binding expired")
+        }
+        BrowserRefusalCode::SecretBindingRevoked => fixed_credential_refusal(
+            "secret_binding_revoked",
+            "the credential binding was revoked",
+        ),
+        BrowserRefusalCode::SecretBindingScopeDenied => fixed_credential_refusal(
+            "secret_binding_scope_denied",
+            "the credential binding does not authorize this release",
+        ),
+        BrowserRefusalCode::SecretHandleExpired => fixed_credential_refusal(
+            "secret_handle_expired",
+            "the credential handle expired; discover credentials again",
+        ),
+        BrowserRefusalCode::SecretHandleConsumed => fixed_credential_refusal(
+            "secret_handle_consumed",
+            "the credential handle was already used; discover credentials again",
+        ),
+        BrowserRefusalCode::SecretHandleTargetMismatch => fixed_credential_refusal(
+            "secret_handle_target_mismatch",
+            "the credential handle does not match this secure target",
+        ),
+        BrowserRefusalCode::SecretProviderUnavailable => fixed_credential_refusal(
+            "secret_provider_unavailable",
+            "the credential provider is unavailable",
+        ),
+        BrowserRefusalCode::SecretProviderLocked => fixed_credential_refusal(
+            "secret_provider_locked",
+            "the credential provider is locked",
+        ),
+        BrowserRefusalCode::SecretUserPresenceRequired => fixed_credential_refusal(
+            "secret_user_presence_required",
+            "credential delivery requires provider-owned user presence",
+        ),
+        BrowserRefusalCode::SecretResolutionFailed => fixed_credential_refusal(
+            "secret_resolution_failed",
+            "the credential could not be resolved",
+        ),
+        BrowserRefusalCode::SecretValueInvalid => fixed_credential_refusal(
+            "secret_value_invalid",
+            "the resolved credential value is invalid",
+        ),
         BrowserRefusalCode::SecretDeliveryMisdirected => fixed_credential_refusal(
             "secret_delivery_misdirected",
             "credential delivery did not remain bound to the exact secure target",
@@ -256,6 +299,30 @@ impl TypeSecretTool {
 impl Tool for TypeSecretTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "type_secret").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
@@ -3029,6 +3096,17 @@ mod tests {
             BrowserRefusalCode::BrowserActionUnavailable,
             BrowserRefusalCode::BrowserOriginOutsideScope,
             BrowserRefusalCode::SecretReleaseNotAuthorized,
+            BrowserRefusalCode::SecretBindingExpired,
+            BrowserRefusalCode::SecretBindingRevoked,
+            BrowserRefusalCode::SecretBindingScopeDenied,
+            BrowserRefusalCode::SecretHandleExpired,
+            BrowserRefusalCode::SecretHandleConsumed,
+            BrowserRefusalCode::SecretHandleTargetMismatch,
+            BrowserRefusalCode::SecretProviderUnavailable,
+            BrowserRefusalCode::SecretProviderLocked,
+            BrowserRefusalCode::SecretUserPresenceRequired,
+            BrowserRefusalCode::SecretResolutionFailed,
+            BrowserRefusalCode::SecretValueInvalid,
             BrowserRefusalCode::SecretDeliveryUnavailable,
             BrowserRefusalCode::SecretDeliveryMisdirected,
             BrowserRefusalCode::SecretDeliveryUnverified,

@@ -601,7 +601,19 @@ fn build_registry(
     };
 
     if let Some(register_host_tools) = options.register_host_tools {
+        let before = registry
+            .tool_names()
+            .map(str::to_owned)
+            .collect::<std::collections::HashSet<_>>();
         register_host_tools(&mut registry);
+        let registered = registry
+            .tool_names()
+            .filter(|name| !before.contains(*name))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        for name in registered {
+            registry.mark_fixed_recording_policy(&name);
+        }
     }
     let recording = Arc::downgrade(&registry.recording);
     let recording_session_end = cua_driver_core::session::register_scoped_fallible_session_end_hook(
@@ -711,6 +723,35 @@ mod tests {
 
     struct TestProtectedHost;
 
+    struct RecordedHostMutation {
+        def: cua_driver_core::tool::ToolDef,
+    }
+
+    #[async_trait]
+    impl cua_driver_core::tool::Tool for RecordedHostMutation {
+        fn def(&self) -> &cua_driver_core::tool::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: Value) -> CoreToolResult {
+            CoreToolResult::text("HOST_RESULT_CANARY_MUST_NOT_PERSIST")
+        }
+    }
+
+    fn register_recorded_host_mutation(registry: &mut ToolRegistry) {
+        registry.register(Box::new(RecordedHostMutation {
+            def: cua_driver_core::tool::ToolDef {
+                name: "probe".into(),
+                description: "test trusted host mutation".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+    }
+
     #[async_trait]
     impl ProtectedConsentProvider for TestProtectedHost {
         fn provider_id(&self) -> &'static str {
@@ -740,6 +781,60 @@ mod tests {
             RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None);
         options.authorization_host = Some(Arc::new(TestProtectedHost));
         options
+    }
+
+    #[tokio::test]
+    async fn host_registered_mutation_uses_content_free_recording_policy() {
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let ceiling = SessionModeCeiling::for_trusted_sessions(
+            [PermissionMode::Unrestricted],
+            true,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let mut options = RuntimeOptions::embedded_with_ceiling(
+            false,
+            ceiling,
+            PermissionMode::Unrestricted,
+            None,
+        );
+        options.register_host_tools = Some(register_recorded_host_mutation);
+        let runtime = DriverRuntime::create(options).unwrap();
+        let output = tempfile::tempdir().unwrap();
+        runtime
+            .registry
+            .recording
+            .start(output.path().to_str().unwrap(), false, None)
+            .unwrap();
+
+        let result = runtime
+            .invoke(
+                "probe",
+                serde_json::json!({"payload": "HOST_ARGUMENT_CANARY_MUST_NOT_PERSIST"}),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            result.is_error,
+            Some(true),
+            "host mutation was refused: {:?}",
+            result.structured_content
+        );
+        runtime.registry.recording.stop_owner(None).unwrap();
+
+        let action_bytes = std::fs::read(output.path().join("turn-00001/action.json")).unwrap();
+        let action: Value = serde_json::from_slice(&action_bytes).unwrap();
+        assert_eq!(action["tool"], "probe");
+        assert_eq!(action["label"], "Host-managed action");
+        assert_eq!(action["arguments"], serde_json::json!({}));
+        assert_eq!(action["result_summary"], "");
+        assert_eq!(action["replayable"], false);
+        let rendered = String::from_utf8(action_bytes).unwrap();
+        assert!(!rendered.contains("HOST_ARGUMENT_CANARY"));
+        assert!(!rendered.contains("HOST_RESULT_CANARY"));
+
+        runtime.shutdown().await;
     }
 
     #[tokio::test]

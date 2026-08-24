@@ -809,9 +809,14 @@ fn write_turn(
         click_family && !refused_before_target_resolution && !refused_before_dispatch;
 
     let mut payload = if fixed_content {
+        let label = if tool_name == "type_secret" {
+            "Fill saved secret"
+        } else {
+            "Host-managed action"
+        };
         serde_json::json!({
             "tool": tool_name,
-            "label": "Fill saved secret",
+            "label": label,
             "arguments": {},
             "replayable": false,
             "result_summary": "",

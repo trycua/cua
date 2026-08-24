@@ -38,7 +38,7 @@ use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
     browser_protected_resource_scope, BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool,
-    BrowserTypeTool, GetBrowserStateTool,
+    BrowserTypeTool, GetBrowserStateTool, TypeSecretTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
@@ -1483,7 +1483,7 @@ async fn credential_discovery_rejects_tab_and_document_substitution_before_minti
 }
 
 #[tokio::test]
-async fn credential_discovery_resolves_the_node_inside_its_exact_frame_world() {
+async fn credential_discovery_rejects_nested_frames_before_minting() {
     let fixture = credential_discovery_fixture().await;
     let (snapshot_id, index) = super::store::parse_ref(&fixture.password_ref).unwrap();
     fixture
@@ -1503,7 +1503,7 @@ async fn credential_discovery_resolves_the_node_inside_its_exact_frame_world() {
             });
         });
 
-    let substituted = fixture
+    let nested = fixture
         .engine
         .discover_credentials_for_ref_with_context(
             fixture.context.as_ref(),
@@ -1515,8 +1515,8 @@ async fn credential_discovery_resolves_the_node_inside_its_exact_frame_world() {
         .await
         .unwrap_err();
     assert_eq!(
-        substituted.code,
-        super::refusal::BrowserRefusalCode::BrowserRefStale
+        nested.code,
+        super::refusal::BrowserRefusalCode::BrowserOriginOutsideScope
     );
     assert_eq!(fixture.broker.active_handle_count(), 0);
     assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
@@ -1648,7 +1648,7 @@ async fn credential_delivery_inserts_once_with_boolean_only_exact_node_evidence(
         .unwrap_err();
     assert_eq!(
         replay.code,
-        super::refusal::BrowserRefusalCode::SecretDeliveryUnavailable
+        super::refusal::BrowserRefusalCode::SecretHandleConsumed
     );
     assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -1663,6 +1663,30 @@ async fn credential_delivery_inserts_once_with_boolean_only_exact_node_evidence(
         1,
         "a consumed handle must never retry insertion"
     );
+}
+
+#[tokio::test]
+async fn credential_delivery_attests_the_exact_tab_for_browser_input_authorization() {
+    let fixture = credential_discovery_fixture().await;
+    let tool = TypeSecretTool::new(fixture.engine.clone());
+    let scope = tool
+        .protected_resource_scope(
+            "browser_bound_input",
+            &json!({
+                "session": fixture.session,
+                "target_id": fixture.target_id,
+                "tab_id": fixture.tab_id,
+                "ref": fixture.password_ref,
+                "handle": "ch-0123456789abcdef0123456789abcdef",
+                "field": "password",
+            }),
+        )
+        .await;
+    let scope = scope.unwrap().expect("exact browser input scope");
+    assert_eq!(scope["kind"], "authenticated_browser_tab");
+    assert_eq!(scope["action_class"], "page_input");
+    assert_eq!(scope["live_origin"], "https://fixture.test");
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -1764,7 +1788,7 @@ async fn credential_delivery_maps_non_runtime_plans_without_provider_metadata() 
 }
 
 #[tokio::test]
-async fn credential_delivery_missing_events_is_unverified_and_never_retried() {
+async fn credential_delivery_missing_events_is_misdirected_and_never_retried() {
     let fixture = credential_discovery_fixture().await;
     let handle = discover_fixture_credential(&fixture).await;
     fixture.state.lock().unwrap().secret_input_observed = false;
@@ -1783,7 +1807,7 @@ async fn credential_delivery_missing_events_is_unverified_and_never_retried() {
         .unwrap_err();
     assert_eq!(
         error.code,
-        super::refusal::BrowserRefusalCode::SecretDeliveryUnverified
+        super::refusal::BrowserRefusalCode::SecretDeliveryMisdirected
     );
     assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.broker.active_handle_count(), 0);
@@ -1804,9 +1828,36 @@ async fn credential_delivery_missing_events_is_unverified_and_never_retried() {
         .unwrap_err();
     assert_eq!(
         replay.code,
-        super::refusal::BrowserRefusalCode::SecretDeliveryUnavailable
+        super::refusal::BrowserRefusalCode::SecretHandleConsumed
     );
     assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn credential_delivery_unavailable_focus_oracle_is_unverified_without_insertion() {
+    let fixture = credential_discovery_fixture().await;
+    let handle = discover_fixture_credential(&fixture).await;
+    fixture.state.lock().unwrap().secret_focus_exact = false;
+    let error = fixture
+        .engine
+        .deliver_credential_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+            &handle,
+            CredentialField::Password,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        super::refusal::BrowserRefusalCode::SecretDeliveryUnverified
+    );
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.broker.active_handle_count(), 0);
+    assert!(!fixture.state.lock().unwrap().secret_insert_seen);
 }
 
 #[tokio::test]

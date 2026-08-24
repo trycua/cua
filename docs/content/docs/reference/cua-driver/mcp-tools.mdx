@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 56 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 58 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -877,6 +877,21 @@ Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native br
 - `target_id` (string, optional): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
 - `window_id` (integer, optional): Native window id owned by pid (bind mode).
 
+### `find_credentials`
+
+Find trusted-host-registered credentials that are already authorized for one exact live semantic password field. Returns only safe descriptors and fresh opaque target-bound handles; it never queries a provider vault or returns secret material.
+
+**Arguments:**
+
+- `ref` (string, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `tab_id` (string, required)
+- `target_id` (string, required)
+
+```json
+{"ref":"example","tab_id":"example","target_id":"example"}
+```
+
 ### `browser_prepare`
 
 Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused.
@@ -939,6 +954,23 @@ Type text into an exactly-bound tab via the Input domain. mode="insert_text" (de
 
 ```json
 {"ref":"example","tab_id":"example","target_id":"example","text":"hello"}
+```
+
+### `type_secret`
+
+Release one trusted-host-registered credential through a fresh single-use handle to the same exact live semantic password field. The secret never appears in public arguments or results, clipboard state, generic typing, or replayable recordings.
+
+**Arguments:**
+
+- `field` (string, required)
+- `handle` (string, required)
+- `ref` (string, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `tab_id` (string, required)
+- `target_id` (string, required)
+
+```json
+{"field":"password","handle":"example","ref":"example","tab_id":"example","target_id":"example"}
 ```
 
 ### `browser_dialog`

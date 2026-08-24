@@ -230,6 +230,84 @@ struct AttestedPasswordTarget {
     target: crate::credentials::VerifiedBrowserSecretTarget,
 }
 
+fn credential_broker_refusal(error: crate::credentials::SecretBrokerError) -> BrowserRefusal {
+    use crate::credentials::{CredentialProviderErrorKind, SecretBrokerError};
+
+    let (code, message) = match error {
+        SecretBrokerError::HandleExpired => (
+            BrowserRefusalCode::SecretHandleExpired,
+            "the credential handle expired",
+        ),
+        SecretBrokerError::HandleConsumed => (
+            BrowserRefusalCode::SecretHandleConsumed,
+            "the credential handle was already consumed",
+        ),
+        SecretBrokerError::TargetMismatch | SecretBrokerError::FieldMismatch => (
+            BrowserRefusalCode::SecretHandleTargetMismatch,
+            "the credential handle does not match the secure target",
+        ),
+        SecretBrokerError::BindingExpired => (
+            BrowserRefusalCode::SecretBindingExpired,
+            "the credential binding expired",
+        ),
+        SecretBrokerError::BindingRevoked
+        | SecretBrokerError::HandleRevoked
+        | SecretBrokerError::ReleaseLimitReached
+        | SecretBrokerError::SessionEnded
+        | SecretBrokerError::RuntimeSuspended => (
+            BrowserRefusalCode::SecretBindingRevoked,
+            "the credential binding is no longer active",
+        ),
+        SecretBrokerError::ProviderUnavailable => (
+            BrowserRefusalCode::SecretProviderUnavailable,
+            "the credential provider is unavailable",
+        ),
+        SecretBrokerError::Provider(CredentialProviderErrorKind::Locked) => (
+            BrowserRefusalCode::SecretProviderLocked,
+            "the credential provider is locked",
+        ),
+        SecretBrokerError::Provider(
+            CredentialProviderErrorKind::MalformedResponse
+            | CredentialProviderErrorKind::OversizedSecret
+            | CredentialProviderErrorKind::InvalidUtf8,
+        ) => (
+            BrowserRefusalCode::SecretValueInvalid,
+            "the credential provider returned an invalid value",
+        ),
+        SecretBrokerError::Provider(
+            CredentialProviderErrorKind::Unavailable | CredentialProviderErrorKind::ProviderDied,
+        ) => (
+            BrowserRefusalCode::SecretProviderUnavailable,
+            "the credential provider is unavailable",
+        ),
+        SecretBrokerError::Provider(CredentialProviderErrorKind::PermissionDenied) => (
+            BrowserRefusalCode::SecretBindingScopeDenied,
+            "the credential provider denied this release",
+        ),
+        SecretBrokerError::Provider(CredentialProviderErrorKind::UserPresenceRequired) => (
+            BrowserRefusalCode::SecretUserPresenceRequired,
+            "credential delivery requires provider-owned user presence",
+        ),
+        SecretBrokerError::Provider(
+            CredentialProviderErrorKind::NotFound
+            | CredentialProviderErrorKind::Timeout
+            | CredentialProviderErrorKind::Cancelled,
+        ) => (
+            BrowserRefusalCode::SecretResolutionFailed,
+            "the credential could not be resolved",
+        ),
+        SecretBrokerError::Authorization(_) => (
+            BrowserRefusalCode::SecretReleaseNotAuthorized,
+            "credential delivery is not authorized",
+        ),
+        SecretBrokerError::Capacity | SecretBrokerError::InvalidHandle => (
+            BrowserRefusalCode::SecretDeliveryUnavailable,
+            "credential delivery is unavailable",
+        ),
+    };
+    refuse(code, message)
+}
+
 const SECRET_DELIVERY_OBSERVER_INSTALL: &str = "function() { \
     /* cua_secret_delivery_observer_install_v1 */ \
     if (this === null || this.nodeType !== 1 || this.isConnected !== true || \
@@ -2093,12 +2171,7 @@ impl BrowserEngine {
             })?;
         let resource = broker
             .prepare_secret_release(handle, field, &initial.target, SystemTime::now())
-            .map_err(|_| {
-                refuse(
-                    BrowserRefusalCode::SecretDeliveryUnavailable,
-                    "credential delivery is unavailable",
-                )
-            })?;
+            .map_err(credential_broker_refusal)?;
         let permit =
             crate::authorization::authorize_secret_release(context, &resource).map_err(|_| {
                 refuse(
@@ -2113,16 +2186,7 @@ impl BrowserEngine {
         let mut release = broker
             .release(handle, field, &initial.target, SystemTime::now(), permit)
             .await
-            .map_err(|error| match error {
-                crate::credentials::SecretBrokerError::Authorization(_) => refuse(
-                    BrowserRefusalCode::SecretReleaseNotAuthorized,
-                    "credential delivery is not authorized",
-                ),
-                _ => refuse(
-                    BrowserRefusalCode::SecretDeliveryUnavailable,
-                    "credential delivery is unavailable",
-                ),
-            })?;
+            .map_err(credential_broker_refusal)?;
 
         match release.plan_kind() {
             Some(crate::credentials::ReleasePlanKind::RuntimeDelivers) => {}
@@ -2263,6 +2327,12 @@ impl BrowserEngine {
         if !entry.semantic || entry.secure_field != Some(super::store::SecureFieldKind::Password) {
             return Ok(None);
         }
+        if entry.frame.kind != FrameKind::Main {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserOriginOutsideScope,
+                "credential delivery does not support nested browser frames",
+            ));
+        }
         let identity = entry.frame.identity.clone().ok_or_else(|| {
             refuse(
                 BrowserRefusalCode::BrowserRouteUnavailable,
@@ -2363,7 +2433,7 @@ impl BrowserEngine {
             .await
             .map_err(|_| {
                 refuse(
-                    BrowserRefusalCode::SecretDeliveryMisdirected,
+                    BrowserRefusalCode::SecretDeliveryUnverified,
                     "the secure browser target could not be prepared for credential delivery",
                 )
             })?;
@@ -2373,7 +2443,7 @@ impl BrowserEngine {
             .filter(|id| *id > 0)
             .ok_or_else(|| {
                 refuse(
-                    BrowserRefusalCode::SecretDeliveryMisdirected,
+                    BrowserRefusalCode::SecretDeliveryUnverified,
                     "the secure browser target could not be prepared for credential delivery",
                 )
             })?;
@@ -2423,7 +2493,7 @@ impl BrowserEngine {
                 .await
                 .map_err(|_| {
                     refuse(
-                        BrowserRefusalCode::SecretDeliveryMisdirected,
+                        BrowserRefusalCode::SecretDeliveryUnverified,
                         "the secure browser target could not be observed for credential delivery",
                     )
                 })?;
@@ -2443,7 +2513,7 @@ impl BrowserEngine {
             .await
             .map_err(|_| {
                 refuse(
-                    BrowserRefusalCode::SecretDeliveryMisdirected,
+                    BrowserRefusalCode::SecretDeliveryUnverified,
                     "the secure browser target could not receive exact focus",
                 )
             })?;
@@ -2514,7 +2584,7 @@ impl BrowserEngine {
             }
             if !focus_ready {
                 return Err(refuse(
-                    BrowserRefusalCode::SecretDeliveryMisdirected,
+                    BrowserRefusalCode::SecretDeliveryUnverified,
                     "the secure browser target could not receive exact focus",
                 ));
             }
@@ -2533,13 +2603,13 @@ impl BrowserEngine {
                 .await
                 .map_err(|_| {
                     refuse(
-                        BrowserRefusalCode::SecretDeliveryMisdirected,
+                        BrowserRefusalCode::SecretDeliveryUnverified,
                         "the secure browser target could not prepare exact replacement",
                     )
                 })?;
             if selected.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
                 return Err(refuse(
-                    BrowserRefusalCode::SecretDeliveryMisdirected,
+                    BrowserRefusalCode::SecretDeliveryUnverified,
                     "the secure browser target could not prepare exact replacement",
                 ));
             }
@@ -2572,14 +2642,14 @@ impl BrowserEngine {
                 .await
                 .map_err(|_| {
                     refuse(
-                        BrowserRefusalCode::SecretDeliveryUnverified,
-                        "credential insertion may have occurred but could not be verified; do not retry automatically",
+                        BrowserRefusalCode::SecretDeliveryMisdirected,
+                        "credential insertion was acknowledged but exact-target events could not be verified; do not retry automatically",
                     )
                 })?;
             if verified.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
                 return Err(refuse(
-                    BrowserRefusalCode::SecretDeliveryUnverified,
-                    "credential insertion may have occurred but exact-target events were not verified; do not retry automatically",
+                    BrowserRefusalCode::SecretDeliveryMisdirected,
+                    "credential insertion was acknowledged but exact-target events were not verified; do not retry automatically",
                 ));
             }
             Ok(())
@@ -2627,7 +2697,7 @@ impl BrowserEngine {
                 if insertion_attempted {
                     BrowserRefusalCode::SecretDeliveryUnverified
                 } else {
-                    BrowserRefusalCode::SecretDeliveryMisdirected
+                    BrowserRefusalCode::SecretDeliveryUnverified
                 },
                 if insertion_attempted {
                     "credential insertion may have occurred but cleanup could not be verified; do not retry automatically"

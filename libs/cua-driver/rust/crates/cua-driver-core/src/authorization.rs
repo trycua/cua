@@ -352,6 +352,7 @@ const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
     "browser_click",
     "browser_type",
     "browser_pointer",
+    "type_secret",
 ];
 const BROWSER_BOUND_INPUT_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -2053,6 +2054,10 @@ mod tests {
         assert_eq!(
             ids("browser_click", serde_json::json!({})),
             vec!["browser_bound_input"]
+        );
+        assert_eq!(
+            ids("type_secret", serde_json::json!({})),
+            vec!["browser_bound_input", "secret_release"]
         );
         assert_eq!(
             ids("kill_app", serde_json::json!({})),

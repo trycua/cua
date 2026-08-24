@@ -67,6 +67,17 @@ pub enum BrowserRefusalCode {
     /// The target-bound credential resource did not pass the trusted R3
     /// authorization boundary.
     SecretReleaseNotAuthorized,
+    SecretBindingExpired,
+    SecretBindingRevoked,
+    SecretBindingScopeDenied,
+    SecretHandleExpired,
+    SecretHandleConsumed,
+    SecretHandleTargetMismatch,
+    SecretProviderUnavailable,
+    SecretProviderLocked,
+    SecretUserPresenceRequired,
+    SecretResolutionFailed,
+    SecretValueInvalid,
     /// The credential broker or provider could not produce a usable release.
     SecretDeliveryUnavailable,
     /// Delivery could not be proven to have remained on the exact secure node.
@@ -97,6 +108,17 @@ impl BrowserRefusalCode {
             Self::BrowserActionUnavailable => "browser_action_unavailable",
             Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
             Self::SecretReleaseNotAuthorized => "secret_release_not_authorized",
+            Self::SecretBindingExpired => "secret_binding_expired",
+            Self::SecretBindingRevoked => "secret_binding_revoked",
+            Self::SecretBindingScopeDenied => "secret_binding_scope_denied",
+            Self::SecretHandleExpired => "secret_handle_expired",
+            Self::SecretHandleConsumed => "secret_handle_consumed",
+            Self::SecretHandleTargetMismatch => "secret_handle_target_mismatch",
+            Self::SecretProviderUnavailable => "secret_provider_unavailable",
+            Self::SecretProviderLocked => "secret_provider_locked",
+            Self::SecretUserPresenceRequired => "secret_user_presence_required",
+            Self::SecretResolutionFailed => "secret_resolution_failed",
+            Self::SecretValueInvalid => "secret_value_invalid",
             Self::SecretDeliveryUnavailable => "secret_delivery_unavailable",
             Self::SecretDeliveryMisdirected => "secret_delivery_misdirected",
             Self::SecretDeliveryUnverified => "secret_delivery_unverified",
@@ -211,6 +233,50 @@ mod tests {
             (
                 BrowserRefusalCode::SecretReleaseNotAuthorized,
                 "secret_release_not_authorized",
+            ),
+            (
+                BrowserRefusalCode::SecretBindingExpired,
+                "secret_binding_expired",
+            ),
+            (
+                BrowserRefusalCode::SecretBindingRevoked,
+                "secret_binding_revoked",
+            ),
+            (
+                BrowserRefusalCode::SecretBindingScopeDenied,
+                "secret_binding_scope_denied",
+            ),
+            (
+                BrowserRefusalCode::SecretHandleExpired,
+                "secret_handle_expired",
+            ),
+            (
+                BrowserRefusalCode::SecretHandleConsumed,
+                "secret_handle_consumed",
+            ),
+            (
+                BrowserRefusalCode::SecretHandleTargetMismatch,
+                "secret_handle_target_mismatch",
+            ),
+            (
+                BrowserRefusalCode::SecretProviderUnavailable,
+                "secret_provider_unavailable",
+            ),
+            (
+                BrowserRefusalCode::SecretProviderLocked,
+                "secret_provider_locked",
+            ),
+            (
+                BrowserRefusalCode::SecretUserPresenceRequired,
+                "secret_user_presence_required",
+            ),
+            (
+                BrowserRefusalCode::SecretResolutionFailed,
+                "secret_resolution_failed",
+            ),
+            (
+                BrowserRefusalCode::SecretValueInvalid,
+                "secret_value_invalid",
             ),
             (
                 BrowserRefusalCode::SecretDeliveryUnavailable,

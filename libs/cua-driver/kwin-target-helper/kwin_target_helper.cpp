@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Cua-owned KWin effect. The Rust driver verifies that this D-Bus name is
 // owned by the running kwin_wayland process before it trusts any response.
+// Protocol v1 is intentionally read-only: only version and window snapshots
+// are exported; input and activation remain outside this helper.
 
 #include <kwin/effect/effect.h>
 #include <kwin/window.h>
@@ -18,7 +20,6 @@
 namespace
 {
 constexpr auto kService = "org.cua.KWinTarget";
-constexpr auto kInterface = "org.cua.KWinTarget";
 constexpr auto kPath = "/org/cua/KWinTarget";
 constexpr quint32 kProtocolVersion = 1;
 
@@ -44,7 +45,6 @@ public slots:
         }
         for (auto it = m_tokens.begin(); it != m_tokens.end();) {
             if (!liveIds.contains(it.key())) {
-                m_ids.remove(it.value());
                 it = m_tokens.erase(it);
             } else {
                 ++it;
@@ -74,20 +74,6 @@ public slots:
         return QString::fromUtf8(QJsonDocument(windows).toJson(QJsonDocument::Compact));
     }
 
-    Q_SCRIPTABLE bool Activate(qulonglong token)
-    {
-        const auto id = m_ids.value(token);
-        if (id.isNull()) {
-            return false;
-        }
-        KWin::Window *window = KWin::Workspace::self()->findWindow(id);
-        if (!window || window->isDeleted() || window->isMinimized()) {
-            return false;
-        }
-        KWin::Workspace::self()->activateWindow(window, true);
-        return true;
-    }
-
 private:
     quint64 tokenFor(const QUuid &id)
     {
@@ -96,12 +82,10 @@ private:
         }
         const quint64 token = m_nextToken++;
         m_tokens.insert(id, token);
-        m_ids.insert(token, id);
         return token;
     }
 
     QHash<QUuid, quint64> m_tokens;
-    QHash<quint64, QUuid> m_ids;
     quint64 m_nextToken = 1;
 };
 

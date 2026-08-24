@@ -1,7 +1,7 @@
 {
   "KPlugin": {
     "Name": "Cua KWin Target Helper",
-    "Description": "Provides trusted KWin window identity metadata for Cua Driver; raw focus-bound input remains disabled.",
+    "Description": "Provides read-only trusted KWin window identity metadata for Cua Driver; raw focus-bound input remains disabled.",
     "License": "MIT",
     "EnabledByDefault": false
   },

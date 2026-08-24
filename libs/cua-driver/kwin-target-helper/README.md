@@ -5,13 +5,13 @@ the portable `cua-driver` binary and must be built against the user's installed
 KWin/Qt/KF6 development files. Do not use a helper built for a different KWin
 or Qt ABI.
 
-The helper currently provides trusted KWin window identity and state metadata:
-stable opaque tokens, PID, geometry, active/minimized state, stacking order,
-and an activation method for diagnostics. **Activation is not used as input
-authorization.** KWin portal/libei input is focus-bound, so focus can change
-after activation/read-back and before the compositor processes an input event.
-Cua therefore refuses raw target-addressed KWin keyboard/pointer actions until
-a target-bound KWin input path exists.
+The helper is intentionally **read-only**. It provides trusted KWin window
+identity and state metadata: stable opaque tokens, PID, geometry,
+active/minimized state, and stacking order. It does not expose window activation
+or input mutation methods. KWin portal/libei input is focus-bound, so focus can
+change between any focus check and compositor-side input processing. Cua
+therefore refuses raw target-addressed KWin keyboard/pointer actions until a
+target-bound KWin input path exists.
 
 ## Requirements
 
@@ -56,16 +56,17 @@ qdbus6 org.kde.KWin /Effects loadEffect cua_kwin_target_helper
 The helper exposes the Cua-owned service `org.cua.KWinTarget` only while the
 effect is loaded by the current `kwin_wayland` process. Verify the service
 owner, protocol version, and target snapshots before trusting identity data.
-The `Activate` method may be used for diagnostics, but the Rust driver does not
-use it to authorize portal/libei input.
+The exported D-Bus surface is deliberately limited to `GetVersion` and
+`GetWindows`.
 
 ## Input safety boundary
 
 Portal/libei events are delivered according to compositor focus when KWin
 processes them. A target focus check immediately before dispatch cannot bind the
 later event to that target, so adding more checks does not remove the race.
-Until the helper exposes a target-bound input operation, Cua fails closed rather
-than sending raw focus-based input to a requested KWin window.
+Until a future KWin integration can bind the mutation itself to an exact target,
+Cua fails closed rather than sending raw focus-based input to a requested KWin
+window.
 
 ## ABI and rollback
 

@@ -1,10 +1,10 @@
 //! Trusted KWin window identity adapter.
 //!
 //! The optional in-process KWin effect exposes stable window tokens, process
-//! identity, geometry, active/minimized state, and an activation method. Those
-//! capabilities are useful for enumeration and correlation, but KWin's
-//! portal/libei input path is still focus-bound: libei delivers to whichever
-//! surface is focused when KWin processes the event.
+//! identity, geometry, active/minimized state, and stacking metadata through a
+//! deliberately read-only D-Bus surface. It does not expose activation or input
+//! mutation methods. KWin's portal/libei input path is still focus-bound: libei
+//! delivers to whichever surface is focused when KWin processes the event.
 //!
 //! A focus check followed by global input therefore has an unavoidable TOCTOU
 //! race. Until Cua has a KWin input API that binds each mutation to the target
@@ -66,9 +66,10 @@ impl std::error::Error for CorrelationError {}
 /// Whether KWin currently offers a target-bound raw-input capability that can
 /// safely authorize portal/libei foreground mutations.
 ///
-/// The helper itself may be installed and usable for discovery, but activation
-/// plus read-back is not equivalent to target-bound input. Keep this false
-/// until the actual input operation is bound to the KWin target token.
+/// This is intentionally distinct from helper presence: the read-only helper
+/// may be installed and usable for discovery while target-bound raw input is
+/// unavailable. Keep this false until the input operation itself is bound to
+/// the KWin target token/window.
 pub fn available() -> bool {
     false
 }
@@ -132,10 +133,10 @@ pub fn require_active_target(windows: &[KwinWindow], token: u64) -> Result<(), C
 
 /// Refuse a focus-bound KWin foreground transaction.
 ///
-/// `body` is deliberately never invoked. The current helper can identify and
-/// activate a KWin window, but libei would still inject into whatever surface
-/// has focus when the compositor processes the event. More pre-dispatch focus
-/// checks cannot make that operation target-safe.
+/// `body` is deliberately never invoked. The current helper can identify an
+/// exact KWin window, but its D-Bus API is read-only; even a separate activation
+/// step would not bind a later libei event to that target. More pre-dispatch
+/// focus checks therefore cannot make the operation target-safe.
 pub fn with_focused_window<T>(
     pid: u32,
     token: u64,
@@ -148,10 +149,11 @@ pub fn with_focused_window<T>(
     )
 }
 
-/// Activation alone is not a safe input-targeting primitive on KWin.
+/// The read-only helper deliberately exposes no activation method.
 ///
-/// Returning `false` keeps callers from treating activation/read-back as
-/// authorization for a subsequent global libei mutation.
+/// Returning `false` preserves the existing adapter call contract while
+/// preventing callers from treating any focus manipulation as authorization
+/// for a subsequent global libei mutation.
 pub fn activate_window(_pid: u32, _token: u64) -> bool {
     false
 }

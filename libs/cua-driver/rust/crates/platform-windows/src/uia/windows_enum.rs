@@ -59,7 +59,7 @@ const DESKTOP_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
 const UIA_RECOVERY_COOLDOWN: Duration = Duration::from_secs(30);
 
-enum UiaDeadlineError {
+pub(crate) enum UiaDeadlineError {
     Timeout,
     Busy,
     Unavailable,
@@ -149,6 +149,73 @@ impl UiaSingleFlight {
             }
         }
     }
+
+    async fn run_async<T, F>(
+        self: &Arc<Self>,
+        stage: &'static str,
+        timeout: Duration,
+        fallback: &'static str,
+        f: F,
+    ) -> Result<T, UiaDeadlineError>
+    where
+        T: Send + 'static,
+        F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+    {
+        let now = now_ms();
+        if now < self.cooldown_until_ms.load(Ordering::Acquire)
+            || self
+                .in_flight
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            tracing::debug!(
+                target: "uia_windows_enum",
+                "UIA {stage} skipped while another provider call is in flight or cooling down"
+            );
+            return Err(UiaDeadlineError::Busy);
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let worker_gate = Arc::clone(self);
+        let spawn = thread::Builder::new()
+            .name(format!("cua-uia-{stage}"))
+            .spawn(move || {
+                let _guard = InFlightGuard {
+                    gate: worker_gate,
+                    cancelled: Arc::clone(&worker_cancelled),
+                };
+                let result = f(worker_cancelled);
+                let _ = tx.send(result);
+            });
+
+        if let Err(e) = spawn {
+            self.in_flight.store(false, Ordering::Release);
+            tracing::warn!(target: "uia_windows_enum", "failed to spawn UIA {stage} thread: {e}");
+            return Err(UiaDeadlineError::Unavailable);
+        }
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(_)) => {
+                tracing::warn!(
+                    target: "uia_windows_enum",
+                    "UIA {stage} thread exited without a result"
+                );
+                Err(UiaDeadlineError::Unavailable)
+            }
+            Err(_elapsed) => {
+                cancelled.store(true, Ordering::Release);
+                tracing::warn!(
+                    target: "uia_windows_enum",
+                    "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",
+                    timeout.as_millis()
+                );
+                Err(UiaDeadlineError::Timeout)
+            }
+        }
+    }
 }
 
 struct InFlightGuard {
@@ -212,6 +279,21 @@ where
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
     uia_single_flight().run(stage, timeout, fallback, f)
+}
+
+pub(crate) async fn run_uia_with_deadline_async<T, F>(
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    uia_single_flight()
+        .run_async(stage, timeout, fallback, f)
+        .await
 }
 
 struct ComInit {

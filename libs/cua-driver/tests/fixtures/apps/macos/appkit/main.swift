@@ -49,6 +49,7 @@ let kScrollOffsetAID = "lbl-scroll-offset"
 let kAccelCountAID = "lbl-accel-count"
 let kScrollTopMarker = "SCROLL_TOP_MARKER_v1"
 let kScrollBottomMarker = "SCROLL_BOTTOM_MARKER_v1"
+let kOpenPanelButtonAID = "btn-open-panel"
 let kExitButtonAID = "btn-exit"
 let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
@@ -77,6 +78,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
     var accelCount = 0
     var keyMonitor: Any?
+    var openPanel: NSOpenPanel?
 
     // Pinned content size — every launch MUST produce a byte-identical window
     // so screenshot dimensions (and the hardcoded pixel coords the harness tests
@@ -308,6 +310,12 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         ])
         content.addArrangedSubview(scrollWrap)
 
+        // Native sheet — exercises AppKit's separate sheet/compositor identity.
+        let openPanel = NSButton(title: "Open native panel", target: self,
+                                 action: #selector(onOpenPanel))
+        openPanel.setAccessibilityIdentifier(kOpenPanelButtonAID)
+        content.addArrangedSubview(openPanel)
+
         // exit
         let exit = NSButton(title: "Exit", target: self, action: #selector(onExit))
         exit.setAccessibilityIdentifier(kExitButtonAID)
@@ -373,6 +381,19 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     @objc private func onReset() {
         counterValue = 0
         counterLabel.stringValue = "counter=0"
+    }
+
+    @objc private func onOpenPanel() {
+        guard openPanel == nil else { return }
+        let panel = NSOpenPanel()
+        panel.title = "CuaTestHarness Native Open Panel"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        openPanel = panel
+        panel.beginSheetModal(for: window) { [weak self] _ in
+            self?.openPanel = nil
+        }
     }
 
     @objc private func onExit() {

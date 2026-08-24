@@ -110,9 +110,7 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
     )
 }
 
-fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
-    let index = element_index_by_id(snapshot.tree_text(), identifier)
-        .unwrap_or_else(|| panic!("{identifier} element_index not found"));
+fn element_token_at_index(snapshot: &ToolResponse, index: u64) -> String {
     snapshot.structured()["elements"]
         .as_array()
         .and_then(|elements| {
@@ -121,8 +119,14 @@ fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
                 .find(|element| element["element_index"].as_u64() == Some(index))
         })
         .and_then(|element| element["element_token"].as_str())
-        .unwrap_or_else(|| panic!("{identifier} element_token not found"))
+        .unwrap_or_else(|| panic!("element_token for index {index} not found"))
         .to_owned()
+}
+
+fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
+    let index = element_index_by_id(snapshot.tree_text(), identifier)
+        .unwrap_or_else(|| panic!("{identifier} element_index not found"));
+    element_token_at_index(snapshot, index)
 }
 
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
@@ -320,6 +324,75 @@ fn harness_appkit_query_projects_structured_elements() {
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_native_sheet_descendant_targets_parent_window() {
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-appkit-native-sheet")
+        .expect("start installed macOS daemon proxy");
+    let harness = Harness::launch();
+    let pid = harness.pid;
+    let (wid, _) = driver
+        .find_window(pid as i64, "CuaTestHarness AppKit")
+        .expect("AppKit main window not found");
+
+    let parent = snapshot_elements(&mut driver, pid, wid);
+    let open_panel = element_token_by_id(&parent, "btn-open-panel");
+    let opened = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid as i64,
+            "window_id": wid,
+            "element_token": open_panel
+        }),
+    );
+    assert!(!opened.is_error(), "open panel failed: {}", opened.text());
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let sheet = loop {
+        let snapshot = snapshot_elements(&mut driver, pid, wid);
+        if snapshot.tree_text().contains("AXSheet") && snapshot.tree_text().contains("Cancel") {
+            break snapshot;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native open-panel sheet did not appear under the parent snapshot:\n{}",
+            snapshot.tree_text()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+
+    let cancel_index = element_index_containing(sheet.tree_text(), "Cancel")
+        .expect("native sheet Cancel element_index not found");
+    let cancel = element_token_at_index(&sheet, cancel_index);
+    let cancelled = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid as i64,
+            "window_id": wid,
+            "element_token": cancel
+        }),
+    );
+    assert!(
+        !cancelled.is_error(),
+        "fresh native sheet token was refused: {}",
+        cancelled.text()
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let post = snapshot_elements(&mut driver, pid, wid);
+        if !post.tree_text().contains("AXSheet") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native sheet token did not dismiss the panel:\n{}",
+            post.tree_text()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[test]

@@ -31,6 +31,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+normalize_macos_arch() {
+    case "$1" in
+        arm64|aarch64) printf '%s\n' "arm64";;
+        x86_64|amd64) printf '%s\n' "x86_64";;
+        *)
+            echo "unsupported macOS fixture architecture: $1" >&2
+            return 1
+            ;;
+    esac
+}
+
+HOST_ARCH="$(normalize_macos_arch "$(uname -m)")"
+FIXTURE_ARCH="$(normalize_macos_arch "${CUA_FIXTURE_ARCH:-$HOST_ARCH}")"
+if [[ "$FIXTURE_ARCH" != "$HOST_ARCH" ]]; then
+    echo "declared fixture architecture $FIXTURE_ARCH does not match host architecture $HOST_ARCH" >&2
+    exit 1
+fi
+SWIFT_TARGET="$FIXTURE_ARCH-apple-macos13.0"
+
 archive_existing() {
     local target="$1"
     [[ -e "$target" ]] || return 0
@@ -64,11 +83,18 @@ build_app() {
     # shellcheck disable=SC2086  # word-splitting on $frameworks is intentional
     xcrun swiftc \
         -O \
-        -target arm64-apple-macos13.0 \
+        -target "$SWIFT_TARGET" \
         $frameworks \
         -parse-as-library \
         -o "$exe_path" \
         "$src_dir"/*.swift
+
+    local binary_archs
+    binary_archs="$(xcrun lipo -archs "$exe_path")"
+    if [[ " $binary_archs " != *" $FIXTURE_ARCH "* ]]; then
+        echo "built $name binary architecture '$binary_archs' does not include required architecture $FIXTURE_ARCH" >&2
+        return 1
+    fi
 
     # Minimal Info.plist — bundle ID + LSUIElement=false so the app shows
     # in the Dock and is targetable by NSWorkspace/AX queries normally.

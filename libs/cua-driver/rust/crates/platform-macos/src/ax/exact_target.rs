@@ -21,32 +21,61 @@ use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
 
-/// Resolve the CGWindowID of the top-level AX window that owns `element`.
+/// Classify all mapped window identities found while proving one element's
+/// ancestry. A native sheet can expose its panel CGWindowID through `AXWindow`
+/// while its `AXParent` chain continues to the application window that owns the
+/// sheet. The intermediate panel identity must not make a valid parent-window
+/// target look like a sibling.
+fn classify_window_ancestry(
+    target_window_id: u32,
+    mapped_window_ids: impl IntoIterator<Item = u32>,
+) -> ElementAncestry {
+    let mut found_window = false;
+    for window_id in mapped_window_ids {
+        found_window = true;
+        if window_id == target_window_id {
+            return ElementAncestry::ProvenDescendant;
+        }
+    }
+    if found_window {
+        ElementAncestry::OutsideTargetWindow
+    } else {
+        ElementAncestry::Unproven
+    }
+}
+
+/// Prove whether `element` belongs to `target_window_id`.
 ///
-/// Prefers the element's `AXWindow` attribute and falls back to a bounded
-/// `AXParent` walk. `None` means ancestry could not be proven — callers must
-/// treat that as "not the requested window", never as a wildcard.
+/// Both the direct `AXWindow` attribute and every window-like node in a bounded
+/// `AXParent` ascent are considered. This matters for AppKit sheets: descendants
+/// can first map to the sheet's separate compositor window, then ascend through
+/// `AXSheet` to the parent `AXWindow`. A different mapped identity is evidence
+/// against the target only after the complete chain has been checked.
 ///
 /// # Safety
 ///
 /// `element` must be a valid `AXUIElementRef` for the duration of the call.
-pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
+pub unsafe fn element_window_ancestry(
+    element: AXUIElementRef,
+    target_window_id: u32,
+) -> ElementAncestry {
+    let mut mapped_window_ids = Vec::new();
+
     if let Some(window) = copy_element_attr(element, "AXWindow") {
-        let window_id = ax_get_window_id(window);
-        CFRelease(window as CFTypeRef);
-        if window_id.is_some() {
-            return window_id;
+        if let Some(window_id) = ax_get_window_id(window) {
+            mapped_window_ids.push(window_id);
         }
+        CFRelease(window as CFTypeRef);
     }
-    // Fallback: ascend AXParent until a window role, then map it.
+
     let mut current: AXUIElementRef = element;
     let mut owned = false;
-    let mut resolved = None;
     for _ in 0..MAX_ANCESTRY_DEPTH {
         match copy_string_attr(current, "AXRole").as_deref() {
             Some("AXWindow") | Some("AXSheet") => {
-                resolved = ax_get_window_id(current);
-                break;
+                if let Some(window_id) = ax_get_window_id(current) {
+                    mapped_window_ids.push(window_id);
+                }
             }
             Some("AXApplication") | None => break,
             _ => {}
@@ -60,13 +89,17 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
                 current = parent;
                 owned = true;
             }
-            None => return None,
+            None => {
+                owned = false;
+                break;
+            }
         }
     }
     if owned {
         CFRelease(current as CFTypeRef);
     }
-    resolved
+
+    classify_window_ancestry(target_window_id, mapped_window_ids)
 }
 
 /// The process's focused AX element, but only when it provably belongs to the
@@ -81,7 +114,7 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
 /// Caller must `CFRelease` the returned element.
 pub unsafe fn focused_element_in_window(pid: i32, window_id: u32) -> Option<AXUIElementRef> {
     let element = focused_element_of_pid(pid)?;
-    if element_window_id(element) == Some(window_id) {
+    if element_window_ancestry(element, window_id) == ElementAncestry::ProvenDescendant {
         Some(element)
     } else {
         CFRelease(element as CFTypeRef);
@@ -175,11 +208,8 @@ pub fn gather_background_facts(
             super::enablement::ensure_chromium_ax_enabled(pid, app);
             let records = ax_window_records(app);
             let app_hidden = copy_bool_attr(app, "AXHidden");
-            let element = element_ptr.map(|ptr| match element_window_id(ptr as AXUIElementRef) {
-                Some(id) if id == window_id => ElementAncestry::ProvenDescendant,
-                Some(_) => ElementAncestry::OutsideTargetWindow,
-                None => ElementAncestry::Unproven,
-            });
+            let element =
+                element_ptr.map(|ptr| element_window_ancestry(ptr as AXUIElementRef, window_id));
             CFRelease(app as CFTypeRef);
             (records, app_hidden, element)
         }
@@ -207,7 +237,29 @@ pub fn gather_background_facts(
 
 #[cfg(test)]
 mod tests {
-    use super::{count_competing_keyboard_destinations, AxWindowRecord};
+    use super::{classify_window_ancestry, count_competing_keyboard_destinations, AxWindowRecord};
+    use cua_driver_core::background_input::ElementAncestry;
+
+    #[test]
+    fn sheet_identity_before_parent_identity_is_a_proven_descendant() {
+        assert_eq!(
+            classify_window_ancestry(41, [73, 73, 41]),
+            ElementAncestry::ProvenDescendant
+        );
+    }
+
+    #[test]
+    fn sibling_identity_without_target_identity_stays_outside() {
+        assert_eq!(
+            classify_window_ancestry(41, [73, 73, 52]),
+            ElementAncestry::OutsideTargetWindow
+        );
+    }
+
+    #[test]
+    fn missing_window_identity_stays_unproven() {
+        assert_eq!(classify_window_ancestry(41, []), ElementAncestry::Unproven);
+    }
 
     fn ax_window(window_id: u32, minimized: Option<bool>) -> AxWindowRecord {
         AxWindowRecord {

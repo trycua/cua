@@ -250,7 +250,7 @@ printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
         daemon.wait(timeout=5)
         self.assertIsNone(mcp.poll(), result.stdout + result.stderr)
 
-    def test_stale_pid_uses_executable_identity_fallback(self) -> None:
+    def test_stale_pid_uses_native_stop_before_fallback(self) -> None:
         executable = self.compile_sleeper(
             self.home / ".cua-driver/packages/current/cua-driver"
         )
@@ -295,6 +295,28 @@ printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("status=0 result=none", result.stdout)
+        self.assertIsNone(process.poll(), result.stdout + result.stderr)
+
+    def test_identity_fallback_does_not_signal_ambiguous_owned_process(self) -> None:
+        executable = self.compile_sleeper(
+            self.home / ".cua-driver/packages/current/cua-driver"
+        )
+        process = self.spawn(executable, "mcp")
+        pid_file = self.home / "missing.pid"
+
+        result = source_helper(
+            self.env,
+            self.shell_setup(pid_file, None, executable)
+            + """
+status=0
+stop_release_daemon || status=$?
+printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
+""",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("status=1 result=failed", result.stdout)
+        self.assertIn("cannot safely identify the daemon", result.stderr)
         self.assertIsNone(process.poll(), result.stdout + result.stderr)
 
     def test_missing_process_tools_fail_closed(self) -> None:

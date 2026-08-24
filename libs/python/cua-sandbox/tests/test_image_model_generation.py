@@ -23,6 +23,10 @@ def test_generated_model_is_black_formatted() -> None:
     subprocess.run([sys.executable, "-m", "black", "--check", str(MODEL)], check=True)
 
 
+def test_generated_model_is_ruff_clean() -> None:
+    subprocess.run([sys.executable, "-m", "ruff", "check", str(MODEL)], check=True)
+
+
 def test_generated_schema_identifies_the_image_resource() -> None:
     schema = json.loads(SCHEMA.read_text())
     assert schema["$id"] == "https://cua.ai/schemas/images.cua.ai/v1alpha1/image.json"

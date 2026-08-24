@@ -157,6 +157,18 @@ def _format_model(output_path: Path) -> None:
         [
             sys.executable,
             "-m",
+            "isort",
+            "--settings-path",
+            str(REPO_ROOT / "pyproject.toml"),
+            str(output_path),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
             "black",
             "--quiet",
             "--config",
@@ -168,15 +180,19 @@ def _format_model(output_path: Path) -> None:
     )
 
 
-def _schema_validation_wrapper(schema_content: str) -> str:
-    schema_literal = json.dumps(schema_content)
-    return f"""
+def _schema_validation_imports() -> str:
+    return """
 import json as _json
 from typing import Any as _Any
 
 from jsonschema import Draft202012Validator as _Draft202012Validator
 from pydantic import model_validator as _model_validator
+"""
 
+
+def _schema_validation_wrapper(schema_content: str) -> str:
+    schema_literal = json.dumps(schema_content)
+    return f"""
 _GENERATED_IMAGE_SCHEMA = _json.loads({schema_literal})
 _GENERATED_IMAGE_SCHEMA_VALIDATOR = _Draft202012Validator(_GENERATED_IMAGE_SCHEMA)
 GeneratedImageResource = ImageResource
@@ -224,7 +240,16 @@ def generate(*, check: bool) -> None:
         temporary_model = temporary_root / "image_models.py"
         temporary_schema.write_text(schema_content)
         _render_models(temporary_schema, temporary_model)
-        model_content = _source_header() + temporary_model.read_text()
+        generated_model = temporary_model.read_text()
+        future_import = "from __future__ import annotations\n"
+        if generated_model.count(future_import) != 1:
+            raise ValueError("expected one future annotations import in generated model")
+        generated_model = generated_model.replace(
+            future_import,
+            future_import + _schema_validation_imports(),
+            1,
+        )
+        model_content = _source_header() + generated_model
         if "class Source(BaseModel):" not in model_content:
             raise ValueError("expected datamodel-code-generator to emit Source")
         if "class ImageResource(BaseModel):" not in model_content:

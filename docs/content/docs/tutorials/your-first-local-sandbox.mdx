@@ -11,6 +11,18 @@ In this tutorial, you create an *ephemeral* Linux sandbox on your machine, run `
   Prerequisites: Python 3.12 or 3.13 and Docker Desktop or Docker Engine.
 </Callout>
 
+<Callout type="error">
+  **This tutorial does not currently work.** The published `trycua/cua-xfce:latest`
+  runs computer-server bound to `127.0.0.1:8000` inside the container
+  (`computer_server/cli.py:34` defaults `--host` to `127.0.0.1`), so Docker's
+  published port mapping forwards to nothing and the script fails with
+  `TimeoutError: Container <name> not ready after 120s`. The image needs rebuilding.
+  In the meantime, drop `kind="container"` and use `Image.linux()`, which boots as a
+  VM under QEMU and does not go through that image. It needs `qemu-system-x86_64`
+  installed instead of Docker — see
+  [Choose and build a sandbox image](/how-to-guides/sandbox/images#how-a-linux-image-runs-locally).
+</Callout>
+
 ## Install the SDK
 
 Open a terminal and install the Python SDK:

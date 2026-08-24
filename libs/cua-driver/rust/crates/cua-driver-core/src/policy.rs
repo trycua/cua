@@ -106,6 +106,28 @@ impl PolicyEngine {
             Self::Disabled => PolicyDecision::Error("policy support is not enabled".to_owned()),
         }
     }
+
+    /// Returns `true` when the tool should appear in `tools/list`.
+    ///
+    /// For YAML policies a tool is potentially listable when it is not
+    /// explicitly denied and has at least one allow path (unconditional or
+    /// rule-constrained).  For Rego, the policy is evaluated with empty
+    /// arguments as an approximation; Rego rules can implement their own
+    /// "no-args" sentinel if finer control is needed.
+    pub fn is_potentially_listable(&self, tool: &str) -> bool {
+        let tool = canonical_tool_name(tool);
+        match self {
+            #[cfg(feature = "yaml")]
+            Self::Yaml(policy) => policy.is_potentially_listable(tool),
+            #[cfg(feature = "rego")]
+            Self::Rego(policy) => {
+                let empty_args = Value::Object(serde_json::Map::new());
+                matches!(policy.evaluate(tool, &empty_args), PolicyDecision::Allow)
+            }
+            #[cfg(not(any(feature = "yaml", feature = "rego")))]
+            Self::Disabled => false,
+        }
+    }
 }
 
 fn canonical_tool_name(tool: &str) -> &str {
@@ -288,6 +310,34 @@ pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), Authorization
     authorize_policy_layers(tool, args, layers)
 }
 
+/// Returns `true` when the tool should be advertised in `tools/list`.
+///
+/// Unlike [`authorize_tool_call`], this does not require a full argument set:
+/// it checks only whether the tool has any potential allow path (is not
+/// unconditionally denied).  Tools that are conditionally allowed via
+/// `allow.rules` are still listed so that callers can attempt a constrained
+/// invocation.  When no policy is configured, all tools are listable.
+///
+/// On a policy loading error, this returns `true` (fail-open for listing).
+/// The error will surface at invocation time through [`authorize_tool_call`],
+/// and [`validate_configured_policy`] is expected to have caught it at startup.
+pub fn is_tool_listable(tool: &str) -> bool {
+    let managed = match configured_managed_policy() {
+        Ok(policy) => policy,
+        Err(_) => return true,
+    };
+    let user = match configured_policy() {
+        Ok(policy) => policy,
+        Err(_) => return true,
+    };
+    for policy in [managed, user].into_iter().flatten() {
+        if !policy.is_potentially_listable(tool) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Eagerly validate the immutable process policy before any action endpoint is
 /// exposed. This prevents a configured typo from producing a listening daemon
 /// that only discovers the error after clients begin issuing calls.
@@ -363,6 +413,20 @@ impl YamlPolicy {
             "tool '{tool}' argument constraints were not satisfied: {}",
             failures.join("; ")
         ))
+    }
+
+    /// Returns `true` when the tool is not explicitly denied and has at least
+    /// one potential allow path (an unconditional entry in `allow.tools` or an
+    /// entry in `allow.rules`).  This is the correct predicate for advertising
+    /// a tool in `tools/list`: the tool may be conditionally allowed, so we
+    /// must not hide it just because a call with empty arguments would be
+    /// denied by unsatisfied constraints.
+    fn is_potentially_listable(&self, tool: &str) -> bool {
+        if self.denied_tools.iter().any(|denied| denied == tool) {
+            return false;
+        }
+        self.allowed_tools.iter().any(|allowed| allowed == tool)
+            || self.rules.iter().any(|rule| rule.tool == tool)
     }
 }
 

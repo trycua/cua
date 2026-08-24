@@ -17,6 +17,22 @@ A **computer-use agent** is the running system around that model. It supplies th
 
 The distinction matters because a capable model alone does not provide a reliable agent. The surrounding system still has to deliver input to the intended application, preserve state between steps, recover from changed interfaces, and constrain consequential actions.
 
+An **agent harness** is the runtime that hosts this loop. A coding agent such as Claude Code or
+Codex can supply instructions, memory, and MCP connections while using either a hosted model or a
+model served on the same machine. Cua Driver is the UI tool layer connected to that harness; it does
+not select or run the model.
+
+```text
+model -> agent harness -> Cua Driver -> operating system and applications
+```
+
+This separation lets the same driver work with different models and harnesses. It also makes the
+cost of each layer visible. Local models often have less inference throughput and a tighter usable
+context budget, so tool schemas, screenshots, and accessibility trees can materially affect how
+long the agent can continue. A smaller tool surface and bounded state reads leave more context for
+the task itself. See [Run a local model with Cua Driver](/how-to-guides/driver/run-with-local-model)
+for one tested configuration.
+
 ## Three action surfaces
 
 On the **coding surface**, the agent writes and runs code as the action itself. This works especially well when the task is text-native, when the same operation must run more than once, or when a small program can cover a larger body of files and state than a human would want to touch by hand.

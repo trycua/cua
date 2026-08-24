@@ -5,18 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
-from uuid import uuid4
 
 from cua_driver import (
-    CaptureScope,
+    ActionTarget,
     ClickButton,
     ClickInput,
     CuaDriver,
-    DesktopScope,
-    EndSessionInput,
     GetDesktopStateInput,
     PressKeyInput,
-    StartSessionInput,
     ToolResult,
     TypeTextInput,
 )
@@ -26,40 +22,20 @@ T = TypeVar("T")
 
 
 class NativeDesktopTools:
-    """Own one in-process driver runtime and one desktop-scoped session."""
+    """Own one in-process runtime with one implicit lifecycle session."""
 
     def __init__(self, timeout: float = 30.0) -> None:
         self.driver = CuaDriver.create()
-        self.session = f"claude-native-{uuid4().hex[:12]}"
         self.timeout = timeout
-        self.started = False
-
-    async def start(self) -> None:
-        await self._bounded(
-            self.driver.start_session(
-                StartSessionInput(
-                    session=self.session,
-                    capture_scope=CaptureScope.DESKTOP,
-                )
-            )
-        )
-        self.started = True
 
     async def close(self) -> None:
-        try:
-            if self.started:
-                await self._bounded(
-                    self.driver.end_session(EndSessionInput(session=self.session))
-                )
-                self.started = False
-        finally:
-            await self.driver.shutdown()
+        await self.driver.shutdown()
 
     async def observe(self) -> dict[str, object]:
         result = await self._bounded(
             self.driver.get_desktop_state(
                 GetDesktopStateInput(
-                    session=self.session,
+                    session=None,
                     screenshot_out_file=None,
                 )
             )
@@ -72,8 +48,9 @@ class NativeDesktopTools:
                 ClickInput(
                     x=x,
                     y=y,
-                    scope=DesktopScope.DESKTOP,
-                    session=self.session,
+                    target=ActionTarget.DESKTOP(display_id="primary"),
+                    scope=None,
+                    session=None,
                     button=ClickButton.LEFT,
                     count=1,
                 )
@@ -85,8 +62,9 @@ class NativeDesktopTools:
             lambda: self.driver.type_text(
                 TypeTextInput(
                     text=text,
-                    scope=DesktopScope.DESKTOP,
-                    session=self.session,
+                    target=ActionTarget.DESKTOP(display_id="primary"),
+                    scope=None,
+                    session=None,
                 )
             )
         )
@@ -97,8 +75,9 @@ class NativeDesktopTools:
                 PressKeyInput(
                     key=key,
                     modifiers=None,
-                    scope=DesktopScope.DESKTOP,
-                    session=self.session,
+                    target=ActionTarget.DESKTOP(display_id="primary"),
+                    scope=None,
+                    session=None,
                 )
             )
         )

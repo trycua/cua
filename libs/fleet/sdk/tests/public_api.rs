@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use cyclops_sdk::{
     Claim, CreateClaimRequest, CreatePoolRequest, CyclopsClient, CyclopsConfiguration,
-    CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse, Pool,
-    ResourceMetadata, Sandbox, SdkError,
+    CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpRequestBuilder,
+    HttpResponse, Pool, ResourceMetadata, Sandbox, SdkError,
 };
 use cyclops_sdk_schema::{
     ClaimSpec, OSGymSandboxClaimStatus, OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolStatus,
@@ -70,6 +70,7 @@ fn pool() -> Pool {
             namespace: "default".into(),
             name: "pool".into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: pool_spec(),
         status: None,
@@ -84,6 +85,7 @@ fn claim() -> Claim {
             namespace: "default".into(),
             name: "claim".into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: claim_spec(),
         status: None,
@@ -174,6 +176,7 @@ async fn foreign_http_client_preserves_ordered_headers_and_byte_bodies() {
                 },
             ],
             body: Some(vec![0, 255]),
+            timeout_secs: None,
         })
         .await
         .unwrap();
@@ -188,14 +191,83 @@ fn http_request_distinguishes_absent_and_empty_bodies() {
         url: "https://run.cua.ai/v1/pools".into(),
         headers: vec![],
         body: None,
+        timeout_secs: None,
     };
     let empty = HttpRequest {
         body: Some(vec![]),
         ..absent.clone()
     };
+    let timed = HttpRequest {
+        timeout_secs: Some(75),
+        ..absent.clone()
+    };
 
     assert_ne!(absent, empty);
     assert_eq!(empty.body, Some(vec![]));
+    assert_ne!(absent, timed);
+    assert_eq!(timed.timeout_secs, Some(75));
+}
+
+#[test]
+fn http_request_builder_treats_optional_fields_as_skippable() {
+    let request = HttpRequestBuilder::new()
+        .method("GET".into())
+        .url("https://run.cua.ai/v1/pools".into())
+        .headers(vec![])
+        .build()
+        .unwrap();
+
+    assert_eq!(request.body, None);
+    assert_eq!(request.timeout_secs, None);
+
+    let bounded = HttpRequestBuilder::new()
+        .method("GET".into())
+        .url("https://run.cua.ai/v1/pools".into())
+        .headers(vec![])
+        .timeout_secs(30)
+        .build()
+        .unwrap();
+
+    assert_eq!(bounded.timeout_secs, Some(30));
+
+    let missing = HttpRequestBuilder::new()
+        .method("GET".into())
+        .headers(vec![])
+        .build();
+
+    assert!(missing.is_err());
+}
+
+#[test]
+fn http_request_deserializes_without_timeout_secs() {
+    let request: HttpRequest = serde_json::from_value(serde_json::json!({
+        "method": "GET",
+        "url": "https://run.cua.ai/v1/pools",
+        "headers": [],
+        "body": null,
+    }))
+    .unwrap();
+
+    assert_eq!(request.timeout_secs, None);
+}
+
+#[test]
+fn resource_metadata_preserves_kubernetes_creation_timestamp() {
+    let metadata: ResourceMetadata = serde_json::from_value(serde_json::json!({
+        "namespace": "default",
+        "name": "claim-1",
+        "creationTimestamp": "2026-08-04T12:34:56Z"
+    }))
+    .unwrap();
+
+    assert_eq!(
+        metadata.creation_timestamp.as_deref(),
+        Some("2026-08-04T12:34:56Z")
+    );
+    assert_eq!(
+        serde_json::to_value(metadata).unwrap()["creationTimestamp"],
+        "2026-08-04T12:34:56Z"
+    );
 }
 
 #[test]
@@ -204,6 +276,7 @@ fn resources_use_canonical_schema_specs_and_statuses() {
         namespace: "default".into(),
         name: "example".into(),
         labels: None,
+        creation_timestamp: None,
     };
     assert_eq!(metadata.namespace, "default");
 
@@ -229,9 +302,10 @@ fn resources_use_canonical_schema_specs_and_statuses() {
     }
 
     fn assert_create_claim_request(request: CreateClaimRequest) {
-        let CreateClaimRequest { pool, spec } = request;
+        let CreateClaimRequest { pool, spec, name } = request;
         assert_pool_types(pool);
         let _: Option<ClaimSpec> = spec;
+        let _: Option<String> = name;
     }
 
     let _: fn(Claim) = assert_claim_types;
@@ -256,6 +330,7 @@ fn resources_support_equality_and_kubernetes_camel_case_json() {
     let create_claim = CreateClaimRequest {
         pool: pool.clone(),
         spec: Some(claim.spec.clone()),
+        name: None,
     };
 
     assert_eq!(pool, pool.clone());

@@ -98,11 +98,12 @@ struct RenderMap {
     last_tick: Instant,
     /// Frozen launch-time config used as the template for lazily-created cursors.
     template: CursorConfig,
-    /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
+    /// Render-side tombstone of ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
     /// click/move from another task that lands AFTER the owning session's
-    /// `Remove` can never resurrect the just-removed cursor. "default" is never
-    /// tombstoned (it backs the anonymous / one-shot path).
+    /// `Remove` can never resurrect the just-removed cursor. An explicit
+    /// owner-checked revival clears the tombstone. "default" is never
+    /// tombstoned for legacy direct platform calls.
     ended: HashSet<CursorKey>,
     /// Cursor key whose target the overlay should currently sit above. A single
     /// layered window can occupy only one z-band, so the most-recently-touched
@@ -123,7 +124,7 @@ fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
 /// unit-testable without any Win32 window.
 ///
 /// Returns the resolved cursor key for a `Cmd` (so the caller can track the
-/// last-active key for z-order pinning); `None` for a `Remove`.
+/// last-active key for z-order pinning); `None` for a lifecycle message.
 fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
     match msg {
         OverlayMsg::Remove(key) => {
@@ -142,6 +143,12 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
                 // Tombstone the key so a late in-flight Cmd from another task
                 // cannot re-create the just-removed cursor.
                 map.ended.insert(key);
+            }
+            None
+        }
+        OverlayMsg::Revive(key) => {
+            if key != "default" {
+                map.ended.remove(&key);
             }
             None
         }
@@ -296,6 +303,18 @@ pub fn remove_cursor(key: CursorKey) {
     }
 }
 
+/// Clear the render-side tombstone after a successful explicit session
+/// revival. Cursor recreation remains lazy until the next render command.
+pub fn revive_cursor(key: CursorKey) {
+    if key.is_empty() {
+        return;
+    }
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(OverlayMsg::Revive(key));
+        wake_overlay();
+    }
+}
+
 /// Returns true if the cursor for `key` is currently enabled/visible. A session
 /// with no own cursor yet falls back to the seeded `"default"` cursor.
 pub fn is_enabled(key: &str) -> bool {
@@ -309,6 +328,27 @@ pub fn is_enabled(key: &str) -> bool {
                     .or_else(|| m.cursors.get("default"))
                     .map(|rs| rs.core.visible)
             })
+        })
+        .unwrap_or(false)
+}
+
+/// Truthful render acknowledgement for lifecycle inspection. Unlike
+/// [`is_enabled`], this checks the exact session key and never falls back to
+/// the seeded default cursor.
+pub fn is_visible_for_session(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|map| map.cursors.get(key))
+                .map(|rs| {
+                    rs.core.cfg.enabled
+                        && rs.core.visible
+                        && rs.core.idle_alpha >= 0.004
+                        && rs.core.pos.0 >= -100.0
+                })
         })
         .unwrap_or(false)
 }
@@ -1709,6 +1749,22 @@ mod tests {
             "tombstone must block resurrection"
         );
         assert_eq!(map.cursors.len(), 1);
+    }
+
+    #[test]
+    fn explicit_revival_clears_tombstone_and_recreates_lazily() {
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
+        assert!(apply_msg(&mut map, move_msg("sessA", 20.0, 20.0)).is_none());
+
+        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
+        assert!(!map.cursors.contains_key("sessA"));
+        assert!(!map.ended.contains("sessA"));
+
+        let resolved = apply_msg(&mut map, move_msg("sessA", 30.0, 30.0));
+        assert_eq!(resolved.as_deref(), Some("sessA"));
+        assert!(map.cursors.contains_key("sessA"));
     }
 
     #[test]

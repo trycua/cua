@@ -82,7 +82,7 @@ fn tools_list_schema_shape() {
         "get_browser_state should advertise opt-in exact-tab capture"
     );
     for (name, required) in [
-        ("browser_prepare", &["pid"][..]),
+        ("browser_prepare", &[][..]),
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),
         ("browser_click", &["target_id", "tab_id"][..]),
         ("browser_type", &["target_id", "tab_id", "ref", "text"][..]),
@@ -109,6 +109,20 @@ fn tools_list_schema_shape() {
             );
         }
     }
+    let prepare = tools
+        .iter()
+        .find(|tool| tool["name"] == "browser_prepare")
+        .expect("browser_prepare not found in tools/list");
+    assert!(
+        prepare["inputSchema"]["anyOf"]
+            .as_array()
+            .is_some_and(|alternatives| alternatives.iter().any(|alternative| {
+                alternative["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|field| field == "pid"))
+            })),
+        "browser_prepare schema must retain a pid-required alternative"
+    );
 
     const DELIVERY_MODE_TOOLS: &[&str] = &[
         "click",
@@ -157,9 +171,8 @@ fn tools_list_schema_shape() {
         list_resp["result"]["capability_version"], "1",
         "adding one capability token is additive and must not bump the vocabulary version"
     );
-    // Capture scope belongs to the session lifecycle on every platform. The
-    // action-level `scope` selects a coordinate/transport form but cannot
-    // override the session policy enforced by the registry.
+    // Session capture scope remains advertised only for compatibility. New
+    // clients choose one typed window or desktop target on each action.
     let capture_scope = &properties("start_session")["capture_scope"];
     for expected in ["auto", "window", "desktop"] {
         assert!(

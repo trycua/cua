@@ -10,15 +10,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareOutcome, PrepareRequest,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -141,6 +141,72 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
     }
 }
 
+fn isolated_browser_candidates() -> Vec<(PathBuf, &'static str, &'static str)> {
+    // pid-free launch deliberately supports only vendor-signed system-wide
+    // installations. Chromium builds have no stable vendor team identity, so
+    // callers can still select one by supplying its already-running pid.
+    vec![
+        (
+            PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            "com.google.Chrome",
+            "EQHXZ8M8AV",
+        ),
+        (
+            PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            "com.microsoft.edgemac",
+            "UBF8T346G9",
+        ),
+    ]
+}
+
+fn codesign_identity_matches(details: &str, identifier: &str, team_identifier: &str) -> bool {
+    let mut observed_identifier = None;
+    let mut observed_team = None;
+    for line in details.lines() {
+        if let Some(value) = line.strip_prefix("Identifier=") {
+            observed_identifier = Some(value.trim());
+        } else if let Some(value) = line.strip_prefix("TeamIdentifier=") {
+            observed_team = Some(value.trim());
+        }
+    }
+    observed_identifier == Some(identifier) && observed_team == Some(team_identifier)
+}
+
+fn has_trusted_codesign_identity(
+    executable: &std::path::Path,
+    identifier: &str,
+    team_identifier: &str,
+) -> bool {
+    let requirement = format!(
+        "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
+    );
+    let verified = std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--strict", "--test-requirement", &requirement])
+        .arg(executable)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !verified {
+        return false;
+    }
+    let Ok(details) = std::process::Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(executable)
+        .stdin(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    details.status.success()
+        && codesign_identity_matches(
+            &String::from_utf8_lossy(&details.stderr),
+            identifier,
+            team_identifier,
+        )
+}
+
 fn loopback_websocket_port(url: &str) -> Option<u16> {
     ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
         .iter()
@@ -185,26 +251,129 @@ fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
     .then_some((port, path))
 }
 
-async fn process_uses_custom_user_data_dir(pid: i64) -> Result<bool, BrowserRefusal> {
-    let output = tokio::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "command="])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser arguments for pid {pid}: {error}"),
-            )
-        })?;
-    if !output.status.success() {
+fn process_arguments(pid: i64) -> Result<Vec<Vec<u8>>, BrowserRefusal> {
+    let pid = libc::pid_t::try_from(pid).map_err(|_| {
+        refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "browser pid is outside the macOS process-id range",
+        )
+    })?;
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size = 0usize;
+    let size_result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if size_result != 0 || size < std::mem::size_of::<libc::c_int>() {
         return Err(refusal(
             BrowserRefusalCode::BrowserBindingStale,
-            format!("browser process {pid} is no longer available"),
+            format!("browser process {pid} arguments are unavailable"),
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).contains("--user-data-dir"))
+    let mut bytes = vec![0u8; size];
+    let read_result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            bytes.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if read_result != 0 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} arguments changed during inspection"),
+        ));
+    }
+    bytes.truncate(size);
+    let argc = libc::c_int::from_ne_bytes(
+        bytes[..std::mem::size_of::<libc::c_int>()]
+            .try_into()
+            .expect("c_int byte width"),
+    );
+    if argc <= 0 {
+        return Ok(Vec::new());
+    }
+    let mut cursor = std::mem::size_of::<libc::c_int>();
+    while cursor < bytes.len() && bytes[cursor] != 0 {
+        cursor += 1;
+    }
+    while cursor < bytes.len() && bytes[cursor] == 0 {
+        cursor += 1;
+    }
+    let mut args = Vec::with_capacity(argc as usize);
+    for _ in 0..argc {
+        if cursor >= bytes.len() {
+            break;
+        }
+        let end = bytes[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|offset| cursor + offset)
+            .unwrap_or(bytes.len());
+        args.push(bytes[cursor..end].to_vec());
+        cursor = end.saturating_add(1);
+    }
+    Ok(args)
+}
+
+fn user_data_dir_from_arguments(
+    args: &[Vec<u8>],
+    default: Option<PathBuf>,
+) -> Result<Option<PathBuf>, BrowserRefusal> {
+    use std::os::unix::ffi::OsStringExt;
+
+    let mut directories = Vec::new();
+    for (index, arg) in args.iter().enumerate() {
+        if let Some(path) = arg.strip_prefix(b"--user-data-dir=") {
+            if !path.is_empty() {
+                directories.push(PathBuf::from(std::ffi::OsString::from_vec(path.to_vec())));
+            }
+        } else if arg == b"--user-data-dir" {
+            if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
+                directories.push(PathBuf::from(std::ffi::OsString::from_vec(path.clone())));
+            }
+        }
+    }
+    directories.sort();
+    directories.dedup();
+    match directories.as_slice() {
+        [] => Ok(default),
+        [path] if path.is_absolute() => Ok(Some(path.clone())),
+        [_] => Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the browser uses a relative --user-data-dir that cannot be attested without its launch working directory",
+        )),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "browser process has multiple distinct --user-data-dir arguments",
+        )),
+    }
+}
+
+async fn user_data_dir_for_pid(
+    pid: i64,
+    product: BrowserProduct,
+) -> Result<Option<PathBuf>, BrowserRefusal> {
+    tokio::task::spawn_blocking(move || {
+        let args = process_arguments(pid)?;
+        user_data_dir_from_arguments(&args, default_user_data_dir(product))
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("browser argument inspection task failed: {error}"),
+        )
+    })?
 }
 
 fn exact_browser_surface_ids(
@@ -307,13 +476,9 @@ async fn active_port_endpoint(
 ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
     // The Chrome 144+ existing-profile bridge deliberately returns 404 for
     // legacy /json discovery. Its exact browser WebSocket path is instead
-    // published in the default profile's DevToolsActivePort file. Custom
-    // user-data dirs remain on the launch/HTTP discovery paths because this
-    // adapter cannot safely recover an arbitrary argv path from `ps` text.
-    if process_uses_custom_user_data_dir(pid).await? {
-        return Ok(None);
-    }
-    let Some(user_data_dir) = default_user_data_dir(product) else {
+    // published in the exact user-data root's DevToolsActivePort file. argv
+    // comes from KERN_PROCARGS2 rather than lossy `ps` text.
+    let Some(user_data_dir) = user_data_dir_for_pid(pid, product).await? else {
         return Ok(None);
     };
     let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
@@ -338,6 +503,7 @@ async fn active_port_endpoint(
     Ok(Some(OwnedEndpoint {
         ws_url: format!("ws://127.0.0.1:{port}{path}"),
         http_port: Some(port),
+        transport: EndpointTransport::DevToolsActivePort,
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
             owner_pid: pid,
@@ -396,6 +562,25 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for MacOsBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        for (candidate, identifier, team_identifier) in isolated_browser_candidates() {
+            let Ok(executable) = select_isolated_browser_executable([candidate]) else {
+                continue;
+            };
+            if has_trusted_codesign_identity(
+                std::path::Path::new(&executable),
+                identifier,
+                team_identifier,
+            ) {
+                return Ok(executable);
+            }
+        }
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "no vendor-signed system Chromium executable is available for isolated launch",
+        ))
+    }
+
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
     }
@@ -495,6 +680,31 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
         let gecko = is_firefox(name, bundle_id);
         let product_kind = browser_product(name, bundle_id);
+        let helper = name.to_ascii_lowercase().contains("helper")
+            || bundle_id.to_ascii_lowercase().contains(".helper")
+            || process_arguments(pid).ok().is_some_and(|args| {
+                args.iter().any(|arg| {
+                    arg.starts_with(b"--type=") && arg.get(7..).is_some_and(|kind| !kind.is_empty())
+                })
+            });
+        let process_role = if helper {
+            BrowserProcessRole::Helper
+        } else if product_kind == BrowserProduct::Electron {
+            BrowserProcessRole::EmbeddedApplication
+        } else if matches!(
+            product_kind,
+            BrowserProduct::GoogleChrome
+                | BrowserProduct::Chromium
+                | BrowserProduct::MicrosoftEdge
+                | BrowserProduct::Brave
+                | BrowserProduct::Vivaldi
+                | BrowserProduct::Opera
+                | BrowserProduct::Arc
+        ) {
+            BrowserProcessRole::StandaloneConsumer
+        } else {
+            BrowserProcessRole::Unknown
+        };
         Ok(BrowserClassification {
             is_browser: chromium || webkit || gecko,
             engine: if chromium {
@@ -508,7 +718,18 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             },
             product_kind,
             product: (!name.is_empty()).then(|| name.to_owned()),
-            channel: None,
+            channel: (process_role == BrowserProcessRole::StandaloneConsumer).then(|| {
+                if bundle_id.to_ascii_lowercase().contains("canary") {
+                    "canary".to_owned()
+                } else if bundle_id.to_ascii_lowercase().contains("beta") {
+                    "beta".to_owned()
+                } else if bundle_id.to_ascii_lowercase().contains("dev") {
+                    "dev".to_owned()
+                } else {
+                    "stable".to_owned()
+                }
+            }),
+            process_role,
             supports_cdp: chromium,
         })
     }
@@ -590,6 +811,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 return Ok(Some(OwnedEndpoint {
                     ws_url,
                     http_port: Some(port),
+                    transport: EndpointTransport::LegacyJsonVersion,
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::ListeningSocketPid,
                         owner_pid: pid,
@@ -622,6 +844,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             return Ok(Some(OwnedEndpoint {
                 ws_url,
                 http_port: Some(port),
+                transport: EndpointTransport::LegacyJsonVersion,
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: pid,
@@ -670,6 +893,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: expected_ws_url.to_owned(),
             http_port: Some(port),
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -776,6 +1000,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                     break Ok(OwnedEndpoint {
                         ws_url: ws_url.clone(),
                         http_port: Some(*port),
+                        transport: EndpointTransport::LegacyJsonVersion,
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
@@ -903,7 +1128,13 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -923,6 +1154,45 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_browser_candidates_are_vendor_attested_system_installs() {
+        let candidates = isolated_browser_candidates();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].1, "com.google.Chrome");
+        assert_eq!(candidates[0].2, "EQHXZ8M8AV");
+        assert!(candidates[0]
+            .0
+            .ends_with("Google Chrome.app/Contents/MacOS/Google Chrome"));
+        assert_eq!(candidates[1].1, "com.microsoft.edgemac");
+        assert_eq!(candidates[1].2, "UBF8T346G9");
+        assert!(candidates[1]
+            .0
+            .ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"));
+        assert!(candidates
+            .iter()
+            .all(|(candidate, _, _)| candidate.is_absolute()));
+    }
+
+    #[test]
+    fn codesign_identity_requires_exact_identifier_and_team() {
+        let details = "Identifier=com.google.Chrome\nTeamIdentifier=EQHXZ8M8AV\n";
+        assert!(codesign_identity_matches(
+            details,
+            "com.google.Chrome",
+            "EQHXZ8M8AV"
+        ));
+        assert!(!codesign_identity_matches(
+            details,
+            "com.google.Chrome",
+            "ATTACKER00"
+        ));
+        assert!(!codesign_identity_matches(
+            "Identifier=com.google.Chrome\nTeamIdentifier=\n",
+            "com.google.Chrome",
+            "EQHXZ8M8AV"
+        ));
+    }
 
     fn window(window_id: u32, pid: i32, title: &str) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {
@@ -1081,6 +1351,39 @@ mod tests {
             parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
             None
         );
+    }
+
+    #[test]
+    fn user_data_dir_parser_preserves_exact_custom_argv_path() {
+        let custom = std::env::temp_dir().join("cua browser profile with spaces");
+        let arg = format!("--user-data-dir={}", custom.display()).into_bytes();
+        assert_eq!(
+            user_data_dir_from_arguments(&[b"/Applications/Chrome".to_vec(), arg], None)
+                .expect("one absolute custom profile"),
+            Some(custom)
+        );
+    }
+
+    #[test]
+    fn user_data_dir_parser_does_not_treat_a_path_as_authority() {
+        let default = PathBuf::from("/tmp/default-browser-data");
+        assert_eq!(
+            user_data_dir_from_arguments(
+                &[b"/Applications/Chrome".to_vec()],
+                Some(default.clone())
+            )
+            .expect("default path"),
+            Some(default)
+        );
+        assert!(user_data_dir_from_arguments(
+            &[
+                b"/Applications/Chrome".to_vec(),
+                b"--user-data-dir=/tmp/one".to_vec(),
+                b"--user-data-dir=/tmp/two".to_vec(),
+            ],
+            None,
+        )
+        .is_err());
     }
 
     #[test]

@@ -9,6 +9,13 @@
 - **Scope:** First-class, user-approved attachment to an existing Chromium profile, followed by bounded autonomous reconnection
 - **Delivery:** Draft PR [#2261](https://github.com/trycua/cua/pull/2261) on `codex/browser-existing-profile-reconnect-plan`; canonical replay is complete and the PR remains draft for review
 
+The implementation now treats endpoint transport and profile-access authority
+as separate proofs. Standalone consumer browsers require a live
+existing-profile grant even when the OS proves that the browser owns a
+loopback DevTools listener. Grant-owned connections also use a fixed CDP
+method policy. Chrome 144+ `DevToolsActivePort` discovery is an internal
+transport for the same public `existing_profile` strategy.
+
 ## Implementation outcome
 
 - Chrome and Edge use exact AX setup and consent adapters on macOS and exact

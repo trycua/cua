@@ -27,6 +27,7 @@ impl CyclopsClient {
                 namespace: request.namespace,
                 name: request.name,
                 labels: None,
+                creation_timestamp: None,
             },
             spec: request.spec,
         };
@@ -41,6 +42,7 @@ impl CyclopsClient {
             &[200, 201, 202],
         )
         .await
+        .map_err(|error| SdkError::deny_pool_access(&template.metadata.namespace, error))
     }
 
     pub async fn list_templates(
@@ -97,13 +99,14 @@ impl CyclopsClient {
             &template.metadata.namespace,
             &template.metadata.name,
         )?;
-        let body = to_json(&template)?;
+        let body = template_merge_patch_json(&template)?;
         self.send_json_crud(
             "update template",
             merge_patch_request(item_url, Some(body)),
             &[200],
         )
         .await
+        .map_err(|error| SdkError::deny_pool_access(&template.metadata.namespace, error))
     }
 
     pub async fn delete_template(self: Arc<Self>, template: Template) -> Result<(), SdkError> {
@@ -118,7 +121,32 @@ impl CyclopsClient {
             &[200, 202, 204, 404],
         )
         .await
+        .map_err(|error| SdkError::deny_pool_access(&template.metadata.namespace, error))
     }
+}
+
+/// Serialize a template as a JSON merge patch that says what the caller meant.
+///
+/// `reconcile_template` overwrites `template.spec` with the caller's complete
+/// desired spec, but a merge patch only touches the keys it mentions, and
+/// `imagePullSecret` is `skip_serializing_if = "Option::is_none"`. A desired
+/// spec with no pull secret therefore left a pull secret already stored on the
+/// template in place -- the patch could not express "no secret".
+///
+/// Writing the absence out as an explicit null makes the patch mean what the
+/// caller asked for. It is also what the gateway's pool admission policy
+/// requires: a patch that carries `containerDiskImage` is refused unless it
+/// also states the pull secret, so every reconcile of an existing template
+/// backed by a registry image was rejected with 403 "k8s request is not
+/// allowed" (trycua/cua#3159).
+fn template_merge_patch_json(template: &Template) -> Result<Vec<u8>, SdkError> {
+    let mut value = serde_json::to_value(template).map_err(|error| SdkError::Body {
+        reason: error.to_string(),
+    })?;
+    if template.spec.vm_template.image_pull_secret.is_none() {
+        value["spec"]["vmTemplate"]["imagePullSecret"] = serde_json::Value::Null;
+    }
+    to_json(&value)
 }
 
 fn merge_patch_request(url: Url, body: Option<Vec<u8>>) -> HttpRequest {
@@ -142,6 +170,7 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
             },
         ],
         body,
+        timeout_secs: None,
     }
 }
 

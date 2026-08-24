@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cua_driver_contract::{CaptureScope, GetSessionStateInput, StartSessionInput};
-use cua_driver_sdk::{CuaDriver, EmbeddedCuaDriverHost, EmbeddedDriverHostState};
+use cua_driver_sdk::{CuaDriver, DriverError, EmbeddedCuaDriverHost, EmbeddedDriverHostState};
 use cua_driver_testkit::{spawn_in_job, ChildReaper};
 use serde_json::{json, Value};
 
@@ -140,7 +140,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
 
     let sdk_session = sdk
         .start_session(StartSessionInput {
-            session: "embedded-sdk-window".into(),
+            session: Some("embedded-sdk-window".into()),
             capture_scope: Some(CaptureScope::Window),
             cursor_theme: None,
         })
@@ -172,23 +172,47 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
         "desktop"
     );
 
-    // Session policy belongs to the session, not the daemon or transport:
-    // one SDK session can remain strict-window while an MCP session sharing
-    // the same embedded host is strict-desktop.
+    // Session policy belongs to the session and ordinary lifecycle inspection
+    // is transport-scoped: the SDK and MCP connections can each inspect their
+    // own session without enumerating the other's label.
     let sdk_state = sdk
         .get_session_state(GetSessionStateInput {
-            session: "embedded-sdk-window".into(),
+            session: Some("embedded-sdk-window".into()),
         })
         .await
         .expect("read SDK session");
-    let mcp_state = sdk
+    let foreign = sdk
         .get_session_state(GetSessionStateInput {
-            session: "embedded-mcp-desktop".into(),
+            session: Some("embedded-mcp-desktop".into()),
         })
         .await
-        .expect("read MCP-created session through SDK");
+        .expect_err("SDK transport must not inspect an MCP-created session");
     assert_eq!(sdk_state.capture_scope, CaptureScope::Window);
-    assert_eq!(mcp_state.capture_scope, CaptureScope::Desktop);
+    assert!(matches!(
+        foreign,
+        DriverError::Tool { error_code, .. } if error_code == "session_not_started"
+    ));
+
+    writeln!(
+        stdin,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "get_session",
+                "arguments": {"session": "embedded-mcp-desktop"}
+            }
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let mcp_state = read_json(&mut stdout);
+    assert_eq!(
+        mcp_state["result"]["structuredContent"]["session"],
+        "embedded-mcp-desktop"
+    );
 
     drop(stdin);
     let mut reaper = ChildReaper::new();

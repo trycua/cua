@@ -9,6 +9,8 @@
     "postinstall": "fumadocs-mdx",
     "docs:generate": "tsx ../scripts/docs-generators/runner.ts",
     "docs:check": "tsx ../scripts/docs-generators/runner.ts --check",
+    "docs:check:cua-driver": "tsx ../scripts/docs-generators/runner.ts --library cua-driver --check",
+    "docs:check:lume": "tsx ../scripts/docs-generators/runner.ts --library lume --check",
     "docs:list": "tsx ../scripts/docs-generators/runner.ts --list",
     "docs:generate:lume": "tsx ../scripts/docs-generators/lume.ts",
     "docs:generate:cua-driver": "tsx ../scripts/docs-generators/cua-driver.ts",

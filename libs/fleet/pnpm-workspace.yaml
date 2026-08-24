@@ -1,0 +1,11 @@
+packages:
+  - .
+
+allowBuilds:
+  esbuild: set this to true or false
+
+onlyBuiltDependencies:
+  - esbuild
+
+patchedDependencies:
+  '@novnc/novnc@1.7.0': patches/@novnc__novnc@1.7.0.patch

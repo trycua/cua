@@ -1,0 +1,83 @@
+name: Feature request
+description: Describe a user problem or product improvement
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem and desired outcome before proposing an implementation.
+        Use the **Request for comments** form when the change affects a public SDK, CLI,
+        MCP, protocol, compatibility, permission, security, or cross-component
+        architectural contract.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Cua Driver
+        - SDK or bindings
+        - MCP or agent integration
+        - CLI
+        - Lume
+        - Containers or images
+        - Documentation
+        - Build, packaging, or release
+        - Cross-component
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Who encounters the problem, in which workflow, and what is its impact?
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired_outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the observable behavior or success condition you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround
+      description: How do users handle this today, if at all?
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Affected components and platforms
+      description: List known packages, applications, operating systems, compatibility boundaries, or integrations.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and prior art
+      description: Link related issues, RFCs, tools, or standards and note why they do not solve the problem.
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation ideas
+      description: Optional. Share implementation ideas only after describing the problem and outcome.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for existing issues, RFCs, and active pull requests.
+          required: true
+        - label: I reviewed the RFC criteria and used the RFC form instead when this requires a public contract or architectural decision.
+          required: true
+        - label: This public request contains no credentials, private data, sensitive screenshots, or vulnerability details.
+          required: true

@@ -238,13 +238,18 @@ impl ScopeViolation {
     }
 }
 
-/// Enforce the modality for a public session. A first non-lifecycle action
-/// implicitly starts that session in `auto`, matching the existing cursor and
-/// recording lifecycle behavior.
+/// Enforce modality only for a session that explicitly opted into the
+/// deprecated capture-scope compatibility contract. Lifecycle-only explicit
+/// and implicit sessions select modality per call and carry no capture state.
 pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation> {
     if matches!(
         tool_name,
-        "start_session" | "end_session" | "escalate_session" | "get_session_state"
+        "start_session"
+            | "end_session"
+            | "escalate_session"
+            | "get_session"
+            | "list_sessions"
+            | "get_session_state"
     ) {
         return Ok(());
     }
@@ -255,11 +260,9 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
     else {
         return Ok(());
     };
-    let (state, _) = bind_session(session, None).map_err(|_| ScopeViolation {
-        code: "session_ended",
-        message: format!("session '{session}' has ended"),
-        state: SessionCaptureScope::new(CaptureScopePolicy::Auto),
-    })?;
+    let Some(state) = get_session(session) else {
+        return Ok(());
+    };
     match (state.effective_scope(), tool_scope(tool_name, args)) {
         (_, ToolScope::Unscoped)
         | (EffectiveCaptureScope::Window, ToolScope::Window)
@@ -537,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn end_racing_escalation_never_resurrects_scope_state() {
+    fn end_racing_escalation_never_resurrects_legacy_scope_state() {
         use std::sync::{Arc, Barrier};
 
         let session = fresh("end-escalate-race");
@@ -565,11 +568,9 @@ mod tests {
 
         assert!(crate::session::is_session_ended(&session));
         assert!(get_session(&session).is_none());
-        assert_eq!(
-            enforce_tool("get_window_state", &json!({"session": session}))
-                .unwrap_err()
-                .code,
-            "session_ended"
+        assert!(
+            enforce_tool("get_window_state", &json!({"session": session})).is_ok(),
+            "the compatibility helper must not recreate cleared capture state; the canonical lifecycle gate rejects the ended session"
         );
 
         assert!(crate::session::revive_session(&session));

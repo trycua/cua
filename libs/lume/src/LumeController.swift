@@ -69,17 +69,20 @@ final class LumeController {
     let home: Home
     private let imageLoaderFactory: ImageLoaderFactory
     private let vmFactory: VMFactory
+    private let runLockProbe: RunLockProbe
 
     // MARK: - Initialization
 
     init(
         home: Home = Home(),
         imageLoaderFactory: ImageLoaderFactory = DefaultImageLoaderFactory(),
-        vmFactory: VMFactory = DefaultVMFactory()
+        vmFactory: VMFactory = DefaultVMFactory(),
+        runLockProbe: RunLockProbe = LsofRunLockProbe()
     ) {
         self.home = home
         self.imageLoaderFactory = imageLoaderFactory
         self.vmFactory = vmFactory
+        self.runLockProbe = runLockProbe
     }
 
     // MARK: - Public VM Management Methods
@@ -214,15 +217,42 @@ final class LumeController {
         var sshAvailable: Bool? = nil
 
         // If not in cache, check if session file exists (cross-process fallback)
-        // Session files are created when VM starts and deleted when VM stops
-        // Validate that the VNC port is actually in use to detect stale sessions
+        // Session files are created when VM starts and deleted when VM stops.
+        // Each marker kind carries its own liveness proof, and a marker that
+        // cannot prove liveness is stale and gets cleaned up.
+        var sessionSuppressesVNCUrl = false
         if !isRunning {
             if let session = try? vmDir.loadSession() {
-                // Parse VNC port from URL like "vnc://:password@127.0.0.1:62295"
-                if let port = parseVNCPort(from: session.url),
-                   NetworkUtils.isLocalPortInUse(port: port) {
+                if !session.isVNCEnabled {
+                    sessionSuppressesVNCUrl = true
+                    // No port to probe: the VM is running only while the PID it
+                    // recorded is still the live holder of the run lock. The PID
+                    // alone proves nothing — it can be recycled.
+                    let live: Bool?
+                    if let pid = session.pid {
+                        live = runLockProbe.isLiveLockHolder(
+                            pid: pid, ofFileAt: vmDir.configPath.path)
+                    } else {
+                        live = false
+                    }
+                    if live == true {
+                        isRunning = true
+                    } else if live == false {
+                        vmDir.clearSession()
+                        Logger.info(
+                            "Cleaned up stale VNC-disabled session marker",
+                            metadata: ["name": vmName])
+                    } else {
+                        Logger.info(
+                            "Could not verify VNC-disabled session marker; preserving it",
+                            metadata: ["name": vmName])
+                    }
+                } else if let url = session.url,
+                          let port = parseVNCPort(from: url),
+                          NetworkUtils.isLocalPortInUse(port: port) {
+                    // Parse VNC port from URL like "vnc://:password@127.0.0.1:62295"
                     isRunning = true
-                    vncUrl = session.url
+                    vncUrl = url
                 } else {
                     // Stale session file - VNC port not in use, clean it up
                     vmDir.clearSession()
@@ -233,8 +263,11 @@ final class LumeController {
 
         if isRunning {
             // Try to get VNC URL from session file (if not already loaded)
-            if vncUrl == nil {
-                vncUrl = try? vmDir.loadSession().url
+            if vncUrl == nil && !sessionSuppressesVNCUrl {
+                let session = try? vmDir.loadSession()
+                if session?.isVNCEnabled == true {
+                    vncUrl = session?.url
+                }
             }
 
             // Try to get IP address from DHCP lease if we have MAC address
@@ -1051,15 +1084,25 @@ final class LumeController {
         additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
+        vncPolicy: VNCPolicy = .enabled,
         telemetryTransport: TelemetryTransport = .cli
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
         let effectiveDisplayMode = displayMode ?? (noDisplay ? .none : .vnc)
+        if let option = VNCPolicy.conflictingOption(
+            policy: vncPolicy,
+            displayMode: effectiveDisplayMode,
+            vncPort: vncPort,
+            vncPassword: vncPassword
+        ) {
+            throw VMError.vncDisabledConflict(option)
+        }
         Logger.info(
             "Running VM",
             metadata: [
                 "name": normalizedName,
                 "display_mode": effectiveDisplayMode.rawValue,
+                "vnc_policy": vncPolicy.rawValue,
                 "shared_directories":
                     "\(sharedDirectories.map( { $0.string } ).joined(separator: ", "))",
                 "mount": mount?.path ?? "none",
@@ -1179,7 +1222,8 @@ final class LumeController {
                 usbMassStoragePaths: usbMassStoragePaths,
                 additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode,
-                clipboard: clipboard)
+                clipboard: clipboard,
+                vncPolicy: vncPolicy)
             Logger.info("VM started successfully", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)

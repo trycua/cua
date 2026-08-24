@@ -154,29 +154,27 @@ fn owner_chain_reaches_target(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PostActionForegroundTarget {
+pub(crate) struct ForegroundTarget {
     hwnd: u64,
     pid: u32,
     owner: Option<u64>,
 }
 
-/// Snapshot the exact target identity and owner before pointer input is sent.
-pub(crate) fn capture_post_action_foreground_target(
-    target: u64,
-) -> Option<PostActionForegroundTarget> {
+/// Snapshot the exact target identity and owner before global input is sent.
+pub(crate) fn capture_foreground_target(target: u64) -> Option<ForegroundTarget> {
     let pid = window_owner_pid(target)?;
     let owner = unsafe { GetWindow(HWND(target as *mut _), GW_OWNER) }
         .ok()
         .filter(|owner| !owner.0.is_null())
         .map(|owner| owner.0 as usize as u64);
-    Some(PostActionForegroundTarget {
+    Some(ForegroundTarget {
         hwnd: target,
         pid,
         owner,
     })
 }
 
-/// Verify the foreground after an exact-target pointer action.
+/// Verify the foreground before or after an exact-target global input action.
 ///
 /// The requested HWND must become foreground before input is sent. The action
 /// may then legitimately open a same-process owned popup or modal, so the
@@ -185,8 +183,8 @@ pub(crate) fn capture_post_action_foreground_target(
 /// A dismiss action may instead destroy the requested owned modal; that is
 /// accepted only when foreground returns to its snapshotted same-process owner.
 /// Unrelated same-process siblings and foreign foreground windows fail closed.
-pub(crate) fn post_action_foreground_matches(
-    target: PostActionForegroundTarget,
+pub(crate) fn foreground_matches_target_or_owned_window(
+    target: ForegroundTarget,
     actual: u64,
 ) -> bool {
     let current_target_pid = window_owner_pid(target.hwnd);
@@ -605,4 +603,56 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
         is_on_screen: true,
         minimized: false,
     })
+}
+
+/// Resolve the real packaged-app process hosted by a specific
+/// `ApplicationFrameWindow`.
+///
+/// An ApplicationFrameHost pid is shared by unrelated apps, so callers must
+/// provide the frame HWND as well as the host pid. The hosted CoreWindow child
+/// retains ownership by the packaged app process and supplies the identity we
+/// need for attribution.
+pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
+    let frame = HWND(frame_hwnd as *mut _);
+    if unsafe { IsWindow(frame) }.0 == 0 || window_class_name(frame) != "ApplicationFrameWindow" {
+        return None;
+    }
+
+    let mut owner_pid = 0;
+    unsafe { GetWindowThreadProcessId(frame, Some(&mut owner_pid)) };
+    if owner_pid != host_pid {
+        return None;
+    }
+
+    struct ChildScan {
+        host_pid: u32,
+        app_pid: Option<u32>,
+    }
+
+    unsafe extern "system" fn child_cb(child: HWND, lparam: LPARAM) -> BOOL {
+        let scan = &mut *(lparam.0 as *mut ChildScan);
+        let mut child_pid = 0;
+        GetWindowThreadProcessId(child, Some(&mut child_pid));
+        if child_pid != 0
+            && child_pid != scan.host_pid
+            && window_class_name(child) == "Windows.UI.Core.CoreWindow"
+        {
+            scan.app_pid = Some(child_pid);
+            return windows::Win32::Foundation::FALSE;
+        }
+        TRUE
+    }
+
+    let mut scan = ChildScan {
+        host_pid,
+        app_pid: None,
+    };
+    unsafe {
+        let _ = EnumChildWindows(
+            frame,
+            Some(child_cb),
+            LPARAM(&mut scan as *mut ChildScan as isize),
+        );
+    }
+    scan.app_pid
 }

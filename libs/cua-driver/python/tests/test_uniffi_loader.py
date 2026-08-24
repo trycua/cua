@@ -24,6 +24,31 @@ LIBRARY = Path(__file__).parents[1] / "src" / "cua_driver" / _library_name()
 
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
+class GeneratedOptionsTests(unittest.TestCase):
+    def test_embedded_overlay_option_defaults_false_and_accepts_true(self) -> None:
+        from cua_driver import EmbeddedDriverHostOptions
+
+        required = {
+            "binary_path": "/example/cua-driver",
+            "host_bundle_id": "com.example.host",
+            "socket_path": None,
+            "startup_timeout_ms": None,
+            "shutdown_timeout_ms": None,
+            "permission_mode": None,
+            "session_policy_path": None,
+            "approve_session_policy": False,
+            "dangerously_bypass_approvals": False,
+            "environment": [],
+            "inherit_stderr": False,
+        }
+
+        self.assertFalse(EmbeddedDriverHostOptions(**required).no_overlay)
+        self.assertTrue(
+            EmbeddedDriverHostOptions(**required, no_overlay=True).no_overlay
+        )
+
+
+@unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 @unittest.skipIf(os.name == "nt", "Unix socket fixture")
 class SdkLoaderTests(unittest.TestCase):
     def test_generated_python_embedded_host_owns_the_rust_lifecycle(self) -> None:
@@ -58,7 +83,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.6.0",
+                    "contract_version": "0.7.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -142,7 +167,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.6.0",
+                                "contract_version": "0.7.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",
@@ -186,6 +211,8 @@ except FileNotFoundError:
             expected_methods = {
                 "start_session",
                 "escalate_session",
+                "get_session",
+                "list_sessions",
                 "get_session_state",
                 "end_session",
                 "get_desktop_state",
@@ -224,6 +251,7 @@ except FileNotFoundError:
                     ClickInput(
                         x=12.0,
                         y=34.0,
+                        target=None,
                         scope=DesktopScope.DESKTOP,
                         session="python-run",
                         button=ClickButton.LEFT,

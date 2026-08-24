@@ -20,12 +20,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[4]
 RUN_ALL = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/run-all.sh"
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
-ELECTRON_BUILD = (
-    REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
-)
+ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
-    REPO_ROOT
-    / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
+    REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
 )
 TAURI_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/build.sh"
 
@@ -337,6 +334,7 @@ REPORT_OPTIONS = (
     'printf "only=%s\\n" "$RETRY_ONLY"\n'
     'printf "standalone=%s\\n" "$RUN_STANDALONE_BROWSER"\n'
     'printf "nobuild=%s\\n" "$NO_BUILD"\n'
+    'printf "lane=%s\\n" "$RETRY_INTERNAL_LANE"\n'
 )
 
 
@@ -378,6 +376,55 @@ def test_retry_attempts_default_to_one() -> None:
     fields = _parse(["--retry-cell=macos-electron-drag-px-foreground"])
     assert fields["status"] == "0"
     assert fields["attempts"] == "1"
+
+
+def test_swiftui_retry_is_routed_to_the_native_lane() -> None:
+    fields = _parse(
+        [
+            "--retry-cell",
+            "macos-swiftui-left-click-ax-background",
+            "--retry-only",
+        ]
+    )
+    assert fields["status"] == "0"
+    assert fields["harness"] == "swiftui"
+    assert fields["lane"] == "native"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "--retry-cell",
+            "macos-swiftui-left-click-ax-background",
+            "--retry-harness",
+            "electron",
+        ],
+        [
+            "--retry-cell",
+            "macos-electron-left-click-ax-background",
+            "--retry-harness",
+            "swiftui",
+        ],
+    ],
+)
+def test_swiftui_retry_cell_and_harness_must_agree(args: list[str]) -> None:
+    assert _parse(args)["status"] == "2"
+
+
+def test_native_swiftui_selector_matches_exactly_one_owned_cell() -> None:
+    completed = _run(
+        RUN_RUST_E2E,
+        'CUA_E2E_HARNESS_FILTER="swiftui"\n'
+        'CUA_E2E_CELL_FILTER="macos-swiftui-left-click-ax-background"\n'
+        'if native_swiftui_test_selected "macos-swiftui-left-click-ax-background"; then '
+        'echo "selected=yes"; fi\n'
+        'if native_swiftui_test_selected "macos-swiftui-set-value-ax-background"; then '
+        'echo "wrong=yes"; fi\n',
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "selected=yes" in completed.stdout
+    assert "wrong=yes" not in completed.stdout
 
 
 @pytest.mark.parametrize(
@@ -440,6 +487,89 @@ def test_full_matrix_clears_inherited_retry_filters(tmp_path: Path) -> None:
     assert output.read_text(encoding="utf-8") == "cell=\nharness=\nlane=\n"
 
 
+def test_unrestricted_daemon_admits_the_history_preview(tmp_path: Path) -> None:
+    fake_open = tmp_path / "bin/open"
+    output = tmp_path / "open-args.txt"
+    _write_executable(fake_open, 'printf "%s\\n" "$@" > "$CUA_TEST_OPEN_ARGS"\n')
+    completed = _run(
+        RUN_ALL,
+        'LOCAL_APP="/Applications/Test.app"\nstart_unrestricted_daemon\n',
+        env={
+            "PATH": f"{fake_open.parent}:{os.environ['PATH']}",
+            "CUA_TEST_OPEN_ARGS": str(output),
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        "-n",
+        "-g",
+        "/Applications/Test.app",
+        "--args",
+        "serve",
+        "--permission-mode",
+        "unrestricted",
+        "--dangerously-bypass-approvals",
+        "--experimental-history",
+    ]
+
+
+def test_history_hook_p99_parser_is_exact(tmp_path: Path) -> None:
+    report = tmp_path / "history-hook-benchmark.txt"
+    report.write_text(
+        "accepted: p50=10ns p95=20ns p99=30ns n=2000\n"
+        "full_queue: p50=4ns p95=5ns p99=6ns n=20000\n",
+        encoding="utf-8",
+    )
+    completed = _run(
+        RUN_ALL,
+        'printf "accepted=%s\\n" "$(history_hook_p99_ns accepted "$REPORT")"\n'
+        'printf "full=%s\\n" "$(history_hook_p99_ns full_queue "$REPORT")"\n',
+        env={"REPORT": str(report)},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert _fields(completed.stdout) == {"accepted": "30", "full": "6"}
+
+
+def test_runner_requires_an_exact_identity_hash_when_configured() -> None:
+    text = RUN_ALL.read_text(encoding="utf-8")
+    assert '[[ ! "${CUA_E2E_SIGNING_IDENTITY}" =~ ^[0-9A-Fa-f]{40}$ ]]' in text
+    assert 'export CUA_DRIVER_LOCAL_SIGNING_IDENTITY="${CUA_E2E_SIGNING_IDENTITY}"' in text
+
+
+def test_required_keychains_unlock_login_without_retaining_password(
+    tmp_path: Path,
+) -> None:
+    signing_keychain = tmp_path / "signing.keychain-db"
+    login_keychain = tmp_path / "login.keychain-db"
+    signing_keychain.touch()
+    login_keychain.touch()
+    fake_security = tmp_path / "bin/security"
+    log = tmp_path / "security.log"
+    _write_executable(
+        fake_security,
+        """printf '%s\\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+""",
+    )
+    completed = _run(
+        RUN_ALL,
+        "unlock_required_keychains\n"
+        'printf "password_present=%s\\n" "${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD+x}"\n',
+        env={
+            "PATH": f"{fake_security.parent}:{os.environ['PATH']}",
+            "CUA_E2E_SIGNING_KEYCHAIN": str(signing_keychain),
+            "CUA_E2E_LOGIN_KEYCHAIN": str(login_keychain),
+            "CUA_E2E_SIGNING_KEYCHAIN_PASSWORD": "fixture-password",
+            "CUA_TEST_SECURITY_LOG": str(log),
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "password_present=" in completed.stdout
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        f"unlock-keychain -p fixture-password {signing_keychain}",
+        f"unlock-keychain -p fixture-password {login_keychain}",
+    ]
+
+
 # --------------------------------------------------------------------------
 # Retry bookkeeping
 # --------------------------------------------------------------------------
@@ -474,8 +604,8 @@ def _write_failures(path: Path, **overrides: object) -> None:
 
 
 CHECK_ELIGIBILITY = (
-    "RETRY_CELL=\"$RETRY_CELL_UNDER_TEST\"\n"
-    "RETRY_HARNESS=\"$RETRY_HARNESS_UNDER_TEST\"\n"
+    'RETRY_CELL="$RETRY_CELL_UNDER_TEST"\n'
+    'RETRY_HARNESS="$RETRY_HARNESS_UNDER_TEST"\n'
     "status=0\n"
     'retry_selection_is_eligible "$RESULTS" "$FAILURES" || status=$?\n'
     'printf "status=%s\\n" "$status"\n'
@@ -989,9 +1119,7 @@ exit 0
     )
     completed = _run(
         RUN_ALL,
-        INSTALLED_BIN_PRELUDE
-        + 'ARTIFACT_DIR="$TEST_ARTIFACT_DIR"\n'
-        "watchdog_check_once\n",
+        INSTALLED_BIN_PRELUDE + 'ARTIFACT_DIR="$TEST_ARTIFACT_DIR"\nwatchdog_check_once\n',
         env=env,
     )
     assert completed.returncode == 0, completed.stderr
@@ -1021,8 +1149,7 @@ def test_sigterm_restores_standard_daemon_and_preserves_signal_status(tmp_path: 
     calls, env = _daemon_fakes(tmp_path, initial_mode="unrestricted")
     completed = _run(
         RUN_ALL,
-        INSTALLED_BIN_PRELUDE
-        + "RESTORE_STANDARD_DAEMON=1\n"
+        INSTALLED_BIN_PRELUDE + "RESTORE_STANDARD_DAEMON=1\n"
         "install_daemon_restore_traps\n"
         "kill -TERM $$\n",
         env=env,
@@ -1071,8 +1198,7 @@ def test_a_failed_restoration_fails_an_otherwise_green_run(tmp_path: Path) -> No
     env["CUA_TEST_LOAD_MODE"] = "unrestricted"
     completed = _run(
         RUN_ALL,
-        INSTALLED_BIN_PRELUDE
-        + "RESTORE_STANDARD_DAEMON=1\ninstall_daemon_restore_traps\nexit 0\n",
+        INSTALLED_BIN_PRELUDE + "RESTORE_STANDARD_DAEMON=1\ninstall_daemon_restore_traps\nexit 0\n",
         env=env,
     )
     assert completed.returncode == 1
@@ -1083,8 +1209,7 @@ def test_the_trap_leaves_an_unclaimed_daemon_alone(tmp_path: Path) -> None:
     calls, env = _daemon_fakes(tmp_path)
     completed = _run(
         RUN_ALL,
-        INSTALLED_BIN_PRELUDE
-        + "RESTORE_STANDARD_DAEMON=0\ninstall_daemon_restore_traps\nexit 4\n",
+        INSTALLED_BIN_PRELUDE + "RESTORE_STANDARD_DAEMON=0\ninstall_daemon_restore_traps\nexit 4\n",
         env=env,
     )
     assert completed.returncode == 4

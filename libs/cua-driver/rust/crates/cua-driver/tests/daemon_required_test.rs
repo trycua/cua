@@ -150,6 +150,130 @@ fn cli_call_succeeds_through_test_owned_daemon() {
 }
 
 #[test]
+fn named_session_survives_across_one_shot_cli_calls() {
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let session = format!("synthetic-cli-lifecycle-{}", std::process::id());
+
+    let started = driver.call(
+        "start_session",
+        serde_json::json!({"session": session, "capture_scope": "window"}),
+    );
+    assert!(!started.is_error(), "start failed: {}", started.text());
+
+    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    assert!(
+        !state.is_error(),
+        "named session did not survive the next CLI process: {}",
+        state.text()
+    );
+    assert_eq!(state.structured()["session"], session);
+
+    let sessions = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args([
+            "sessions",
+            "list",
+            "--json",
+            "--socket",
+            driver.daemon_socket().expect("test daemon socket"),
+        ])
+        .output()
+        .expect("list live sessions");
+    assert!(
+        sessions.status.success(),
+        "session list failed: {}",
+        String::from_utf8_lossy(&sessions.stderr)
+    );
+    let sessions: serde_json::Value =
+        serde_json::from_slice(&sessions.stdout).expect("session list JSON");
+    assert_eq!(sessions["count"], 1);
+
+    let ended = driver.call("end_session", serde_json::json!({"session": session}));
+    assert!(!ended.is_error(), "end failed: {}", ended.text());
+
+    let sessions = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args([
+            "sessions",
+            "list",
+            "--json",
+            "--socket",
+            driver.daemon_socket().expect("test daemon socket"),
+        ])
+        .output()
+        .expect("list ended sessions");
+    assert!(
+        sessions.status.success(),
+        "session list failed: {}",
+        String::from_utf8_lossy(&sessions.stderr)
+    );
+    let sessions: serde_json::Value =
+        serde_json::from_slice(&sessions.stdout).expect("session list JSON");
+    assert_eq!(sessions["count"], 0);
+}
+
+#[test]
+fn implicitly_started_named_session_survives_across_one_shot_cli_calls() {
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let session = format!("synthetic-cli-implicit-{}", std::process::id());
+
+    let first_action = driver.call("get_config", serde_json::json!({"session": session}));
+    assert!(
+        !first_action.is_error(),
+        "implicit first action failed: {}",
+        first_action.text()
+    );
+
+    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    assert!(
+        !state.is_error(),
+        "implicitly started session did not survive the next CLI process: {}",
+        state.text()
+    );
+    assert_eq!(state.structured()["session"], session);
+
+    let ended = driver.call("end_session", serde_json::json!({"session": session}));
+    assert!(!ended.is_error(), "end failed: {}", ended.text());
+}
+
+#[test]
+fn named_cli_session_cleanup_is_isolated() {
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let first = format!("synthetic-cli-isolation-a-{}", std::process::id());
+    let second = format!("synthetic-cli-isolation-b-{}", std::process::id());
+
+    for session in [&first, &second] {
+        let started = driver.call(
+            "start_session",
+            serde_json::json!({"session": session, "capture_scope": "window"}),
+        );
+        assert!(!started.is_error(), "start failed: {}", started.text());
+    }
+
+    let ended = driver.call("end_session", serde_json::json!({"session": first}));
+    assert!(!ended.is_error(), "first end failed: {}", ended.text());
+
+    let anonymous = driver.call("get_config", serde_json::json!({}));
+    assert!(
+        !anonymous.is_error(),
+        "anonymous one-shot call failed: {}",
+        anonymous.text()
+    );
+
+    let state = driver.call("get_session_state", serde_json::json!({"session": second}));
+    assert!(
+        !state.is_error(),
+        "ending another named session or cleaning an anonymous call ended the survivor: {}",
+        state.text()
+    );
+    assert_eq!(state.structured()["session"], second);
+
+    let ended = driver.call("end_session", serde_json::json!({"session": second}));
+    assert!(!ended.is_error(), "second end failed: {}", ended.text());
+}
+
+#[test]
 fn revoke_cli_ends_the_exact_live_session() {
     let mut driver = CliDriver::new();
     assert!(driver.available(), "test daemon failed to start");
@@ -181,34 +305,9 @@ fn revoke_cli_ends_the_exact_live_session() {
 }
 
 #[test]
-fn forged_legacy_artifact_cannot_authorize_existing_profile_in_standard_mode() {
+fn standard_mode_refuses_existing_profile_without_a_launch_grant() {
     let mut driver = CliDriver::new();
     assert!(driver.available(), "test daemon failed to start");
-
-    let token = uuid::Uuid::new_v4().to_string();
-    let approval_root = std::env::temp_dir().join("cua-driver-browser-approvals-v1");
-    std::fs::create_dir_all(&approval_root).expect("create legacy approval directory");
-    let artifact_path = approval_root.join(format!("{token}.json"));
-    let expires_unix_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-        + 60_000;
-    std::fs::write(
-        &artifact_path,
-        serde_json::to_vec(&serde_json::json!({
-            "schema": "cua-browser-existing-profile-approval-v1",
-            "token": token,
-            "scope": {
-                "pid": 42,
-                "window_id": 7,
-                "session": "forged-standard-attach"
-            },
-            "expires_unix_ms": expires_unix_ms
-        }))
-        .unwrap(),
-    )
-    .expect("write syntactically valid forged legacy artifact");
 
     let response = driver.call(
         "browser_prepare",
@@ -216,20 +315,14 @@ fn forged_legacy_artifact_cannot_authorize_existing_profile_in_standard_mode() {
             "pid": 42,
             "window_id": 7,
             "session": "forged-standard-attach",
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         }),
     );
-    let _ = std::fs::remove_file(&artifact_path);
 
     assert_eq!(response.structured()["status"], "refused");
     assert_eq!(
         response.structured()["refusal"]["code"],
         "browser_consent_required"
-    );
-    assert_eq!(
-        response.structured()["refusal"]["detail"]["legacy_approval_enabled"],
-        false
     );
     assert!(
         response.structured()["refusal"]["message"]
@@ -311,11 +404,64 @@ deny:
     assert!(denied.is_error());
     assert!(denied
         .text()
-        .contains("bounded session policy denies tool 'list_apps'"));
+        .contains("capability manifest denies tool 'list_apps'"));
 
     let undeclared = driver.call("get_screen_size", serde_json::json!({}));
     assert!(undeclared.is_error());
     assert!(undeclared
         .text()
-        .contains("outside the bounded session policy"));
+        .contains("outside the capability manifest"));
+}
+
+#[test]
+fn capability_manifest_narrows_standard_mode() {
+    let directory = tempfile::tempdir().expect("temporary capability manifest directory");
+    let manifest_path = directory.path().join("standard-v3.yaml");
+    std::fs::write(
+        &manifest_path,
+        "version: 3\nallow:\n  tools: [get_config]\ndeny:\n  tools: [list_apps]\n",
+    )
+    .expect("write standard capability manifest");
+    let manifest = manifest_path.display().to_string();
+    let mut driver = CliDriver::with_daemon_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "standard"),
+        ("CUA_DRIVER_CAPABILITY_MANIFEST_FILE", &manifest),
+        ("CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED", "1"),
+    ]);
+    assert!(
+        driver.available(),
+        "standard manifest daemon failed to start"
+    );
+    assert!(!driver.call("get_config", serde_json::json!({})).is_error());
+    assert!(driver.call("list_apps", serde_json::json!({})).is_error());
+    assert!(driver
+        .call("get_screen_size", serde_json::json!({}))
+        .is_error());
+}
+
+#[test]
+fn capability_manifest_narrows_unrestricted_mode() {
+    let directory = tempfile::tempdir().expect("temporary capability manifest directory");
+    let manifest_path = directory.path().join("unrestricted-v3.yaml");
+    std::fs::write(
+        &manifest_path,
+        "version: 3\nallow:\n  tools: [get_config]\ndeny:\n  tools: [list_apps]\n",
+    )
+    .expect("write unrestricted capability manifest");
+    let manifest = manifest_path.display().to_string();
+    let mut driver = CliDriver::with_daemon_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+        ("CUA_DRIVER_CAPABILITY_MANIFEST_FILE", &manifest),
+        ("CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED", "1"),
+    ]);
+    assert!(
+        driver.available(),
+        "unrestricted manifest daemon failed to start"
+    );
+    assert!(!driver.call("get_config", serde_json::json!({})).is_error());
+    assert!(driver.call("list_apps", serde_json::json!({})).is_error());
+    assert!(driver
+        .call("get_screen_size", serde_json::json!({}))
+        .is_error());
 }

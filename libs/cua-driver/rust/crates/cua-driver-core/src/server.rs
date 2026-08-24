@@ -852,6 +852,33 @@ pub async fn handle_request(
     id: serde_json::Value,
     provider: &dyn ToolProvider,
 ) -> Response {
+    handle_request_inner(req, id, provider, None).await
+}
+
+/// Dispatch one MCP request with a transport identity proved by the local
+/// adapter rather than supplied by the MCP client.
+///
+/// The ordinary untrusted entry point above must continue to discard every
+/// reserved argument. Direct stdio and authenticated HTTP each own a transport
+/// lease, so their adapters pass that lease here after parsing the untrusted
+/// request. The inner boundary sanitizes caller claims first and then stamps
+/// this trusted owner onto both implicit and explicitly named lifecycle
+/// sessions.
+pub async fn handle_request_with_transport_session(
+    req: Request,
+    id: serde_json::Value,
+    provider: &dyn ToolProvider,
+    transport_session: &str,
+) -> Response {
+    handle_request_inner(req, id, provider, Some(transport_session)).await
+}
+
+async fn handle_request_inner(
+    req: Request,
+    id: serde_json::Value,
+    provider: &dyn ToolProvider,
+    transport_session: Option<&str>,
+) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
 
@@ -877,23 +904,17 @@ pub async fn handle_request(
                     .and_then(serde_json::Value::as_str)
                     .filter(|session| !session.is_empty())
                     .map(str::to_owned);
-                if let (Some(arguments), Some(session)) =
-                    (call.args.as_object_mut(), public_session)
-                {
-                    arguments.insert(
-                        "_session_id".to_owned(),
-                        serde_json::Value::String(session.clone()),
-                    );
-                    arguments.insert(
-                        "_transport_session_id".to_owned(),
-                        serde_json::Value::String(session.clone()),
-                    );
-                }
-                if call.name == "browser_prepare" {
-                    if let Some(arguments) = call.args.as_object_mut() {
+                if let Some(arguments) = call.args.as_object_mut() {
+                    if let Some(session) = public_session.as_deref().or(transport_session) {
                         arguments.insert(
-                            crate::browser::approval::MCP_HOST_APPROVAL_ARG.to_owned(),
-                            serde_json::Value::Bool(true),
+                            "_session_id".to_owned(),
+                            serde_json::Value::String(session.to_owned()),
+                        );
+                    }
+                    if let Some(owner) = transport_session.or(public_session.as_deref()) {
+                        arguments.insert(
+                            "_transport_session_id".to_owned(),
+                            serde_json::Value::String(owner.to_owned()),
                         );
                     }
                 }
@@ -989,6 +1010,75 @@ mod observation_tests {
         assert_eq!(arguments["_transport_session_id"], "public");
         assert_eq!(arguments["_cua_browser_download_mcp_host_approved"], true);
         assert!(arguments.get("_protected_process_fingerprint").is_none());
+    }
+
+    #[tokio::test]
+    async fn trusted_transport_boundary_keeps_public_label_separate_from_owner() {
+        let provider = CapturingProvider {
+            arguments: Mutex::new(None),
+        };
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "browser_download",
+                "arguments": {
+                    "session": "public",
+                    "_session_id": "forged-owner",
+                    "_transport_session_id": "forged-transport",
+                    "_cua_browser_download_mcp_host_approved": false,
+                    "_protected_process_fingerprint": {"pid": 1}
+                }
+            }
+        }))
+        .unwrap();
+        let response = handle_request_with_transport_session(
+            request,
+            serde_json::json!(1),
+            &provider,
+            "mcp-trusted-lease",
+        )
+        .await;
+        assert!(matches!(response.body, ResponseBody::Result { .. }));
+
+        let arguments = provider.arguments.lock().unwrap().clone().unwrap();
+        assert_eq!(arguments["_session_id"], "public");
+        assert_eq!(arguments["_transport_session_id"], "mcp-trusted-lease");
+        assert_eq!(arguments["_cua_browser_download_mcp_host_approved"], true);
+        assert!(arguments.get("_protected_process_fingerprint").is_none());
+    }
+
+    #[tokio::test]
+    async fn trusted_transport_boundary_mints_implicit_identity_from_lease() {
+        let provider = CapturingProvider {
+            arguments: Mutex::new(None),
+        };
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "get_config",
+                "arguments": {
+                    "_session_id": "forged-owner",
+                    "_transport_session_id": "forged-transport"
+                }
+            }
+        }))
+        .unwrap();
+        let response = handle_request_with_transport_session(
+            request,
+            serde_json::json!(1),
+            &provider,
+            "mcp-trusted-lease",
+        )
+        .await;
+        assert!(matches!(response.body, ResponseBody::Result { .. }));
+
+        let arguments = provider.arguments.lock().unwrap().clone().unwrap();
+        assert_eq!(arguments["_session_id"], "mcp-trusted-lease");
+        assert_eq!(arguments["_transport_session_id"], "mcp-trusted-lease");
     }
 
     #[test]
@@ -1118,8 +1208,7 @@ mod observation_tests {
             (
                 "browser_prepare",
                 serde_json::json!({
-                    "strategy": {"kind": "existing_profile"},
-                    "approval_token": "private-token"
+                    "strategy": {"kind": "existing_profile"}
                 }),
                 ToolOperation::BrowserPrepareExistingProfile,
             ),

@@ -47,7 +47,7 @@ private func templateSpec() -> OsGymSandboxTemplateSpec {
             containerDiskImage: required("CUA_IMAGE"), command: nil, runtime: nil, runtimeClassName: nil,
             nodeSelector: nil, tolerations: nil, imagePullPolicy: nil,
             imagePullSecret: required("CUA_IMAGE_PULL_SECRET"),
-            cpuCores: 4, memory: "4Gi", firmware: nil, probes: nil,
+            cpuCores: 4, memory: "4Gi", firmware: nil, nestedVirtualization: nil, probes: nil,
             services: [SandboxService(name: "mcp", targetPort: 3000, protocol: nil)], oidc: nil
         )
     )
@@ -69,7 +69,8 @@ private func initializeMcp(client: CyclopsClient, sandbox: Sandbox) async throws
                     HttpHeader(name: "accept", value: "application/json, text/event-stream"),
                     HttpHeader(name: "content-type", value: "application/json"),
                 ],
-                body: body
+                body: body,
+                timeoutSecs: nil
             )
         )
         if (200...299).contains(Int(response.status)) { return response.status }

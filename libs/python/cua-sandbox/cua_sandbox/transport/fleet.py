@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, Optional
+import math
+from typing import Any, Dict, List, Optional
 
 import httpx
 from cua_sandbox.transport.base import Transport
@@ -13,10 +14,38 @@ from cua_sandbox.transport.computer_server import (
     normalize_screen_size,
     parse_command_response,
 )
-from fleet_sdk import HttpHeader, HttpRequest
+from fleet_sdk import HttpHeader, HttpRequest, HttpRequestBuilder
 
 _CMD_MAX_RETRIES = 3
 _CMD_RETRY_BACKOFF_S = 0.5
+
+
+def build_http_request(
+    *,
+    method: str,
+    url: str,
+    headers: Optional[List[Any]] = None,
+    body: Optional[bytes] = None,
+    timeout_secs: Optional[int] = None,
+) -> HttpRequest:
+    """Construct ``fleet_sdk.HttpRequest`` through the builder API.
+
+    The builder treats optional record fields as skippable, so request
+    construction keeps working when the Fleet SDK adds fields. An absent
+    ``timeout_secs`` falls back to the native client's 30-second default.
+    """
+    builder = HttpRequestBuilder().method(method).url(url).headers(headers or [])
+    if body is not None:
+        builder = builder.body(body)
+    if timeout_secs is not None:
+        builder = builder.timeout_secs(timeout_secs)
+    return builder.build()
+
+
+def _whole_seconds(timeout: Optional[float]) -> Optional[int]:
+    if timeout is None or timeout <= 0:
+        return None
+    return math.ceil(timeout)
 
 
 class FleetTransport(Transport):
@@ -29,13 +58,16 @@ class FleetTransport(Transport):
         bound: Any,
         service_name: str = "api",
         timeout: float = 30.0,
+        owns_sdk: bool = False,
         **_: Any,
     ) -> None:
         self._sdk = sdk
         self._bound = bound
         self._service_name = service_name
         self._timeout = timeout
+        self._owns_sdk = owns_sdk
         self._connected = False
+        self._sdk_closed = False
 
     async def connect(self) -> None:
         if self._service_name not in self._bound.services:
@@ -44,6 +76,12 @@ class FleetTransport(Transport):
 
     async def disconnect(self) -> None:
         self._connected = False
+        # A transport constructed with owns_sdk=True (e.g. by Lease.wait) is the
+        # sole holder of its Fleet client, so disconnect is where that client's
+        # HTTP resources are returned.
+        if self._owns_sdk and not self._sdk_closed:
+            await self._sdk.close()
+            self._sdk_closed = True
 
     async def request_service(
         self,
@@ -80,8 +118,12 @@ class FleetTransport(Transport):
             self._bound,
             service_name or self._service_name,
             path,
-            HttpRequest(
-                method=method, url=f"https://service.invalid{path}", headers=headers, body=body
+            build_http_request(
+                method=method,
+                url=f"https://service.invalid{path}",
+                headers=headers,
+                body=body,
+                timeout_secs=_whole_seconds(self._timeout),
             ),
         )
         request = httpx.Request(method, f"https://service.invalid{path}")

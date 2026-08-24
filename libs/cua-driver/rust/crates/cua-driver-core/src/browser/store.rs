@@ -24,7 +24,9 @@ use uuid::Uuid;
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::SemanticDocument;
-use super::types::{BindingQuality, ProcessFingerprint, Rect};
+use super::types::{
+    BindingQuality, EndpointAccessClass, EndpointTransport, ProcessFingerprint, Rect,
+};
 
 /// Browser action kinds proven for one semantic page ref.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -210,11 +212,15 @@ pub struct TargetRecord {
     pub window_id: u64,
     pub ws_url: String,
     pub endpoint_owner_pid: i64,
+    pub endpoint_transport: EndpointTransport,
+    pub endpoint_access_class: EndpointAccessClass,
     /// CDP connection generation that minted this capability. Zero denotes
     /// the legacy/non-grant route.
     pub generation: u64,
-    /// Internal transport owner for a grant-backed existing-profile route.
-    pub grant_transport_session: Option<String>,
+    /// Internal transport owner that proved an existing-profile grant or a
+    /// driver-owned browser lifecycle. The public session remains the target
+    /// namespace and is checked independently.
+    pub transport_session: Option<String>,
     pub fingerprint: ProcessFingerprint,
     pub native_title: String,
     pub native_bounds: Rect,
@@ -468,8 +474,10 @@ mod tests {
             window_id: 7,
             ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
             endpoint_owner_pid: 42,
+            endpoint_transport: EndpointTransport::LegacyJsonVersion,
+            endpoint_access_class: EndpointAccessClass::EmbeddedApplication,
             generation: 0,
-            grant_transport_session: None,
+            transport_session: None,
             fingerprint: ProcessFingerprint {
                 pid: 42,
                 start_time: Some(1),

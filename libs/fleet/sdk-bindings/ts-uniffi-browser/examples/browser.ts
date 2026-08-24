@@ -1,11 +1,27 @@
 import {
+  CreateClaimRequestBuilder,
+  CreatePoolRequestBuilder,
+  CreateTemplateRequestBuilder,
+  CreateUserApiKeyRequestBuilder,
   CyclopsClient,
+  CyclopsTokenProviderConfigurationBuilder,
+  OsGymSandboxTemplateSpecBuilder,
+  OsGymSandboxWarmPoolSpecBuilder,
+  SandboxServiceBuilder,
+  SandboxTemplateRefBuilder,
+  SchemaBuildError,
+  SdkBuildError,
+  TemplateBuilder,
+  VmTemplateBuilder,
+  WarmPoolAutoscalingBuilder,
   uniffiInitAsync,
   type Claim,
+  type OsGymSandboxTemplateSpec,
+  type OsGymSandboxWarmPoolSpec,
   type Pool,
   type Template,
+  type VmTemplateBuilderLike,
 } from "../ts/index.web"
-import type { OsGymSandboxTemplateSpec, OsGymSandboxWarmPoolSpec } from "../ts/cyclops_sdk_schema"
 
 declare global {
   interface Window {
@@ -26,14 +42,124 @@ const servicePath = "/health"
 const output = document.querySelector<HTMLPreElement>("#output")!
 const runButton = document.querySelector<HTMLButtonElement>("#run")!
 const sdkReady = document.querySelector<HTMLElement>("[data-testid=sdk-ready]")!
+const builderReady = document.querySelector<HTMLElement>("[data-testid=builder-ready]")!
 const lifecycleStatus = document.querySelector<HTMLElement>("[data-testid=lifecycle-status]")!
+
+function verifyBuilderContract(): void {
+  const configuration = new CyclopsTokenProviderConfigurationBuilder()
+    .baseUrl("https://api.example.test")
+    .poolPollIntervalMs(5_000n)
+    .poolPollLimit(120)
+    .claimPollIntervalMs(5_000n)
+    .claimPollLimit(120)
+    .build()
+  const userKey = new CreateUserApiKeyRequestBuilder()
+    .name("automation")
+    .scope([])
+    .build()
+  const autoscaling = new WarmPoolAutoscalingBuilder()
+    .minPoolSize(1)
+    .initialPoolSize(2)
+    .maxPoolSize(5)
+    .build()
+  const vm = new VmTemplateBuilder()
+    .containerDiskImage("image")
+    .build()
+  const templateSpec = new OsGymSandboxTemplateSpecBuilder()
+    .vmTemplate(vm)
+    .build()
+  const metadata = {
+    namespace: "default",
+    name: "template",
+  }
+  const template = new TemplateBuilder()
+    .apiVersion("osgym.cua.ai/v1alpha1")
+    .kind("OSGymSandboxTemplate")
+    .metadata(metadata)
+    .spec(templateSpec)
+    .build()
+  const templateRef = new SandboxTemplateRefBuilder()
+    .name("template")
+    .build()
+  const poolSpec = new OsGymSandboxWarmPoolSpecBuilder()
+    .replicas(1)
+    .sandboxTemplateRef(templateRef)
+    .build()
+  const pool = {
+    apiVersion: "osgym.cua.ai/v1alpha1",
+    kind: "OSGymSandboxWarmPool",
+    metadata: { namespace: "default", name: "default" },
+    spec: poolSpec,
+  }
+  const claim = new CreateClaimRequestBuilder().pool(pool).build()
+  const service = new SandboxServiceBuilder()
+    .name("mcp")
+    .targetPort(3000)
+    .build()
+  const poolRequest = new CreatePoolRequestBuilder()
+    .namespace("default")
+    .spec(poolSpec)
+    .build()
+  const templateRequest = new CreateTemplateRequestBuilder()
+    .namespace("default")
+    .name("template")
+    .spec(templateSpec)
+    .build()
+
+  try {
+    new CreateClaimRequestBuilder().build()
+    throw new Error("incomplete SDK builder unexpectedly succeeded")
+  } catch (error) {
+    if (
+      !SdkBuildError.MissingRequiredField.instanceOf(error) ||
+      error.inner.recordType !== "CreateClaimRequest" ||
+      error.inner.field !== "pool"
+    ) {
+      throw error
+    }
+  }
+
+  try {
+    new VmTemplateBuilder().build()
+    throw new Error("incomplete schema builder unexpectedly succeeded")
+  } catch (error) {
+    if (
+      !SchemaBuildError.MissingRequiredField.instanceOf(error) ||
+      error.inner.recordType !== "VmTemplate" ||
+      error.inner.field !== "container_disk_image"
+    ) {
+      throw error
+    }
+  }
+
+  if (
+    configuration.poolPollLimit !== 120 ||
+    userKey.scope.length !== 0 ||
+    autoscaling.maxPoolSize !== 5 ||
+    template.metadata.name !== "template" ||
+    claim.name !== undefined ||
+    service.targetPort !== 3000 ||
+    poolRequest.namespace !== "default" ||
+    templateRequest.name !== "template"
+  ) {
+    throw new Error("generated browser builder contract returned unexpected records")
+  }
+}
 
 const sdkInitialization = uniffiInitAsync().then(
   () => {
     sdkReady.textContent = "ready"
+    try {
+      verifyBuilderContract()
+      builderReady.textContent = "ready"
+    } catch (error) {
+      builderReady.textContent = "failed"
+      throw error
+    }
   },
   (error) => {
     sdkReady.textContent = "failed"
+    builderReady.textContent = "failed"
     log("SDK initialization failed:", error instanceof Error ? error.message : String(error))
     throw error
   },
@@ -71,37 +197,48 @@ function runtimeConfig(): BrowserRuntimeConfig {
   return config
 }
 
-function makeTemplateSpec(image: string, imagePullSecret?: string): OsGymSandboxTemplateSpec {
-  return {
-    vmTemplate: {
-      containerDiskImage: image,
-      cpuCores: 4,
-      memory: "4Gi",
-      imagePullSecret,
-      services: [{ name: serviceName, targetPort: 3000 }],
-    },
-  }
+function makeTemplateSpec(
+  image: string,
+  imagePullSecret?: string,
+): OsGymSandboxTemplateSpec {
+  const service = new SandboxServiceBuilder()
+    .name(serviceName)
+    .targetPort(3000)
+    .build()
+  let vmBuilder: VmTemplateBuilderLike = new VmTemplateBuilder()
+    .containerDiskImage(image)
+    .cpuCores(4)
+    .memory("4Gi")
+    .services([service])
+  if (imagePullSecret) vmBuilder = vmBuilder.imagePullSecret(imagePullSecret)
+  return new OsGymSandboxTemplateSpecBuilder()
+    .vmTemplate(vmBuilder.build())
+    .build()
 }
 
 function makePoolSpec(namespace: string): OsGymSandboxWarmPoolSpec {
-  return {
-    replicas: 1,
-    sandboxTemplateRef: { name: `${namespace}-template` },
-  }
+  const reference = new SandboxTemplateRefBuilder()
+    .name(`${namespace}-template`)
+    .build()
+  return new OsGymSandboxWarmPoolSpecBuilder()
+    .replicas(1)
+    .sandboxTemplateRef(reference)
+    .build()
 }
 
 async function runLifecycle(): Promise<void> {
   await sdkInitialization
   const config = runtimeConfig()
   log("[auth] Supplying runner access token to SDK client.")
+  const clientConfiguration = new CyclopsTokenProviderConfigurationBuilder()
+    .baseUrl(config.baseUrl)
+    .poolPollIntervalMs(5_000n)
+    .poolPollLimit(120)
+    .claimPollIntervalMs(5_000n)
+    .claimPollLimit(120)
+    .build()
   const client = CyclopsClient.connectBrowserWithAccessToken(
-    {
-      baseUrl: config.baseUrl,
-      poolPollIntervalMs: 5_000n,
-      poolPollLimit: 120,
-      claimPollIntervalMs: 5_000n,
-      claimPollLimit: 120,
-    },
+    clientConfiguration,
     config.accessToken,
   )
   log("[auth] SDK client connected.")
@@ -111,18 +248,26 @@ async function runLifecycle(): Promise<void> {
   let claim: Claim | undefined
   try {
     log("[1/5] Creating pool and template...")
-    pool = await client.createPool({
-      namespace: config.namespace,
-      spec: makePoolSpec(config.namespace),
-    })
-    template = await client.createTemplate({
-      namespace: config.namespace,
-      name: `${config.namespace}-template`,
-      spec: makeTemplateSpec(config.image, config.imagePullSecret),
-    })
+    const poolSpec = makePoolSpec(config.namespace)
+    pool = await client.createPool(
+      new CreatePoolRequestBuilder()
+        .namespace(config.namespace)
+        .spec(poolSpec)
+        .build(),
+    )
+    const templateSpec = makeTemplateSpec(config.image, config.imagePullSecret)
+    template = await client.createTemplate(
+      new CreateTemplateRequestBuilder()
+        .namespace(config.namespace)
+        .name(`${config.namespace}-template`)
+        .spec(templateSpec)
+        .build(),
+    )
 
     log("[2/5] Creating claim...")
-    claim = await client.createClaim({ pool })
+    claim = await client.createClaim(
+      new CreateClaimRequestBuilder().pool(pool).build(),
+    )
 
     log("[3/5] Waiting for claim to bind a sandbox...")
     const sandbox = await client.waitClaim(claim)

@@ -215,7 +215,7 @@ def test_windows_api_resolver_accepts_published_stable_tags_marked_prerelease() 
             "function Resolve-Version"
         )
     ]
-    assert "(-not $_.draft)" in body
+    assert "if ($_.draft) { return $false }" in body
     assert "(-not $_.prerelease)" not in body
     assert "[0-9]+\\.[0-9]+\\.[0-9]+" in body
 
@@ -603,6 +603,7 @@ def _run_download(tmp_path: Path, scenario: str, token_env: str = "") -> tuple[i
             set -uo pipefail
             REPO="trycua/cua"
             TAG_PREFIX="cua-driver-rs-v"
+            TAG="cua-driver-rs-v1.2.3"
             LABEL="linux-x86_64"
             TMP_DIR="{tmp_path.as_posix()}"
             {token_env}
@@ -686,6 +687,74 @@ def test_unix_public_asset_download_does_not_forward_api_token(tmp_path: Path) -
     assert len(calls) == 1
     assert "Authorization:" not in calls[0]
     assert "api-token" not in stderr
+
+
+@requires_posix_bash
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("1.2.3", "cua-driver-rs-v1.2.3"),
+        ("cua-driver-rs-v1.2.3", "cua-driver-rs-v1.2.3"),
+        (
+            "1.2.4-nightly.20260812.42",
+            "nightly-cua-driver-rs-v1.2.4-nightly.20260812.42",
+        ),
+        (
+            "nightly-cua-driver-rs-v1.2.4-nightly.20260812.42",
+            "nightly-cua-driver-rs-v1.2.4-nightly.20260812.42",
+        ),
+    ],
+)
+def test_unix_explicit_pin_selects_an_exact_stable_or_nightly_tag(
+    tmp_path: Path, value: str, expected: str
+) -> None:
+    script = tmp_path / "resolve-pin.sh"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            set -euo pipefail
+            TAG_PREFIX="cua-driver-rs-v"
+            NIGHTLY_TAG_PREFIX="nightly-cua-driver-rs-v"
+            {_extract_shell_function(_unix_source(), "resolve_explicit_release_tag")}
+            resolve_explicit_release_tag "{value}"
+            """
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["bash", script.as_posix()], capture_output=True, text=True, check=True
+    )
+    assert result.stdout == expected
+
+
+@requires_posix_bash
+@pytest.mark.parametrize(
+    "value",
+    [
+        "nightly-cua-driver-rs-v1.2.4-rc.1",
+        "cua-driver-rs-v1.2.4-nightly.20260812.42",
+        "nightly-lume-v1.2.4-nightly.20260812.42",
+        "1.2",
+    ],
+)
+def test_unix_explicit_pin_rejects_cross_channel_and_malformed_tags(
+    tmp_path: Path, value: str
+) -> None:
+    script = tmp_path / "resolve-bad-pin.sh"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            set -euo pipefail
+            TAG_PREFIX="cua-driver-rs-v"
+            NIGHTLY_TAG_PREFIX="nightly-cua-driver-rs-v"
+            {_extract_shell_function(_unix_source(), "resolve_explicit_release_tag")}
+            resolve_explicit_release_tag "{value}"
+            """
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(["bash", script.as_posix()], capture_output=True, text=True)
+    assert result.returncode != 0
 
 
 def _run_fallback_flow(

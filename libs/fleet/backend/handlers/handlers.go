@@ -4,25 +4,46 @@ package handlers
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"regexp"
+	"time"
 
 	"cyclops-cs-backend/auth"
+	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/keycloak"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
 
-type Handlers struct {
-	Admin      *keycloak.Admin
-	GatewayCfg config.GatewayConfiguration
-	AuthCfg    config.AuthConfiguration
-	KC         config.KeycloakConfiguration
+type UserAccountService interface {
+	UserCreatedAt(ctx context.Context, subject string) (time.Time, error)
+}
 
+type Handlers struct {
+	Admin           *keycloak.Admin
+	GatewayCfg      config.GatewayConfiguration
+	AuthCfg         config.AuthConfiguration
+	KC              config.KeycloakConfiguration
+	Stripe          config.StripeConfiguration
+	Billing         BillingService
+	UserAccounts    UserAccountService
+	WebhookVerifier WebhookVerifier
+
+	// Features carries the database-backed dependencies (the state query
+	// executor and the GitHub trust policy store). It is a pointer because
+	// setupRouter copies Handlers by value; see features.go.
+	Features *Features
+
+	ChatAccess          config.ChatAccessMode
+	Conversations       chat.ConversationStore
+	Model               chat.ModelClient
+	chatAccessEvaluator func(context.Context, *auth.User) (bool, error)
+	chatLocks           *conversationLockRegistry
 
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
@@ -36,10 +57,33 @@ type Handlers struct {
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 	return Handlers{
-		Admin:      admin,
-		GatewayCfg: cfg.Gateway,
-		AuthCfg:    cfg.Auth,
-		KC:         cfg.Keycloak,
+		Features:     NewFeatures(),
+		Admin:        admin,
+		UserAccounts: admin,
+		GatewayCfg:   cfg.Gateway,
+		AuthCfg:      cfg.Auth,
+		KC:           cfg.Keycloak,
+		Stripe:       cfg.Stripe,
+		ChatAccess:   cfg.Chat.Access,
+		chatLocks:    newConversationLockRegistry(),
+	}
+}
+
+func (h Handlers) chatEnabled(ctx context.Context, user *auth.User) (bool, error) {
+	if user == nil || user.ID == "" {
+		return false, nil
+	}
+	switch h.ChatAccess {
+	case config.ChatAccessAll:
+		return true, nil
+	case config.ChatAccessRestricted:
+		evaluator := h.chatAccessEvaluator
+		if evaluator == nil {
+			evaluator = auth.EvalChatEnabled
+		}
+		return evaluator(ctx, user)
+	default:
+		return false, nil
 	}
 }
 
@@ -61,6 +105,19 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 
 func currentUser(r *http.Request) *auth.User {
 	return auth.GetUser(r.Context())
+}
+
+func isGitHubPrincipal(user *auth.User) bool {
+	return user != nil && user.PrincipalType == auth.PrincipalTypeGitHubOIDC
+}
+
+func namespaceAllowed(user *auth.User, namespace string) bool {
+	for _, allowed := range user.AllowedNamespaces {
+		if allowed == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // statusCapture wraps http.ResponseWriter to capture the status code written

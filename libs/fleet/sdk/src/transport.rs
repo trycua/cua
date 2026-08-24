@@ -58,17 +58,36 @@ impl NativeHttpClient {
         })
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_request_timeout(
+    request: reqwest::RequestBuilder,
+    timeout_secs: Option<u64>,
+) -> reqwest::RequestBuilder {
+    match timeout_secs {
+        Some(timeout_secs) => request.timeout(Duration::from_secs(timeout_secs)),
+        None => request,
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait::async_trait]
 impl HttpClient for NativeHttpClient {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
-        let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|error| {
+        let HttpRequest {
+            method,
+            url,
+            headers: request_headers,
+            body,
+            timeout_secs,
+        } = request;
+        let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| {
             HttpError::Transport {
                 reason: format!("invalid HTTP method: {error}"),
             }
         })?;
         let mut headers = reqwest::header::HeaderMap::new();
-        for header in request.headers {
+        for header in request_headers {
             let name = reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(
                 |error| HttpError::Transport {
                     reason: format!("invalid HTTP header name: {error}"),
@@ -81,8 +100,11 @@ impl HttpClient for NativeHttpClient {
             })?;
             headers.append(name, value);
         }
-        let mut native = self.client.request(method, request.url).headers(headers);
-        if let Some(body) = request.body {
+        let mut native = apply_request_timeout(
+            self.client.request(method, url).headers(headers),
+            timeout_secs,
+        );
+        if let Some(body) = body {
             native = native.body(body);
         }
         native_http_runtime()
@@ -462,6 +484,7 @@ impl Transport {
                     },
                 ],
                 body: Some(body),
+                timeout_secs: None,
             })
             .await
             .map_err(map_http_error)?;
@@ -607,6 +630,7 @@ mod native_http_client_tests {
                     },
                 ],
                 body: None,
+                timeout_secs: None,
             })
             .await
             .unwrap();
@@ -650,6 +674,7 @@ mod native_http_client_tests {
                     value: "Bearer intended-token".into(),
                 }],
                 body: None,
+                timeout_secs: None,
             })
             .await
             .unwrap();
@@ -657,5 +682,29 @@ mod native_http_client_tests {
         thread::sleep(Duration::from_millis(50));
         assert_eq!(response.status, 302);
         assert!(matches!(redirected.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_tests {
+    use super::apply_request_timeout;
+    use std::time::Duration;
+
+    #[test]
+    fn applies_per_request_timeout_only_when_present() {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap();
+
+        let default_request = apply_request_timeout(client.get("https://example.com"), None)
+            .build()
+            .unwrap();
+        let overridden_request = apply_request_timeout(client.get("https://example.com"), Some(75))
+            .build()
+            .unwrap();
+
+        assert_eq!(default_request.timeout(), None);
+        assert_eq!(overridden_request.timeout(), Some(&Duration::from_secs(75)));
     }
 }

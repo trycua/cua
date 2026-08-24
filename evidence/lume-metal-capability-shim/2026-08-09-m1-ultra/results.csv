@@ -1,0 +1,5 @@
+workload,metric,unit,host_baremetal,stock_guest,safe_shim_guest,guest_ratio,shim_to_host_percent
+TinyLlama 1.1B Q4_K_M (llama.cpp),pp512,tokens/s,4871.99,431.8625,4786.7,11.0839,98.2494
+TinyLlama 1.1B Q4_K_M (llama.cpp),tg128,tokens/s,286.7055,12.6307,206.5965,16.3567,72.0588
+Llama-3.2-3B-Instruct-4bit (MLX-LM),pp512,tokens/s,,1656.5539,1665.4671,1.0054,
+Llama-3.2-3B-Instruct-4bit (MLX-LM),tg128,tokens/s,,172.0882,170.8605,0.9929,

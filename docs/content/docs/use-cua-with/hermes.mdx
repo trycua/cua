@@ -1,0 +1,58 @@
+---
+title: Hermes
+description: Use Cua Driver through Hermes Agent's built-in Computer Use toolset.
+icon: Waypoints
+---
+
+Hermes Agent includes a `computer_use` toolset that wraps Cua Driver with
+Hermes-native actions, approvals, image handling, diagnostics, and session
+cleanup. Use this built-in integration instead of adding Cua Driver as a second,
+raw MCP server.
+
+Hermes setup normally attempts to install Cua Driver, but that step is
+best-effort. Install or repair the driver when needed, then verify the complete
+path:
+
+```bash
+hermes computer-use install
+hermes computer-use status
+hermes computer-use doctor
+hermes tools list
+```
+
+If `computer_use` is disabled, enable it for the Hermes CLI:
+
+```bash
+hermes tools enable computer_use --platform cli
+```
+
+Start a session with the Computer Use toolset:
+
+```bash
+hermes -t computer_use chat
+```
+
+For deeper platform guidance, install Cua Driver's maintained skill pack. Cua
+Driver links it into the standard Hermes skill directory:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+Raw `cua-driver mcp` registration remains available for driver development and
+low-level MCP debugging, but it exposes an overlapping interface without
+Hermes's Computer Use wrapper. Do not enable both interfaces by default. The
+[`mcp-config` reference](/reference/cua-driver/cli-reference#cua-driver-mcp-config)
+records that advanced path.
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/dcc5a81f-6379-4378-a225-adaf5dfa5dcd"
+  poster="https://github.com/user-attachments/assets/15091959-0f93-4076-9338-18ef3a737091"
+  title="Four Hermes sessions share a Windows desktop"
+  sourceUrl="https://x.com/francedot/status/2061706670208897279"
+>
+  Independent Hermes agents operate separate apps through the same Cua Driver runtime.
+</VideoDemo>
+
+Upstream: [Hermes Computer Use documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/computer-use).

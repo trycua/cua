@@ -18,6 +18,43 @@ pub trait ToolOutput: Serialize + DeserializeOwned + JsonSchema {
     }
 }
 
+/// Schema for the refusal payload a tool emits alongside `isError: true`.
+///
+/// Refusals answer with a diagnostic shape rather than the success shape, and
+/// two are in service: `{"status":"refused","refusal":{code,message,detail}}`
+/// on the element-token and daemon paths, and `{"code":…,"effect":"refused",…}`
+/// on the window-target paths. Both carry tool-specific diagnostic keys, so the
+/// envelope stays open — the marker keys are what make it recognisably a
+/// refusal rather than a malformed success.
+pub fn refusal_envelope_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": true,
+        "anyOf": [
+            {"required": ["refusal"]},
+            {"required": ["status"]},
+            {"required": ["code"]},
+        ],
+    })
+}
+
+/// Wrap a success schema into the shape advertised as the MCP `outputSchema`.
+///
+/// MCP requires every `structuredContent` a tool emits to validate against its
+/// advertised `outputSchema` — including payloads that accompany
+/// `isError: true`. Advertising the success shape alone made strict clients
+/// reject refusals outright, replacing the actionable message the driver had
+/// already placed in `content` ("element_token is stale; call get_window_state
+/// again to refresh") with an opaque schema-validation error. Agents then had
+/// no signal to re-snapshot and fell back to blind pixel clicking.
+///
+/// The success variant is kept exactly as generated — still closed, so success
+/// payloads stay strictly checked — and the refusal envelope joins it as a
+/// sibling variant.
+pub fn advertised_output_schema(success: Value) -> Value {
+    serde_json::json!({ "type": "object", "anyOf": [success, refusal_envelope_schema()] })
+}
+
 fn output_schema_with_additional_properties<T: JsonSchema>(additional_properties: bool) -> Value {
     let mut settings = SchemaSettings::draft2020_12();
     settings.inline_subschemas = true;
@@ -81,6 +118,59 @@ pub struct SessionStateOutput {
 }
 
 impl ToolOutput for SessionStateOutput {}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLifecycleState {
+    Active,
+    Ending,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionClientKindOutput {
+    Cli,
+    Direct,
+    Mcp,
+    PythonSdk,
+    TypescriptSdk,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionTransportOutput {
+    Cli,
+    Daemon,
+    McpStdio,
+    McpHttp,
+}
+
+/// Content-free lifecycle state safe for an ordinary agent transport.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SessionOutput {
+    /// Sanitized public label, or null for an unnamed implicit session.
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub session: Option<String>,
+    pub implicit: bool,
+    pub state: SessionLifecycleState,
+    pub client_kind: SessionClientKindOutput,
+    pub transport: SessionTransportOutput,
+    pub cursor_visible: bool,
+    pub recording_active: bool,
+    pub idle_seconds: u64,
+    pub expires_in_seconds: u64,
+}
+
+impl ToolOutput for SessionOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct ListSessionsOutput {
+    pub sessions: Vec<SessionOutput>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub next_cursor: Option<String>,
+}
+
+impl ToolOutput for ListSessionsOutput {}
 
 /// Successful structured result returned by `start_session`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]

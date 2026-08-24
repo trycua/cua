@@ -1,5 +1,102 @@
 basePath: /
 definitions:
+  billing.CardSummary:
+    properties:
+      brand:
+        type: string
+      exp_month:
+        type: integer
+      exp_year:
+        type: integer
+      last4:
+        type: string
+    type: object
+  billing.Summary:
+    properties:
+      card:
+        allOf:
+        - $ref: '#/definitions/billing.CardSummary'
+        x-nullable: true
+      payment_method_present:
+        type: boolean
+    required:
+    - card
+    - payment_method_present
+    type: object
+  chat.Conversation:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      messages:
+        items:
+          $ref: '#/definitions/chat.Message'
+        type: array
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  chat.ConversationSummary:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  chat.Message:
+    properties:
+      content:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      role:
+        $ref: '#/definitions/chat.Role'
+      tool_call_id:
+        type: string
+      tool_calls:
+        items:
+          $ref: '#/definitions/chat.ToolCall'
+        type: array
+    type: object
+  chat.Role:
+    enum:
+    - user
+    - assistant
+    - tool
+    type: string
+    x-enum-varnames:
+    - RoleUser
+    - RoleAssistant
+    - RoleTool
+  chat.ToolCall:
+    properties:
+      function:
+        $ref: '#/definitions/chat.ToolFunction'
+      id:
+        type: string
+      type:
+        type: string
+    type: object
+  chat.ToolFunction:
+    properties:
+      arguments:
+        type: string
+      name:
+        type: string
+    type: object
+  handlers.BillingSessionResponse:
+    properties:
+      url:
+        type: string
+    type: object
   handlers.ConfigResponse:
     properties:
       admin:
@@ -8,6 +105,10 @@ definitions:
           Non-admins get the customer view: infra-only nav (Nodes, Operator events)
           is hidden in the SPA and the corresponding kubectl-proxy paths are denied
           server-side by authz.rego.
+        type: boolean
+      billing:
+        type: boolean
+      chat:
         type: boolean
     type: object
   handlers.CreateKeyRequest:
@@ -103,6 +204,13 @@ definitions:
       status:
         type: string
     type: object
+  handlers.TurnRequest:
+    properties:
+      messages:
+        items:
+          $ref: '#/definitions/chat.Message'
+        type: array
+    type: object
   handlers.UserKeyResponse:
     properties:
       client_id:
@@ -115,6 +223,15 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  handlers.turnEvent:
+    properties:
+      delta:
+        type: string
+      message:
+        $ref: '#/definitions/chat.Message'
+      type:
+        type: string
     type: object
   keycloak.KeyClient:
     properties:
@@ -132,182 +249,300 @@ definitions:
 info:
   contact: {}
   description: Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key
-    management, service proxies (k8s / orch / svc), namespace management, and deprecated
-    gateway / batch / label routes that now return 410 Gone. All pool operations use
-    OSGymSandboxClaim CRs (Path B).
+    management, service proxies (k8s / svc), and namespace management. All pool operations
+    use OSGymSandboxClaim CRs (Path B).
   title: Cyclops CS Backend API
   version: "0.1"
 paths:
-  /api/batch/{pool}/{id}:
-    delete:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
-      - description: Batch ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "410":
-          description: Gone
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deprecated batch delete route
-      tags:
-      - batch
-  /api/batch/{pool}/{id}/results:
-    get:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
-      - description: Batch ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "410":
-          description: Gone
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deprecated batch results route
-      tags:
-      - batch
-  /api/batch/{pool}/{id}/status:
-    get:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
-      - description: Batch ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "410":
-          description: Gone
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deprecated batch status route
-      tags:
-      - batch
-  /api/batch/{pool}/lanes:
-    delete:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "410":
-          description: Gone
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deprecated batch lanes route
-      tags:
-      - batch
+  /api/billing/portal-session:
     post:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
+      description: Creates a Stripe-hosted Billing Portal Session for the customer
+        owned by the authenticated Cyclops subject.
       produces:
       - application/json
       responses:
-        "410":
-          description: Gone
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BillingSessionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
           schema:
             additionalProperties:
               type: string
             type: object
       security:
       - BearerAuth: []
-      summary: Deprecated batch lanes route
+      summary: Create Stripe Billing Portal Session
       tags:
-      - batch
-  /api/batch/{pool}/submit:
+      - billing
+  /api/billing/setup-session:
     post:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
+      description: Creates a Stripe-hosted Checkout Session in setup mode for reusable
+        off-session card collection.
       produces:
       - application/json
       responses:
-        "410":
-          description: Gone
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BillingSessionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
           schema:
             additionalProperties:
               type: string
             type: object
       security:
       - BearerAuth: []
-      summary: Deprecated batch submission route
+      summary: Create Stripe card setup Session
       tags:
-      - batch
+      - billing
+  /api/billing/summary:
+    get:
+      description: Returns a sanitized Stripe-backed billing summary for the authenticated
+        Cyclops subject.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/billing.Summary'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Billing summary
+      tags:
+      - billing
+  /api/billing/webhook:
+    post:
+      consumes:
+      - application/json
+      description: Verifies a Stripe-signed raw webhook body and configures the default
+        payment method for completed fleet setup intents.
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "413":
+          description: Request Entity Too Large
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Receive Stripe webhook
+      tags:
+      - billing
+  /api/chat/conversations:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/chat.ConversationSummary'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List the calling user's chat conversations
+      tags:
+      - chat
+    post:
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/chat.Conversation'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a chat conversation
+      tags:
+      - chat
+  /api/chat/conversations/{id}:
+    get:
+      parameters:
+      - description: Conversation ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/chat.Conversation'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a chat conversation
+      tags:
+      - chat
+  /api/chat/conversations/{id}/turns:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Conversation ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: User message or tool results
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.TurnRequest'
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.turnEvent'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Send a chat turn and stream the assistant response
+      tags:
+      - chat
   /api/config:
     get:
       description: Returns OPA-evaluated feature flags for the authenticated SPA user.
@@ -328,35 +563,15 @@ paths:
       summary: Per-user feature flags
       tags:
       - config
-  /api/gateway/{name}/{path}:
-    get:
-      description: The per-pool HTTP orchestrator has been deprecated and removed.
-        All pools now use OSGymSandboxClaim CRs exclusively (Path B). This endpoint
-        returns 410 Gone for any request. See CUA-609.
-      parameters:
-      - description: Pool name (DNS-1123 label)
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Upstream path (ignored)
-        in: path
-        name: path
-        type: string
-      responses:
-        "410":
-          description: Orchestrator HTTP layer deprecated (CUA-609)
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      summary: 'DEPRECATED: Per-pool orchestrator reverse-proxy (CUA-609)'
-      tags:
-      - gateway
   /api/k8s/{path}:
     get:
-      description: Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar)
-        so the SPA can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated.
-        EventList responses are filtered by the caller's OPA visible_events policy
-        via auth.K8sEventFilterMiddleware (mounted in main.go's route chain).
+      description: 'Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy
+        sidecar) so the caller can read K8s resources via the pod ServiceAccount.
+        SPA-only; OPA-gated. The policy is an allowlist: only enumerated group/version/resource/method
+        combinations are proxied (the osgym.cua.ai and cua.ai fleet CRDs, namespaced
+        pod/service reads, pod logs and metrics, KubeVirt reads, and API discovery).
+        Anything else, including Kubernetes events and any cluster-scoped path, is
+        denied and never reaches the sidecar.'
       parameters:
       - description: K8s API path
         in: path
@@ -465,130 +680,6 @@ paths:
       summary: Revoke an API key by Keycloak client UUID
       tags:
       - keys
-  /api/label/{pool}/{label}:
-    delete:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
-      - description: Label
-        in: path
-        name: label
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "410":
-          description: Gone
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deprecated label delete route
-      tags:
-      - label
-  /api/label/{pool}/{label}/batch:
-    post:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
-      - description: Label
-        in: path
-        name: label
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "410":
-          description: Gone
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deprecated label batch route
-      tags:
-      - label
-  /api/label/{pool}/{label}/results:
-    get:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
-      - description: Label
-        in: path
-        name: label
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "410":
-          description: Gone
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deprecated label results route
-      tags:
-      - label
-  /api/label/{pool}/{label}/status:
-    get:
-      deprecated: true
-      description: Route is deprecated and unavailable. Returns 410 Gone for every
-        request. The orchestrator-backed batch surface is retired; callers must migrate
-        to the replacement flow.
-      parameters:
-      - description: Pool name
-        in: path
-        name: pool
-        required: true
-        type: string
-      - description: Label
-        in: path
-        name: label
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "410":
-          description: Gone
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deprecated label status route
-      tags:
-      - label
   /api/namespaces:
     get:
       description: Returns namespaces owned by the caller's Capsule Tenant. The list
@@ -695,33 +786,22 @@ paths:
       summary: Delete a namespace owned by the calling user
       tags:
       - namespaces
-  /api/orch/{namespace}/{service}/{path}:
     get:
-      description: Resolves <service>.<namespace>.svc.cluster.local at request time
-        (in-cluster DNS). The caller must hold RBAC in {namespace} (verified via an
-        impersonated RoleBinding probe); OPA additionally validates that namespace
-        and service look like DNS-1123 labels.
+      description: Gets a K8s namespace via impersonation. Capsule restricts access
+        to the caller's Tenant.
       parameters:
-      - description: Namespace (DNS-1123 label)
+      - description: Namespace name
         in: path
-        name: namespace
+        name: name
         required: true
         type: string
-      - description: Service name (DNS-1123 label)
-        in: path
-        name: service
-        required: true
-        type: string
-      - description: Upstream path
-        in: path
-        name: path
-        required: true
-        type: string
+      produces:
+      - application/json
       responses:
         "200":
-          description: Upstream response
+          description: OK
           schema:
-            type: string
+            $ref: '#/definitions/handlers.NamespaceResponse'
         "400":
           description: Bad Request
           schema:
@@ -734,15 +814,19 @@ paths:
           description: Forbidden
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
         "502":
           description: Bad Gateway
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: SPA-authenticated proxy to a per-namespace orchestrator service
+      summary: Get a namespace owned by the calling user
       tags:
-      - passthrough
+      - namespaces
   /api/svc/{namespace}/{service}/{path}:
     get:
       description: Proxies to {service}.{namespace}.svc.cluster.local:80. Per-key
@@ -878,16 +962,13 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/handlers.HealthResponse'
-      summary: Liveness/readiness probe
+      summary: Liveness probe
       tags:
       - health
 securityDefinitions:
   BearerAuth:
-    description: Keycloak access token. For /api/keys and /api/{k8s,orch} the token
-      is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). /api/gateway/{name}
-      requires a per-key token whose `namespace` claim equals "pool-{name}" (enforced
-      by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently
-      retired — they return 410 Gone for every request regardless of token validity.
+    description: Keycloak access token. For /api/keys and /api/k8s the token is an
+      interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).
     in: header
     name: Authorization
     type: apiKey

@@ -4,13 +4,34 @@ Public documentation content and assets live in this repository. The production
 renderer, redirects, analytics, and site configuration live in `trycua/cloud`.
 This app is a local MDX preview for contributors to the public repository.
 
-Run the local preview:
+Install the docs dependencies and run the local preview from this directory:
 
 ```bash
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open http://localhost:8090 with your browser to see the result.
+Open http://localhost:8090 with your browser to see the result. The docs app has
+its own lockfile; installing dependencies at the repository root is not enough.
+
+## Validate a change
+
+Curated MDX pages use the content checks and production build:
+
+```bash
+pnpm docs:check-hygiene
+pnpm docs:check-links
+pnpm build
+```
+
+For generated reference changes, also run the owning component check:
+
+```bash
+pnpm docs:check:cua-driver
+pnpm docs:check:lume
+```
+
+`pnpm docs:check` is the explicit full Cua Driver and Lume audit.
 
 ## Docs conventions
 

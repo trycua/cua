@@ -30,21 +30,31 @@ from cua_sandbox.runtime.compat import (
 )
 from cua_sandbox.sandbox import Sandbox, SandboxInfo, sandbox
 from cua_sandbox.transport.cloud import CloudTransport
+from cua_sandbox.transport.fleet_cloud import PoolAccessDeniedError
 from fleet_sdk import (
     ClaimSpec,
     CreatePoolRequest,
+    CreatePoolRequestBuilder,
     CreateTemplateRequest,
+    CreateTemplateRequestBuilder,
     Firmware,
     OsGymSandboxTemplateSpec,
+    OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpec,
+    OsGymSandboxWarmPoolSpecBuilder,
     RuntimeKind,
     SandboxService,
+    SandboxServiceBuilder,
     SandboxTemplateRef,
+    SandboxTemplateRefBuilder,
     ServiceProtocol,
 )
 from fleet_sdk import Template as TemplateResource
 from fleet_sdk import (
     VmTemplate,
+    VmTemplateBuilder,
+    WarmPoolAutoscaling,
+    WarmPoolAutoscalingBuilder,
 )
 
 __all__ = [
@@ -53,17 +63,27 @@ __all__ = [
     "whoami",
     "Image",
     "Pool",
+    "PoolAccessDeniedError",
     "Template",
     "TemplateResource",
     "CreatePoolRequest",
+    "CreatePoolRequestBuilder",
     "CreateTemplateRequest",
+    "CreateTemplateRequestBuilder",
     "ClaimSpec",
     "SandboxTemplateRef",
+    "SandboxTemplateRefBuilder",
     "OsGymSandboxWarmPoolSpec",
+    "OsGymSandboxWarmPoolSpecBuilder",
+    "WarmPoolAutoscaling",
+    "WarmPoolAutoscalingBuilder",
     "OsGymSandboxTemplateSpec",
+    "OsGymSandboxTemplateSpecBuilder",
     "RuntimeKind",
     "VmTemplate",
+    "VmTemplateBuilder",
     "SandboxService",
+    "SandboxServiceBuilder",
     "ServiceProtocol",
     "Firmware",
     "Sandbox",

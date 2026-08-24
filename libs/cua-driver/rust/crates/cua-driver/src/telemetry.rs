@@ -502,6 +502,8 @@ struct AgentSessionState {
     used_cursor_tools: bool,
     used_recording: bool,
     used_config_write: bool,
+    used_window_modality: bool,
+    used_desktop_modality: bool,
 }
 
 impl AgentSessionState {
@@ -529,6 +531,8 @@ impl AgentSessionState {
             used_cursor_tools: false,
             used_recording: false,
             used_config_write: false,
+            used_window_modality: false,
+            used_desktop_modality: false,
         }
     }
 
@@ -536,10 +540,22 @@ impl AgentSessionState {
         &mut self,
         transport: Transport,
         computer_action: bool,
+        capture_modality: Option<cua_driver_core::session::CaptureModality>,
         escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
+        if is_history_tool(&outcome.tool_name) {
+            return;
+        }
         self.transport_bits |= transport_bit(transport);
+        self.used_window_modality |= matches!(
+            capture_modality,
+            Some(cua_driver_core::session::CaptureModality::Window)
+        );
+        self.used_desktop_modality |= matches!(
+            capture_modality,
+            Some(cua_driver_core::session::CaptureModality::Desktop)
+        );
         let tool_name = outcome.tool_name.as_str();
         if tool_name == "escalate_session"
             && outcome.success
@@ -608,6 +624,7 @@ impl AgentSessionState {
         let cursor = cursor.unwrap_or(cua_driver_core::session::CursorOutcomeObservation {
             observed: false,
             enabled: false,
+            visible: false,
             theme: CursorThemeCategory::Unknown,
             motion_customized: false,
             active_cursor_count: 0,
@@ -649,6 +666,14 @@ impl AgentSessionState {
             ("used_cursor_tools", Value::Bool(self.used_cursor_tools)),
             ("used_recording", Value::Bool(self.used_recording)),
             ("used_config_write", Value::Bool(self.used_config_write)),
+            (
+                "used_window_modality",
+                Value::Bool(self.used_window_modality),
+            ),
+            (
+                "used_desktop_modality",
+                Value::Bool(self.used_desktop_modality),
+            ),
             ("cursor_outcome_observed", Value::Bool(cursor.observed)),
             ("cursor_overlay_enabled_at_end", Value::Bool(cursor.enabled)),
             ("cursor_theme", Value::String(cursor_theme.into())),
@@ -847,6 +872,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
         session_id: &str,
         transport: cua_driver_core::session::SessionTransport,
         computer_action: bool,
+        capture_modality: Option<cua_driver_core::session::CaptureModality>,
         escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
@@ -860,6 +886,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             state.observe(
                 session_transport(transport),
                 computer_action,
+                capture_modality,
                 escalation_reason,
                 outcome,
             );
@@ -970,6 +997,9 @@ pub(crate) fn capture_tool_completed(
     outcome: cua_driver_core::server::ToolCompletionObservation,
     transport: Transport,
 ) {
+    if is_history_tool(&outcome.tool_name) {
+        return;
+    }
     let is_first_value_candidate =
         outcome.computer_action && outcome.success && !outcome.refusal_code.is_refusal();
     if !is_enabled() || !should_capture_tool_completion(Instant::now(), is_first_value_candidate) {
@@ -981,6 +1011,10 @@ pub(crate) fn capture_tool_completed(
         Value::String(execution_mode().into()),
     );
     capture_bounded(event::MCP_TOOL_COMPLETED, properties, transport);
+}
+
+fn is_history_tool(tool_name: &str) -> bool {
+    matches!(tool_name, "history_status" | "history_query")
 }
 
 #[derive(Debug)]
@@ -1754,6 +1788,7 @@ pub(crate) fn capture_cli_completed(
         "stop" => "stop",
         "status" => "status",
         "recording" => "recording",
+        "history" => "history",
         "dump_docs" => "dump_docs",
         "update" => "update",
         "check_update" => "check_update",
@@ -1908,6 +1943,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "stop" => "stop",
         "status" => "status",
         "recording" => "recording",
+        "history" => "history",
         "dump_docs" => "dump_docs",
         "update" => "update",
         "check_update" => "check_update",
@@ -1943,6 +1979,18 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "stop" => "stop",
             "status" => "status",
             "render" => "render",
+            _ => "other",
+        },
+        "history" => match operation {
+            "enable" => "enable",
+            "disable" => "disable",
+            "pause" => "pause",
+            "resume" => "resume",
+            "status" => "status",
+            "flush" => "flush",
+            "list" => "list",
+            "show" => "show",
+            "delete" => "delete",
             _ => "other",
         },
         "permissions" => match operation {
@@ -3282,6 +3330,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             true,
+            Some(cua_driver_core::session::CaptureModality::Window),
             None,
             &ToolCompletionObservation {
                 tool_name: "click".into(),
@@ -3298,6 +3347,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::NoWindowTarget),
             &ToolCompletionObservation {
                 tool_name: "escalate_session".into(),
@@ -3314,6 +3364,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            Some(cua_driver_core::session::CaptureModality::Desktop),
             None,
             &ToolCompletionObservation {
                 tool_name: "page".into(),
@@ -3332,6 +3383,7 @@ mod tests {
             Some(cua_driver_core::session::CursorOutcomeObservation {
                 observed: true,
                 enabled: true,
+                visible: true,
                 theme: cua_driver_core::session::CursorThemeCategory::Custom,
                 motion_customized: true,
                 active_cursor_count: 3,
@@ -3351,6 +3403,8 @@ mod tests {
         assert_eq!(properties["multi_cursor_bucket"], "3_5");
         assert_eq!(properties["observed_multiple_transports"], true);
         assert_eq!(properties["client_kind"], "python_sdk");
+        assert_eq!(properties["used_window_modality"], true);
+        assert_eq!(properties["used_desktop_modality"], true);
         assert_eq!(properties["capture_scope"], "auto");
         assert_eq!(properties["auto_escalated_to_desktop"], true);
         assert_eq!(properties["escalation_reason"], "no_window_target");
@@ -3373,6 +3427,42 @@ mod tests {
                 "aggregate contains {forbidden}: {serialized}"
             );
         }
+    }
+
+    #[test]
+    fn history_reads_do_not_change_tool_or_agent_session_telemetry() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
+        };
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
+        for tool_name in ["history_status", "history_query"] {
+            assert!(is_history_tool(tool_name));
+            state.observe(
+                Transport::McpHttp,
+                false,
+                Some(cua_driver_core::session::CaptureModality::Desktop),
+                None,
+                &ToolCompletionObservation {
+                    tool_name: tool_name.into(),
+                    operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                    computer_action: false,
+                    success: true,
+                    error_class: ToolErrorClass::None,
+                    refusal_code: cua_driver_core::server::ToolRefusalCode::None,
+                    duration_bucket: DurationBucket::Under10Ms,
+                    output_type: OutputType::Text,
+                    output_size_bucket: OutputSizeBucket::Under1KiB,
+                },
+            );
+        }
+        assert_eq!(state.tool_count, 0);
+        assert_eq!(state.transport_bits, transport_bit(Transport::McpStdio));
+        assert!(!state.used_desktop_modality);
+        assert!(!state.had_successful_tool);
     }
 
     #[test]
@@ -3401,6 +3491,7 @@ mod tests {
         auto.observe(
             Transport::Daemon,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::Other),
             &failed,
         );
@@ -3420,6 +3511,7 @@ mod tests {
         desktop.observe(
             Transport::Daemon,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::Other),
             &successful,
         );
@@ -3461,7 +3553,7 @@ mod tests {
             cua_driver_core::session::SessionClientKind::Mcp,
             cua_driver_core::CaptureScope::Window,
         );
-        state.observe(Transport::McpStdio, true, None, &outcome);
+        state.observe(Transport::McpStdio, true, None, None, &outcome);
         let session_properties =
             state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
         assert_eq!(session_properties["computer_action_count_bucket"], "0");
@@ -3499,6 +3591,7 @@ mod tests {
             state.observe(
                 Transport::McpStdio,
                 true,
+                None,
                 None,
                 &ToolCompletionObservation {
                     tool_name: tool_name.into(),
@@ -3705,6 +3798,9 @@ mod tests {
     fn cli_operations_and_client_kinds_are_revalidated_in_the_worker() {
         assert_eq!(fixed_cli_operation("recording", "start"), "start");
         assert_eq!(fixed_cli_operation("recording", "/private/path"), "other");
+        assert_eq!(fixed_cli_command("history"), "history");
+        assert_eq!(fixed_cli_operation("history", "query-secret"), "other");
+        assert_eq!(fixed_cli_operation("history", "show"), "show");
         assert_eq!(fixed_cli_operation("doctor", "start"), "not_applicable");
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "claude_code"),

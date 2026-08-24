@@ -11,6 +11,7 @@
     "run-in-macos-lume-vm",
     "run-tests-in-macos-lume-vm",
     "connect-your-agent",
+    "run-with-local-model",
     "drive-a-web-page",
     "record-and-render-a-trajectory",
     "keep-running",
@@ -18,6 +19,7 @@
     "write-a-bounded-manifest",
     "personalize-cursor",
     "update",
+    "use-computer-history",
     "troubleshoot-stale-macos-permissions",
     "windows-ssh"
   ]

@@ -15,248 +15,448 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/api/batch/{pool}/lanes": {
+        "/api/billing/portal-session": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
+                "description": "Creates a Stripe-hosted Billing Portal Session for the customer owned by the authenticated Cyclops subject.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "billing"
                 ],
-                "summary": "Deprecated batch lanes route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Create Stripe Billing Portal Session",
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/setup-session": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a Stripe-hosted Checkout Session in setup mode for reusable off-session card collection.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Create Stripe card setup Session",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/summary": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Billing summary",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/billing.Summary"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/webhook": {
+            "post": {
+                "description": "Verifies a Stripe-signed raw webhook body and configures the default payment method for completed fleet setup intents.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Receive Stripe webhook",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/chat/conversations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "List the calling user's chat conversations",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/chat.ConversationSummary"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     }
                 }
             },
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "batch"
-                ],
-                "summary": "Deprecated batch lanes route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/batch/{pool}/submit": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "chat"
                 ],
-                "summary": "Deprecated batch submission route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Create a chat conversation",
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "201": {
+                        "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/chat.Conversation"
                         }
-                    }
-                }
-            }
-        },
-        "/api/batch/{pool}/{id}": {
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "batch"
-                ],
-                "summary": "Deprecated batch delete route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
                     },
-                    {
-                        "type": "string",
-                        "description": "Batch ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/api/batch/{pool}/{id}/results": {
+        "/api/chat/conversations/{id}": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "chat"
                 ],
-                "summary": "Deprecated batch results route",
-                "deprecated": true,
+                "summary": "Get a chat conversation",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Batch ID",
+                        "description": "Conversation ID",
                         "name": "id",
                         "in": "path",
                         "required": true
                     }
                 ],
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/chat.Conversation"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/api/batch/{pool}/{id}/status": {
-            "get": {
+        "/api/chat/conversations/{id}/turns": {
+            "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
+                "consumes": [
                     "application/json"
                 ],
-                "tags": [
-                    "batch"
+                "produces": [
+                    "application/x-ndjson"
                 ],
-                "summary": "Deprecated batch status route",
-                "deprecated": true,
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Send a chat turn and stream the assistant response",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
+                        "description": "Conversation ID",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "type": "string",
-                        "description": "Batch ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
+                        "description": "User message or tool results",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.TurnRequest"
+                        }
                     }
                 ],
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.turnEvent"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     }
                 }
@@ -293,38 +493,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/gateway/{name}/{path}": {
-            "get": {
-                "description": "The per-pool HTTP orchestrator has been deprecated and removed. All pools now use OSGymSandboxClaim CRs exclusively (Path B). This endpoint returns 410 Gone for any request. See CUA-609.",
-                "tags": [
-                    "gateway"
-                ],
-                "summary": "DEPRECATED: Per-pool orchestrator reverse-proxy (CUA-609)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name (DNS-1123 label)",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Upstream path (ignored)",
-                        "name": "path",
-                        "in": "path"
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Orchestrator HTTP layer deprecated (CUA-609)",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/k8s/{path}": {
             "get": {
                 "security": [
@@ -332,7 +500,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the SPA can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. EventList responses are filtered by the caller's OPA visible_events policy via auth.K8sEventFilterMiddleware (mounted in main.go's route chain).",
+                "description": "Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the caller can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. The policy is an allowlist: only enumerated group/version/resource/method combinations are proxied (the osgym.cua.ai and cua.ai fleet CRDs, namespaced pod/service reads, pod logs and metrics, KubeVirt reads, and API discovery). Anything else, including Kubernetes events and any cluster-scoped path, is denied and never reaches the sidecar.",
                 "tags": [
                     "passthrough"
                 ],
@@ -501,186 +669,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/label/{pool}/{label}": {
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label delete route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/batch": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label batch route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/results": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label results route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/status": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label status route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/api/namespaces": {
             "get": {
                 "security": [
@@ -783,6 +771,68 @@ const docTemplate = `{
             }
         },
         "/api/namespaces/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Gets a K8s namespace via impersonation. Capsule restricts access to the caller's Tenant.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "namespaces"
+                ],
+                "summary": "Get a namespace owned by the calling user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Namespace name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.NamespaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "delete": {
                 "security": [
                     {
@@ -827,75 +877,6 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "502": {
-                        "description": "Bad Gateway",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/orch/{namespace}/{service}/{path}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Resolves \u003cservice\u003e.\u003cnamespace\u003e.svc.cluster.local at request time (in-cluster DNS). The caller must hold RBAC in {namespace} (verified via an impersonated RoleBinding probe); OPA additionally validates that namespace and service look like DNS-1123 labels.",
-                "tags": [
-                    "passthrough"
-                ],
-                "summary": "SPA-authenticated proxy to a per-namespace orchestrator service",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Namespace (DNS-1123 label)",
-                        "name": "namespace",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Service name (DNS-1123 label)",
-                        "name": "service",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Upstream path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Upstream response",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -1106,7 +1087,7 @@ const docTemplate = `{
                 "tags": [
                     "health"
                 ],
-                "summary": "Liveness/readiness probe",
+                "summary": "Liveness probe",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1119,11 +1100,166 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "billing.CardSummary": {
+            "type": "object",
+            "properties": {
+                "brand": {
+                    "type": "string"
+                },
+                "exp_month": {
+                    "type": "integer"
+                },
+                "exp_year": {
+                    "type": "integer"
+                },
+                "last4": {
+                    "type": "string"
+                }
+            }
+        },
+        "billing.Summary": {
+            "type": "object",
+            "required": [
+                "card",
+                "payment_method_present"
+            ],
+            "properties": {
+                "card": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/billing.CardSummary"
+                        }
+                    ],
+                    "x-nullable": true
+                },
+                "payment_method_present": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "chat.Conversation": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chat.Message"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "chat.ConversationSummary": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "chat.Message": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "role": {
+                    "$ref": "#/definitions/chat.Role"
+                },
+                "tool_call_id": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chat.ToolCall"
+                    }
+                }
+            }
+        },
+        "chat.Role": {
+            "type": "string",
+            "enum": [
+                "user",
+                "assistant",
+                "tool"
+            ],
+            "x-enum-varnames": [
+                "RoleUser",
+                "RoleAssistant",
+                "RoleTool"
+            ]
+        },
+        "chat.ToolCall": {
+            "type": "object",
+            "properties": {
+                "function": {
+                    "$ref": "#/definitions/chat.ToolFunction"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "chat.ToolFunction": {
+            "type": "object",
+            "properties": {
+                "arguments": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.BillingSessionResponse": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.ConfigResponse": {
             "type": "object",
             "properties": {
                 "admin": {
                     "description": "Admin is true when the caller is in input.flags.admin_subs (OPA-evaluated).\nNon-admins get the customer view: infra-only nav (Nodes, Operator events)\nis hidden in the SPA and the corresponding kubectl-proxy paths are denied\nserver-side by authz.rego.",
+                    "type": "boolean"
+                },
+                "billing": {
+                    "type": "boolean"
+                },
+                "chat": {
                     "type": "boolean"
                 }
             }
@@ -1270,6 +1406,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.TurnRequest": {
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chat.Message"
+                    }
+                }
+            }
+        },
         "handlers.UserKeyResponse": {
             "type": "object",
             "properties": {
@@ -1287,6 +1434,20 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "handlers.turnEvent": {
+            "type": "object",
+            "properties": {
+                "delta": {
+                    "type": "string"
+                },
+                "message": {
+                    "$ref": "#/definitions/chat.Message"
+                },
+                "type": {
+                    "type": "string"
                 }
             }
         },
@@ -1313,7 +1474,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). /api/gateway/{name} requires a per-key token whose ` + "`" + `namespace` + "`" + ` claim equals \"pool-{name}\" (enforced by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.",
+            "description": "Keycloak access token. For /api/keys and /api/k8s the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"
@@ -1328,7 +1489,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "Cyclops CS Backend API",
-	Description:      "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), namespace management, and deprecated gateway / batch / label routes that now return 410 Gone. All pool operations use OSGymSandboxClaim CRs (Path B).",
+	Description:      "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / svc), and namespace management. All pool operations use OSGymSandboxClaim CRs (Path B).",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

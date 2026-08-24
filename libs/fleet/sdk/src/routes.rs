@@ -9,6 +9,7 @@ const TEMPLATE_COLLECTION_SUFFIX: &str = "/osgymsandboxtemplates";
 const NAMESPACE_COLLECTION: &str = "api/namespaces";
 const NAMESPACE_PREFIX: &str = "api/namespaces/";
 const SERVICE_COLLECTION_PREFIX: &str = "api/svc/";
+const USER_KEY_COLLECTION: &str = "api/user-keys";
 
 pub fn pool_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
     validate_dns_label_for("namespace", namespace)?;
@@ -59,6 +60,20 @@ pub fn namespace_collection(base: &Url) -> Result<Url, SdkError> {
 pub fn namespace_item(base: &Url, namespace: &str) -> Result<Url, SdkError> {
     validate_dns_label_for("namespace", namespace)?;
     route(base, format!("{NAMESPACE_PREFIX}{namespace}"))
+}
+
+pub fn user_key_collection(base: &Url) -> Result<Url, SdkError> {
+    route(base, USER_KEY_COLLECTION.into())
+}
+
+pub fn user_key_item(base: &Url, id: &str) -> Result<Url, SdkError> {
+    let mut url = user_key_collection(base)?;
+    url.path_segments_mut()
+        .map_err(|_| SdkError::Configuration {
+            reason: "base_url cannot be used for user API key routes".into(),
+        })?
+        .push(id);
+    Ok(url)
 }
 
 pub fn validate_dns_label(value: &str) -> Result<(), SdkError> {

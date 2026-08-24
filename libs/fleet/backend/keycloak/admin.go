@@ -61,6 +61,29 @@ func (a *Admin) token(ctx context.Context) (string, error) {
 	return t.AccessToken, nil
 }
 
+func (a *Admin) UserCreatedAt(ctx context.Context, subject string) (createdAt time.Time, err error) {
+	ctx, span := adminTracer().Start(ctx, "keycloak.get_user_created_at", trace.WithAttributes(
+		attribute.String("keycloak.realm", a.realm),
+	))
+	defer span.End()
+
+	start := time.Now()
+	defer func() { metrics.RecordKeycloakRequest("GetUserByID", time.Since(start), err) }()
+
+	tok, err := a.token(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	user, err := a.client.GetUserByID(ctx, tok, a.realm, subject)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get user by ID: %w", err)
+	}
+	if user.CreatedTimestamp == nil {
+		return time.Time{}, fmt.Errorf("user created timestamp is missing")
+	}
+	return time.UnixMilli(*user.CreatedTimestamp).UTC(), nil
+}
+
 type KeyClient struct {
 	ID        string `json:"id"`
 	ClientID  string `json:"client_id"`
@@ -366,7 +389,7 @@ func (a *Admin) ListUserKeyClients(ctx context.Context, ownerSub string) ([]User
 			if attrs["managed_by"] != "cyclops-cs-backend" || attrs["key_type"] != "user" || attrs["owner_sub"] != ownerSub {
 				continue
 			}
-			var scope []string
+			scope := []string{}
 			if s := attrs["scope"]; s != "" {
 				scope = strings.Split(s, ",")
 			}

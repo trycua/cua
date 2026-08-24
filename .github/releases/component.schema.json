@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/component.schema.json",
+  "title": "Cua release-channel component registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sharedChangePaths", "components"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "sharedChangePaths": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/repositoryPath" },
+      "uniqueItems": true
+    },
+    "components": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/component" }
+    }
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "releasePleasePath",
+        "displayName",
+        "stableTagPrefix",
+        "nightlyTagPrefix",
+        "versionAuthorityFile",
+        "changelog",
+        "builderWorkflow",
+        "changeDetectionPaths",
+        "buildVersionSites",
+        "channels"
+      ],
+      "properties": {
+        "releasePleasePath": { "$ref": "#/$defs/repositoryPath" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "stableTagPrefix": { "type": "string", "minLength": 1 },
+        "nightlyTagPrefix": { "type": "string", "pattern": "^nightly-.+" },
+        "versionAuthorityFile": { "$ref": "#/$defs/repositoryPath" },
+        "changelog": { "$ref": "#/$defs/repositoryPath" },
+        "builderWorkflow": { "$ref": "#/$defs/repositoryPath" },
+        "changeDetectionPaths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/repositoryPath" },
+          "uniqueItems": true
+        },
+        "buildVersionSites": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/versionSite" }
+        },
+        "channels": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nightly", "registries"],
+          "properties": {
+            "nightly": { "const": true },
+            "registries": {
+              "type": "array",
+              "maxItems": 0
+            }
+          }
+        }
+      }
+    },
+    "versionSite": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "plain" },
+            "path": { "$ref": "#/$defs/repositoryPath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "pattern", "replacement", "expectedMatches"],
+          "properties": {
+            "kind": { "const": "regex" },
+            "path": { "$ref": "#/$defs/repositoryPath" },
+            "pattern": { "type": "string", "minLength": 1 },
+            "replacement": { "type": "string" },
+            "expectedMatches": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "manifestPath"],
+          "properties": {
+            "kind": { "const": "cargo-workspace-lock" },
+            "path": { "$ref": "#/$defs/repositoryPath" },
+            "manifestPath": { "$ref": "#/$defs/repositoryPath" }
+          }
+        }
+      ]
+    }
+  }
+}

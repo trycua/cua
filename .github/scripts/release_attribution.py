@@ -60,6 +60,11 @@ VERIFIED_IDENTITY_PR_RE = re.compile(
 )
 TRAILING_PR_RE = re.compile(r"\s+\(#(?P<number>\d+)\)\s*$")
 LEGACY_RELEASE_BUMP_RE = re.compile(r"^Bump (?:cua-driver-rs|lume) to v\S+$", re.IGNORECASE)
+PUBLISHED_INSTALLER_BUMP_RE = re.compile(
+    r"^chore\(cua-driver\): advance published installer version to "
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*) \[skip ci\]$",
+    re.IGNORECASE,
+)
 NOREPLY_RE = re.compile(
     r"^(?:\d+\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?)@users\.noreply\.github\.com$",
     re.IGNORECASE,
@@ -223,7 +228,13 @@ def parse_conventional_line(line: str) -> ConventionalEntry | None:
     )
 
 
-def release_entries(subject: str, commit_body: str, pull_body: str) -> list[ConventionalEntry]:
+def release_entries(
+    subject: str,
+    commit_body: str,
+    pull_body: str,
+    *,
+    allowed_types: set[str] = RELEASING_TYPES,
+) -> list[ConventionalEntry]:
     override = OVERRIDE_RE.search(pull_body or "")
     candidates = override.group("body").splitlines() if override else [subject]
     entries = [entry for line in candidates if (entry := parse_conventional_line(line))]
@@ -232,7 +243,7 @@ def release_entries(subject: str, commit_body: str, pull_body: str) -> list[Conv
             ConventionalEntry(entry.change_type, entry.scope, entry.summary, True)
             for entry in entries
         ]
-    return [entry for entry in entries if entry.change_type in RELEASING_TYPES]
+    return [entry for entry in entries if entry.change_type in allowed_types]
 
 
 def validate_pr_title(
@@ -846,7 +857,10 @@ def build_manifest(
     release_ref: str | None = None,
     exclude_paths: Sequence[str] = (),
     asset_dir: Path | None = None,
+    channel: str = "stable",
 ) -> dict[str, Any]:
+    if channel not in {"stable", "nightly"}:
+        raise ReleaseError(f"unsupported release channel: {channel}")
     current_ref = release_ref or tag
     actual_sha = resolve_tag_sha(repo_root, current_ref)
     if actual_sha != expected_sha:
@@ -861,28 +875,34 @@ def build_manifest(
     visual_requested = False
 
     for commit in commits_in_range(repo_root, previous_tag, current_ref, paths, exclude_paths):
-        if re.match(
-            r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE
-        ) or LEGACY_RELEASE_BUMP_RE.match(commit.subject):
+        if (
+            re.match(r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE)
+            or LEGACY_RELEASE_BUMP_RE.match(commit.subject)
+            or PUBLISHED_INSTALLER_BUMP_RE.match(commit.subject)
+        ):
             continue
         parsed_subject = parse_conventional_line(commit.subject)
-        subject_is_releasing = bool(
-            parsed_subject and parsed_subject.change_type in RELEASING_TYPES
-        )
+        included_types = ALLOWED_TITLE_TYPES if channel == "nightly" else RELEASING_TYPES
+        subject_is_included = bool(parsed_subject and parsed_subject.change_type in included_types)
         pull = resolve_pull_for_commit(
             github,
             repository,
             commit,
-            required=subject_is_releasing,
+            required=subject_is_included,
         )
         if pull is None:
             continue
         pull_body = str(pull.get("body") or "")
-        if not subject_is_releasing and not OVERRIDE_RE.search(pull_body):
+        if not subject_is_included and not OVERRIDE_RE.search(pull_body):
             continue
         pull_number = int(pull["number"])
         pull_commits[pull_number].add(commit.sha)
-        entries = release_entries(commit.subject, commit.body, pull_body)
+        entries = release_entries(
+            commit.subject,
+            commit.body,
+            pull_body,
+            allowed_types=included_types,
+        )
         if not entries:
             continue
         contributors, issues, pull_visual = _change_contributors(
@@ -908,33 +928,37 @@ def build_manifest(
                 }
             )
 
-    if not changes:
+    if not changes and channel == "stable":
         raise ReleaseError(f"no releasing pull requests found for {tag}")
 
-    changelog_section = extract_changelog_section(changelog_path, version)
-    missing_prs = sorted(
-        {
-            int(change["pr"])
-            for change in changes
-            if not changelog_references_change(
-                changelog_section,
-                int(change["pr"]),
-                pull_commits[int(change["pr"])],
-            )
-        }
-    )
-    if missing_prs:
-        raise ReleaseError(f"changelog section is missing pull requests: {missing_prs}")
+    if channel == "stable":
+        changelog_content = extract_changelog_section(changelog_path, version)
+        missing_prs = sorted(
+            {
+                int(change["pr"])
+                for change in changes
+                if not changelog_references_change(
+                    changelog_content,
+                    int(change["pr"]),
+                    pull_commits[int(change["pr"])],
+                )
+            }
+        )
+        if missing_prs:
+            raise ReleaseError(f"changelog section is missing pull requests: {missing_prs}")
+    else:
+        changelog_content = changelog_path.read_text()
 
-    bump = release_bump(changes, version)
+    bump = release_bump(changes, version) if changes else "patch"
 
     owner, repo = repository.split("/", 1)
+    compare_target = actual_sha if channel == "nightly" else tag
     compare_url = (
-        f"https://github.com/{owner}/{repo}/compare/{quote(previous_tag)}...{quote(tag)}"
+        f"https://github.com/{owner}/{repo}/compare/{quote(previous_tag)}...{quote(compare_target)}"
         if previous_tag
         else f"https://github.com/{owner}/{repo}/releases/tag/{quote(tag)}"
     )
-    return {
+    manifest = {
         "schema": (
             f"https://raw.githubusercontent.com/{repository}/{actual_sha}/"
             ".github/release-manifest.schema.json"
@@ -951,16 +975,19 @@ def build_manifest(
         "compareUrl": compare_url,
         "changelog": {
             "path": changelog_path.relative_to(repo_root).as_posix(),
-            "sha256": sha256(changelog_section.encode()).hexdigest(),
+            "sha256": sha256(changelog_content.encode()).hexdigest(),
         },
-        "visualRequested": visual_requested or bump == "major",
+        "visualRequested": channel == "stable" and (visual_requested or bump == "major"),
         "changes": changes,
         "contributors": merge_contributors(all_contributors),
         "assets": asset_checksums(asset_dir),
     }
+    if channel == "nightly":
+        manifest["channel"] = "nightly"
+    return manifest
 
 
-def _thanks(change: Mapping[str, Any]) -> str:
+def format_change_thanks(change: Mapping[str, Any]) -> str:
     external: dict[str, Mapping[str, Any]] = {}
     reporters: dict[str, Mapping[str, Any]] = {}
     for item in change.get("contributors", []):
@@ -977,14 +1004,9 @@ def _thanks(change: Mapping[str, Any]) -> str:
 
     parts: list[str] = []
     if external:
-        parts.append(
-            "Thanks " + ", ".join(f"@{item['login']}" for item in external.values())
-        )
+        parts.append("Thanks " + ", ".join(f"@{item['login']}" for item in external.values()))
     if reporters:
-        parts.append(
-            "reported by "
-            + ", ".join(f"@{item['login']}" for item in reporters.values())
-        )
+        parts.append("reported by " + ", ".join(f"@{item['login']}" for item in reporters.values()))
     return "; ".join(parts)
 
 
@@ -1027,7 +1049,7 @@ def render_body(manifest: Mapping[str, Any], footer: str = "") -> str:
             continue
         lines.extend(["", f"## {TYPE_HEADINGS[change_type]}", ""])
         for change in grouped[change_type]:
-            suffix = _thanks(change)
+            suffix = format_change_thanks(change)
             bullet = (
                 f"- {change['summary']}. ([#{change['pr']}]({repository_url}/pull/{change['pr']}))"
             )
@@ -1144,6 +1166,7 @@ def collect_command(args: argparse.Namespace) -> None:
         release_ref=args.ref,
         exclude_paths=args.exclude_path,
         asset_dir=args.asset_dir.resolve() if args.asset_dir else None,
+        channel=args.channel,
     )
     write_json(args.output, manifest)
     print(f"wrote {args.output} with {len(manifest['changes'])} changes")
@@ -1240,6 +1263,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--config", type=Path, default=Path(".github/release-attribution-config.json")
     )
     collect.add_argument("--asset-dir", type=Path)
+    collect.add_argument("--channel", choices=("stable", "nightly"), default="stable")
     collect.add_argument("--output", type=Path, required=True)
 
     render = subparsers.add_parser("render")

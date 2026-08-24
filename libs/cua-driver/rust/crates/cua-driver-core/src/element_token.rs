@@ -386,7 +386,7 @@ pub fn resolve_element_args(
         (Some(_), None, None) => Err(refusal(
             "snapshot_id_required",
             format!(
-                "{tool_name}: bare element_index is not accepted in Cua Driver 0.17; pass element_token or snapshot_id with element_index"
+                "{tool_name}: bare element_index is not accepted; pass element_token, or snapshot_id together with element_index"
             ),
         )),
         (Some(idx), None, Some(snapshot_handle)) => {

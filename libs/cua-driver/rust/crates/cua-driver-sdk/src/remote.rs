@@ -136,6 +136,10 @@ impl RemoteDriverClient {
         exchange(&self.channel, "list", None, None).await
     }
 
+    pub(crate) async fn list_host_sessions(&self) -> Result<Value, DriverError> {
+        exchange(&self.channel, "sessions_list", None, None).await
+    }
+
     pub(crate) async fn invoke(&self, name: &str, arguments: Value) -> Result<Value, DriverError> {
         exchange(
             &self.channel,

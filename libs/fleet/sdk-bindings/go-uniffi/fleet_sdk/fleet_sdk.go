@@ -414,11 +414,29 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim()
+		})
+		if checksum != 17505 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim()
 		})
 		if checksum != 18984 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces()
+		})
+		if checksum != 65288 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -536,6 +554,33 @@ func uniffiCheckChecksums() {
 		if checksum != 18704 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key()
+		})
+		if checksum != 9174 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key()
+		})
+		if checksum != 1700 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys()
+		})
+		if checksum != 5949 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -1156,7 +1201,15 @@ type CyclopsClientInterface interface {
 	DeleteClaim(claim Claim) error
 	GetClaim(claim Claim) (Claim, error)
 	ListClaims(namespace string) ([]Claim, error)
+	// Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+	// expiry is the only liveness input the pool operator's claim reaper
+	// honors, so a holder that outlives its current lease must renew before
+	// the deadline passes or the bound sandbox is deleted underneath it.
+	// Deliberately narrower than a claim update: nothing else on the claim
+	// can be mutated through the SDK.
+	RenewClaim(claim Claim, shutdownTime string) (Claim, error)
 	WaitClaim(claim Claim) (Sandbox, error)
+	ListNamespaces() ([]Namespace, error)
 	CreatePool(request CreatePoolRequest) (Pool, error)
 	DeletePool(pool Pool) error
 	GetPool(name string) (Pool, error)
@@ -1170,6 +1223,9 @@ type CyclopsClientInterface interface {
 	ListTemplates(namespace string) ([]Template, error)
 	ReconcileTemplate(request CreateTemplateRequest) (Template, error)
 	UpdateTemplate(template Template) (Template, error)
+	CreateUserApiKey(request CreateUserApiKeyRequest) (NewUserApiKey, error)
+	DeleteUserApiKey(id string) error
+	ListUserApiKeys() ([]UserApiKey, error)
 }
 type CyclopsClient struct {
 	ffiObject FfiObject
@@ -1395,6 +1451,47 @@ func (_self *CyclopsClient) ListClaims(namespace string) ([]Claim, error) {
 	return res, err
 }
 
+// Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+// expiry is the only liveness input the pool operator's claim reaper
+// honors, so a holder that outlives its current lease must renew before
+// the deadline passes or the bound sandbox is deleted underneath it.
+// Deliberately narrower than a claim update: nothing else on the claim
+// can be mutated through the SDK.
+func (_self *CyclopsClient) RenewClaim(claim Claim, shutdownTime string) (Claim, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Claim {
+			return FfiConverterClaimINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(
+			_pointer, FfiConverterClaimINSTANCE.Lower(claim), FfiConverterStringINSTANCE.Lower(shutdownTime)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
 func (_self *CyclopsClient) WaitClaim(claim Claim) (Sandbox, error) {
 	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
 	defer _self.ffiObject.decrementPointer()
@@ -1413,6 +1510,41 @@ func (_self *CyclopsClient) WaitClaim(claim Claim) (Sandbox, error) {
 		},
 		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(
 			_pointer, FfiConverterClaimINSTANCE.Lower(claim)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) ListNamespaces() ([]Namespace, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) []Namespace {
+			return FfiConverterSequenceNamespaceINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(
+			_pointer),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
@@ -1876,6 +2008,107 @@ func (_self *CyclopsClient) UpdateTemplate(template Template) (Template, error) 
 
 	return res, err
 }
+
+func (_self *CyclopsClient) CreateUserApiKey(request CreateUserApiKeyRequest) (NewUserApiKey, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) NewUserApiKey {
+			return FfiConverterNewUserApiKeyINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(
+			_pointer, FfiConverterCreateUserApiKeyRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) DeleteUserApiKey(id string) error {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	_, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) struct{} {
+			C.ffi_cyclops_sdk_rust_future_complete_void(handle, status)
+			return struct{}{}
+		},
+		// liftFn
+		func(_ struct{}) struct{} { return struct{}{} },
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(
+			_pointer, FfiConverterStringINSTANCE.Lower(id)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_void(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_void(handle)
+		},
+	)
+
+	if err == nil {
+		return nil
+	}
+
+	return err
+}
+
+func (_self *CyclopsClient) ListUserApiKeys() ([]UserApiKey, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) []UserApiKey {
+			return FfiConverterSequenceUserApiKeyINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(
+			_pointer),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
 func (object *CyclopsClient) Destroy() {
 	runtime.SetFinalizer(object, nil)
 	object.ffiObject.destroy()
@@ -2263,11 +2496,16 @@ func (_ FfiDestroyerClaim) Destroy(value Claim) {
 type CreateClaimRequest struct {
 	Pool Pool
 	Spec *cyclops_sdk_schema.ClaimSpec
+	// Explicit claim name. A client-supplied name is used verbatim (after
+	// DNS-label validation); left unset, the client generates a random
+	// `claim-<petname>` so concurrent leases and retries cannot collide.
+	Name *string
 }
 
 func (r *CreateClaimRequest) Destroy() {
 	FfiDestroyerPool{}.Destroy(r.Pool)
 	FfiDestroyerOptionalClaimSpec{}.Destroy(r.Spec)
+	FfiDestroyerOptionalString{}.Destroy(r.Name)
 }
 
 type FfiConverterCreateClaimRequest struct{}
@@ -2282,6 +2520,7 @@ func (c FfiConverterCreateClaimRequest) Read(reader io.Reader) CreateClaimReques
 	return CreateClaimRequest{
 		FfiConverterPoolINSTANCE.Read(reader),
 		FfiConverterOptionalClaimSpecINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
 	}
 }
 
@@ -2296,6 +2535,7 @@ func (c FfiConverterCreateClaimRequest) LowerExternal(value CreateClaimRequest) 
 func (c FfiConverterCreateClaimRequest) Write(writer io.Writer, value CreateClaimRequest) {
 	FfiConverterPoolINSTANCE.Write(writer, value.Pool)
 	FfiConverterOptionalClaimSpecINSTANCE.Write(writer, value.Spec)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.Name)
 }
 
 type FfiDestroyerCreateClaimRequest struct{}
@@ -2393,6 +2633,50 @@ func (c FfiConverterCreateTemplateRequest) Write(writer io.Writer, value CreateT
 type FfiDestroyerCreateTemplateRequest struct{}
 
 func (_ FfiDestroyerCreateTemplateRequest) Destroy(value CreateTemplateRequest) {
+	value.Destroy()
+}
+
+type CreateUserApiKeyRequest struct {
+	Name  string
+	Scope []string
+}
+
+func (r *CreateUserApiKeyRequest) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Name)
+	FfiDestroyerSequenceString{}.Destroy(r.Scope)
+}
+
+type FfiConverterCreateUserApiKeyRequest struct{}
+
+var FfiConverterCreateUserApiKeyRequestINSTANCE = FfiConverterCreateUserApiKeyRequest{}
+
+func (c FfiConverterCreateUserApiKeyRequest) Lift(rb RustBufferI) CreateUserApiKeyRequest {
+	return LiftFromRustBuffer[CreateUserApiKeyRequest](c, rb)
+}
+
+func (c FfiConverterCreateUserApiKeyRequest) Read(reader io.Reader) CreateUserApiKeyRequest {
+	return CreateUserApiKeyRequest{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterSequenceStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterCreateUserApiKeyRequest) Lower(value CreateUserApiKeyRequest) C.RustBuffer {
+	return LowerIntoRustBuffer[CreateUserApiKeyRequest](c, value)
+}
+
+func (c FfiConverterCreateUserApiKeyRequest) LowerExternal(value CreateUserApiKeyRequest) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[CreateUserApiKeyRequest](c, value))
+}
+
+func (c FfiConverterCreateUserApiKeyRequest) Write(writer io.Writer, value CreateUserApiKeyRequest) {
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+	FfiConverterSequenceStringINSTANCE.Write(writer, value.Scope)
+}
+
+type FfiDestroyerCreateUserApiKeyRequest struct{}
+
+func (_ FfiDestroyerCreateUserApiKeyRequest) Destroy(value CreateUserApiKeyRequest) {
 	value.Destroy()
 }
 
@@ -2561,10 +2845,11 @@ func (_ FfiDestroyerHttpHeader) Destroy(value HttpHeader) {
 }
 
 type HttpRequest struct {
-	Method  string
-	Url     string
-	Headers []HttpHeader
-	Body    *[]byte
+	Method      string
+	Url         string
+	Headers     []HttpHeader
+	Body        *[]byte
+	TimeoutSecs *uint64
 }
 
 func (r *HttpRequest) Destroy() {
@@ -2572,6 +2857,7 @@ func (r *HttpRequest) Destroy() {
 	FfiDestroyerString{}.Destroy(r.Url)
 	FfiDestroyerSequenceHttpHeader{}.Destroy(r.Headers)
 	FfiDestroyerOptionalBytes{}.Destroy(r.Body)
+	FfiDestroyerOptionalUint64{}.Destroy(r.TimeoutSecs)
 }
 
 type FfiConverterHttpRequest struct{}
@@ -2588,6 +2874,7 @@ func (c FfiConverterHttpRequest) Read(reader io.Reader) HttpRequest {
 		FfiConverterStringINSTANCE.Read(reader),
 		FfiConverterSequenceHttpHeaderINSTANCE.Read(reader),
 		FfiConverterOptionalBytesINSTANCE.Read(reader),
+		FfiConverterOptionalUint64INSTANCE.Read(reader),
 	}
 }
 
@@ -2604,6 +2891,7 @@ func (c FfiConverterHttpRequest) Write(writer io.Writer, value HttpRequest) {
 	FfiConverterStringINSTANCE.Write(writer, value.Url)
 	FfiConverterSequenceHttpHeaderINSTANCE.Write(writer, value.Headers)
 	FfiConverterOptionalBytesINSTANCE.Write(writer, value.Body)
+	FfiConverterOptionalUint64INSTANCE.Write(writer, value.TimeoutSecs)
 }
 
 type FfiDestroyerHttpRequest struct{}
@@ -2657,6 +2945,114 @@ func (c FfiConverterHttpResponse) Write(writer io.Writer, value HttpResponse) {
 type FfiDestroyerHttpResponse struct{}
 
 func (_ FfiDestroyerHttpResponse) Destroy(value HttpResponse) {
+	value.Destroy()
+}
+
+type Namespace struct {
+	Name      string
+	Status    string
+	CreatedAt string
+	Labels    *map[string]string
+}
+
+func (r *Namespace) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Name)
+	FfiDestroyerString{}.Destroy(r.Status)
+	FfiDestroyerString{}.Destroy(r.CreatedAt)
+	FfiDestroyerOptionalMapStringString{}.Destroy(r.Labels)
+}
+
+type FfiConverterNamespace struct{}
+
+var FfiConverterNamespaceINSTANCE = FfiConverterNamespace{}
+
+func (c FfiConverterNamespace) Lift(rb RustBufferI) Namespace {
+	return LiftFromRustBuffer[Namespace](c, rb)
+}
+
+func (c FfiConverterNamespace) Read(reader io.Reader) Namespace {
+	return Namespace{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterOptionalMapStringStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterNamespace) Lower(value Namespace) C.RustBuffer {
+	return LowerIntoRustBuffer[Namespace](c, value)
+}
+
+func (c FfiConverterNamespace) LowerExternal(value Namespace) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[Namespace](c, value))
+}
+
+func (c FfiConverterNamespace) Write(writer io.Writer, value Namespace) {
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+	FfiConverterStringINSTANCE.Write(writer, value.Status)
+	FfiConverterStringINSTANCE.Write(writer, value.CreatedAt)
+	FfiConverterOptionalMapStringStringINSTANCE.Write(writer, value.Labels)
+}
+
+type FfiDestroyerNamespace struct{}
+
+func (_ FfiDestroyerNamespace) Destroy(value Namespace) {
+	value.Destroy()
+}
+
+type NewUserApiKey struct {
+	ClientId     string
+	ClientSecret string
+	TokenUrl     string
+	Name         string
+	Scope        []string
+}
+
+func (r *NewUserApiKey) Destroy() {
+	FfiDestroyerString{}.Destroy(r.ClientId)
+	FfiDestroyerString{}.Destroy(r.ClientSecret)
+	FfiDestroyerString{}.Destroy(r.TokenUrl)
+	FfiDestroyerString{}.Destroy(r.Name)
+	FfiDestroyerSequenceString{}.Destroy(r.Scope)
+}
+
+type FfiConverterNewUserApiKey struct{}
+
+var FfiConverterNewUserApiKeyINSTANCE = FfiConverterNewUserApiKey{}
+
+func (c FfiConverterNewUserApiKey) Lift(rb RustBufferI) NewUserApiKey {
+	return LiftFromRustBuffer[NewUserApiKey](c, rb)
+}
+
+func (c FfiConverterNewUserApiKey) Read(reader io.Reader) NewUserApiKey {
+	return NewUserApiKey{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterSequenceStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterNewUserApiKey) Lower(value NewUserApiKey) C.RustBuffer {
+	return LowerIntoRustBuffer[NewUserApiKey](c, value)
+}
+
+func (c FfiConverterNewUserApiKey) LowerExternal(value NewUserApiKey) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[NewUserApiKey](c, value))
+}
+
+func (c FfiConverterNewUserApiKey) Write(writer io.Writer, value NewUserApiKey) {
+	FfiConverterStringINSTANCE.Write(writer, value.ClientId)
+	FfiConverterStringINSTANCE.Write(writer, value.ClientSecret)
+	FfiConverterStringINSTANCE.Write(writer, value.TokenUrl)
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+	FfiConverterSequenceStringINSTANCE.Write(writer, value.Scope)
+}
+
+type FfiDestroyerNewUserApiKey struct{}
+
+func (_ FfiDestroyerNewUserApiKey) Destroy(value NewUserApiKey) {
 	value.Destroy()
 }
 
@@ -2724,15 +3120,17 @@ func (_ FfiDestroyerPool) Destroy(value Pool) {
 }
 
 type ResourceMetadata struct {
-	Namespace string
-	Name      string
-	Labels    *map[string]string
+	Namespace         string
+	Name              string
+	Labels            *map[string]string
+	CreationTimestamp *string
 }
 
 func (r *ResourceMetadata) Destroy() {
 	FfiDestroyerString{}.Destroy(r.Namespace)
 	FfiDestroyerString{}.Destroy(r.Name)
 	FfiDestroyerOptionalMapStringString{}.Destroy(r.Labels)
+	FfiDestroyerOptionalString{}.Destroy(r.CreationTimestamp)
 }
 
 type FfiConverterResourceMetadata struct{}
@@ -2748,6 +3146,7 @@ func (c FfiConverterResourceMetadata) Read(reader io.Reader) ResourceMetadata {
 		FfiConverterStringINSTANCE.Read(reader),
 		FfiConverterStringINSTANCE.Read(reader),
 		FfiConverterOptionalMapStringStringINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
 	}
 }
 
@@ -2763,6 +3162,7 @@ func (c FfiConverterResourceMetadata) Write(writer io.Writer, value ResourceMeta
 	FfiConverterStringINSTANCE.Write(writer, value.Namespace)
 	FfiConverterStringINSTANCE.Write(writer, value.Name)
 	FfiConverterOptionalMapStringStringINSTANCE.Write(writer, value.Labels)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.CreationTimestamp)
 }
 
 type FfiDestroyerResourceMetadata struct{}
@@ -2874,6 +3274,58 @@ func (c FfiConverterTemplate) Write(writer io.Writer, value Template) {
 type FfiDestroyerTemplate struct{}
 
 func (_ FfiDestroyerTemplate) Destroy(value Template) {
+	value.Destroy()
+}
+
+type UserApiKey struct {
+	Id       string
+	ClientId string
+	Name     string
+	Scope    []string
+}
+
+func (r *UserApiKey) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Id)
+	FfiDestroyerString{}.Destroy(r.ClientId)
+	FfiDestroyerString{}.Destroy(r.Name)
+	FfiDestroyerSequenceString{}.Destroy(r.Scope)
+}
+
+type FfiConverterUserApiKey struct{}
+
+var FfiConverterUserApiKeyINSTANCE = FfiConverterUserApiKey{}
+
+func (c FfiConverterUserApiKey) Lift(rb RustBufferI) UserApiKey {
+	return LiftFromRustBuffer[UserApiKey](c, rb)
+}
+
+func (c FfiConverterUserApiKey) Read(reader io.Reader) UserApiKey {
+	return UserApiKey{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterSequenceStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterUserApiKey) Lower(value UserApiKey) C.RustBuffer {
+	return LowerIntoRustBuffer[UserApiKey](c, value)
+}
+
+func (c FfiConverterUserApiKey) LowerExternal(value UserApiKey) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[UserApiKey](c, value))
+}
+
+func (c FfiConverterUserApiKey) Write(writer io.Writer, value UserApiKey) {
+	FfiConverterStringINSTANCE.Write(writer, value.Id)
+	FfiConverterStringINSTANCE.Write(writer, value.ClientId)
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+	FfiConverterSequenceStringINSTANCE.Write(writer, value.Scope)
+}
+
+type FfiDestroyerUserApiKey struct{}
+
+func (_ FfiDestroyerUserApiKey) Destroy(value UserApiKey) {
 	value.Destroy()
 }
 
@@ -3578,6 +4030,47 @@ func (_ FfiDestroyerSdkError) Destroy(value *SdkError) {
 	}
 }
 
+type FfiConverterOptionalString struct{}
+
+var FfiConverterOptionalStringINSTANCE = FfiConverterOptionalString{}
+
+func (c FfiConverterOptionalString) Lift(rb RustBufferI) *string {
+	return LiftFromRustBuffer[*string](c, rb)
+}
+
+func (_ FfiConverterOptionalString) Read(reader io.Reader) *string {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterStringINSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalString) Lower(value *string) C.RustBuffer {
+	return LowerIntoRustBuffer[*string](c, value)
+}
+
+func (c FfiConverterOptionalString) LowerExternal(value *string) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*string](c, value))
+}
+
+func (_ FfiConverterOptionalString) Write(writer io.Writer, value *string) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterStringINSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalString struct{}
+
+func (_ FfiDestroyerOptionalString) Destroy(value *string) {
+	if value != nil {
+		FfiDestroyerString{}.Destroy(*value)
+	}
+}
+
 type FfiConverterOptionalBytes struct{}
 
 var FfiConverterOptionalBytesINSTANCE = FfiConverterOptionalBytes{}
@@ -3616,6 +4109,47 @@ type FfiDestroyerOptionalBytes struct{}
 func (_ FfiDestroyerOptionalBytes) Destroy(value *[]byte) {
 	if value != nil {
 		FfiDestroyerBytes{}.Destroy(*value)
+	}
+}
+
+type FfiConverterOptionalUint64 struct{}
+
+var FfiConverterOptionalUint64INSTANCE = FfiConverterOptionalUint64{}
+
+func (c FfiConverterOptionalUint64) Lift(rb RustBufferI) *uint64 {
+	return LiftFromRustBuffer[*uint64](c, rb)
+}
+
+func (_ FfiConverterOptionalUint64) Read(reader io.Reader) *uint64 {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterUint64INSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalUint64) Lower(value *uint64) C.RustBuffer {
+	return LowerIntoRustBuffer[*uint64](c, value)
+}
+
+func (c FfiConverterOptionalUint64) LowerExternal(value *uint64) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*uint64](c, value))
+}
+
+func (_ FfiConverterOptionalUint64) Write(writer io.Writer, value *uint64) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterUint64INSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalUint64 struct{}
+
+func (_ FfiDestroyerOptionalUint64) Destroy(value *uint64) {
+	if value != nil {
+		FfiDestroyerUint64{}.Destroy(*value)
 	}
 }
 
@@ -3924,6 +4458,53 @@ func (FfiDestroyerSequenceHttpHeader) Destroy(sequence []HttpHeader) {
 	}
 }
 
+type FfiConverterSequenceNamespace struct{}
+
+var FfiConverterSequenceNamespaceINSTANCE = FfiConverterSequenceNamespace{}
+
+func (c FfiConverterSequenceNamespace) Lift(rb RustBufferI) []Namespace {
+	return LiftFromRustBuffer[[]Namespace](c, rb)
+}
+
+func (c FfiConverterSequenceNamespace) Read(reader io.Reader) []Namespace {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]Namespace, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, FfiConverterNamespaceINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequenceNamespace) Lower(value []Namespace) C.RustBuffer {
+	return LowerIntoRustBuffer[[]Namespace](c, value)
+}
+
+func (c FfiConverterSequenceNamespace) LowerExternal(value []Namespace) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]Namespace](c, value))
+}
+
+func (c FfiConverterSequenceNamespace) Write(writer io.Writer, value []Namespace) {
+	if len(value) > math.MaxInt32 {
+		panic("[]Namespace is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		FfiConverterNamespaceINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequenceNamespace struct{}
+
+func (FfiDestroyerSequenceNamespace) Destroy(sequence []Namespace) {
+	for _, value := range sequence {
+		FfiDestroyerNamespace{}.Destroy(value)
+	}
+}
+
 type FfiConverterSequencePool struct{}
 
 var FfiConverterSequencePoolINSTANCE = FfiConverterSequencePool{}
@@ -4015,6 +4596,53 @@ type FfiDestroyerSequenceTemplate struct{}
 func (FfiDestroyerSequenceTemplate) Destroy(sequence []Template) {
 	for _, value := range sequence {
 		FfiDestroyerTemplate{}.Destroy(value)
+	}
+}
+
+type FfiConverterSequenceUserApiKey struct{}
+
+var FfiConverterSequenceUserApiKeyINSTANCE = FfiConverterSequenceUserApiKey{}
+
+func (c FfiConverterSequenceUserApiKey) Lift(rb RustBufferI) []UserApiKey {
+	return LiftFromRustBuffer[[]UserApiKey](c, rb)
+}
+
+func (c FfiConverterSequenceUserApiKey) Read(reader io.Reader) []UserApiKey {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]UserApiKey, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, FfiConverterUserApiKeyINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequenceUserApiKey) Lower(value []UserApiKey) C.RustBuffer {
+	return LowerIntoRustBuffer[[]UserApiKey](c, value)
+}
+
+func (c FfiConverterSequenceUserApiKey) LowerExternal(value []UserApiKey) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]UserApiKey](c, value))
+}
+
+func (c FfiConverterSequenceUserApiKey) Write(writer io.Writer, value []UserApiKey) {
+	if len(value) > math.MaxInt32 {
+		panic("[]UserApiKey is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		FfiConverterUserApiKeyINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequenceUserApiKey struct{}
+
+func (FfiDestroyerSequenceUserApiKey) Destroy(sequence []UserApiKey) {
+	for _, value := range sequence {
+		FfiDestroyerUserApiKey{}.Destroy(value)
 	}
 }
 

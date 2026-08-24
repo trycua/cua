@@ -7,6 +7,7 @@
     "manage-vms",
     "expand-vm-disk",
     "change-sip",
+    "gpu-passthrough",
     "serve-api",
     "use-mcp-server"
   ]

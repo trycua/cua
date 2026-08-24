@@ -1,0 +1,6 @@
+2026-08-09 12:42:20.357 python[2758:55059] [LumeMetalCapabilities] Enabled for python (familyMax=5001 featureProfile=10 maxThreadgroupMemory=65536)
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+RuntimeError: [metal::Device] Unable to construct residency set.
+Exception ignored in atexit callback: <nanobind.nb_func object at 0x108997bc0>
+RuntimeError: [metal::Device] Unable to construct residency set.

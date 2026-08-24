@@ -2,21 +2,25 @@ import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useCollection } from "@cloudscape-design/collection-hooks"
 import Box from "@cloudscape-design/components/box"
-import Button from "@cloudscape-design/components/button"
-import Header from "@cloudscape-design/components/header"
 import Link from "@cloudscape-design/components/link"
+import Modal from "@cloudscape-design/components/modal"
+import designTokens from "@cua/design/tokens.json"
 import Pagination from "@cloudscape-design/components/pagination"
 import PropertyFilter from "@cloudscape-design/components/property-filter"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
-import { api } from "../api/cyclops"
+import { deletePool, getPool, listPools } from "../sdk/pools"
+import { localVisualPreviewPath } from "../local-visual-preview"
 import {
   derivePoolStatus,
   reconcileTombstones,
   tombstonePool,
-} from "../api/pools"
+} from "../sdk/status"
 import { PoolStatusPill } from "../components/PoolStatus"
 import { useFlash } from "../components/FlashContext"
+import { CuaButton } from "../components/CuaButton"
+import { PageEmpty } from "../components/PageState"
+import { PageShell } from "../components/PageShell"
 
 interface PoolRow {
   name: string
@@ -35,11 +39,26 @@ export function PoolsList() {
   const [selected, setSelected] = useState<PoolRow[]>([])
   const [busy, setBusy] = useState(false)
   const [duplicating, setDuplicating] = useState(false)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [compactTable, setCompactTable] = useState(
+    () => window.matchMedia(
+      `(max-width: ${designTokens.layout.breakpoint.mobile - 1}px)`,
+    ).matches,
+  )
+
+  useEffect(() => {
+    const query = window.matchMedia(
+      `(max-width: ${designTokens.layout.breakpoint.mobile - 1}px)`,
+    )
+    const update = () => setCompactTable(query.matches)
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [])
 
   const load = async () => {
     setLoading(true)
     try {
-      const poolList = await api.listPools()
+      const poolList = await listPools()
       reconcileTombstones(poolList.map(p => p.name))
       setRows(
         poolList.map(p => ({
@@ -65,13 +84,14 @@ export function PoolsList() {
     if (selected.length === 0) return
     setBusy(true)
     try {
-      await Promise.all(selected.map(p => api.deletePool(p.namespace, p.name)))
+      await Promise.all(selected.map(p => deletePool(p.namespace, p.name)))
       for (const p of selected) tombstonePool(p.name)
       flash.push({
         type: "success",
         header: `Deleted ${selected.length} pool${selected.length > 1 ? "s" : ""}`,
       })
       setSelected([])
+      setConfirmDeleteOpen(false)
       await load()
     } catch (e) {
       flash.push({
@@ -93,7 +113,7 @@ export function PoolsList() {
     if (!src) return
     setDuplicating(true)
     try {
-      const full = await api.getPool(src.namespace, src.name)
+      const full = await getPool(src.namespace, src.name)
       navigate("/pools/new", { state: { source: full } })
     } catch (e) {
       flash.push({
@@ -112,7 +132,6 @@ export function PoolsList() {
     propertyFilterProps,
     filteredItemsCount,
     paginationProps,
-    actions,
   } = useCollection(rows, {
     propertyFiltering: {
       filteringProperties: [
@@ -121,25 +140,19 @@ export function PoolsList() {
         { key: "statusText", propertyLabel: "Status",     groupValuesLabel: "Status values",     operators: ["=", "!="] },
       ],
       empty: (
-        <Box textAlign="center" padding="m">
-          <SpaceBetween size="xs">
-            <b>No pools</b>
-            <Box variant="p" color="text-body-secondary">
-              Create one to get started.
-            </Box>
-            <Button onClick={() => navigate("/pools/new")}>New pool</Button>
-          </SpaceBetween>
-        </Box>
+        <PageEmpty
+          title="No pools"
+          action={
+            <CuaButton tone="primary" onClick={() => navigate("/pools/new")}>
+              New pool
+            </CuaButton>
+          }
+        >
+          Create one to get started.
+        </PageEmpty>
       ),
       noMatch: (
-        <Box textAlign="center" color="text-body-secondary" padding="m">
-          <SpaceBetween size="xs">
-            <b>No matches</b>
-            <Button onClick={() => actions.setPropertyFiltering({ tokens: [], operation: "and" })}>
-              Clear filter
-            </Button>
-          </SpaceBetween>
-        </Box>
+        <PageEmpty title="No matches" />
       ),
     },
     pagination: { pageSize: 25 },
@@ -147,41 +160,72 @@ export function PoolsList() {
   })
 
   return (
-      <Table
+    <PageShell
+      eyebrow="Fleet"
+      title="Pools"
+      counter={loading ? undefined : `(${rows.length})`}
+      secondaryActions={
+        <SpaceBetween direction="horizontal" size="xs">
+          <CuaButton
+            tone="icon"
+            ariaLabel="Refresh pools"
+            iconName="refresh"
+            onClick={load}
+            disabled={loading}
+          />
+        </SpaceBetween>
+      }
+      primaryAction={
+        <CuaButton
+          tone="primary"
+          onClick={() => navigate(localVisualPreviewPath("/pools/new"))}
+        >
+          New pool
+        </CuaButton>
+      }
+    >
+      {selected.length > 0 ? (
+        <div className="cua-selection-actions" aria-live="polite">
+          <span>
+            {selected.length} pool{selected.length === 1 ? "" : "s"} selected
+          </span>
+          <SpaceBetween direction="horizontal" size="xs">
+            <CuaButton
+              disabled={selected.length !== 1 || duplicating}
+              loading={duplicating}
+              onClick={duplicate}
+            >
+              Duplicate
+            </CuaButton>
+            <CuaButton
+              disabled={busy}
+              loading={busy}
+              onClick={() => setConfirmDeleteOpen(true)}
+            >
+              Delete
+            </CuaButton>
+          </SpaceBetween>
+        </div>
+      ) : null}
+      <section
+        className="cua-page-table"
+        aria-label="Pools table"
+      >
+        <Table
         {...collectionProps}
-        header={
-          <Header
-            variant="h1"
-            counter={loading ? undefined : `(${rows.length})`}
-            actions={
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" onClick={load} disabled={loading} />
-                <Button
-                  disabled={selected.length !== 1 || duplicating}
-                  loading={duplicating}
-                  onClick={duplicate}
-                >
-                  Duplicate
-                </Button>
-                <Button
-                  disabled={selected.length === 0 || busy}
-                  loading={busy}
-                  onClick={removeSelected}
-                >
-                  Delete
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => navigate("/pools/new")}
-                >
-                  New pool
-                </Button>
-              </SpaceBetween>
-            }
-          >
-            Pools
-          </Header>
-        }
+        ariaLabels={{
+          tableLabel: "Pools",
+          selectionGroupLabel: "Pool selection",
+          allItemsSelectionLabel: ({ selectedItems }) =>
+            selectedItems.length === items.length && items.length > 0
+              ? "Deselect all pools"
+              : "Select all pools",
+          itemSelectionLabel: ({ selectedItems }, item) =>
+            selectedItems.includes(item)
+              ? `Deselect pool ${item.name}`
+              : `Select pool ${item.name}`,
+        }}
+        variant="borderless"
         items={items}
         loading={loading}
         loadingText="Loading pools"
@@ -204,44 +248,106 @@ export function PoolsList() {
             }}
           />
         }
-        pagination={<Pagination {...paginationProps} />}
+        pagination={
+          <Pagination
+            {...paginationProps}
+            ariaLabels={{
+              paginationLabel: "Pools pagination",
+              previousPageLabel: "Previous page",
+              nextPageLabel: "Next page",
+              pageLabel: pageNumber => `Page ${pageNumber}`,
+            }}
+          />
+        }
+        stickyColumns={{ first: 1, last: 1 }}
+        columnDisplay={[
+          { id: "name", visible: true },
+          { id: "replicas", visible: !compactTable },
+          { id: "available", visible: !compactTable },
+          { id: "capacity", visible: compactTable },
+          { id: "status", visible: true },
+        ]}
         columnDefinitions={[
           {
             id: "name",
             header: "Name",
             cell: p => (
               <Link
-                href={`#/pools/${p.namespace}/${p.name}`}
+                href={`#${localVisualPreviewPath(`/pools/${p.namespace}/${p.name}`)}`}
                 onFollow={e => {
                   e.preventDefault()
-                  navigate(`/pools/${p.namespace}/${p.name}`)
+                  navigate(
+                    localVisualPreviewPath(`/pools/${p.namespace}/${p.name}`),
+                  )
                 }}
               >
-                {p.name}
+                <span className="cua-pool-name" title={p.name}>{p.name}</span>
               </Link>
             ),
             sortingField: "name",
             isRowHeader: true,
+            minWidth: compactTable ? 112 : 220,
+            width: compactTable ? 120 : undefined,
+            maxWidth: compactTable ? 120 : undefined,
           },
           {
             id: "replicas",
             header: "Replicas",
             cell: p => p.replicas,
             sortingField: "replicas",
+            minWidth: 96,
           },
           {
             id: "available",
             header: "Available",
             cell: p => p.availableCount,
             sortingField: "availableCount",
+            minWidth: 96,
+          },
+          {
+            id: "capacity",
+            header: "Available",
+            cell: p => `${p.availableCount}/${p.replicas}`,
+            minWidth: 72,
+            width: 72,
+            maxWidth: 72,
           },
           {
             id: "status",
             header: "Status",
-            cell: p => <PoolStatusPill status={derivePoolStatus(p)} />,
-            sortingField: "statusText",
+            cell: p => (
+              <PoolStatusPill
+                status={derivePoolStatus(p)}
+                compact={compactTable}
+              />
+            ),
+            sortingField: compactTable ? undefined : "statusText",
+            minWidth: compactTable ? 60 : 140,
+            width: compactTable ? 60 : undefined,
+            maxWidth: compactTable ? 60 : undefined,
           },
         ]}
-      />
+        />
+      </section>
+      <Modal
+        visible={confirmDeleteOpen}
+        onDismiss={() => setConfirmDeleteOpen(false)}
+        header={`Delete ${selected.length} pool${selected.length === 1 ? "" : "s"}?`}
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <CuaButton onClick={() => setConfirmDeleteOpen(false)}>
+                Cancel
+              </CuaButton>
+              <CuaButton tone="danger" onClick={removeSelected} loading={busy}>
+                Delete
+              </CuaButton>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        This action cannot be undone.
+      </Modal>
+    </PageShell>
   )
 }

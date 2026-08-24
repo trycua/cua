@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Patch version to publish (without v prefix)"
+        description: "Canonical cua-fleet version to publish"
         required: true
-        default: "0.0.10"
+        default: "0.1.14"
   workflow_call:
     inputs:
       version:
-        description: "Patch version to publish"
+        description: "Canonical cua-fleet version to publish"
         required: true
         type: string
     secrets:
@@ -29,7 +29,7 @@ jobs:
     outputs:
       version: ${{ steps.get-version.outputs.version }}
     steps:
-      - name: Determine and validate patch version
+      - name: Determine and validate canonical version
         id: get-version
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -49,36 +49,15 @@ jobs:
             exit 1
           fi
 
-          curl --fail --silent --show-error --location \
-            https://pypi.org/pypi/cua-fleet/json > /tmp/cua-fleet-pypi.json
-          python3 - "$VERSION" /tmp/cua-fleet-pypi.json <<'PY'
-          import json
-          import re
-          import sys
-
-          version, metadata_path = sys.argv[1:]
-          if not re.fullmatch(r"0\.0\.[0-9]+", version):
-              raise SystemExit("cua-fleet releases must be 0.0.x patches")
-
-          releases = json.load(open(metadata_path))["releases"]
-          stable = sorted(
-              int(match.group(1))
-              for candidate in releases
-              if (match := re.fullmatch(r"0\.0\.([0-9]+)", candidate))
-          )
-          if not stable:
-              raise SystemExit("PyPI does not contain a stable cua-fleet patch release")
-          latest = stable[-1]
-          proposed = int(version.rsplit(".", 1)[1])
-          if proposed not in {latest, latest + 1}:
-              raise SystemExit(f"expected 0.0.{latest + 1}, got {version}")
-          print(f"Validated cua-fleet patch version {version}")
-          PY
+          if [[ "$VERSION" != "0.1.14" ]]; then
+            echo "::error::This workflow promotes the hash-pinned cua-fleet 0.1.14 wheel set, not $VERSION."
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-  repackage:
+  promote:
     needs: prepare
-    name: Repackage ${{ matrix.platform }} wheel
+    name: Promote ${{ matrix.platform }} wheel
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -86,28 +65,34 @@ jobs:
         include:
           - platform: linux-x86_64
             runner: ubuntu-22.04
-            wheel: cua_train-0.1.6-py3-none-manylinux_2_34_x86_64.whl
-            sha256: 418db974949f4020fae2f3ed2f5a8d0db6ddce38e34f5db89283ac479d816a55
-            library_suffix: .so
+            wheel: cua_fleet-0.1.14-py3-none-manylinux_2_34_x86_64.whl
+            sha256: 2dc70e98b3e8c691bf0fff0494b0a85d2405e872f1ca99dbfa2680473cea565b
+            native_library: libcyclops_sdk.so
             audit: auditwheel
           - platform: linux-aarch64
             runner: ubuntu-24.04-arm
-            wheel: cua_train-0.1.6-py3-none-manylinux_2_34_aarch64.whl
-            sha256: 80526bf94ed535383b3dddd9a7da800da9fcb32837c21c2e2caa39390e3548c9
-            library_suffix: .so
+            wheel: cua_fleet-0.1.14-py3-none-manylinux_2_34_aarch64.whl
+            sha256: d6ea25902cf9ffc89779530b6ae7cff5413383ea7dc3c632a4fb47e00699a6d4
+            native_library: libcyclops_sdk.so
             audit: auditwheel
           - platform: macos-x86_64
             runner: macos-15-intel
-            wheel: cua_train-0.1.6-py3-none-macosx_10_12_x86_64.whl
-            sha256: 87cb4220054514ac5f44118d490ae404fbca5c97d2b964cd4fcaf1facd391fc0
-            library_suffix: .dylib
+            wheel: cua_fleet-0.1.14-py3-none-macosx_10_12_x86_64.whl
+            sha256: d370f83773574da8edcca080e9d86aec8eb7ed758d6c551b900482a8575f6810
+            native_library: libcyclops_sdk.dylib
             audit: delocate
           - platform: macos-arm64
             runner: macos-14
-            wheel: cua_train-0.1.6-py3-none-macosx_11_0_arm64.whl
-            sha256: 17563c0504c9270e570332924f3092faec3dcdbf48557a70ee830e165ac7751c
-            library_suffix: .dylib
+            wheel: cua_fleet-0.1.14-py3-none-macosx_11_0_arm64.whl
+            sha256: e19784c0ce8aa2d9a77bf096fc6ff10e990842f05c67bdfb96a16ecd5e7123e2
+            native_library: libcyclops_sdk.dylib
             audit: delocate
+          - platform: windows-x86_64
+            runner: windows-latest
+            wheel: cua_fleet-0.1.14-py3-none-win_amd64.whl
+            sha256: 3e73327b7c99dc95a4b4194628d3575a8707cab77d6929ed1bf34a82192a4464
+            native_library: cyclops_sdk.dll
+            audit: none
     steps:
       - uses: actions/checkout@v4
 
@@ -116,50 +101,54 @@ jobs:
           python-version: "3.11"
 
       - name: Download and verify canonical native wheel
+        shell: bash
         env:
           WHEEL: ${{ matrix.wheel }}
           SHA256: ${{ matrix.sha256 }}
         run: |
           set -euo pipefail
+          mkdir -p dist
           curl --fail --location --retry 3 \
-            --output "$WHEEL" \
-            "https://wheels.cua.ai/simple/cua-train/$WHEEL"
+            --output "dist/$WHEEL" \
+            "https://wheels.cua.ai/simple/cua-fleet/$WHEEL"
+          python - "$SHA256" "dist/$WHEEL" <<'PY'
+          import hashlib
+          from pathlib import Path
+          import sys
 
-      - name: Repackage as cua-fleet
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          WHEEL: ${{ matrix.wheel }}
-          SHA256: ${{ matrix.sha256 }}
-        run: |
-          python .github/scripts/repackage_cua_train_wheel.py \
-            --source "$WHEEL" \
-            --expected-sha256 "$SHA256" \
-            --destination-version "$VERSION" \
-            --outdir dist
-          python .github/scripts/repackage_cua_train_wheel.py --verify dist/*.whl
+          expected, wheel_path = sys.argv[1:]
+          actual = hashlib.sha256(Path(wheel_path).read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"SHA-256 mismatch for {wheel_path}: expected {expected}, got {actual}")
+          PY
 
       - name: Audit native dependencies without modifying the wheel
+        if: matrix.audit != 'none'
+        shell: bash
         env:
           AUDIT: ${{ matrix.audit }}
+          WHEEL: ${{ matrix.wheel }}
         run: |
           set -euo pipefail
           if [[ "$AUDIT" == "auditwheel" ]]; then
             python -m pip install --upgrade auditwheel
-            auditwheel show dist/*.whl
+            auditwheel show "dist/$WHEEL"
           else
             python -m pip install --upgrade delocate
-            delocate-listdeps dist/*.whl
+            delocate-listdeps "dist/$WHEEL"
           fi
 
-      - name: Install only the promoted wheel and load native bindings
+      - name: Install promoted wheel and load native bindings
+        shell: bash
         env:
-          LIBRARY_SUFFIX: ${{ matrix.library_suffix }}
+          WHEEL: ${{ matrix.wheel }}
+          NATIVE_LIBRARY: ${{ matrix.native_library }}
         run: |
           set -euo pipefail
-          python -m venv /tmp/cua-fleet-wheel-smoke
-          /tmp/cua-fleet-wheel-smoke/bin/pip install --no-index --no-deps dist/*.whl
-          /tmp/cua-fleet-wheel-smoke/bin/python - "$LIBRARY_SUFFIX" <<'PY'
+          python -m pip install --no-index --no-deps --target wheel-smoke "dist/$WHEEL"
+          PYTHONPATH=wheel-smoke python - "$NATIVE_LIBRARY" <<'PY'
           import ctypes
+          import os
           from pathlib import Path
           import sys
 
@@ -180,7 +169,10 @@ jobs:
           )
 
           package = Path(fleet_sdk.__file__).resolve().parent
-          native = package / f"libcyclops_sdk{sys.argv[1]}"
+          dll_directory = None
+          if os.name == "nt":
+              dll_directory = os.add_dll_directory(str(package))
+          native = package / sys.argv[1]
           assert native.is_file(), native
           ctypes.CDLL(str(native))
           assert all((
@@ -199,21 +191,30 @@ jobs:
           ))
           PY
 
-      - name: Exercise the example startup boundary without credentials
+      - name: Exercise example startup boundary without credentials
+        shell: bash
         run: |
-          set +e
-          env -i PATH="$PATH" HOME="$HOME" \
-            /tmp/cua-fleet-wheel-smoke/bin/python \
-            libs/fleet/sdk-bindings/examples/python/live_app_controlled.py \
-            > /tmp/live-app.stdout 2> /tmp/live-app.stderr
-          status=$?
-          set -e
-          test "$status" -ne 0
-          grep -Fq "KeyError: 'CUA_CLIENT_ID'" /tmp/live-app.stderr
-          if grep -Eq "ModuleNotFoundError|cannot open shared object|Library not loaded" /tmp/live-app.stderr; then
-            cat /tmp/live-app.stderr
-            exit 1
-          fi
+          set -euo pipefail
+          PYTHONPATH=wheel-smoke python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          environment = os.environ.copy()
+          environment.pop("CUA_CLIENT_ID", None)
+          environment.pop("CUA_CLIENT_SECRET", None)
+          result = subprocess.run(
+              [sys.executable, "libs/fleet/sdk-bindings/examples/python/live_app_controlled.py"],
+              env=environment,
+              capture_output=True,
+              text=True,
+          )
+          assert result.returncode != 0, result.stdout
+          assert "KeyError: 'CUA_CLIENT_ID'" in result.stderr, result.stderr
+          native_errors = ("ModuleNotFoundError", "cannot open shared object", "Library not loaded")
+          assert not any(error in result.stderr for error in native_errors), result.stderr
+          PY
 
       - uses: actions/upload-artifact@v4
         with:
@@ -222,10 +223,9 @@ jobs:
           if-no-files-found: error
 
   validate:
-    needs: [prepare, repackage]
+    needs: [prepare, promote]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -233,43 +233,41 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Verify four promoted wheels and packaging metadata
+      - name: Verify five promoted wheels and packaging metadata
         run: |
           set -euo pipefail
           python -m pip install --upgrade twine
           python -m twine check dist/*.whl
-          python .github/scripts/repackage_cua_train_wheel.py --verify dist/*.whl
           python - "${{ needs.prepare.outputs.version }}" dist <<'PY'
+          import hashlib
           from pathlib import Path
           import sys
+          from zipfile import ZipFile
 
           version, dist_directory = sys.argv[1:]
-          wheels = sorted(Path(dist_directory).glob("*.whl"))
           expected = {
-              f"cua_fleet-{version}-py3-none-manylinux_2_34_x86_64.whl",
-              f"cua_fleet-{version}-py3-none-manylinux_2_34_aarch64.whl",
-              f"cua_fleet-{version}-py3-none-macosx_10_12_x86_64.whl",
-              f"cua_fleet-{version}-py3-none-macosx_11_0_arm64.whl",
+              f"cua_fleet-{version}-py3-none-manylinux_2_34_x86_64.whl": "2dc70e98b3e8c691bf0fff0494b0a85d2405e872f1ca99dbfa2680473cea565b",
+              f"cua_fleet-{version}-py3-none-manylinux_2_34_aarch64.whl": "d6ea25902cf9ffc89779530b6ae7cff5413383ea7dc3c632a4fb47e00699a6d4",
+              f"cua_fleet-{version}-py3-none-macosx_10_12_x86_64.whl": "d370f83773574da8edcca080e9d86aec8eb7ed758d6c551b900482a8575f6810",
+              f"cua_fleet-{version}-py3-none-macosx_11_0_arm64.whl": "e19784c0ce8aa2d9a77bf096fc6ff10e990842f05c67bdfb96a16ecd5e7123e2",
+              f"cua_fleet-{version}-py3-none-win_amd64.whl": "3e73327b7c99dc95a4b4194628d3575a8707cab77d6929ed1bf34a82192a4464",
           }
-          actual = {wheel.name for wheel in wheels}
-          assert actual == expected, (actual, expected)
+          wheels = {wheel.name: wheel for wheel in Path(dist_directory).glob("*.whl")}
+          assert set(wheels) == set(expected), (set(wheels), set(expected))
+          for name, digest in expected.items():
+              wheel = wheels[name]
+              assert hashlib.sha256(wheel.read_bytes()).hexdigest() == digest, name
+              with ZipFile(wheel) as archive:
+                  metadata_name = next(
+                      candidate for candidate in archive.namelist() if candidate.endswith(".dist-info/METADATA")
+                  )
+                  metadata = archive.read(metadata_name).decode()
+                  assert "Name: cua-fleet\n" in metadata, name
+                  assert f"Version: {version}\n" in metadata, name
           PY
 
-  unsupported-windows:
-    needs: [prepare, repackage]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Reject native wheels on Windows
-        shell: pwsh
-        run: |
-          python -c "import subprocess, sys; result = subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-index', '--no-deps', '--find-links', 'dist', 'cua-fleet==${{ needs.prepare.outputs.version }}']); raise SystemExit('Windows unexpectedly resolved a native cua-fleet wheel' if result.returncode == 0 else 0)"
-
   publish:
-    needs: [prepare, validate, unsupported-windows]
+    needs: [prepare, validate]
     runs-on: ubuntu-latest
     environment: pypi-fleet
     steps:
@@ -291,13 +289,21 @@ jobs:
           import sys
 
           version, dist_dir, metadata_path = sys.argv[1:]
-          expected = {wheel.name: hashlib.sha256(wheel.read_bytes()).hexdigest() for wheel in Path(dist_dir).glob("*.whl")}
+          expected = {
+              wheel.name: hashlib.sha256(wheel.read_bytes()).hexdigest()
+              for wheel in Path(dist_dir).glob("*.whl")
+          }
           releases = json.load(open(metadata_path))["releases"]
-          existing = {item["filename"]: item["digests"]["sha256"] for item in releases.get(version, [])}
+          existing = {
+              item["filename"]: item["digests"]["sha256"]
+              for item in releases.get(version, [])
+          }
           unexpected = set(existing) - set(expected)
           mismatched = {name for name, digest in existing.items() if expected.get(name) != digest}
           if unexpected or mismatched:
-              raise SystemExit(f"PyPI {version} conflicts: unexpected={unexpected}, mismatched={mismatched}")
+              raise SystemExit(
+                  f"PyPI {version} conflicts: unexpected={unexpected}, mismatched={mismatched}"
+              )
           missing = sorted(set(expected) - set(existing))
           Path("/tmp/cua-fleet-missing-wheels.txt").write_text("\n".join(missing))
           PY

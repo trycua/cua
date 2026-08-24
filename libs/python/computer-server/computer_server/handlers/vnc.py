@@ -24,6 +24,7 @@ import logging
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..backend_policy import vnc_unsupported_result
 from .base import BaseAccessibilityHandler, BaseAutomationHandler
 
 logger = logging.getLogger(__name__)
@@ -563,7 +564,17 @@ class VNCAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Clipboard and run_command inherited from BaseAutomationHandler
+    # VNC has no clipboard or shell channel. Override the base class's local
+    # fallbacks so even a stale/direct caller cannot mutate the server host.
+
+    async def copy_to_clipboard(self) -> Dict[str, Any]:
+        return vnc_unsupported_result()
+
+    async def set_clipboard(self, text: str) -> Dict[str, Any]:
+        return vnc_unsupported_result()
+
+    async def run_command(self, command: str, timeout: Optional[float] = None) -> Dict[str, Any]:
+        return vnc_unsupported_result()
 
 
 # ---------------------------------------------------------------------------

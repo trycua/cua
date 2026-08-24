@@ -15,11 +15,14 @@ cua-driver-core = { path = "../cua-driver-core" }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
+zeroize = { workspace = true }
+getrandom = { workspace = true }
 # tiny-skia for cursor rendering (shared cross-platform)
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 clipboard-rs = { version = "0.3.5", features = ["wayland"] }
+keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
 # X11 background input + window enumeration + MIT-SHM capture
 x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm"] }
 x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }
@@ -135,6 +138,8 @@ portal-libei = ["portal-input", "portal-capture"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+uuid = { workspace = true }
+tempfile = "3"
 # Used by the `screenshot_cascade` example to surface the
 # `tracing::debug!` lines emitted by each tier of the dispatch as it
 # falls through.

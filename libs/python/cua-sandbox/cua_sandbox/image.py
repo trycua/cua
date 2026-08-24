@@ -28,6 +28,21 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_LINUX_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34"
+# Anonymously pullable, so the built-in Windows image needs no registry credentials.
+# The guest is Windows Server 2022 (build 10.0.20348), which is why ``Image.windows()``
+# defaults to "2022". ``Image.windows("11")`` still means client Windows 11, which has
+# no containerDisk and is installed locally from a downloaded evaluation ISO.
+# Index digest: sha256:6d341afc26a37c4072d22ba403a89ecdad9a29aebab79570b5a38da6b8e16370
+DEFAULT_WINDOWS_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
+
+# Built-in image descriptors that resolve to a pinned KubeVirt containerDisk, so
+# Fleet cloud and the local QEMU runtime boot byte-identical disks.
+BUILTIN_REGISTRY_IMAGES: Dict[Tuple[str, str, str, Optional[str]], str] = {
+    ("linux", "ubuntu", "24.04", "vm"): DEFAULT_LINUX_REGISTRY_IMAGE,
+    ("windows", "windows", "2022", "vm"): DEFAULT_WINDOWS_REGISTRY_IMAGE,
+}
+
 _IMAGE_CACHE = Path.home() / ".cua" / "cua-sandbox" / "image-cache"
 
 
@@ -143,8 +158,14 @@ class Image:
         return cls(os_type="macos", distro="macos", version=version, kind=kind)
 
     @classmethod
-    def windows(cls, version: str = "11", kind: str = "vm") -> Image:
-        """Windows image. Always a VM (QEMU or Hyper-V)."""
+    def windows(cls, version: str = "2022", kind: str = "vm") -> Image:
+        """Windows image. Always a VM (QEMU or Hyper-V).
+
+        Defaults to ``"2022"`` (Windows Server 2022), the only version with a pinned
+        containerDisk — see :data:`BUILTIN_REGISTRY_IMAGES`. Other versions, including
+        ``"11"``, have no pinned disk: on Fleet cloud they are unsupported, and locally
+        they are installed from a downloaded evaluation ISO.
+        """
         return cls(os_type="windows", distro="windows", version=version, kind=kind)
 
     @classmethod
@@ -153,9 +174,26 @@ class Image:
         return cls(os_type="android", distro="android", version=version, kind=kind)
 
     @classmethod
-    def from_registry(cls, ref: str) -> Image:
-        """Create an image from a registry reference. kind is resolved after pull."""
-        return cls(os_type="linux", distro="registry", version="latest", kind=None, _registry=ref)
+    def from_registry(
+        cls,
+        ref: str,
+        *,
+        os_type: str = "linux",
+        kind: Optional[str] = None,
+    ) -> Image:
+        """Create an image from a registry reference.
+
+        os_type selects the firmware: Windows guest disks are built UEFI-only,
+        so a Windows containerDisk pulled from a registry must say so or it is
+        handed BIOS and will not boot. kind is resolved after pull when omitted.
+        """
+        return cls(
+            os_type=os_type,
+            distro="registry",
+            version="latest",
+            kind=kind,
+            _registry=ref,
+        )
 
     @classmethod
     def from_file(
@@ -477,3 +515,15 @@ class Image:
             f"Image({self.os_type}/{self.distro}:{self.version}, "
             f"kind={self.kind}, {len(self._layers)} layers{reg})"
         )
+
+
+def cloud_registry_image(image: Image) -> Optional[str]:
+    """Return the explicit or built-in containerDisk reference for an image.
+
+    An explicit ``Image.from_registry(...)`` reference always wins; otherwise the
+    built-in descriptors resolve through :data:`BUILTIN_REGISTRY_IMAGES`. Images
+    with no pinned disk (custom distros, container kinds) return ``None``.
+    """
+    if image._registry is not None:
+        return image._registry
+    return BUILTIN_REGISTRY_IMAGES.get((image.os_type, image.distro, image.version, image.kind))

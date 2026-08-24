@@ -321,12 +321,14 @@ async def smoke_create_pool():
         ),
         transport,
     )
-    spec = fleet_sdk.OsGymSandboxWarmPoolSpec(
-        replicas=1,
-        sandbox_template_ref=fleet_sdk.SandboxTemplateRef(name="default"),
-        autoscaling=None,
-    )
-    pool = await client.create_pool(fleet_sdk.CreatePoolRequest(namespace="default", spec=spec))
+    spec = fleet_sdk.OsGymSandboxWarmPoolSpecBuilder().replicas(1).sandbox_template_ref(
+        fleet_sdk.SandboxTemplateRefBuilder().name("default").build()
+    ).build()
+    request = fleet_sdk.CreatePoolRequestBuilder().namespace("default").spec(spec).build()
+    assert type(spec) is fleet_sdk.OsGymSandboxWarmPoolSpec
+    assert type(request) is fleet_sdk.CreatePoolRequest
+    assert spec.autoscaling is None
+    pool = await client.create_pool(request)
     assert pool.metadata.name == "offline-pool"
     assert any(request.url.endswith("/osgymsandboxwarmpools") for request in transport.requests)
 
@@ -335,7 +337,89 @@ PYTHON_SMOKE
 rm "$runtime_copy"
 runtime_copy=""
 "$generator" --check
+python_sdk_source="$bindings_dir/python/fleet_sdk/_sdk.py"
+python_schema_source="$bindings_dir/python/fleet_sdk/_schema.py"
+kotlin_sdk_source="$bindings_dir/kotlin/ai/cua/cyclops/sdk/fleet_sdk.kt"
+kotlin_schema_source="$bindings_dir/kotlin/ai/cua/cyclops/sdk/schema/cyclops_sdk_schema.kt"
+swift_sdk_source="$bindings_dir/swift/CyclopsSdk.swift"
+swift_schema_source="$bindings_dir/swift/CyclopsSdkSchema.swift"
 ruby_sdk_source="$bindings_dir/ruby/cyclops_sdk/sdk.rb"
+ruby_schema_source="$bindings_dir/ruby/cyclops_sdk/schema.rb"
+node_sdk_source="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+browser_sdk_source="$bindings_dir/ts-uniffi-browser/ts/fleet_sdk.ts"
+browser_schema_source="$bindings_dir/ts-uniffi-browser/ts/cyclops_sdk_schema.ts"
+go_sdk_source="$bindings_dir/go-uniffi/fleet_sdk/fleet_sdk.go"
+
+for separate_binding in "$node_sdk_source" "$go_sdk_source"; do
+  if grep -Fq -- "VmTemplateBuilder" "$separate_binding" || grep -Fq -- "CreatePoolRequestBuilder" "$separate_binding"; then
+    fail "separately generated Go/Node binding unexpectedly contains authoritative builders: $separate_binding"
+  fi
+done
+
+for browser_builder in \
+  VmTemplateBuilder \
+  WarmPoolAutoscalingBuilder \
+  CreatePoolRequestBuilder \
+  CyclopsTokenProviderConfigurationBuilder \
+  CreateClaimRequestBuilder \
+  CreateUserApiKeyRequestBuilder \
+  TemplateBuilder; do
+  if ! grep -Fq -- "class $browser_builder" "$browser_schema_source" && \
+    ! grep -Fq -- "class $browser_builder" "$browser_sdk_source"; then
+    fail "Browser/WASM bindings omit $browser_builder"
+  fi
+done
+grep -Fq -- "class VmTemplateBuilder" "$python_schema_source" || fail "Python bindings omit VmTemplateBuilder"
+grep -Fq -- "class CreatePoolRequestBuilder" "$python_sdk_source" || fail "Python bindings omit CreatePoolRequestBuilder"
+grep -Fq -- "open class VmTemplateBuilder" "$kotlin_schema_source" || fail "Kotlin bindings omit VmTemplateBuilder"
+grep -Fq -- "open class CreatePoolRequestBuilder" "$kotlin_sdk_source" || fail "Kotlin bindings omit CreatePoolRequestBuilder"
+grep -Fq -- "open class VmTemplateBuilder" "$swift_schema_source" || fail "Swift bindings omit VmTemplateBuilder"
+grep -Fq -- "open class CreatePoolRequestBuilder" "$swift_sdk_source" || fail "Swift bindings omit CreatePoolRequestBuilder"
+grep -Fq -- "class VmTemplateBuilder" "$ruby_schema_source" || fail "Ruby bindings omit VmTemplateBuilder"
+grep -Fq -- "class CreatePoolRequestBuilder" "$ruby_sdk_source" || fail "Ruby bindings omit CreatePoolRequestBuilder"
+grep -Fq -- "alloc_from_TypeOSGymSandboxTemplateSpec" "$bindings_dir/ruby/cyclops_sdk.rb" || \
+  fail "Ruby facade omits cross-component record allocation adapter"
+if grep -Fq -- "execute_authenticated" "$python_sdk_source"; then fail "Python bindings export execute_authenticated"; fi
+if grep -Fq -- "executeAuthenticated" "$kotlin_sdk_source"; then fail "Kotlin bindings export executeAuthenticated"; fi
+if grep -Fq -- "executeAuthenticated" "$swift_sdk_source"; then fail "Swift bindings export executeAuthenticated"; fi
+if grep -Fq -- "execute_authenticated" "$ruby_sdk_source"; then fail "Ruby bindings export execute_authenticated"; fi
+if grep -Fq -- "executeAuthenticated" "$node_sdk_source"; then fail "Node bindings export executeAuthenticated"; fi
+if grep -Fq -- "ExecuteAuthenticated" "$go_sdk_source"; then fail "Go bindings export ExecuteAuthenticated"; fi
+for method in list_namespaces list_user_api_keys create_user_api_key delete_user_api_key; do
+  grep -Fq -- "async def $method" "$python_sdk_source" || fail "Python bindings omit $method"
+done
+for method in listNamespaces listUserApiKeys createUserApiKey deleteUserApiKey; do
+  grep -Fq -- "suspend fun \`$method\`" "$kotlin_sdk_source" || fail "Kotlin bindings omit $method"
+  grep -Fq -- "func $method" "$swift_sdk_source" || fail "Swift bindings omit $method"
+done
+for method in list_namespaces list_user_api_keys create_user_api_key delete_user_api_key; do
+  grep -Fq -- "def $method" "$ruby_sdk_source" || fail "Ruby bindings omit $method"
+done
+for method in listNamespaces listUserApiKeys createUserApiKey deleteUserApiKey; do
+  grep -Fq -- "$method(" "$node_sdk_source" || fail "Node bindings omit $method"
+done
+for method in ListNamespaces ListUserApiKeys CreateUserApiKey DeleteUserApiKey; do
+  grep -Fq -- "$method(" "$go_sdk_source" || fail "Go bindings omit $method"
+done
+grep -Fq -- "creation_timestamp:typing.Optional[str]" "$python_sdk_source" || fail "Python bindings omit creation_timestamp"
+grep -Fq -- "var \`creationTimestamp\`: kotlin.String?" "$kotlin_sdk_source" || fail "Kotlin bindings omit creationTimestamp"
+grep -Fq -- "public var creationTimestamp: String?" "$swift_sdk_source" || fail "Swift bindings omit creationTimestamp"
+grep -Fq -- "attr_reader :namespace, :name, :labels, :creation_timestamp" "$ruby_sdk_source" || fail "Ruby bindings omit creation_timestamp"
+grep -Fq -- "creationTimestamp?: string" "$node_sdk_source" || fail "Node bindings omit creationTimestamp"
+grep -Fq -- "CreationTimestamp *string" "$go_sdk_source" || fail "Go bindings omit CreationTimestamp"
+
+for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
+  grep -Fq -- "timeoutSecs?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.timeoutSecs: $typescript_binding"
+  grep -Fq -- "timeoutSecs: FfiConverterOptionalUInt64.read(from)" "$typescript_binding" || fail "TypeScript bindings do not read HttpRequest.timeoutSecs: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt64.write(value.timeoutSecs, into)" "$typescript_binding" || fail "TypeScript bindings do not write HttpRequest.timeoutSecs: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt64.allocationSize(value.timeoutSecs)" "$typescript_binding" || fail "TypeScript bindings do not allocate HttpRequest.timeoutSecs: $typescript_binding"
+  grep -Fq -- "const FfiConverterOptionalUInt64 = new FfiConverterOptional" "$typescript_binding" || fail "TypeScript bindings omit the optional UInt64 converter: $typescript_binding"
+done
+grep -Fq -- "TimeoutSecs *uint64" "$go_sdk_source" || fail "Go bindings omit HttpRequest.TimeoutSecs"
+grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Read(reader)" "$go_sdk_source" || fail "Go bindings do not read HttpRequest.TimeoutSecs"
+grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Write(writer, value.TimeoutSecs)" "$go_sdk_source" || fail "Go bindings do not write HttpRequest.TimeoutSecs"
+grep -Fq -- "FfiDestroyerOptionalUint64{}.Destroy(r.TimeoutSecs)" "$go_sdk_source" || fail "Go bindings do not destroy HttpRequest.TimeoutSecs"
+grep -Fq -- "type FfiConverterOptionalUint64 struct{}" "$go_sdk_source" || fail "Go bindings omit the optional uint64 converter"
 grep -Fq -- "@uniffi_handle_map = UniffiHandleMap.new" "$ruby_sdk_source" || fail "Ruby callback bindings do not retain native callback objects"
 grep -Fq -- "module UniffiCallbackInterfaceHttpClient" "$ruby_sdk_source" || fail "Ruby callback bindings do not register an HTTP callback vtable"
 grep -Fq -- "[VTableCallbackInterfaceHttpClient.by_ref]" "$ruby_sdk_source" || fail "Ruby callback vtable initializer has the wrong FFI signature"
@@ -348,6 +432,7 @@ grep -Fq -- "def self.uniffi_is_error_type?" "$ruby_sdk_source" || fail "Ruby ca
 grep -Fq -- "FleetSdk.uniffi_rust_future_rust_buffer" "$ruby_sdk_source" || fail "Ruby async methods do not resolve Rust-buffer futures"
 grep -Fq -- "def self.uniffi_rust_future_void" "$ruby_sdk_source" || fail "Ruby bindings do not resolve void futures"
 grep -Fq -- "FleetSdk.uniffi_rust_future_void" "$ruby_sdk_source" || fail "Ruby async void methods do not resolve Rust futures"
+if grep -Fq -- ",,RustCallStatus.new" "$ruby_sdk_source"; then fail "Ruby zero-argument async methods emit a duplicate status separator"; fi
 grep -Fq -- "UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreatePoolRequest(request),RustCallStatus.new)" "$ruby_sdk_source" || fail "Ruby async factories do not pass the generated status placeholder"
 grep -Fq -- "    readTypeOSGymSandboxWarmPoolSpec" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema record readers"
 if grep -Fq -- "OsGym" "$ruby_sdk_source"; then

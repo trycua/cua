@@ -16,7 +16,7 @@ attention:
 1. `standard` is the promptless practical default for normal observation,
    input, file, browser, and configuration tools. Attaching to an existing
    logged-in Chromium profile remains an explicit boundary. Start CLI or MCP
-   with `--grant existing-profile`, use a matching bounded manifest, or supply
+   with `--grant existing-profile`, use a matching capability manifest, or supply
    an authorization host from an embedding application.
 2. The old cursor-style fields and `set_agent_cursor_style` operation are
    removed. Sessions use the built-in animated `cua.default` theme and display
@@ -34,6 +34,19 @@ See [Permission modes and bounded autonomy](/reference/cua-driver/permission-mod
 restarting a long-running daemon or worker.
 
 ## Check for updates
+
+Checks use the saved channel. Existing installations default to `stable`.
+Inspect or change it with:
+
+```bash
+cua-driver channel status
+cua-driver channel set nightly
+cua-driver update --apply
+```
+
+Changing the channel does not install by itself. A stable/nightly transition is
+reported as available even when the target version would not compare as newer
+under ordinary SemVer ordering.
 
 ```bash
 cua-driver check-update
@@ -99,6 +112,8 @@ cua-driver check-update --json
 ```json
 {
   "current_version": "0.12.6",
+  "current_channel": "stable",
+  "selected_channel": "stable",
   "latest_version": "0.13.0",
   "update_available": true,
   "source": "github_releases",
@@ -133,7 +148,10 @@ Every `cua-driver mcp`, `serve`, and `doctor` invocation starts a background ver
    Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.13.0
 ```
 
-The check uses a 20-hour cache and never blocks startup. One-shot commands such as `--version`, `call`, and `list-tools` skip it so piped output remains clean.
+The check uses a channel-keyed 20-hour cache and never blocks startup. A cached
+stable result can never satisfy a nightly check, or vice versa. One-shot
+commands such as `--version`, `call`, and `list-tools` skip it so piped output
+remains clean.
 
 Disable the check for one invocation:
 

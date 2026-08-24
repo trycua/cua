@@ -27,20 +27,24 @@ pub use cursor::{
     CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
-    CaptureScope, ClickButton, ClickInput, ClipboardReadInput, ClipboardWriteInput, DesktopScope,
-    DragInput, EndSessionInput, EscalateSessionInput, EscalationReason, GetAgentCursorStateInput,
-    GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionStateInput,
-    HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection,
-    ScrollInput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClipboardReadInput,
+    ClipboardWriteInput, DesktopScope, DragInput, EndSessionInput, EscalateSessionInput,
+    EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput, InvokeMenuInput,
+    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
     SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
+    MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
-    ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation, ActionEscalationReason,
-    ActionEscalationTarget, ActionEvidence, ActionEvidenceKind, ActionResult,
-    ActionResultValidationError, ActionRoute, ClipboardReadOutput, ClipboardWriteOutput,
-    CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
-    CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
-    GetAgentCursorStateOutput, ScreenSizeOutput, SessionStateOutput, SetAgentCursorEnabledOutput,
+    advertised_output_schema, refusal_envelope_schema, ActionDelivery, ActionDeliveryMode,
+    ActionEffect, ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
+    ActionEvidenceKind, ActionResult, ActionResultValidationError, ActionRoute,
+    ClipboardReadOutput, ClipboardWriteOutput, CursorMotionOutput, CursorPointOutput,
+    CursorPositionOutput, CursorThemeOutput, CursorVisualOutput, DesktopStateOutput,
+    EffectiveScope, EndSessionOutput, GetAgentCursorStateOutput, ListSessionsOutput,
+    ScreenSizeOutput, SessionClientKindOutput, SessionLifecycleState, SessionOutput,
+    SessionStateOutput, SessionTransportOutput, SetAgentCursorEnabledOutput,
     SetAgentCursorMotionOutput, SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
 };
 pub use verification::{
@@ -56,7 +60,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.6.0";
+pub const CONTRACT_VERSION: &str = "0.7.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -293,7 +297,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.6.0");
+        assert_eq!(manifest.contract_version, "0.7.0");
         assert!(manifest.experimental);
     }
 
@@ -340,6 +344,45 @@ mod tests {
                 ["properties"]["exists"]["enum"],
             serde_json::json!([true])
         );
+    }
+
+    #[test]
+    fn portable_action_sessions_explain_named_multi_call_runs() {
+        for name in [
+            "click",
+            "clipboard_read",
+            "clipboard_write",
+            "drag",
+            "get_cursor_position",
+            "get_desktop_state",
+            "get_screen_size",
+            "hotkey",
+            "invoke_menu",
+            "move_cursor",
+            "press_key",
+            "scroll",
+            "set_window_frame",
+            "type_text",
+        ] {
+            let contract = tool_contract(name).expect("portable action contract");
+            let description = contract.input_schema["properties"]["session"]["description"]
+                .as_str()
+                .expect("portable session description")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(description, MULTI_CALL_SESSION_DESCRIPTION, "{name}");
+        }
+
+        let verify = tool_contract("verify_state").expect("verify_state contract");
+        let description = verify.input_schema["properties"]["session"]["description"]
+            .as_str()
+            .expect("verify_state session description")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(description.starts_with(MULTI_CALL_SESSION_DESCRIPTION));
+        assert!(description.contains("never selects capture modality or authorization"));
     }
 
     #[test]

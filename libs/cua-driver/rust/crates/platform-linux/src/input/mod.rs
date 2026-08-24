@@ -390,8 +390,77 @@ fn real_pointer_capabilities_available(
     server_supported: bool,
     xvfb: bool,
     uinput_accessible: bool,
+    unsafe_hotplug_session: bool,
 ) -> bool {
-    server_supported && !xvfb && uinput_accessible
+    server_supported && !xvfb && uinput_accessible && !unsafe_hotplug_session
+}
+
+fn nonempty(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
+}
+
+fn desktop_value_is_kde(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value
+            .split([':', ';', ','])
+            .map(str::trim)
+            .any(|token| token.eq_ignore_ascii_case("kde") || token.eq_ignore_ascii_case("plasma"))
+    })
+}
+
+/// KDE Plasma 6 / Qt 6.11 applications on X11 can crash session-wide when an
+/// ephemeral uinput pointer is hotplugged into Xorg. Foreground input does not
+/// need that device: the click, drag, scroll, and keyboard tools already use
+/// XTEST after activating the target window. Disable only the MPX/uinput
+/// capability here so callers retain their existing foreground escalation and
+/// XSendEvent fallback behavior.
+fn kde_x11_uinput_hotplug_is_unsafe(
+    session_type: Option<&str>,
+    current_desktop: Option<&str>,
+    session_desktop: Option<&str>,
+    desktop_session: Option<&str>,
+    kde_full_session: Option<&str>,
+    display: Option<&str>,
+    wayland_display: Option<&str>,
+) -> bool {
+    let explicit_x11 = session_type.is_some_and(|value| value.eq_ignore_ascii_case("x11"));
+    let explicit_wayland = session_type.is_some_and(|value| value.eq_ignore_ascii_case("wayland"));
+    if explicit_wayland || (!explicit_x11 && nonempty(wayland_display)) {
+        return false;
+    }
+
+    let x11 = explicit_x11 || nonempty(display);
+    let kde = desktop_value_is_kde(current_desktop)
+        || desktop_value_is_kde(session_desktop)
+        || desktop_value_is_kde(desktop_session)
+        || kde_full_session.is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        });
+
+    x11 && kde
+}
+
+fn kde_x11_uinput_hotplug_is_unsafe_from_env() -> bool {
+    let session_type = std::env::var("XDG_SESSION_TYPE").ok();
+    let current_desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+    let session_desktop = std::env::var("XDG_SESSION_DESKTOP").ok();
+    let desktop_session = std::env::var("DESKTOP_SESSION").ok();
+    let kde_full_session = std::env::var("KDE_FULL_SESSION").ok();
+    let display = std::env::var("DISPLAY").ok();
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+
+    kde_x11_uinput_hotplug_is_unsafe(
+        session_type.as_deref(),
+        current_desktop.as_deref(),
+        session_desktop.as_deref(),
+        desktop_session.as_deref(),
+        kde_full_session.as_deref(),
+        display.as_deref(),
+        wayland_display.as_deref(),
+    )
 }
 
 fn uinput_accessible() -> bool {
@@ -403,6 +472,13 @@ fn uinput_accessible() -> bool {
 }
 
 pub fn real_pointer_input_available() -> bool {
+    // Do not even probe /dev/uinput on an affected KDE/X11 session. Creating
+    // the device is itself the dangerous operation; a later fallback is too
+    // late once Xorg has announced the hotplug to Qt clients.
+    if kde_x11_uinput_hotplug_is_unsafe_from_env() {
+        return false;
+    }
+
     // `ensure_master_pointer` creates an XI2 master before attaching the
     // uinput slave. If this process cannot open /dev/uinput, attempting that
     // path on every click/scroll would create and abandon an XInput master
@@ -418,12 +494,26 @@ pub fn real_pointer_input_available() -> bool {
         supports_parallel_pointer_injection(display).is_ok(),
         is_xvfb_process_running(),
         true,
+        false,
     );
     unsafe { x11::xlib::XCloseDisplay(display) };
     supported
 }
 
 fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
+    ensure_master_pointer_for_session(cursor_id, kde_x11_uinput_hotplug_is_unsafe_from_env())
+}
+
+fn ensure_master_pointer_for_session(
+    cursor_id: &str,
+    unsafe_hotplug_session: bool,
+) -> Result<MasterPointerIds> {
+    if unsafe_hotplug_session {
+        return Err(uinput_unavailable(
+            "disabled on KDE Plasma X11; retry with delivery_mode='foreground'",
+        ));
+    }
+
     if let Some(ids) = mpx_pointers().lock().unwrap().get(cursor_id).copied() {
         return Ok(ids);
     }
@@ -967,10 +1057,11 @@ fn ewmh_activate_window(
 /// primitives (proper `x_server_time` stamping beats the WM's focus-stealing
 /// prevention).
 ///
-/// Best-effort: if no X display can be opened the body still runs (without
-/// activation) so a headless/Wayland path degrades rather than hard-fails.
-/// `settle_ms` is the pause after activation before the first injected event —
-/// the WM needs a moment to complete the focus swap (mirrors the macOS settle).
+/// The transition is confirmed from both EWMH active-window state and the X11
+/// core input-focus tree before `body` runs. A fixed delay or a successful
+/// `XSetInputFocus` return is not evidence that global XTest input is safe.
+/// `settle_ms` is retained as a compatibility hint and folded into the bounded
+/// confirmation timeout; it is no longer an unconditional sleep.
 pub fn with_x11_foreground<T>(
     xid: u64,
     settle_ms: u64,
@@ -978,15 +1069,17 @@ pub fn with_x11_foreground<T>(
 ) -> Result<T> {
     let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
     if display.is_null() {
-        return body();
+        bail!("foreground_unavailable: cannot open DISPLAY to verify exact X11 input focus");
     }
     let prior = ewmh_active_window(display);
+    let mut prior_core_focus: x11::xlib::Window = 0;
+    let mut prior_revert = 0;
+    unsafe {
+        x11::xlib::XGetInputFocus(display, &mut prior_core_focus, &mut prior_revert);
+    }
     ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0));
     unsafe {
         x11::xlib::XSync(display, 0);
-    }
-    if settle_ms > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     // EWMH `_NET_ACTIVE_WINDOW` is honored as *raise-only* by WMs with
     // focus-stealing prevention (e.g. KWin): the window reaches the top of the
@@ -1008,18 +1101,92 @@ pub fn with_x11_foreground<T>(
         x11::xlib::XSync(display, 0);
         x11::xlib::XSetErrorHandler(prev_handler);
     }
-    let result = body();
-    // Restore the prior active window (brief swap, like macOS/Windows).
+    let timeout = std::time::Duration::from_millis(settle_ms.max(400));
+    let deadline = std::time::Instant::now() + timeout;
+    let target = xid as x11::xlib::Window;
+    let focused = loop {
+        let active = ewmh_active_window(display) == Some(target);
+        if active && x11_focus_is_within(display, target) {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let result = if focused {
+        body()
+    } else {
+        let active = ewmh_active_window(display).unwrap_or(0);
+        Err(anyhow::anyhow!(
+            "foreground_unavailable: X11 did not confirm active window and input focus within \
+             exact target 0x{xid:x} before the {:?} deadline (active=0x{active:x}); no input was sent",
+            timeout
+        ))
+    };
+
+    // Restore both the EWMH active toplevel and the exact prior core focus.
     if let Some(p) = prior {
         ewmh_activate_window(display, p, xid as x11::xlib::Window);
+    }
+    if prior_core_focus != 0 {
         unsafe {
+            let previous_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+            x11::xlib::XSetInputFocus(
+                display,
+                prior_core_focus,
+                prior_revert,
+                x11::xlib::CurrentTime,
+            );
             x11::xlib::XSync(display, 0);
+            x11::xlib::XSetErrorHandler(previous_handler);
         }
     }
     unsafe {
         x11::xlib::XCloseDisplay(display);
     }
     result
+}
+
+fn x11_focus_is_within(display: *mut x11::xlib::Display, target: x11::xlib::Window) -> bool {
+    let mut focused: x11::xlib::Window = 0;
+    let mut revert_to = 0;
+    unsafe {
+        x11::xlib::XGetInputFocus(display, &mut focused, &mut revert_to);
+    }
+    if focused == target {
+        return true;
+    }
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    while focused != 0 && focused != root {
+        let mut query_root = 0;
+        let mut parent = 0;
+        let mut children: *mut x11::xlib::Window = ptr::null_mut();
+        let mut child_count = 0;
+        let status = unsafe {
+            x11::xlib::XQueryTree(
+                display,
+                focused,
+                &mut query_root,
+                &mut parent,
+                &mut children,
+                &mut child_count,
+            )
+        };
+        if !children.is_null() {
+            unsafe {
+                x11::xlib::XFree(children.cast());
+            }
+        }
+        if status == 0 || parent == 0 || parent == focused {
+            return false;
+        }
+        if parent == target {
+            return true;
+        }
+        focused = parent;
+    }
+    false
 }
 
 /// Activate `xid` and LEAVE it active (no restore) — the persistent foreground
@@ -2141,7 +2308,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Screen-absolute click via the XTest extension — the `capture_scope="desktop"`
+/// Screen-absolute click via the XTest extension — the desktop-target
 /// foreground click. It warps the real pointer to `(x, y)` and injects a true
 /// button press/release there, so the event lands on whatever window owns that
 /// screen pixel (the Linux peer of the Windows `WindowFromPoint` + macOS
@@ -2740,7 +2907,8 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        create_uinput_pointer, guarded_uinput_creation, is_uinput_unavailable, master_pointer_name,
+        create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
+        is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
         modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
         real_pointer_capabilities_available, sample_function, slave_pointer_name,
         EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
@@ -2852,10 +3020,76 @@ mod path_tests {
 
     #[test]
     fn real_pointer_capabilities_require_uinput_access() {
-        assert!(real_pointer_capabilities_available(true, false, true));
-        assert!(!real_pointer_capabilities_available(true, false, false));
-        assert!(!real_pointer_capabilities_available(false, false, true));
-        assert!(!real_pointer_capabilities_available(true, true, true));
+        assert!(real_pointer_capabilities_available(
+            true, false, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, false, false, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            false, false, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, true, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, false, true, true
+        ));
+    }
+
+    #[test]
+    fn kde_x11_sessions_disable_uinput_pointer_hotplug() {
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("KDE"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            None,
+        ));
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("KDE"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            Some("wayland-0"),
+        ));
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            None,
+            None,
+            Some("plasma"),
+            None,
+            Some("true"),
+            Some(":1"),
+            None,
+        ));
+
+        assert!(!kde_x11_uinput_hotplug_is_unsafe(
+            Some("wayland"),
+            Some("KDE"),
+            None,
+            None,
+            Some("true"),
+            Some(":0"),
+            Some("wayland-0"),
+        ));
+        assert!(!kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("GNOME"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            None,
+        ));
+
+        let error = ensure_master_pointer_for_session("regression-test", true)
+            .expect_err("the creation choke point must refuse before opening X11 or uinput");
+        assert!(is_uinput_unavailable(&error));
+        assert!(error.to_string().contains("delivery_mode='foreground'"));
     }
 
     #[test]

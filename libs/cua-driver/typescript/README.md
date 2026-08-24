@@ -30,7 +30,6 @@ agent SDK.
 
 ```ts
 import {
-  CaptureScope,
   CuaDriver,
   CursorReducedMotion,
   EndSessionInput,
@@ -43,7 +42,6 @@ const driver = CuaDriver.create(undefined) // same process; no daemon
 await driver.startSession(
   StartSessionInput.new({
     session: "demo",
-    captureScope: CaptureScope.Desktop,
   }),
 )
 
@@ -73,7 +71,13 @@ images, verification/error metadata, and `structuredJson` / `rawJson` for
 platform-extensible results. Session lifecycle calls return dedicated generated
 records.
 
-The agent cursor is session-owned. Its default theme and custom dotLottie
+`startSession` is optional for ordinary calls. The runtime creates one
+implicit session for this SDK transport and reuses it until shutdown, explicit
+end, or five minutes of inactivity. Use a named session when application code
+needs to configure or inspect that run explicitly.
+
+The agent cursor is session-owned and initializes on the first cursor-bearing
+action, including `moveCursor`. Its default theme and custom dotLottie
 authoring workflow are documented in
 [`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
 and installed with the local CLI; SDK and MCP tools select only an installed
@@ -173,6 +177,10 @@ The npm package installs one optional native package selected for the current
 OS and CPU. It does not bundle the `cua-driver` executable: ship that executable
 outside ASAR, preserve its executable bit, and sign it before signing and
 notarizing the enclosing app.
+
+Windows native packages statically link the Microsoft C runtime, so importing
+the SDK on a clean x64 or ARM64 Windows installation does not require a separate
+Visual C++ Redistributable installation.
 
 Each native package also carries Cua's copy-mode build of the pinned
 `@ubjs/node` N-API runtime. Upstream `0.31.0-3` returns Rust-owned memory through

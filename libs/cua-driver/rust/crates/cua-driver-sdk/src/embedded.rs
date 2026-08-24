@@ -43,11 +43,18 @@ pub struct EmbeddedDriverHostOptions {
     pub startup_timeout_ms: Option<u64>,
     pub shutdown_timeout_ms: Option<u64>,
     pub permission_mode: Option<EmbeddedPermissionMode>,
+    #[uniffi(default = None)]
+    pub capability_manifest_path: Option<String>,
+    #[uniffi(default = false)]
+    pub approve_capability_manifest: bool,
+    /// Deprecated aliases retained for compatibility.
     pub session_policy_path: Option<String>,
     pub approve_session_policy: bool,
     pub dangerously_bypass_approvals: bool,
     pub environment: Vec<EmbeddedEnvironmentVariable>,
     pub inherit_stderr: bool,
+    #[uniffi(default = false)]
+    pub no_overlay: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -116,6 +123,7 @@ struct ValidatedOptions {
     dangerously_bypass_approvals: bool,
     environment: Vec<EmbeddedEnvironmentVariable>,
     inherit_stderr: bool,
+    no_overlay: bool,
 }
 
 #[cfg(unix)]
@@ -251,11 +259,14 @@ impl EmbeddedCuaDriverHost {
             startup_timeout_ms: None,
             shutdown_timeout_ms: None,
             permission_mode: None,
+            capability_manifest_path: None,
+            approve_capability_manifest: false,
             session_policy_path: None,
             approve_session_policy: false,
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: true,
+            no_overlay: false,
         })
     }
 
@@ -633,13 +644,16 @@ impl EmbeddedCuaDriverHost {
             .into(),
         ];
         if let Some(path) = &self.options.session_policy_path {
-            args.extend(["--session-policy".into(), path.clone()]);
+            args.extend(["--capability-manifest".into(), path.clone()]);
         }
         if self.options.approve_session_policy {
-            args.push("--approve-session-policy".into());
+            args.push("--approve-capability-manifest".into());
         }
         if self.options.dangerously_bypass_approvals {
             args.push("--dangerously-bypass-approvals".into());
+        }
+        if self.options.no_overlay {
+            args.push("--no-overlay".into());
         }
         args
     }
@@ -732,13 +746,33 @@ fn validate_options(
     let permission_mode = options
         .permission_mode
         .unwrap_or(EmbeddedPermissionMode::Standard);
+    if options.capability_manifest_path.is_some()
+        && options.session_policy_path.is_some()
+        && options.capability_manifest_path != options.session_policy_path
+    {
+        return configuration_error(
+            "capability_manifest_path conflicts with deprecated session_policy_path",
+        );
+    }
+    let capability_manifest_path = options
+        .capability_manifest_path
+        .clone()
+        .or_else(|| options.session_policy_path.clone());
+    let capability_manifest_approved =
+        options.approve_capability_manifest || options.approve_session_policy;
+    let manifest_configured = capability_manifest_path
+        .as_deref()
+        .is_some_and(|path| !path.trim().is_empty());
+    if capability_manifest_path.is_some() && !manifest_configured {
+        return configuration_error("capability manifest path must not be empty");
+    }
+    if manifest_configured != capability_manifest_approved {
+        return configuration_error(
+            "capability manifest path and approval acknowledgement must be supplied together",
+        );
+    }
     match permission_mode {
         EmbeddedPermissionMode::Standard => {
-            if options.session_policy_path.is_some() || options.approve_session_policy {
-                return configuration_error(
-                    "session policy options are valid only in bounded mode",
-                );
-            }
             if options.dangerously_bypass_approvals {
                 return configuration_error(
                     "dangerously_bypass_approvals is valid only in unrestricted mode",
@@ -746,15 +780,8 @@ fn validate_options(
             }
         }
         EmbeddedPermissionMode::Bounded => {
-            if options
-                .session_policy_path
-                .as_deref()
-                .is_none_or(|path| path.trim().is_empty())
-            {
-                return configuration_error("bounded mode requires session_policy_path");
-            }
-            if !options.approve_session_policy {
-                return configuration_error("bounded mode requires approve_session_policy=true");
+            if !manifest_configured {
+                return configuration_error("bounded mode requires a capability manifest");
             }
             if options.dangerously_bypass_approvals {
                 return configuration_error("bounded mode cannot bypass runtime approvals");
@@ -764,11 +791,6 @@ fn validate_options(
             if !options.dangerously_bypass_approvals {
                 return configuration_error(
                     "unrestricted mode requires dangerously_bypass_approvals=true",
-                );
-            }
-            if options.session_policy_path.is_some() || options.approve_session_policy {
-                return configuration_error(
-                    "unrestricted mode cannot use a bounded session policy",
                 );
             }
         }
@@ -795,11 +817,12 @@ fn validate_options(
         startup_timeout: Duration::from_millis(startup_timeout_ms),
         shutdown_timeout: Duration::from_millis(shutdown_timeout_ms),
         permission_mode,
-        session_policy_path: options.session_policy_path,
-        approve_session_policy: options.approve_session_policy,
+        session_policy_path: capability_manifest_path,
+        approve_session_policy: capability_manifest_approved,
         dangerously_bypass_approvals: options.dangerously_bypass_approvals,
         environment: options.environment,
         inherit_stderr: options.inherit_stderr,
+        no_overlay: options.no_overlay,
     })
 }
 
@@ -837,6 +860,8 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "DBUS_SESSION_BUS_ADDRESS"
                 | "XAUTHORITY"
                 | "CUA_LOG"
+                | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
+                | "CUA_TELEMETRY_ENABLED"
         )
 }
 
@@ -846,9 +871,10 @@ pub(crate) fn inherited_managed_environment_name(name: &str) -> bool {
         "CUA_DRIVER_PERMISSION_MODE"
             | "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
             | "CUA_DRIVER_DISABLE_UNRESTRICTED"
-            | "CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL"
             | "CUA_DRIVER_SESSION_POLICY_FILE"
             | "CUA_DRIVER_SESSION_POLICY_APPROVED"
+            | "CUA_DRIVER_CAPABILITY_MANIFEST_FILE"
+            | "CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED"
             | "CUA_DRIVER_POLICY_FILE"
             | "CUA_DRIVER_MANAGED_POLICY_FILE"
     )
@@ -1123,17 +1149,25 @@ mod tests {
             startup_timeout_ms: None,
             shutdown_timeout_ms: None,
             permission_mode: Some(mode),
+            capability_manifest_path: None,
+            approve_capability_manifest: false,
             session_policy_path: None,
             approve_session_policy: false,
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: false,
+            no_overlay: false,
         }
     }
 
     #[test]
     fn authorization_modes_require_explicit_acknowledgements() {
         assert!(validate_options(options(EmbeddedPermissionMode::Standard)).is_ok());
+
+        let mut standard_manifest = options(EmbeddedPermissionMode::Standard);
+        standard_manifest.capability_manifest_path = Some("capabilities.yaml".into());
+        standard_manifest.approve_capability_manifest = true;
+        assert!(validate_options(standard_manifest).is_ok());
 
         let bounded = options(EmbeddedPermissionMode::Bounded);
         assert!(validate_options(bounded).is_err());
@@ -1147,6 +1181,37 @@ mod tests {
         let mut unrestricted = options(EmbeddedPermissionMode::Unrestricted);
         unrestricted.dangerously_bypass_approvals = true;
         assert!(validate_options(unrestricted).is_ok());
+
+        let mut unrestricted_manifest = options(EmbeddedPermissionMode::Unrestricted);
+        unrestricted_manifest.dangerously_bypass_approvals = true;
+        unrestricted_manifest.capability_manifest_path = Some("capabilities.yaml".into());
+        unrestricted_manifest.approve_capability_manifest = true;
+        assert!(validate_options(unrestricted_manifest).is_ok());
+    }
+
+    #[test]
+    fn no_overlay_is_opt_in_on_the_owned_daemon() {
+        let default_host =
+            EmbeddedCuaDriverHost::with_options(options(EmbeddedPermissionMode::Standard)).unwrap();
+        assert!(!default_host
+            .serve_args("/tmp/cua-default.sock")
+            .contains(&"--no-overlay".into()));
+
+        let mut configured = options(EmbeddedPermissionMode::Standard);
+        configured.no_overlay = true;
+        let configured_host = EmbeddedCuaDriverHost::with_options(configured).unwrap();
+        assert!(configured_host
+            .serve_args("/tmp/cua-no-overlay.sock")
+            .contains(&"--no-overlay".into()));
+    }
+
+    #[test]
+    fn capability_manifest_aliases_must_not_conflict() {
+        let mut options = options(EmbeddedPermissionMode::Standard);
+        options.capability_manifest_path = Some("capabilities-v3.yaml".into());
+        options.session_policy_path = Some("legacy-v2.yaml".into());
+        options.approve_capability_manifest = true;
+        assert!(validate_options(options).is_err());
     }
 
     #[test]
@@ -1156,6 +1221,45 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+    }
+
+    #[test]
+    fn telemetry_preferences_are_inherited_and_overridable() {
+        assert!(allowed_environment_name("CUA_DRIVER_RS_TELEMETRY_ENABLED"));
+        assert!(allowed_environment_name("cua_telemetry_enabled"));
+
+        let inherited = [
+            ("CUA_DRIVER_RS_TELEMETRY_ENABLED".into(), "1".into()),
+            ("CUA_TELEMETRY_ENABLED".into(), "true".into()),
+        ];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "1"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "true"
+        }));
+
+        let values = merge_safe_environment(
+            inherited,
+            &[
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_TELEMETRY_ENABLED".into(),
+                    value: "0".into(),
+                },
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_TELEMETRY_ENABLED".into(),
+                    value: "false".into(),
+                },
+            ],
+        );
+
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "0"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "false"
+        }));
     }
 
     #[test]

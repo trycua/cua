@@ -340,6 +340,7 @@ async fn does_not_attach_bearer_to_cross_origin_requests() {
         url: "https://cyclops.example/api/pools".into(),
         headers: vec![header("Authorization", "Basic external")],
         body: Some(vec![0, 1, 2]),
+        timeout_secs: None,
     };
 
     let response = client.execute_authenticated(external).await.unwrap();
@@ -430,6 +431,7 @@ fn request(url: &str) -> HttpRequest {
             header("x-trace", "keep"),
         ],
         body: None,
+        timeout_secs: None,
     }
 }
 

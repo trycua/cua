@@ -35,7 +35,6 @@
 //! is re-proven before any mutation; frames whose identity or
 //! capability cannot be proven are omitted or refused, never guessed.
 
-pub mod approval;
 pub mod binding;
 pub mod cdp_ws;
 pub mod download;
@@ -61,8 +60,8 @@ pub use engine::BrowserEngine;
 pub use platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
     BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareAuthorization, PrepareOutcome,
-    PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
+    PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareOutcome, PrepareProfile,
+    PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{
@@ -74,3 +73,48 @@ pub use types::{
     EndpointOwnershipMethod, EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof,
     NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
+
+pub(crate) fn session_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "string",
+        "description": format!(
+            "{} Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+            cua_driver_contract::MULTI_CALL_SESSION_DESCRIPTION
+        )
+    })
+}
+
+pub(crate) fn required_session_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "string",
+        "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. This tool requires the label that owns its browser target, tab, and refs."
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_session_schema_keeps_naming_and_capability_guidance_together() {
+        let schema = session_schema();
+        let description = schema["description"]
+            .as_str()
+            .expect("browser session description");
+        assert!(description.contains("prefer a short public session label"));
+        assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("Browser targets, tabs, and refs"));
+    }
+
+    #[test]
+    fn required_browser_session_schema_does_not_suggest_omission() {
+        let schema = required_session_schema();
+        let description = schema["description"]
+            .as_str()
+            .expect("required browser session description");
+        assert!(description.contains("prefer a short public session label"));
+        assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("requires the label"));
+        assert!(!description.contains("Omit it"));
+    }
+}

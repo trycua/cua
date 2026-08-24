@@ -23,6 +23,7 @@ pip-preview = { path = "../pip-preview" }
 async-trait = "0.1"
 base64 = { workspace = true }
 uuid = { workspace = true }
+zeroize = { workspace = true }
 # Telemetry HTTP client. `ureq` over `reqwest` for the small dep footprint:
 # PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
 # rustls (default) so Linux/Windows builds don't require system OpenSSL.
@@ -51,6 +52,11 @@ platform-macos = { path = "../platform-macos" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 platform-windows = { path = "../platform-windows" }
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 platform-linux = { path = "../platform-linux" }
@@ -78,7 +84,7 @@ tokio = { workspace = true, features = ["full"] }
 image = { workspace = true }
 base64 = { workspace = true }
 # Isolated HOME / cache directories for `version_check` unit tests so they
-# never touch the developer's real `~/.cua-driver-rs/version_check.json`.
+# never touch the developer's real `~/.cua-driver/version_check.json`.
 tempfile = "3"
 futures-util = "0.3"
 tokio-tungstenite = "0.24"

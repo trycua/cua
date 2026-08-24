@@ -14,6 +14,17 @@ private data class Expected(
     val response: ByteArray,
 )
 
+private val generatedClaimNamePattern = Regex("claim-[a-z0-9](?:[-a-z0-9]*[a-z0-9])?")
+private val claimNameFieldPattern = Regex("\"name\":\"(claim-[^\"]+)\"")
+
+private fun normalizedGeneratedClaimBody(body: ByteArray?): ByteArray? {
+    val text = body?.decodeToString() ?: return null
+    val match = claimNameFieldPattern.find(text) ?: return null
+    val name = match.groupValues[1]
+    check(name.length <= 63 && generatedClaimNamePattern.matches(name))
+    return text.replaceRange(match.groups[1]!!.range, "claim-generated").encodeToByteArray()
+}
+
 private val jsonHeaders = listOf(
     "accept" to "application/json",
     "content-type" to "application/json",
@@ -51,7 +62,7 @@ private fun lifecycleQueue() = listOf(
     tokenExpected(),
     textExpected("POST", "https://cyclops.invalid/api/namespaces", jsonHeaders, "{\"name\":\"default\"}".encodeToByteArray(), 201u, "{}"),
     textExpected("POST", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools", jsonHeaders, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxWarmPool\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"replicas\":1,\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":null}".encodeToByteArray(), 201u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxWarmPool\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"replicas\":1,\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":null}"),
-    textExpected("POST", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims", jsonHeaders, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxClaim\",\"metadata\":{\"namespace\":\"default\",\"name\":\"claim-1\",\"labels\":null},\"spec\":{\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":null}".encodeToByteArray(), 201u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxClaim\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":{\"phase\":\"Bound\",\"sandbox\":{\"name\":\"offline-sandbox\"}}}"),
+    textExpected("POST", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims", jsonHeaders, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxClaim\",\"metadata\":{\"namespace\":\"default\",\"name\":\"claim-1\",\"labels\":null},\"spec\":{\"sandboxTemplateRef\":{\"name\":\"default\"},\"bindDeadline\":900},\"status\":null}".encodeToByteArray(), 201u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxClaim\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":{\"phase\":\"Bound\",\"sandbox\":{\"name\":\"offline-sandbox\"}}}"),
     textExpected("GET", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default", jsonHeaders, null, 200u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxClaim\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"sandboxTemplateRef\":{\"name\":\"default\"}},\"status\":{\"phase\":\"Bound\",\"sandbox\":{\"name\":\"offline-sandbox\"}}}"),
     textExpected("GET", "https://cyclops.invalid/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default", jsonHeaders, null, 200u, "{\"apiVersion\":\"osgym.cua.ai/v1alpha1\",\"kind\":\"OSGymSandboxTemplate\",\"metadata\":{\"namespace\":\"default\",\"name\":\"default\",\"labels\":null},\"spec\":{\"vmTemplate\":{\"containerDiskImage\":\"registry.example/desktop:offline\",\"services\":[{\"name\":\"mcp\",\"targetPort\":8080}]}}}"),
     serviceExpected("{\"offline\":true}".encodeToByteArray(), "offline service accepted".encodeToByteArray()),
@@ -68,7 +79,13 @@ private class ScriptedHttpClient(expected: List<Expected>) : HttpClient {
         val item = expected.removeFirstOrNull() ?: error("unexpected request")
         check(request.method == item.method && request.url == item.url)
         check(request.headers.map { it.name to it.value } == item.headers)
-        check((request.body == null && item.body == null) || (request.body != null && item.body != null && request.body.contentEquals(item.body)))
+        if (request.method == "POST" && request.url.endsWith("/osgymsandboxclaims")) {
+            val actualBody = normalizedGeneratedClaimBody(request.body)
+            val expectedBody = normalizedGeneratedClaimBody(item.body)
+            check(actualBody != null && expectedBody != null && actualBody.contentEquals(expectedBody))
+        } else {
+            check((request.body == null && item.body == null) || (request.body != null && item.body != null && request.body.contentEquals(item.body)))
+        }
         HttpResponse(item.status, emptyList(), item.response)
     }
 
@@ -91,7 +108,7 @@ private fun configuration() = CyclopsConfiguration(
     2u,
 )
 
-private fun serviceRequest(body: ByteArray?) = HttpRequest("POST", "https://ignored.invalid/mcp", emptyList(), body)
+private fun serviceRequest(body: ByteArray?) = HttpRequest("POST", "https://ignored.invalid/mcp", emptyList(), body, null)
 private val sandbox = Sandbox("default", "default", "offline-sandbox", listOf("mcp"))
 
 fun main() = runBlocking {

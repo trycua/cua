@@ -10,62 +10,43 @@ import Link from "@cloudscape-design/components/link"
 import Modal from "@cloudscape-design/components/modal"
 import Select from "@cloudscape-design/components/select"
 import SpaceBetween from "@cloudscape-design/components/space-between"
-import Spinner from "@cloudscape-design/components/spinner"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
 import Table from "@cloudscape-design/components/table"
 import Tabs from "@cloudscape-design/components/tabs"
-import { api, claimsApi, type Claim } from "../api/cyclops"
-import { derivePoolStatus, tombstonePool } from "../api/pools"
-import { useFeatureFlags } from "../components/FeatureFlagContext"
 import { useFlash } from "../components/FlashContext"
 import { PoolStatusPill } from "../components/PoolStatus"
-
-interface ServiceDef {
-  name: string
-  targetPort: number
-  protocol: string
-}
-
-interface PoolData {
-  name: string
-  namespace: string
-  replicas: number
-  cpu: number
-  ram: string
-  ociImage: string
-  services: ServiceDef[]
-  probes?: { readinessProbe?: Record<string, unknown>; livenessProbe?: Record<string, unknown> }
-  phase: string
-  totalCount: number
-  availableCount: number
-  claimedCount: number
-}
+import { createClaim as createSdkClaim, deleteClaim, listClaims } from "../sdk/claims"
+import type { Claim, PoolData } from "../sdk/models"
+import { deletePool, getPool, updatePoolServices } from "../sdk/pools"
+import { derivePoolStatus, tombstonePool } from "../sdk/status"
+import { CuaButton } from "../components/CuaButton"
+import { PageEmpty, PageError } from "../components/PageState"
+import { PageShell } from "../components/PageShell"
 
 export function PoolDetail() {
   const { namespace = "", name = "" } = useParams()
   const navigate = useNavigate()
   const flash = useFlash()
-  const { admin } = useFeatureFlags()
 
   const [pool, setPool] = useState<PoolData | null>(null)
   const [loading, setLoading] = useState(true)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
-
-  // Orchestrator restart state (admin-only)
-  const [confirmingOrchestratorRestart, setConfirmingOrchestratorRestart] = useState(false)
-  const [orchestratorRestarting, setOrchestratorRestarting] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
+    setLoadError(null)
     try {
-      const p = await api.getPool(namespace, name)
+      const p = await getPool(namespace, name)
       setPool(p)
     } catch (e) {
+      const message = String((e as Error).message)
+      setLoadError(message)
       flash.push({
         type: "error",
         header: `Failed to load pool "${name}"`,
-        content: String((e as Error).message),
+        content: message,
       })
     } finally {
       setLoading(false)
@@ -79,7 +60,7 @@ export function PoolDetail() {
   const remove = async () => {
     setDeleting(true)
     try {
-      await api.deletePool(namespace, name)
+      await deletePool(namespace, name)
       tombstonePool(name)
       flash.push({ type: "success", header: `Deleted ${name}` })
       navigate("/pools")
@@ -93,77 +74,57 @@ export function PoolDetail() {
     }
   }
 
-  const restartOrchestrator = async () => {
-    if (!pool) return
-    setOrchestratorRestarting(true)
-    try {
-      await api.restartOrchestrator(`pool-${pool.name}`, pool.name)
-      flash.push({
-        type: "success",
-        header: `Restarting orchestrator for ${pool.name}`,
-        content:
-          "A rollout restart has been triggered. The orchestrator pod will be replaced momentarily.",
-      })
-    } catch (e) {
-      flash.push({
-        type: "error",
-        header: "Orchestrator restart failed",
-        content: String((e as Error).message),
-      })
-    } finally {
-      setOrchestratorRestarting(false)
-      setConfirmingOrchestratorRestart(false)
-    }
-  }
-
   if (loading && !pool) {
     return (
-      <Container header={<Header variant="h1">{name}</Header>}>
-        <Box textAlign="center" padding="l">
-          <Spinner /> Loading pool…
-        </Box>
-      </Container>
+      <PageShell eyebrow="Fleet / Pool" title={name || "Pool"}>
+        <PageEmpty title="Loading pool…" />
+      </PageShell>
     )
   }
-  if (!pool) return null
+  if (!pool) {
+    return (
+      <PageShell eyebrow="Fleet / Pool" title={name || "Pool"}>
+        <PageError
+          title="Pool unavailable"
+          action={<CuaButton onClick={load}>Try again</CuaButton>}
+        >
+          {loadError}
+        </PageError>
+      </PageShell>
+    )
+  }
 
   const status = derivePoolStatus(pool)
 
   return (
-    <SpaceBetween size="l">
-      <Container
-        header={
-          <Header
-            variant="h1"
-            actions={
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" onClick={load} />
-                <Button
-                  onClick={() =>
-                    pool && navigate("/pools/new", { state: { source: pool } })
-                  }
-                >
-                  Duplicate
-                </Button>
-                {admin && (
-                  <Button
-                    onClick={() => setConfirmingOrchestratorRestart(true)}
-                    disabled={orchestratorRestarting}
-                  >
-                    Restart orchestrator
-                  </Button>
-                )}
-                <Button onClick={() => setConfirmingDelete(true)}>
-                  Delete
-                </Button>
-              </SpaceBetween>
+    <PageShell
+      eyebrow="Fleet / Pool"
+      title={pool.name}
+      description={<PoolStatusPill status={status} />}
+      secondaryActions={
+        <SpaceBetween direction="horizontal" size="xs">
+          <CuaButton
+            tone="icon"
+            ariaLabel="Refresh pool"
+            iconName="refresh"
+            onClick={load}
+          />
+          <CuaButton
+            onClick={() =>
+              navigate("/pools/new", { state: { source: pool } })
             }
           >
-            {pool.name}
-          </Header>
-        }
-      >
-        <ColumnLayout columns={admin ? 3 : 2} variant="text-grid">
+            Duplicate
+          </CuaButton>
+          <CuaButton onClick={() => setConfirmingDelete(true)}>
+            Delete
+          </CuaButton>
+        </SpaceBetween>
+      }
+    >
+      <SpaceBetween size="l">
+      <Container header={<Header variant="h2">Overview</Header>}>
+        <ColumnLayout columns={2} variant="text-grid">
           <div>
             <Box variant="awsui-key-label">Status</Box>
             <PoolStatusPill status={status} />
@@ -172,14 +133,6 @@ export function PoolDetail() {
             <Box variant="awsui-key-label">Namespace</Box>
             <div>{pool.namespace}</div>
           </div>
-          {admin && (
-            <div>
-              <Box variant="awsui-key-label">Gateway</Box>
-              <div>
-                <code>{window.location.origin}/api/gateway/{pool.name}</code>
-              </div>
-            </div>
-          )}
         </ColumnLayout>
       </Container>
 
@@ -205,12 +158,12 @@ export function PoolDetail() {
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setConfirmingDelete(false)}>
+              <CuaButton onClick={() => setConfirmingDelete(false)}>
                 Cancel
-              </Button>
-              <Button variant="primary" onClick={remove} loading={deleting}>
+              </CuaButton>
+              <CuaButton tone="danger" onClick={remove} loading={deleting}>
                 Delete
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           </Box>
         }
@@ -219,39 +172,8 @@ export function PoolDetail() {
         in <b>{pool.namespace}</b>.
       </Modal>
 
-      {admin && (
-        <Modal
-          visible={confirmingOrchestratorRestart}
-          onDismiss={() => { if (!orchestratorRestarting) setConfirmingOrchestratorRestart(false) }}
-          header={`Restart orchestrator for ${name}?`}
-          footer={
-            <Box float="right">
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button
-                  onClick={() => setConfirmingOrchestratorRestart(false)}
-                  disabled={orchestratorRestarting}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={restartOrchestrator}
-                  loading={orchestratorRestarting}
-                >
-                  Restart orchestrator
-                </Button>
-              </SpaceBetween>
-            </Box>
-          }
-        >
-          This will trigger a rolling restart of the{" "}
-          <b>{name}-orchestrator</b> Deployment in{" "}
-          <b>{pool.namespace}</b>. Equivalent to{" "}
-          <code>kubectl rollout restart deployment/{name}-orchestrator</code>.
-          In-flight requests will be drained before the old pod is terminated.
-        </Modal>
-      )}
-    </SpaceBetween>
+      </SpaceBetween>
+    </PageShell>
   )
 }
 
@@ -409,7 +331,7 @@ function ServicesEditor({
         targetPort: parseInt(r.targetPort, 10),
         protocol: r.protocol || "TCP",
       }))
-      await api.updatePoolServices(pool.namespace, pool.name, services)
+      await updatePoolServices(pool.namespace, pool.name, services)
       flash.push({ type: "success", header: "Services updated" })
       onSaved()
     } catch (e) {
@@ -430,12 +352,12 @@ function ServicesEditor({
           variant="h2"
           actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="add-plus" onClick={addRow}>
+              <CuaButton iconName="add-plus" onClick={addRow}>
                 Add service
-              </Button>
-              <Button variant="primary" loading={saving} onClick={save}>
+              </CuaButton>
+              <CuaButton tone="primary" loading={saving} onClick={save}>
                 Save
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           }
         >
@@ -471,7 +393,12 @@ function ServicesEditor({
                 }
                 options={PROTOCOL_OPTIONS}
               />
-              <Button iconName="remove" variant="icon" onClick={() => removeRow(row.id)} />
+              <CuaButton
+                tone="icon"
+                ariaLabel={`Remove service ${row.name || "row"}`}
+                iconName="remove"
+                onClick={() => removeRow(row.id)}
+              />
             </ColumnLayout>
           ))}
         </SpaceBetween>
@@ -521,12 +448,9 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
 
   // Pool name = namespace name (1:1 mapping).
   const claimNamespace = pool.namespace
-  // The compat shim names the template <pool-name>-template.
-  const templateRef = `${pool.name}-template`
-
   const loadClaims = useCallback(async () => {
     try {
-      const list = await claimsApi.list(claimNamespace)
+      const list = await listClaims(claimNamespace)
       setClaims(list)
     } catch {
       // Silently ignore polling errors — the table will show stale data
@@ -548,9 +472,8 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
   const createClaim = async () => {
     setCreating(true)
     try {
-      const id = `claim-${Math.random().toString(36).slice(2, 10)}`
-      await claimsApi.create(claimNamespace, id, templateRef)
-      flash.push({ type: "success", header: `Created claim ${id}` })
+      const claim = await createSdkClaim(claimNamespace, pool.name)
+      flash.push({ type: "success", header: `Created claim ${claim.name}` })
       setShowCreate(false)
       await loadClaims()
     } catch (e) {
@@ -567,7 +490,7 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
   const releaseClaim = async (claimName: string) => {
     setReleasing(true)
     try {
-      await claimsApi.remove(claimNamespace, claimName)
+      await deleteClaim(claimNamespace, claimName)
       flash.push({ type: "success", header: `Released claim ${claimName}` })
       setConfirmRelease(null)
       await loadClaims()
@@ -593,10 +516,15 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
             counter={`(${claims.length})`}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" onClick={loadClaims} />
-                <Button variant="primary" onClick={() => setShowCreate(true)}>
+                <CuaButton
+                  tone="icon"
+                  ariaLabel="Refresh claims"
+                  iconName="refresh"
+                  onClick={loadClaims}
+                />
+                <CuaButton tone="primary" onClick={() => setShowCreate(true)}>
                   Create claim
-                </Button>
+                </CuaButton>
               </SpaceBetween>
             }
           >
@@ -668,19 +596,19 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button
+              <CuaButton
                 onClick={() => setShowCreate(false)}
                 disabled={creating}
               >
                 Cancel
-              </Button>
-              <Button
-                variant="primary"
+              </CuaButton>
+              <CuaButton
+                tone="primary"
                 onClick={createClaim}
                 loading={creating}
               >
                 Create
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           </Box>
         }
@@ -705,19 +633,19 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button
+              <CuaButton
                 onClick={() => setConfirmRelease(null)}
                 disabled={releasing}
               >
                 Cancel
-              </Button>
-              <Button
-                variant="primary"
+              </CuaButton>
+              <CuaButton
+                tone="danger"
                 onClick={() => confirmRelease && releaseClaim(confirmRelease)}
                 loading={releasing}
               >
                 Release
-              </Button>
+              </CuaButton>
             </SpaceBetween>
           </Box>
         }

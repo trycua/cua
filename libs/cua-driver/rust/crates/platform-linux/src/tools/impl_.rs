@@ -594,7 +594,10 @@ impl Tool for GetWindowStateTool {
                 modality at ACTION time: an element ax action \
                 (element_index/element_token → accessibility rung) or an element px \
                 action (x,y → pixel rung off this screenshot). capture_mode is \
-                deprecated and ignored.\n\n\
+                deprecated and ignored. On Wayland, where output capture cannot prove \
+                the requested surface's identity, the truthful tree is returned without \
+                a screenshot and `screenshot_error.code` is \
+                `surface_identity_unproven`.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees. When applied, BOTH \
@@ -603,7 +606,7 @@ impl Tool for GetWindowStateTool {
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer"},
-                "window_id":{"type":"integer","description":"X11 XID from list_windows."},
+                "window_id":{"type":"integer","description":"Native window identifier from list_windows."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_screenshot":{"type":"boolean",
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
@@ -670,6 +673,7 @@ impl Tool for GetWindowStateTool {
             crate::wayland::list_windows_dispatch(Some(pid))
                 .iter()
                 .any(|window| window.xid == xid && window.pid == Some(pid))
+                || crate::wayland::window_was_listed_for_pid(pid, xid)
         } else {
             crate::x11::window_belongs_to_pid(xid, pid)
         };
@@ -681,9 +685,9 @@ impl Tool for GetWindowStateTool {
 
         // Always walk the AT-SPI tree; capture the screenshot by default. The
         // tree+screenshot pair is the default so the agent grounds on both and
-        // cross-checks the (sometimes-lying) tree against the frame — only the
-        // explicit `include_screenshot:false` opt-out (with no screenshot_out_file)
-        // skips the grab to return tree only.
+        // cross-checks the (sometimes-lying) tree against the frame. An explicit
+        // `include_screenshot:false` skips the grab; an unproven Wayland surface
+        // returns the tree with a typed screenshot error instead of unrelated pixels.
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
         let observation_only = args
             .get("_observation_only")
@@ -713,6 +717,7 @@ impl Tool for GetWindowStateTool {
             // of embedding base64; otherwise embed base64. Skipped only when
             // include_screenshot:false and no disk path was requested.
             // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
+            let mut screenshot_error = None;
             let screenshot = if should_capture {
                 match crate::wayland::screenshot_dispatch(xid) {
                     Ok(raw) => {
@@ -730,6 +735,10 @@ impl Tool for GetWindowStateTool {
                             Some((Some(B64.encode(&png)), None, w, h, original_w))
                         }
                     }
+                    Err(error) if crate::wayland::is_surface_identity_unproven(&error) => {
+                        screenshot_error = Some(error.to_string());
+                        None
+                    }
                     Err(error) => {
                         return Err(anyhow::anyhow!(
                             "window screenshot failed for window {xid}: {error}"
@@ -739,12 +748,12 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
-            Ok((tree_result, screenshot, bounds))
+            Ok((tree_result, screenshot, bounds, screenshot_error))
         })
         .await;
 
         match result {
-            Ok(Ok((tree_opt, shot_opt, bounds))) => {
+            Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": xid, "pid": pid });
 
@@ -927,6 +936,10 @@ impl Tool for GetWindowStateTool {
                         structured["screenshot_file_path"] = json!(fp);
                     }
                 }
+                if let Some(reason) = screenshot_error {
+                    structured["screenshot_frame_valid"] = json!(false);
+                    structured["screenshot_error"] = surface_identity_unproven_error(xid, reason);
+                }
 
                 ToolResult {
                     content,
@@ -941,7 +954,35 @@ impl Tool for GetWindowStateTool {
     }
 }
 
+fn surface_identity_unproven_error(xid: u64, reason: String) -> Value {
+    json!({
+        "code": "surface_identity_unproven",
+        "window_id": xid,
+        "reason": reason,
+        "suggestion": "capture the full output explicitly, or retry on a compositor backend that supports identified per-window capture"
+    })
+}
+
 // ── launch_app ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod get_window_state_capture_tests {
+    use super::*;
+
+    #[test]
+    fn surface_identity_failure_is_a_typed_screenshot_error() {
+        let error = surface_identity_unproven_error(
+            0x2962,
+            "surface_identity_unproven: fixture".to_owned(),
+        );
+
+        assert_eq!(error["code"], "surface_identity_unproven");
+        assert_eq!(error["window_id"], 0x2962);
+        assert!(error["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("surface_identity_unproven")));
+    }
+}
 
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -951,18 +992,252 @@ fn contains_remote_debugging_flag(value: &str) -> bool {
     lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
 }
 
+/// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
+/// `Exec=` value with field codes stripped) in the background and return the
+/// child pid.
+fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::Result<u32> {
+    let mut parts = cmd.split_whitespace();
+    let prog = parts.next().unwrap_or(cmd);
+    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+    rest.extend(additional_arguments.iter().cloned());
+    let mut launch = std::process::Command::new(prog);
+    launch
+        .args(&rest)
+        // Enable accessibility for this child without toggling GNOME's global
+        // ScreenReaderEnabled setting (which can launch Orca). Native
+        // toolkits ignore these when they do not need them.
+        .env("ACCESSIBILITY_ENABLED", "1")
+        .env("NO_AT_BRIDGE", "0");
+    if chromium_family_program(prog)
+        && !rest
+            .iter()
+            .any(|arg| arg == "--force-renderer-accessibility")
+    {
+        launch.arg("--force-renderer-accessibility");
+    }
+    let child = launch.spawn()?;
+    let pid = child.id();
+    reap_in_background(child);
+    Ok(pid)
+}
+
+/// Collect a launched child's exit status in the background.
+///
+/// `std::process::Child` does not reap on drop and the driver never waits on
+/// an app it launches, so every launched app used to linger as a zombie for
+/// the daemon's lifetime: it held a pid slot, and — because the pid stays
+/// present — made "does this pid exist" liveness checks report a terminated
+/// app as still running.
+///
+/// Reaping is scoped to one thread per child rather than setting
+/// `SIGCHLD` to `SIG_IGN`, which is process-global and would break every
+/// caller that needs an exit status, including the `xdg-open` check below
+/// and any `Command::status()`/`output()` elsewhere in the daemon. The
+/// thread blocks in `wait` until the app exits, so it costs nothing while
+/// the app runs and never delays the launch itself.
+fn reap_in_background(mut child: std::process::Child) {
+    let pid = child.id();
+    let reaper = std::thread::Builder::new()
+        .name(format!("cua-reap-{pid}"))
+        .stack_size(64 * 1024)
+        .spawn(move || {
+            if let Err(e) = child.wait() {
+                tracing::debug!(pid, "launched app could not be reaped: {e}");
+            }
+        });
+    if let Err(e) = reaper {
+        tracing::debug!(pid, "could not start reaper thread for launched app: {e}");
+    }
+}
+
+/// Match a launch_app `name` that failed direct exec against installed XDG
+/// .desktop applications: exact display name, desktop-file id, or `Exec=`
+/// basename first, then a display-name substring when it is unambiguous.
+fn match_installed_app<'a>(
+    apps: &'a [crate::installed_apps::InstalledApp],
+    query: &str,
+) -> Option<&'a crate::installed_apps::InstalledApp> {
+    let q = query.to_ascii_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+    apps.iter()
+        .find(|a| {
+            a.name.to_ascii_lowercase() == q
+                || a.bundle_id.to_ascii_lowercase() == q
+                || exec_basename(&a.launch_path) == q
+        })
+        .or_else(|| {
+            let mut matches = apps
+                .iter()
+                .filter(|a| a.name.to_ascii_lowercase().contains(&q));
+            match (matches.next(), matches.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        })
+}
+
+/// Watch a just-spawned `xdg-open` long enough to catch a fast failure.
+/// xdg-open's generic fallback can `exec` the target app and stay alive for
+/// its whole lifetime, so a child still running after the grace period counts
+/// as success; a quick non-zero exit (2 = file not found, 3 = no handler
+/// tool, 4 = action failed) is the only reliable failure signal.
+fn xdg_open_failure(mut child: std::process::Child) -> Option<String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+    loop {
+        // A branch that observes an exit status has already reaped the child;
+        // one that gives up on it still owes that, so hand it to the reaper
+        // instead of dropping it and leaving a zombie behind.
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return None,
+            Ok(Some(status)) => return Some(format!("xdg-open failed ({status})")),
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                reap_in_background(child);
+                return None;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(e) => {
+                reap_in_background(child);
+                return Some(format!("could not observe xdg-open: {e}"));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod launch_app_tests {
+    use super::*;
+    use crate::installed_apps::InstalledApp;
+
+    fn app(name: &str, bundle_id: &str, launch_path: &str) -> InstalledApp {
+        InstalledApp {
+            name: name.to_owned(),
+            bundle_id: bundle_id.to_owned(),
+            launch_path: launch_path.to_owned(),
+            last_used: None,
+        }
+    }
+
+    fn fixture() -> Vec<InstalledApp> {
+        vec![
+            app("Galculator", "galculator", "galculator"),
+            app(
+                "Google Chrome",
+                "google-chrome",
+                "/usr/bin/google-chrome-stable",
+            ),
+            app("File Manager", "thunar", "thunar"),
+            app(
+                "File Manager Settings",
+                "thunar-settings",
+                "thunar-settings",
+            ),
+        ]
+    }
+
+    /// Process state letter from `/proc/<pid>/stat`, or `None` once the entry
+    /// is gone. `comm` may itself contain spaces and parentheses, so the state
+    /// is read after the final `)` rather than by splitting from the left.
+    fn proc_state(pid: u32) -> Option<char> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let after_comm = stat.rsplit_once(')')?.1;
+        after_comm.split_whitespace().next()?.chars().next()
+    }
+
+    #[test]
+    fn launched_children_are_reaped_instead_of_lingering_as_zombies() {
+        // A launched app that exits must not stay in the process table. The
+        // driver never waits on what it launches, so without an explicit
+        // reaper every launch leaked a pid slot for the daemon's lifetime and
+        // left "does this pid exist" liveness checks reporting a terminated
+        // app as still running.
+        // `/bin/sh` rather than a richer coreutils binary: it is the one
+        // executable POSIX and the Nix build sandbox both guarantee, and the
+        // sandbox has no `/bin/true`.
+        let pid = spawn_launch_command("/bin/sh -c exit", &[]).expect("/bin/sh should spawn");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match proc_state(pid) {
+                None => break,                    // reaped, entry gone
+                Some(state) if state != 'Z' => {} // still running or exiting
+                Some(_) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "pid {pid} was still a zombie after the reaper deadline"
+                    );
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pid {pid} was never reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    #[test]
+    fn matches_exact_display_name_case_insensitively() {
+        let apps = fixture();
+        let hit = match_installed_app(&apps, "google chrome").expect("should match");
+        assert_eq!(hit.bundle_id, "google-chrome");
+    }
+
+    #[test]
+    fn matches_desktop_file_id_and_exec_basename() {
+        let apps = fixture();
+        assert_eq!(
+            match_installed_app(&apps, "galculator").unwrap().name,
+            "Galculator"
+        );
+        assert_eq!(
+            match_installed_app(&apps, "google-chrome-stable")
+                .unwrap()
+                .name,
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn matches_unambiguous_display_name_substring() {
+        let apps = fixture();
+        assert_eq!(
+            match_installed_app(&apps, "chrome").unwrap().name,
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn refuses_ambiguous_substring_and_unknown_names() {
+        let apps = fixture();
+        // "file manager" is a substring of two entries — refuse to guess.
+        // ("File Manager" itself still resolves via the exact-name rung.)
+        assert!(match_installed_app(&apps, "file man").is_none());
+        assert_eq!(
+            match_installed_app(&apps, "file manager")
+                .unwrap()
+                .bundle_id,
+            "thunar"
+        );
+        assert!(match_installed_app(&apps, "gnome-calculator").is_none());
+        assert!(match_installed_app(&apps, "").is_none());
+    }
+}
+
 #[async_trait]
 impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
         LAUNCH_DEF.get_or_init(|| ToolDef {
             name: "launch_app".into(),
             description: "Launch a Linux app in the background. Provide launch_path (preferred — \
-                round-trip the value from list_apps), name (app name, launched via xdg-open or \
-                direct exec), bundle_id (ignored on Linux), or urls (list of URLs to open). \
-                Resolution precedence: launch_path > name > bundle_id.".into(),
+                round-trip the value from list_apps), name (tried as a direct command, then \
+                matched against installed .desktop applications, then handed to xdg-open if it \
+                is a URL or existing file path), bundle_id (ignored on Linux), or urls (list of \
+                URLs to open). Resolution precedence: launch_path > name > bundle_id. Errors \
+                when the name resolves to nothing launchable.".into(),
             input_schema: json!({"type":"object","properties":{
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
-                "name":{"type":"string","description":"App name or command to launch."},
+                "name":{"type":"string","description":"App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring)."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."}
@@ -1002,8 +1277,17 @@ impl Tool for LaunchAppTool {
             move || -> anyhow::Result<(String, Option<u32>, String)> {
                 // Open URLs via xdg-open.
                 if !urls.is_empty() {
+                    let mut children = Vec::new();
                     for url in &urls {
-                        std::process::Command::new("xdg-open").arg(url).spawn()?;
+                        children.push((
+                            url.clone(),
+                            std::process::Command::new("xdg-open").arg(url).spawn()?,
+                        ));
+                    }
+                    for (url, child) in children {
+                        if let Some(reason) = xdg_open_failure(child) {
+                            anyhow::bail!("could not open '{url}': {reason}");
+                        }
                     }
                     return Ok((
                         format!("Opened {} URL(s) via xdg-open.", urls.len()),
@@ -1016,29 +1300,8 @@ impl Tool for LaunchAppTool {
                 // canonical form preferred by list_apps callers.
                 let command = launch_path_opt.as_deref().or(name_opt.as_deref());
                 if let Some(cmd) = command {
-                    let mut parts = cmd.split_whitespace();
-                    let prog = parts.next().unwrap_or(cmd);
-                    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
-                    rest.extend(additional_arguments);
-                    let mut launch = std::process::Command::new(prog);
-                    launch
-                        .args(&rest)
-                        // Enable accessibility for this child without toggling
-                        // GNOME's global ScreenReaderEnabled setting (which can
-                        // launch Orca). Native toolkits ignore these when they
-                        // do not need them.
-                        .env("ACCESSIBILITY_ENABLED", "1")
-                        .env("NO_AT_BRIDGE", "0");
-                    if chromium_family_program(prog)
-                        && !rest
-                            .iter()
-                            .any(|arg| arg == "--force-renderer-accessibility")
-                    {
-                        launch.arg("--force-renderer-accessibility");
-                    }
-                    match launch.spawn() {
-                        Ok(child) => {
-                            let pid = child.id();
+                    match spawn_launch_command(cmd, &additional_arguments) {
+                        Ok(pid) => {
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
                                 Some(pid),
@@ -1046,9 +1309,49 @@ impl Tool for LaunchAppTool {
                             ));
                         }
                         Err(_) => {
-                            // Fall back to xdg-open for .desktop app names. xdg-open may
-                            // spawn a helper and exit, so do not claim its pid is the app pid.
-                            std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            // Not an executable on PATH. Resolve the name against
+                            // installed XDG .desktop applications — the same
+                            // source list_apps reads — and run the match's Exec=.
+                            let installed = crate::installed_apps::list_installed_apps();
+                            if let Some(app) = match_installed_app(&installed, cmd) {
+                                let pid =
+                                    spawn_launch_command(&app.launch_path, &additional_arguments)
+                                        .map_err(|e| {
+                                        anyhow::anyhow!(
+                                            "'{cmd}' matched installed app '{}' but its launcher \
+                                         `{}` failed to start: {e}",
+                                            app.name,
+                                            app.launch_path
+                                        )
+                                    })?;
+                                return Ok((
+                                    format!(
+                                        "✅ Launched {} (`{}`, pid {pid}) in background — \
+                                         resolved '{cmd}' via its desktop entry.",
+                                        app.name, app.launch_path
+                                    ),
+                                    Some(pid),
+                                    app.name.clone(),
+                                ));
+                            }
+                            // xdg-open handles URLs and file paths, not app
+                            // names — only fall through for something it can
+                            // plausibly open, and surface its fast non-zero
+                            // exit instead of reporting a launch that never
+                            // happened.
+                            if !cmd.contains("://") && !std::path::Path::new(cmd).exists() {
+                                anyhow::bail!(
+                                    "'{cmd}' is not an executable on PATH and matches no \
+                                     installed .desktop application. Call list_apps and \
+                                     round-trip its launch_path."
+                                );
+                            }
+                            let child = std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            if let Some(reason) = xdg_open_failure(child) {
+                                anyhow::bail!("could not open '{cmd}': {reason}");
+                            }
+                            // xdg-open may spawn a helper and exit, so do not
+                            // claim its pid is the app pid.
                             return Ok((
                                 format!("Opened '{cmd}' via xdg-open."),
                                 None,
@@ -1625,7 +1928,7 @@ fn mouse_button_name(button: u8) -> &'static str {
 }
 
 fn resolve_cursor_key(args: &Value) -> String {
-    for key in ["session", "cursor_id"] {
+    for key in ["session", "_session_id", "cursor_id"] {
         if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
             if !v.is_empty() {
                 return v.to_owned();
@@ -1633,6 +1936,35 @@ fn resolve_cursor_key(args: &Value) -> String {
         }
     }
     "default".to_owned()
+}
+
+#[cfg(test)]
+mod cursor_key_resolution_tests {
+    use super::resolve_cursor_key;
+    use serde_json::json;
+
+    #[test]
+    fn trusted_implicit_session_owns_the_cursor() {
+        assert_eq!(resolve_cursor_key(&json!({})), "default");
+        assert_eq!(
+            resolve_cursor_key(&json!({"_session_id": "implicit-lease"})),
+            "implicit-lease"
+        );
+        assert_eq!(
+            resolve_cursor_key(&json!({
+                "_session_id": "implicit-lease",
+                "cursor_id": "legacy"
+            })),
+            "implicit-lease"
+        );
+        assert_eq!(
+            resolve_cursor_key(&json!({
+                "session": "named",
+                "_session_id": "implicit-lease"
+            })),
+            "named"
+        );
+    }
 }
 
 fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
@@ -1948,7 +2280,7 @@ impl Tool for ClickTool {
         let cursor_id = resolve_cursor_key(&args);
         let modifiers: Vec<String> = args.str_array("modifier");
 
-        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // ── Window-less screen-absolute branch (desktop target) ───────────────
         // x,y with NO pid and NO window_id → TRUE SCREEN pixels. Foreground,
         // desktop-scope click (the Linux peer of the Windows WindowFromPoint /
         // macOS global-HID path). The core registry has already enforced the
@@ -2704,24 +3036,18 @@ impl Tool for TypeTextTool {
             && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid))
         {
             if let Some(idx) = resolved_elem_idx {
-                let focused =
-                    tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))
-                        .await;
-                match focused {
-                    Ok(Ok(true)) => {}
-                    Ok(Ok(false)) => {
-                        return ToolResult::error(format!(
-                            "AT-SPI Component.GrabFocus returned false for element {idx}"
-                        ))
-                    }
-                    Ok(Err(error)) => return ToolResult::error(error.to_string()),
-                    Err(error) => return ToolResult::error(format!("Task error: {error}")),
-                }
-
                 let text_w = text.clone();
-                let result =
-                    tokio::task::spawn_blocking(move || crate::wayland::type_text(xid, &text_w))
-                        .await;
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::wayland::with_target_foreground(pid, xid, || {
+                        if !crate::atspi::focus_element(pid, idx)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {idx}"
+                            );
+                        }
+                        crate::wayland::type_text_focused(&text_w)
+                    })
+                })
+                .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
@@ -2771,8 +3097,20 @@ impl Tool for TypeTextTool {
                 );
             }
             let text_w = text.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::type_text(xid, &text_w)).await;
+            let idx = resolved_elem_idx;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::with_target_foreground(pid, xid, || {
+                    if let Some(idx) = idx {
+                        if !crate::atspi::focus_element(pid, idx)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {idx}"
+                            );
+                        }
+                    }
+                    crate::wayland::type_text_focused(&text_w)
+                })
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
@@ -2840,24 +3178,17 @@ impl Tool for TypeTextTool {
         // producing the renderer input event, so web embedders use real XTest
         // key events. Native toolkits keep their verifiable AT-SPI path below.
         if delivery.is_foreground() && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid)) {
-            if let Some(idx) = resolved_elem_idx {
-                let focused =
-                    tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))
-                        .await;
-                match focused {
-                    Ok(Ok(true)) => {}
-                    Ok(Ok(false)) => {
-                        return ToolResult::error(format!(
-                            "AT-SPI Component.GrabFocus returned false for element {idx}"
-                        ))
-                    }
-                    Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
-                }
-            }
             let text_f = text.clone();
+            let idx = resolved_elem_idx;
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::with_x11_foreground(xid, 80, || {
+                    if let Some(idx) = idx {
+                        if !crate::atspi::focus_element(pid, idx)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {idx}"
+                            );
+                        }
+                    }
                     crate::input::send_type_text_xtest(&text_f)
                 })
             })
@@ -3154,10 +3485,10 @@ impl Tool for PressKeyTool {
         };
         let mods: Vec<String> = args.str_array("modifiers");
 
-        // Surface 6: resolve element_token / element_index for the window-id
-        // hint. press_key targets a window via XSendEvent, so we only need
-        // the resolved window_id — element_index itself is not used to
-        // address an AX node here (no focus-grab path).
+        // Surface 6: resolve the element token/index into both its owning
+        // window and exact child. Foreground delivery establishes child focus
+        // inside the verified top-level activation transaction; background
+        // XSendEvent retains the historical direct-window path.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
@@ -3177,6 +3508,12 @@ impl Tool for PressKeyTool {
                 window_id_arg.or_else(|| window_id.map(|v| v as u64))
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
+        };
+        let resolved_element_idx = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let xid = match xid_opt {
             Some(x) => x,
@@ -3220,7 +3557,7 @@ impl Tool for PressKeyTool {
         if px.is_some() != py.is_some() {
             return ToolResult::error("Pass both x and y to press_key, or neither.");
         }
-        if px.is_some() && element_index_arg.is_some() {
+        if px.is_some() && resolved_element_idx.is_some() {
             return ToolResult::error(
                 "Pass either element_index (ax) or x,y (px) to press_key, not both.",
             );
@@ -3230,7 +3567,7 @@ impl Tool for PressKeyTool {
         // Preserve legacy modifiers by promoting the request to a chord.
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
-                focus_nested_inject_target(pid, xid, element_index_arg, px.zip(py)).await
+                focus_nested_inject_target(pid, xid, resolved_element_idx, px.zip(py)).await
             {
                 return error;
             }
@@ -3256,28 +3593,6 @@ impl Tool for PressKeyTool {
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
-        }
-
-        // An element-addressed keypress needs to establish the target's
-        // focus before the window-level X11 key event is sent. AT-SPI's
-        // primary action is the focus-free route for editable web controls;
-        // resolving the element only for its window ID silently loses the key
-        // on Chromium inputs whose window is backgrounded.
-        if let Some(element_index) = element_index_arg {
-            let focused = tokio::task::spawn_blocking(move || {
-                crate::atspi::focus_element(pid, element_index)
-            })
-            .await;
-            match focused {
-                Ok(Ok(true)) => {}
-                Ok(Ok(false)) => {
-                    return ToolResult::error(format!(
-                        "AT-SPI Component.GrabFocus returned false for element {element_index}"
-                    ))
-                }
-                Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                Err(e) => return ToolResult::error(format!("Task error: {e}")),
-            }
         }
 
         let px_target = {
@@ -3308,16 +3623,25 @@ impl Tool for PressKeyTool {
         // to become a chord here — otherwise the modifiers are dropped and the
         // bare key is typed as a character (Ctrl+S inserts a literal "s").
         if crate::wayland::wayland_input_enabled() {
-            let result = match press_key_chord(&mods, &key) {
-                None => {
-                    let key_w = key.clone();
-                    tokio::task::spawn_blocking(move || crate::wayland::press_key(xid, &key_w))
-                        .await
-                }
-                Some(chord) => {
-                    tokio::task::spawn_blocking(move || crate::wayland::hotkey(xid, &chord)).await
-                }
-            };
+            let key_w = key.clone();
+            let chord = press_key_chord(&mods, &key);
+            let idx = resolved_element_idx;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::with_target_foreground(pid, xid, || {
+                    if let Some(idx) = idx {
+                        if !crate::atspi::focus_element(pid, idx)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {idx}"
+                            );
+                        }
+                    }
+                    match chord {
+                        Some(keys) => crate::wayland::hotkey_focused(&keys),
+                        None => crate::wayland::press_key_focused(&key_w),
+                    }
+                })
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Pressed key '{key}' (via Wayland virtual-keyboard)."
@@ -3333,7 +3657,10 @@ impl Tool for PressKeyTool {
         // click restores the prior top-level before returning.
         let deliver_fg = delivery.is_foreground();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
+            if resolved_element_idx.is_none()
+                && mods.is_empty()
+                && key_for_task.eq_ignore_ascii_case("enter")
+            {
                 if inject_terminal_input(pid, xid, "\n")? {
                     return Ok(());
                 }
@@ -3346,8 +3673,22 @@ impl Tool for PressKeyTool {
             // XSendEvent (no focus steal) for apps that accept it.
             if deliver_fg {
                 return crate::input::with_x11_foreground(xid, 80, || {
+                    if let Some(element_index) = resolved_element_idx {
+                        if !crate::atspi::focus_element(pid, element_index)? {
+                            anyhow::bail!(
+                                "AT-SPI Component.GrabFocus returned false for element {element_index}"
+                            );
+                        }
+                    }
                     crate::input::send_key_xtest(&key_for_task, &m)
                 });
+            }
+            if let Some(element_index) = resolved_element_idx {
+                if !crate::atspi::focus_element(pid, element_index)? {
+                    anyhow::bail!(
+                        "AT-SPI Component.GrabFocus returned false for element {element_index}"
+                    );
+                }
             }
             if let Some((x, y)) = px_target {
                 crate::input::send_key_at(xid, x, y, &key_for_task, &m)
@@ -5092,7 +5433,9 @@ impl Tool for MouseButtonDownTool {
                 Does not release the button; pair with mouse_drag / mouse_button_up. \
                 Returns the current held-button state.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id","x","y"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
@@ -5240,7 +5583,9 @@ impl Tool for MouseDragTool {
                 Requires an active mouse_button_down state; does not release the button. \
                 Returns the updated held-button state.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
@@ -5444,7 +5789,9 @@ impl Tool for MouseButtonUpTool {
             description: "Release a previously-held mouse button via background X11 delivery. \
                 If x/y are omitted, releases at the last held position. Returns the current held-button state.".into(),
             input_schema: json!({"type":"object","properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema_with(
+                    "When both are present, session takes precedence over cursor_id."
+                ),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
@@ -5979,12 +6326,11 @@ impl Tool for GetDesktopStateTool {
     fn def(&self) -> &ToolDef {
         GDS_DEF.get_or_init(|| ToolDef {
             name: "get_desktop_state".into(),
-            description: "Full-display vision screenshot in true screen pixels (no downscale), \
-                for capture_scope=\"desktop\" GUI loops. Captures the entire display (root \
-                window) as native-size PNG so screen-absolute pixel coordinates land exactly. \
-                No AT-SPI walk.".into(),
+            description: "Capture the full display in true screen pixels with no downscale. \
+                Use its native-size PNG as the coordinate source for actions whose target is \
+                {kind:\"desktop\",display_id:\"primary\"}. No AT-SPI walk.".into(),
             input_schema: json!({"type":"object","properties":{
-                "session":{"type":"string","description":"Optional session id."},
+                "session":{"type":"string","description":"For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session."},
                 "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -6200,14 +6546,9 @@ impl Tool for MoveCursorTool {
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
         // overlay arrow settles to the natural macOS-style pose.
-        crate::overlay::send_command_for(
-            cursor_id.clone(),
-            cursor_overlay::OverlayCommand::MoveTo {
-                x,
-                y,
-                end_heading_radians: std::f64::consts::FRAC_PI_4,
-            },
-        );
+        // Use the acknowledged animation path so a first-ever move seeds and
+        // displays the session cursor just as reliably as a coordinate click.
+        crate::overlay::animate_cursor_to_for(cursor_id.clone(), x, y).await;
         // Native Wayland: also warp the real cursor via zwlr_virtual_pointer.
         // Off-thread because the wayland-client roundtrip is blocking. Best-effort
         // — overlay update + registry write already succeeded; surface a warning
@@ -6605,12 +6946,12 @@ impl Tool for SetConfigTool {
             || args.get("key").and_then(Value::as_str) == Some("capture_scope")
         {
             return ToolResult::error(
-                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
             .with_structured(json!({
                 "code": "config_key_retired",
                 "key": "capture_scope",
-                "replacement": "start_session.capture_scope",
+                "replacement": "action.target",
             }));
         }
         let mut cfg = self.state.config.write().unwrap();
@@ -7506,11 +7847,13 @@ pub fn build_registry_with_provider(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
+                        crate::overlay::is_visible_for_session(session_id),
                         Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
                         false,
                         false,
                         None,
@@ -7535,9 +7878,14 @@ pub fn build_registry_with_provider(
             crate::input::forget_master_pointer(session_id);
         })
     };
+    let session_revive_hook =
+        cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
+            crate::overlay::revive_cursor(session_id.to_owned());
+        });
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     r.retain_cursor_outcome_reader(cursor_outcome_reader);
     r.retain_session_end_hook(session_end_hook);
+    r.retain_session_revive_hook(session_revive_hook);
     if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
         let prefix = format!("__cua_runtime_{runtime_scope}:");
         let cursor_registry = state.cursor_registry.clone();

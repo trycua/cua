@@ -45,7 +45,7 @@ These run without the repo-local GUI applications:
 | --- | --- | --- |
 | Core driver logic | `rust/crates/*/src/**` | Protocol values, sessions, schemas, image helpers, input helpers, configuration, telemetry, CLI behavior |
 | MCP and CLI boundary | `rust/crates/cua-driver/tests/protocol_*` | Handshake, tool registration, tool calls, media, sessions, and errors |
-| Session capture scope | `session_capture_scope_test.rs` plus core `capture_scope` tests | Per-session isolation, immutable live policy, explicit auto escalation, end/revive race safety, transport-mirror refusal, and retired persistent key |
+| Lifecycle sessions and target migration | Core `session`, `session_tools`, `action_target`, and compatibility `capture_scope` tests plus `session_capture_scope_test.rs` | One implicit session per transport, five-minute idle policy, in-flight and exact-once cleanup, owner-scoped inspection and revival, per-call target validation, and legacy capture-scope compatibility |
 | Tool-contract gate | `schema_consistency_test.rs` | Shared tool schema parity and reviewed risk metadata across OS backends |
 | Configuration transport | `transport_config_persistence_test.rs` | CLI and MCP configuration persistence |
 | Token and protocol surfaces | `protocol_element_token_test.rs`, related tests | JSON-RPC-visible contract behavior |
@@ -109,7 +109,7 @@ Windows native harnesses are repo-local applications built from source:
 | WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows |
 | WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup |
 | WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
-| Desktop scope | `desktop_scope_windows_test.rs` | Concurrent strict window/desktop sessions, full-display capture, screen-absolute click/scroll, and strict rejection |
+| Desktop target | `desktop_scope_windows_test.rs` | Per-call window/desktop modality, full-display capture, screen-absolute click/scroll, and strict rejection |
 | Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
 
 Native controls use AX/UIA state as their oracle. Pointer actions also use PX
@@ -123,7 +123,7 @@ background delivery and attach desktop-side-effect oracles.
 | AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and foreground slider drag across the proven delivery modes; background drag is an exact refusal |
 | SwiftUI | `harness_swiftui_test.rs` | AX tree/capture, background click/value, and foreground popover-trigger state |
 | WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 40-cell shared web catalog |
-| Desktop scope | `desktop_scope_macos_test.rs` | Concurrent strict window/desktop sessions, screen-absolute action delivery, and strict rejection |
+| Desktop target | `desktop_scope_macos_test.rs` | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior in the canonical logged-in lane |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification in the canonical logged-in lane |
 
@@ -143,7 +143,7 @@ transient-panel AX discovery gap.
 | Electron | `cross_platform_behavior_test.rs` | X11 and hosted Sway | Shared web action matrix |
 | Tauri | `cross_platform_behavior_test.rs` | X11 and hosted Sway | Shared web action matrix |
 | GTK3 | `harness_gtk3_test.rs` | X11/AT-SPI and Wayland/AT-SPI where configured | Native GTK controls and input |
-| Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland | Concurrent strict window/desktop sessions, screen-absolute action delivery, and strict rejection |
+| Desktop target | `desktop_scope_linux_test.rs` | X11/Wayland | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
 
 Nix provides the Linux build and desktop environment. X11 and Wayland are
 separate matrix dimensions because their capture and input contracts differ.

@@ -18,12 +18,12 @@ func resetFlagsCache() {
 }
 
 // TestExportedEvalsEndToEnd wires the real path: SimpleEnvProvider →
-// flagsData() → input.flags → the prepared OPA queries. It guards the
-// glue (flag discovery, env→key mapping, set-result decoding) that the
+// flagsData() → input.flags → the prepared OPA query. It guards the
+// glue (flag discovery, env→key mapping, result decoding) that the
 // pure-policy tests in policy_test.go don't touch.
 func TestExportedEvalsEndToEnd(t *testing.T) {
 	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-sub"]`)
-	t.Setenv("CYCLOPS_CS_EVENT_REASON_ALLOWLIST", `["PoolCreated","PoolReady"]`)
+	t.Setenv("CYCLOPS_CS_CHAT_SUBS", `["chat-sub"]`)
 
 	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
 		t.Fatalf("setup dev provider: %v", err)
@@ -48,29 +48,26 @@ func TestExportedEvalsEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("EvalVisibleEvents", func(t *testing.T) {
-		items := []interface{}{
-			map[string]interface{}{"reason": "PoolCreated"},
-			map[string]interface{}{"reason": "PoolReady"},
-			map[string]interface{}{"reason": "InternalScaleDecision"},
-		}
-
-		out, err := EvalVisibleEvents(ctx, &User{ID: "nobody"}, items)
-		if err != nil {
-			t.Fatalf("EvalVisibleEvents(non-admin): %v", err)
-		}
-		if len(out) != 2 {
-			t.Fatalf("non-admin visible events = %d, want 2 (allowlisted reasons only)", len(out))
-		}
-
-		out, err = EvalVisibleEvents(ctx, &User{ID: "admin-sub"}, items)
-		if err != nil {
-			t.Fatalf("EvalVisibleEvents(admin): %v", err)
-		}
-		if len(out) != 3 {
-			t.Fatalf("admin visible events = %d, want 3 (all)", len(out))
+	t.Run("EvalChatEnabled", func(t *testing.T) {
+		for _, test := range []struct {
+			name string
+			user *User
+			want bool
+		}{
+			{name: "admin", user: &User{ID: "admin-sub", AZP: "cyclops-cs-spa"}, want: true},
+			{name: "allowlisted", user: &User{ID: "chat-sub", AZP: "cyclops-cs-spa"}, want: true},
+			{name: "unlisted", user: &User{ID: "someone-else", AZP: "cyclops-cs-spa"}, want: false},
+			{name: "nil", user: nil, want: false},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				ok, err := EvalChatEnabled(ctx, test.user)
+				if err != nil || ok != test.want {
+					t.Fatalf("EvalChatEnabled(%v) = %v, %v; want %v, nil", test.user, ok, err, test.want)
+				}
+			})
 		}
 	})
+
 }
 
 // TestFlagsDataCachedAndRefreshes confirms the TTL cache serves a stable
@@ -103,6 +100,32 @@ func TestFlagsDataCachedAndRefreshes(t *testing.T) {
 	}
 }
 
+func TestFlagsDataLoadsCardRequirementExemptSubs(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_CARD_REQUIREMENT_EXEMPT_SUBS", `["exempt-a","exempt-b"]`)
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+	resetFlagsCache()
+
+	got := asStrings(flagsData()["card_requirement_exempt_subs"])
+	if len(got) != 2 || got[0] != "exempt-a" || got[1] != "exempt-b" {
+		t.Fatalf("card_requirement_exempt_subs = %v, want [exempt-a exempt-b]", got)
+	}
+}
+
+func TestComputeFlagsDataFailsClosedOnTypeMismatch(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-sub"]`)
+	t.Setenv("CYCLOPS_CS_BILLING_ENABLED", "true")
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+
+	got := computeFlagsData(context.Background())
+	if len(got) != 0 {
+		t.Fatalf("computeFlagsData() = %v, want empty flags after type mismatch", got)
+	}
+}
+
 func asStrings(v any) []string {
 	items, ok := v.([]interface{})
 	if !ok {
@@ -115,4 +138,40 @@ func asStrings(v any) []string {
 		}
 	}
 	return out
+}
+
+func TestEvalBillingEnabledDefaultsFalseAndReadsBooleanFlag(t *testing.T) {
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+	LoadOpa()
+
+	t.Setenv("CYCLOPS_CS_BILLING_ENABLED", "false")
+	resetFlagsCache()
+	enabled, err := EvalBillingEnabled(context.Background(), &User{ID: "user-1", AZP: "cyclops-cs-spa"})
+	if err != nil || enabled {
+		t.Fatalf("EvalBillingEnabled(false) = %v, %v; want false, nil", enabled, err)
+	}
+
+	t.Setenv("CYCLOPS_CS_BILLING_ENABLED", "true")
+	resetFlagsCache()
+	enabled, err = EvalBillingEnabled(context.Background(), &User{ID: "user-1", AZP: "cyclops-cs-spa"})
+	if err != nil || !enabled {
+		t.Fatalf("EvalBillingEnabled(true) = %v, %v; want true, nil", enabled, err)
+	}
+}
+
+func TestEvalChatEnabledFailsClosedForMalformedAllowlist(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`)
+	t.Setenv("CYCLOPS_CS_CHAT_SUBS", `not-json`)
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		t.Fatalf("setup dev provider: %v", err)
+	}
+	LoadOpa()
+	resetFlagsCache()
+
+	enabled, err := EvalChatEnabled(context.Background(), &User{ID: "not-json", AZP: "cyclops-cs-spa"})
+	if err != nil || enabled {
+		t.Fatalf("EvalChatEnabled(malformed allowlist) = %v, %v; want false, nil", enabled, err)
+	}
 }

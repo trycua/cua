@@ -21,20 +21,11 @@
 #
 # Rust uninstall removes:
 #   All hosts:
-#     - the running `cua-driver serve` daemon is stopped before anything is
-#       deleted (mirrors uninstall.ps1 on Windows). Candidates are selected by
-#       argv[0]; whether one is a daemon is decided by scanning its command
-#       line the way the CLI does, so `cua-driver mcp` children of a live MCP
-#       client are reported, not killed, even when a flag value happens to be
-#       the word `serve`. That scan reads real argv from /proc where the host
-#       has it; where it does not (macOS) an unrecoverable command line is
-#       reported as `daemon_stop_undetermined` instead of guessed at. A bare
-#       `cua-driver` argv[0] is kept only when the executable behind the pid
-#       resolves into the install. After the pids die the scan repeats, so a
-#       supervisor that survived the autostart teardown is caught. A daemon
-#       that outlives SIGKILL or keeps respawning is reported as
-#       `daemon_stop_incomplete`, and the script then exits non-zero with a
-#       closing line saying the removal completed but a process is still up.
+#     - the running daemon is stopped through the installed `cua-driver stop`
+#       command using its per-user PID file, and the owned PID is verified gone
+#       before any runtime or bundle is removed. A small executable-identity
+#       fallback handles stale or missing PID files without reimplementing the
+#       CLI's argument parser.
 #   Linux:
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
@@ -154,367 +145,226 @@ purge_linux_history() {
         return 1
     fi
 }
-
-# Turn a literal installed-binary path into an argv[0] regex fragment: every
-# ERE metacharacter a $HOME or a package path may contain is escaped so the
-# path matches itself and nothing else.
-escape_path_regex() {
-    printf '%s' "$1" | sed 's/[][(){}.^$*+?|\\]/\\&/g'
-}
-
-# Flags whose next token is a value rather than the subcommand. Kept in
-# lockstep with VALUE_FLAGS in
-# libs/cua-driver/rust/crates/cua-driver/src/cli.rs — the test suite fails when
-# the two lists drift apart.
-DAEMON_VALUE_FLAGS="--cursor-theme --cursor-reduced-motion --glide-ms --dwell-ms
---idle-hide-ms --screenshot-out-file --client --socket --permission-mode --grant
---session-policy --capability-manifest --pid-file --type --host-bundle-id --pid
---strategy --window-id --session --profile-mode --profile-name
---experimental-pip-geometry"
-
-is_daemon_value_flag() {
-    local candidate="$1"
-    local flag
-    for flag in $DAEMON_VALUE_FLAGS; do
-        if [[ "$candidate" == "$flag" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-# Print the subcommand a token list resolves to, or nothing when it has none.
-#
-# This is a scan rather than a pattern because the two are not the same
-# language. The CLI takes the first NON-FLAG argument as the subcommand, and
-# only a value-taking flag swallows the token after it:
-#
-#   cua-driver --no-overlay serve      → serve  (a daemon)
-#   cua-driver --socket /tmp/x serve   → serve  (a daemon)
-#   cua-driver --no-overlay call serve → call   (a finite CLI call)
-#   cua-driver --socket serve mcp      → mcp    (an MCP child, socket "serve")
-#
-# A regex that tries to express this is ambiguous — its generic-flag branch
-# also matches `--socket`, so the last two lines above match as daemons and get
-# killed. Mirror `positionals()` in cli.rs instead, and let the regex do only
-# what it is unambiguous at: pinning argv[0].
-#
-# $1 selects how much the tokens can be trusted:
-#
-#   exact      the tokens are the real argv, one element each.
-#   flattened  the tokens came from a whitespace-joined command line, where an
-#              argument that itself contains whitespace is indistinguishable
-#              from the arguments after it. That is recoverable only until a
-#              value-taking flag appears: `--socket "/tmp/a serve" mcp` and
-#              `--socket /tmp/a serve` flatten to command lines whose token
-#              lists differ by nothing a scan can see. Print `?` there —
-#              guessing would either kill an MCP child or miss a daemon.
-daemon_subcommand() {
-    local mode="$1"
-    shift
-    local -a tokens=("$@")
-    local index=1
-    local token
-    while [[ "$index" -lt "${#tokens[@]}" ]]; do
-        token="${tokens[index]}"
-        if is_daemon_value_flag "$token"; then
-            if [[ "$mode" == "flattened" ]]; then
-                printf '?'
-                return 0
-            fi
-            index=$((index + 2))
-        elif [[ "$token" == -* ]]; then
-            index=$((index + 1))
-        else
-            printf '%s' "$token"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# Print the subcommand of a running process, or `?` when its argument
-# boundaries cannot be recovered.
-#
-# Linux exposes the real argv through /proc/<pid>/cmdline, NUL-separated, so the
-# scan is exact there. macOS has no equivalent a shell can read: `ps -o args=`
-# joins the arguments with spaces and the original boundaries are gone, so the
-# scan falls back to `flattened` and declines to guess. A daemon started the way
-# the product starts one — `serve` ahead of any flag, as install-local.sh, the
-# LaunchAgent, the systemd unit and the runtime's own relaunch all do — is
-# unaffected, because no value flag precedes the subcommand.
-daemon_pid_subcommand() {
-    local pid="$1"
-    local -a argv=()
-    local token
-    if [[ -r "/proc/$pid/cmdline" ]]; then
-        while IFS= read -r -d "" token; do
-            argv+=("$token")
-        done < "/proc/$pid/cmdline"
-        [[ "${#argv[@]}" -gt 0 ]] || return 1
-        daemon_subcommand exact "${argv[@]}"
-        return
-    fi
-    local command_line
-    command_line="$(ps -ww -o args= -p "$pid" 2>/dev/null || true)"
-    [[ -n "$command_line" ]] || return 1
-    read -r -a argv <<< "$command_line"
-    [[ "${#argv[@]}" -gt 0 ]] || return 1
-    daemon_subcommand flattened "${argv[@]}"
-}
-
-# Anchor an argv[0] regex fragment as a whole-command-line match for pgrep.
-# Anchoring is what keeps a launcher shell that merely mentions the path in its
-# script text out of the match — see the same note in uninstall-local.sh.
-daemon_argv0_pattern() {
-    printf '^%s([[:space:]]|$)' "$1"
-}
-
-# True when a pid is still running and not just an unreaped zombie. A zombie
-# holds no socket, no window and no TCC connection — treating one as alive
-# would turn a successful stop into a false `daemon_stop_incomplete`.
-daemon_pid_alive() {
-    local state
-    state="$(ps -o state= -p "$1" 2>/dev/null || true)"
-    state="${state//[[:space:]]/}"
-    case "$state" in
-        ""|Z*) return 1 ;;
-        *) return 0 ;;
+# The daemon owns a per-user PID file and exposes the graceful stop command.
+# Keep those two facts authoritative: the uninstaller should not reimplement
+# the CLI parser or guess which cua-driver invocation is the daemon.
+daemon_pid_file_path() {
+    case "$OS" in
+        Darwin) printf '%s/Library/Caches/cua-driver/cua-driver.pid' "$HOME" ;;
+        Linux)  printf '%s/.cache/cua-driver/cua-driver.pid' "$HOME" ;;
+        *)      printf '/tmp/cua-driver.pid' ;;
     esac
 }
 
-daemon_pids_alive() {
+read_daemon_pid() {
+    local pid_file="$1"
     local pid
-    for pid in "$@"; do
-        if daemon_pid_alive "$pid"; then
-            return 0
-        fi
-    done
-    return 1
+    [[ -r "$pid_file" ]] || return 1
+    IFS= read -r pid < "$pid_file" || true
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    printf '%s' "$pid"
 }
 
-# Print the path of a running process's executable, empty when the host will
-# not say. Linux keeps it as /proc/<pid>/exe — still resolvable after the file
-# is unlinked, which is exactly the case this phase exists for, so the
-# " (deleted)" suffix is trimmed. BSD `ps -o comm=` prints the executable path
-# on macOS; anything that is not absolute is treated as "unknown".
-daemon_pid_executable() {
+# kill -0 is enough for the normal PID-file path and is scoped by the kernel
+# to a process this uninstaller is allowed to signal. The optional ps state
+# check avoids treating an unreaped zombie as a live daemon when ps is present.
+daemon_pid_alive() {
     local pid="$1"
-    local executable
-    if [[ -L "/proc/$pid/exe" ]]; then
-        executable="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
-        executable="${executable% (deleted)}"
-    else
-        executable="$(ps -o comm= -p "$pid" 2>/dev/null || true)"
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [[ -r "/proc/$pid/stat" ]]; then
+        local proc_stat proc_state
+        proc_stat="$(<"/proc/$pid/stat")" || return 1
+        proc_state="${proc_stat##*) }"
+        proc_state="${proc_state%% *}"
+        [[ -n "$proc_state" && "$proc_state" != Z* ]] || return 1
+        return 0
     fi
-    case "$executable" in
-        /*) printf '%s' "$executable" ;;
-        *) return 1 ;;
-    esac
+    if command -v ps >/dev/null 2>&1; then
+        local state
+        state="$(ps -o state= -p "$pid" 2>/dev/null || true)"
+        state="${state//[[:space:]]/}"
+        [[ -z "$state" || "$state" != Z* ]] || return 1
+    fi
+    return 0
 }
 
-# True when an executable path lives inside the release install. Used for
-# candidates whose argv[0] says nothing about the file behind it — a daemon
-# started from PATH has argv[0] `cua-driver` and could be any build on the
-# machine, so its origin is what decides, not its name.
-is_release_executable() {
-    local executable="$1"
-    shift
-    local prefix
-    for prefix in "$@"; do
-        [[ -n "$prefix" ]] || continue
-        case "$executable" in
-            "$prefix"|"$prefix"/*) return 0 ;;
+daemon_wait_for_exit() {
+    local pid="$1"
+    local attempts=0
+    while daemon_pid_alive "$pid"; do
+        if [[ "$attempts" -ge 20 ]]; then
+            return 1
+        fi
+        sleep 0.1 2>/dev/null || sleep 1 || true
+        attempts=$((attempts + 1))
+    done
+    return 0
+}
+
+# Return the executable/command identity exposed for a PID. Linux's procfs
+# keeps reporting an unlinked executable, which is important during uninstall;
+# on macOS ps is the portable fallback. The caller compares this value only
+# with paths belonging to the release install.
+daemon_process_identity() {
+    local pid="$1"
+    local identity=""
+    if [[ -L "/proc/$pid/exe" ]]; then
+        identity="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+        identity="${identity% (deleted)}"
+    fi
+    if [[ -z "$identity" ]] && command -v ps >/dev/null 2>&1; then
+        identity="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
+    fi
+    identity="${identity#"${identity%%[![:space:]]*}"}"
+    identity="${identity%"${identity##*[![:space:]]}"}"
+    [[ -n "$identity" ]] || return 1
+    printf '%s' "$identity"
+}
+
+daemon_identity_matches_install() {
+    local identity="$1"
+    local executable
+    for executable in "${DAEMON_EXECUTABLES[@]}"; do
+        [[ -n "$executable" ]] || continue
+        case "$identity" in
+            "$executable"|"$executable"[[:space:]]*) return 0 ;;
         esac
     done
+
+    # A daemon can still be running from a release directory that the updater
+    # has already pruned. Keep this fallback as a path check only; the PID file
+    # and stop command remain the normal path.
+    case "$identity" in
+        "$HOME_DIR"/packages/releases/*/cua-driver) return 0 ;;
+        "$HOME_DIR"/packages/releases/*/cua-driver[[:space:]]*) return 0 ;;
+        "$LEGACY_HOME_DIR"/packages/releases/*/cua-driver) return 0 ;;
+        "$LEGACY_HOME_DIR"/packages/releases/*/cua-driver[[:space:]]*) return 0 ;;
+    esac
     return 1
 }
 
-# Print the pids, one per line, of this uid's live processes that belong to the
-# release install and whose subcommand is $3. An empty subcommand matches any
-# invocation, and `?` selects the ones whose argument boundaries could not be
-# recovered.
-#
-# $2 says how far argv[0] can be trusted:
-#
-#   path   argv[0] is itself a release install path, so matching it is proof
-#          enough of what the process is.
-#   name   argv[0] is the bare binary name, which any build on the machine can
-#          have — a vendored `cua-driver` started from PATH is not ours to kill.
-#          The executable behind the pid has to resolve into the install, and a
-#          pid whose executable the host will not name is left alone.
-#
-# pgrep narrows the candidates; every decision after that reads the process
-# itself, so a flag value that happens to be the word `serve` can never be
-# mistaken for the subcommand.
-collect_release_pids() {
-    local uid="$1"
-    local trust="$2"
-    local subcommand="$3"
-    shift 3
-    local binary_regex pid executable
-    local seen=" "
-    for binary_regex in "$@"; do
-        [[ -n "$binary_regex" ]] || continue
-        while read -r pid; do
-            [[ -n "$pid" ]] || continue
-            case "$seen" in *" $pid "*) continue ;; esac
-            seen="$seen$pid "
-            daemon_pid_alive "$pid" || continue
-            if [[ "$trust" == "name" ]]; then
-                executable="$(daemon_pid_executable "$pid" || true)"
-                [[ -n "$executable" ]] || continue
-                is_release_executable "$executable" \
-                    ${DAEMON_ORIGIN_PREFIXES[@]+"${DAEMON_ORIGIN_PREFIXES[@]}"} \
-                    || continue
-            fi
-            if [[ -n "$subcommand" ]]; then
-                [[ "$(daemon_pid_subcommand "$pid" || true)" == "$subcommand" ]] \
-                    || continue
-            fi
-            printf '%s\n' "$pid"
-        done < <(pgrep -U "$uid" -f "$(daemon_argv0_pattern "$binary_regex")" 2>/dev/null || true)
-    done
+daemon_pid_is_release() {
+    local pid="$1"
+    local identity
+    identity="$(daemon_process_identity "$pid" 2>/dev/null || true)"
+    [[ -n "$identity" ]] || return 1
+    daemon_identity_matches_install "$identity"
 }
 
-# Both candidate passes for one subcommand, using the argv[0] regexes and
-# origin prefixes the uninstall branch set up. Prints pids; empty output means
-# there are none.
-release_daemon_pids() {
-    local uid="$1"
-    local subcommand="$2"
-    collect_release_pids "$uid" path "$subcommand" \
-        ${DAEMON_ARGV0_REGEXES[@]+"${DAEMON_ARGV0_REGEXES[@]}"}
-    collect_release_pids "$uid" name "$subcommand" \
-        ${DAEMON_BARE_ARGV0_REGEXES[@]+"${DAEMON_BARE_ARGV0_REGEXES[@]}"}
-}
-
-# How long to let a supervisor respawn a daemon before re-checking. The
-# release systemd unit restarts on failure after 2s, and a KeepAlive
-# LaunchAgent is immediate, so a shorter wait would call a respawning daemon
-# stopped.
-DAEMON_RESPAWN_SETTLE_SECONDS=2.5
-
-# Stop the running `cua-driver serve` daemon(s) belonging to the release
-# install, using the argv[0] regexes and origin prefixes the uninstall branch
-# set up.
-#
-# `pkill -x cua-driver` cannot be used: `-x` compares against the 15-character
-# truncated `comm`, so it is unreliable for this binary name. Select by argv[0]
-# instead, and require the `serve` subcommand so `cua-driver mcp` — a stdio
-# child of a live MCP client, which exits with that client — is left alone.
-#
-# The uninstaller only ever touches this user's install, and it refuses to run
-# as root, so every match is scoped to the invoking uid: on a shared Mac the
-# same /Applications bundle can be running for someone else, and their daemon
-# is neither ours to signal nor ours to wait for.
-#
-# Stopping a pid is not the same as stopping the daemon. The autostart teardown
-# above is best-effort — `systemctl --user disable` and `launchctl unload`
-# failures are swallowed so a half-configured host can still be uninstalled —
-# so after the pids are confirmed gone the scan runs again: a supervisor that
-# survived teardown puts a NEW pid there, and reporting the old one's death as
-# success would be a lie.
-#
-# Returns 0 only when a re-scan finds nothing left, 1 when nothing matched at
-# all, 2 when pgrep or ps is unavailable, 3 when a daemon survived SIGKILL, and
-# 4 when something keeps starting new ones.
-#
-# ps is as required as pgrep: it is what resolves a candidate pid to the
-# command line the subcommand decision needs, to the executable the origin
-# check needs, and to the state that turns "signalled" into "confirmed gone".
-# They ship together on every supported host, so demanding both costs nothing
-# real.
-stop_release_serve_daemons() {
+# The fallback is deliberately small. It is used only when the authoritative
+# PID file is absent/stale or the installed stop helper is unavailable. Process
+# selection is based on executable identity, not a reimplementation of the
+# Rust CLI's subcommand grammar.
+release_daemon_fallback_pids() {
     command -v pgrep >/dev/null 2>&1 || return 2
     command -v ps >/dev/null 2>&1 || return 2
     local uid
-    uid="$(id -u)"
-    local round=0
-    local stopped_any=0
-    local pid waited
-    while [[ "$round" -lt 3 ]]; do
-        local -a pids=()
-        while read -r pid; do
-            [[ -n "$pid" ]] || continue
-            pids+=("$pid")
-        done < <(release_daemon_pids "$uid" serve)
-        if [[ "${#pids[@]}" -eq 0 ]]; then
-            if [[ "$stopped_any" == "1" ]]; then
+    uid="$(id -u 2>/dev/null || true)"
+    [[ "$uid" =~ ^[0-9]+$ ]] || return 2
+    local pid identity
+    while read -r pid; do
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+        daemon_pid_alive "$pid" || continue
+        identity="$(daemon_process_identity "$pid" || true)"
+        [[ -n "$identity" ]] || continue
+        daemon_identity_matches_install "$identity" || continue
+        printf '%s\n' "$pid"
+    done < <(pgrep -U "$uid" -f '(^|[[:space:]/])cua-driver([[:space:]]|$)' 2>/dev/null || true)
+}
+
+force_stop_daemon_pid() {
+    local pid="$1"
+    kill -TERM "$pid" 2>/dev/null || true
+    if daemon_wait_for_exit "$pid"; then
+        return 0
+    fi
+    kill -KILL "$pid" 2>/dev/null || true
+    daemon_wait_for_exit "$pid"
+}
+
+# Return 0 after a confirmed stop or when no release daemon exists, and return
+# 1 when a daemon remains or the stop cannot be verified. The caller turns all
+# verification failures into a non-zero uninstall so it never claims success
+# while an owned daemon is still alive.
+stop_release_daemon() {
+    DAEMON_STOP_RESULT=none
+    local pid=""
+    local helper="${DAEMON_STOP_HELPER:-}"
+    local pid_file="${DAEMON_PID_FILE:-}"
+    local fallback_pids=""
+    local fallback_status=0
+
+    if [[ -n "$pid_file" ]] && pid="$(read_daemon_pid "$pid_file" 2>/dev/null)" \
+        && daemon_pid_alive "$pid" \
+        && daemon_pid_is_release "$pid"; then
+        if [[ -n "$helper" ]]; then
+            "$helper" stop >/dev/null 2>&1 || true
+        fi
+        if daemon_wait_for_exit "$pid"; then
+            DAEMON_STOP_RESULT=stopped
+            return 0
+        fi
+
+        # The PID file identifies the daemon, so a failed graceful stop may
+        # escalate against this PID only. Do not broaden a live, valid PID into
+        # a name-based kill that could reach an MCP child.
+        if force_stop_daemon_pid "$pid"; then
+            DAEMON_STOP_RESULT=stopped
+            return 0
+        fi
+        printf 'daemon_stop_incomplete: release cua-driver daemon pid %s is still running after stop.\n' "$pid" >&2
+        DAEMON_STOP_RESULT=failed
+        return 1
+    fi
+
+    # Missing or stale PID file: ask the installed helper first. A successful
+    # `stop`, followed by a non-running `status`, is enough to prove that the
+    # daemon endpoint is gone without touching an unrelated MCP child that
+    # happens to use the same executable.
+    if [[ -n "$helper" ]]; then
+        if "$helper" stop >/dev/null 2>&1; then
+            if ! "$helper" status >/dev/null 2>&1; then
+                DAEMON_STOP_RESULT=stopped
                 return 0
             fi
+        elif ! "$helper" status >/dev/null 2>&1; then
+            DAEMON_STOP_RESULT=none
+            return 0
+        fi
+    fi
+
+    # The helper could not establish a stopped endpoint. Locate only
+    # processes whose executable is in the release install. This is a recovery
+    # path for old installs and unlinked binaries, not the normal shutdown
+    # mechanism.
+    fallback_pids="$(release_daemon_fallback_pids 2>/dev/null)" || fallback_status=$?
+    if [[ "$fallback_status" == "2" ]]; then
+        printf 'daemon_stop_incomplete: cannot verify a stale or missing daemon PID because pgrep and ps are required for the executable-identity fallback.\n' >&2
+        DAEMON_STOP_RESULT=failed
+        return 2
+    fi
+    if [[ -z "$fallback_pids" ]]; then
+        DAEMON_STOP_RESULT=none
+        return 0
+    fi
+
+    local fallback_pid
+    while IFS= read -r fallback_pid; do
+        [[ -n "$fallback_pid" ]] || continue
+        if daemon_pid_alive "$fallback_pid"; then
+            force_stop_daemon_pid "$fallback_pid" || true
+        fi
+    done <<< "$fallback_pids"
+    while IFS= read -r fallback_pid; do
+        [[ -n "$fallback_pid" ]] || continue
+        if daemon_pid_alive "$fallback_pid"; then
+            printf 'daemon_stop_incomplete: release cua-driver process %s is still running after stop.\n' "$fallback_pid" >&2
+            DAEMON_STOP_RESULT=failed
             return 1
         fi
-        stopped_any=1
-
-        for pid in "${pids[@]}"; do
-            kill -TERM "$pid" 2>/dev/null || true
-        done
-
-        # SIGTERM lets the daemon close its listening socket and tear down the
-        # agent-cursor overlay. Escalate only for whatever is still alive after
-        # a short grace period, so a wedged daemon cannot outlive the uninstall.
-        waited=0
-        while [[ "$waited" -lt 10 ]]; do
-            daemon_pids_alive "${pids[@]}" || break
-            # Fractional sleep is a BSD/GNU extension; fall back to whole
-            # seconds rather than letting `set -e` abort the uninstall on a
-            # host without it.
-            sleep 0.1 2>/dev/null || sleep 1 || true
-            waited=$((waited + 1))
-        done
-        if daemon_pids_alive "${pids[@]}"; then
-            for pid in "${pids[@]}"; do
-                kill -KILL "$pid" 2>/dev/null || true
-            done
-            # SIGKILL is not a guarantee — an uninterruptible wait, or a
-            # process this uid may match but not signal, both survive it. The
-            # whole point of this phase is that no daemon outlives the
-            # uninstall, so confirm it instead of assuming it; the caller turns
-            # a survivor into a warning, not a success.
-            waited=0
-            while [[ "$waited" -lt 5 ]]; do
-                daemon_pids_alive "${pids[@]}" || break
-                sleep 0.1 2>/dev/null || sleep 1 || true
-                waited=$((waited + 1))
-            done
-            if daemon_pids_alive "${pids[@]}"; then
-                return 3
-            fi
-        fi
-
-        # Give a surviving supervisor time to put a new daemon there, then let
-        # the loop find it.
-        sleep "$DAEMON_RESPAWN_SETTLE_SECONDS" 2>/dev/null || sleep 3 || true
-        round=$((round + 1))
-    done
-    return 4
-}
-
-# Report — never kill — non-`serve` processes still running from the release
-# install paths. Those are `cua-driver mcp` children of a live MCP client
-# (Claude Code, Codex); killing them surfaces to the user as a client-side
-# transport error instead of a clean shutdown, and they exit with their client.
-# Returns 0 when at least one such process is alive.
-report_surviving_release_processes() {
-    command -v pgrep >/dev/null 2>&1 || return 1
-    command -v ps >/dev/null 2>&1 || return 1
-    local uid
-    uid="$(id -u)"
-    [[ -n "$(release_daemon_pids "$uid" "")" ]]
-}
-
-# Report — never kill — processes whose subcommand could not be resolved
-# because the host does not expose real argument boundaries (macOS). Saying so
-# is the honest outcome: the alternative is guessing, which either kills an MCP
-# child or silently leaves the daemon this uninstaller is meant to stop.
-# Returns 0 when at least one such process is alive.
-report_undetermined_release_processes() {
-    command -v pgrep >/dev/null 2>&1 || return 1
-    command -v ps >/dev/null 2>&1 || return 1
-    local uid
-    uid="$(id -u)"
-    [[ -n "$(release_daemon_pids "$uid" "?")" ]]
+    done <<< "$fallback_pids"
+    DAEMON_STOP_RESULT=stopped
+    return 0
 }
 
 reject_root_invocation() {
@@ -524,16 +374,6 @@ reject_root_invocation() {
         return 77
     fi
 }
-
-# Narrow source-only seam for the synthetic uninstall fixture. Production
-# execution never sets this variable and continues through the full script.
-if [[ "${CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY:-0}" == "1" ]]; then
-    return 0
-fi
-
-if ! reject_root_invocation "$(id -u)"; then
-    exit 77
-fi
 
 # TCC revocation is on by default so uninstall leaves the next macOS install
 # in a clean promptable state. The bundle id com.trycua.driver is shared with
@@ -599,6 +439,38 @@ resolve_link() {
     esac
 }
 
+select_daemon_stop_helper() {
+    local candidate resolved
+    for candidate in \
+        "$USER_BIN_LINK" \
+        "$APP_BUNDLE/Contents/MacOS/cua-driver" \
+        "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver" \
+        "$PACKAGES_DIR/current/cua-driver" \
+        "$LEGACY_HOME_DIR/packages/current/cua-driver"; do
+        if [[ -L "$candidate" ]]; then
+            resolved="$(resolve_link "$candidate")"
+            if [[ -x "$resolved" ]]; then
+                printf '%s' "$resolved"
+                return 0
+            fi
+        elif [[ -x "$candidate" ]]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Narrow source-only seam for the synthetic uninstall fixture. Production
+# execution never sets this variable and continues through the full script.
+if [[ "${CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY:-0}" == "1" ]]; then
+    return 0
+fi
+
+if ! reject_root_invocation "$(id -u)"; then
+    exit 77
+fi
+
 # ----------------------------------------------------------------------
 # Rust uninstall branch (default on Linux + macOS).
 # ----------------------------------------------------------------------
@@ -652,6 +524,26 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     if [[ -d "$PACKAGES_DIR" || -d "$LEGACY_HOME_DIR" || -d "$LEGACY_APP_BUNDLE" || -f "$LAUNCHAGENT_PLIST" || -f "$LEGACY_LAUNCHAGENT_PLIST" || -f "$SYSTEMD_USER_UNIT" || -f "$LEGACY_SYSTEMD_USER_UNIT" || -f "$HOME_DIR/.telemetry_id" || -f "$HOME_DIR/.installation_recorded" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
+
+    # Capture the helper and executable identities before the CLI symlink is
+    # removed. The helper is used for the authoritative `stop` call; the
+    # identities are retained for the stale/missing PID-file fallback.
+    DAEMON_PID_FILE="$(daemon_pid_file_path)"
+    DAEMON_STOP_HELPER="$(select_daemon_stop_helper || true)"
+    DAEMON_EXECUTABLES=()
+    for DAEMON_CANDIDATE in \
+        "$USER_BIN_LINK" \
+        "$APP_BUNDLE/Contents/MacOS/cua-driver" \
+        "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver" \
+        "$PACKAGES_DIR/current/cua-driver" \
+        "$LEGACY_HOME_DIR/packages/current/cua-driver"; do
+        DAEMON_EXECUTABLES+=("$DAEMON_CANDIDATE")
+        if [[ -L "$DAEMON_CANDIDATE" ]]; then
+            DAEMON_RESOLVED="$(resolve_link "$DAEMON_CANDIDATE")"
+            [[ -z "$DAEMON_RESOLVED" ]] || DAEMON_EXECUTABLES+=("$DAEMON_RESOLVED")
+        fi
+    done
+    unset DAEMON_CANDIDATE DAEMON_RESOLVED
 
     # --- CLI symlink ---
     # Only remove ~/.local/bin/cua-driver when it resolves into a
@@ -715,102 +607,33 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         fi
     fi
 
-    # --- Autostart (macOS LaunchAgent) ---
-    # install-local.sh --autostart on macOS registers
-    # ~/Library/LaunchAgents/com.trycua.cua-driver.plist. Unload (so the
-    # running daemon stops) + remove it, plus the pre-rename
-    # com.trycua.cua-driver-rs.plist when present.
-    if [[ "$OS" == "Darwin" ]]; then
-        FOUND_LAUNCHAGENT_PLIST=0
-        for LAUNCHAGENT_PLIST_PATH in "$LAUNCHAGENT_PLIST" "$LEGACY_LAUNCHAGENT_PLIST"; do
-            if [[ -f "$LAUNCHAGENT_PLIST_PATH" ]]; then
-                FOUND_LAUNCHAGENT_PLIST=1
-                launchctl unload "$LAUNCHAGENT_PLIST_PATH" 2>/dev/null || true
-                rm -f "$LAUNCHAGENT_PLIST_PATH"
-                log "removed LaunchAgent $LAUNCHAGENT_PLIST_PATH"
-            fi
-        done
-        if [[ "$FOUND_LAUNCHAGENT_PLIST" == "0" ]]; then
-            log "no current or legacy LaunchAgent found (skipping)"
-        fi
-    fi
-
     DAEMON_STOP_FAILED=0
 
     # --- Running daemon ---
-    # Unix keeps an unlinked binary mapped, so removing the bundle and the
-    # runtime payloads below leaves a running `cua-driver serve` alive on its
-    # deleted path, still holding its listening socket, its accessibility and
-    # screen-capture connections, and the agent-cursor overlay. uninstall.ps1
-    # already stops every cua-driver process on Windows, where the open handles
-    # make the removal itself fail — on Unix the same leftover is silent.
-    #
-    # Placement: after the autostart teardown above, because a KeepAlive
-    # LaunchAgent or a Restart=on-failure systemd unit would respawn whatever
-    # we stop; and before the history purge, the TCC reset, and the bundle
-    # removal, so `--purge` takes the exclusive writer lease uncontended and
-    # the com.trycua.driver grants are not revoked underneath a live process
-    # signed with that identity.
-    #
-    # Gated on the Rust marker like every other shared-path action: on a
-    # Swift-only Mac the bundle path and the CLI symlink resolve to the retired
-    # Swift driver, whose daemon is not ours to stop.
+    # Autostart teardown above must happen first so its supervisor cannot
+    # respawn the daemon while this phase is stopping it. The daemon's PID file
+    # and the installed CLI's stop command are authoritative; only a stale or
+    # missing PID file uses the executable-identity fallback.
     if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
-        DAEMON_ARGV0_REGEXES=(
-            "$(escape_path_regex "$USER_BIN_LINK")"
-            "$(escape_path_regex "$APP_BUNDLE/Contents/MacOS/cua-driver")"
-            "$(escape_path_regex "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver")"
-            "$(escape_path_regex "$PACKAGES_DIR/current/cua-driver")"
-            "$(escape_path_regex "$LEGACY_HOME_DIR/packages/current/cua-driver")"
-            # A daemon the runtime started for itself carries the realpath of a
-            # release in argv[0], because it resolves its own executable
-            # through the packages/current symlink. Match that namespace as a
-            # pattern rather than enumerating what is on disk: the installer
-            # prunes old release directories, so a daemon that survived an
-            # upgrade is running from a path that no longer exists — exactly
-            # the unlinked-binary case this phase is here for.
-            "$(escape_path_regex "$PACKAGES_DIR")/releases/[^[:space:]/]+/cua-driver"
-            "$(escape_path_regex "$LEGACY_HOME_DIR/packages")/releases/[^[:space:]/]+/cua-driver"
-        )
-        # Started from a shell with the install dir on PATH: the shell passes
-        # the word as typed, so argv[0] is the bare binary name and says
-        # nothing about which build is behind it. Any vendored or hand-built
-        # `cua-driver` on this machine has the same argv[0], so these
-        # candidates are kept only when the executable itself resolves into the
-        # install below. (`cua-driver-local` cannot match either way — the
-        # pattern requires a separator right after the name.)
-        DAEMON_BARE_ARGV0_REGEXES=("cua-driver")
-        DAEMON_ORIGIN_PREFIXES=(
-            "$APP_BUNDLE"
-            "$LEGACY_APP_BUNDLE"
-            "$HOME_DIR"
-            "$LEGACY_HOME_DIR"
-        )
         DAEMON_STOP_STATUS=0
-        stop_release_serve_daemons || DAEMON_STOP_STATUS=$?
+        stop_release_daemon || DAEMON_STOP_STATUS=$?
         case "$DAEMON_STOP_STATUS" in
-            0) log "stopped the running cua-driver serve daemon" ;;
-            2) log "pgrep/ps not found; a running cua-driver serve daemon (if any) has to be stopped by hand" ;;
-            3)
-                DAEMON_STOP_FAILED=1
-                printf 'daemon_stop_incomplete: a cua-driver serve daemon survived SIGTERM and SIGKILL and is still running; stop it by hand before reinstalling.\n' >&2
-                log "warning: could not stop the running cua-driver serve daemon (see stderr)"
+            0)
+                if [[ "$DAEMON_STOP_RESULT" == "stopped" ]]; then
+                    log "stopped the running cua-driver serve daemon"
+                else
+                    log "no running cua-driver serve daemon (skipping)"
+                fi
                 ;;
-            4)
+            2)
                 DAEMON_STOP_FAILED=1
-                printf 'daemon_stop_incomplete: a cua-driver serve daemon keeps being restarted after it is stopped, so an autostart supervisor is still active; check "systemctl --user list-units cua-driver*" or "launchctl list | grep cua-driver" and remove it before reinstalling.\n' >&2
-                log "warning: a supervisor keeps restarting the cua-driver serve daemon (see stderr)"
+                log "could not verify the running cua-driver daemon because process inspection tools are unavailable"
                 ;;
-            *) log "no running cua-driver serve daemon (skipping)" ;;
+            *)
+                DAEMON_STOP_FAILED=1
+                log "warning: could not stop the running cua-driver daemon (see daemon_stop_incomplete on stderr)"
+                ;;
         esac
-        if report_undetermined_release_processes; then
-            DAEMON_STOP_FAILED=1
-            printf 'daemon_stop_undetermined: a running cua-driver process has an argument containing whitespace, and this host does not expose real argument boundaries to a shell, so it could not be told apart from an MCP client child; it was left alone. Inspect it with ps and stop it by hand if it is a serve daemon.\n' >&2
-            log "warning: left a cua-driver process alone because its subcommand could not be resolved (see stderr)"
-        fi
-        if report_surviving_release_processes; then
-            log "note: other cua-driver processes are still running; \`cua-driver mcp\` runs as a stdio child of your MCP client and exits when that client closes"
-        fi
     else
         log "no Rust install marker; leaving any running cua-driver process untouched"
     fi

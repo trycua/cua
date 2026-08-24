@@ -1,864 +1,348 @@
-"""Coverage for the daemon-stop phase of the release Unix uninstaller.
-
-`uninstall.sh` deletes the bundle and the runtime payloads, but Unix keeps an
-unlinked binary mapped: without an explicit stop the `cua-driver serve` daemon
-survives the uninstall on its deleted path.
-
-The phase makes two separate decisions, and the tests follow that split:
-
-* which processes are *candidates* — an anchored argv[0] match over the release
-  install paths, asserted here by running the patterns the uninstaller actually
-  issued through `grep -E`, the same POSIX ERE dialect pgrep compiles; and
-* which candidates are *daemons* — decided by scanning the real command line
-  the way `positionals()` in cli.rs does, because a flag value can be the word
-  `serve` (`cua-driver --socket serve mcp` is an MCP child) and no regex can
-  tell those apart unambiguously.
-
-Where the outcome is what matters, the tests spawn real processes under an
-argv[0] of the install path and let the real pgrep/ps/kill run.
-"""
+"""Tests for the release uninstaller's authoritative daemon shutdown path."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
+import tempfile
 import time
-
-import pytest
+import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 UNINSTALL = REPO_ROOT / "libs/cua-driver/scripts/uninstall.sh"
-CLI_SOURCE = "libs/cua-driver/rust/crates/cua-driver/src/cli.rs"
-RELEASE_DIR_NAME = "0.19.3-aarch64-apple-darwin"
-# Non-root uid the sandbox pins, so a root container behaves like a developer
-# machine; the root refusal itself is covered by uninstall-history-purge-test.sh.
-FAKE_UID = "501"
-BUNDLE_BINARY = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
-# Above pid_max on Linux and macOS, so signalling it can never reach a process.
-UNREACHABLE_PID = "2147483646"
-STOPPED = "stopped the running cua-driver serve daemon"
-# Linux exposes real argument boundaries through /proc; macOS does not.
-HAS_PROC = Path("/proc/self/cmdline").exists()
 
 
-def _write_executable(path: Path, body: str) -> None:
-    path.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+def write_executable(path: Path, body: str) -> None:
+    path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
     path.chmod(0o755)
 
 
-def _sandbox(
-    tmp_path: Path,
-    os_name: str,
-    *,
-    record_pgrep: bool = False,
-    fake_command_line: str | None = None,
-    respawning: bool = False,
-    real_uid: bool = False,
-) -> tuple[Path, Path, dict[str, str]]:
-    """Run the uninstaller against a throwaway HOME with shimmed tools.
-
-    By default pgrep, ps and kill are the real ones, so process tests exercise
-    the same code path a user gets. `record_pgrep` logs the patterns and
-    reports no matches; `fake_command_line` fakes a candidate whose pid cannot be
-    signalled, for the two outcomes a real process cannot produce: surviving
-    SIGKILL, and having unrecoverable argument boundaries on a /proc host.
-    """
-    home = tmp_path / "home"
-    fake_bin = tmp_path / "bin"
-    calls = tmp_path / "calls.log"
-    home.mkdir()
-    fake_bin.mkdir()
-
-    _write_executable(fake_bin / "uname", f"printf '%s\\n' '{os_name}'\n")
-    if real_uid:
-        # Process tests need the uid the fixtures actually run as, so `id` is
-        # left alone — which also means the uninstaller's root refusal applies.
-        if os.getuid() == 0:
-            pytest.skip("the uninstaller refuses to run as root; run these as a user")
-    else:
-        # The uninstaller refuses to run as root, and it scopes every process
-        # match to the invoking uid.
-        _write_executable(fake_bin / "id", f"printf '%s\\n' '{FAKE_UID}'\n")
-    for command in ("launchctl", "systemctl", "tccutil", "sudo", "claude"):
-        _write_executable(
-            fake_bin / command,
-            f"printf '%s:%s\\n' '{command}' \"$*\" >> '{calls}'\n",
-        )
-
-    if record_pgrep:
-        _write_executable(
-            fake_bin / "pgrep",
-            f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\nexit 1\n",
-        )
-    elif fake_command_line is not None:
-        state_dir = tmp_path / "process-state"
-        state_dir.mkdir()
-        if respawning:
-            # A different unreachable pid every scan: the old one is gone, so
-            # its death confirms, and a new daemon has taken its place.
-            _write_executable(
-                fake_bin / "pgrep",
-                f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\n"
-                f"round=$(cat '{state_dir}/round' 2>/dev/null || printf '0')\n"
-                f"printf '%s' \"$((round + 1))\" > '{state_dir}/round'\n"
-                f"printf '%s\\n' \"$(({UNREACHABLE_PID} - round))\"\n",
-            )
-        else:
-            _write_executable(
-                fake_bin / "pgrep",
-                f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\n"
-                f"printf '%s\\n' '{UNREACHABLE_PID}'\n",
-            )
-        # `kill` is a shell builtin aimed at a pid that cannot exist, so the
-        # fixture's liveness has to come from ps. An immortal candidate answers
-        # every probe. A respawning one answers the first probe for each pid
-        # and is gone by the next: that pid died, and the supervisor's
-        # replacement only shows up on the following scan.
-        if respawning:
-            alive_rule = (
-                f'count=$(cat "{state_dir}/$pid" 2>/dev/null || printf 0)\n'
-                f'        printf %s "$((count + 1))" > "{state_dir}/$pid"\n'
-                '        if [ "$count" -eq 0 ]; then printf \'S\\n\'; fi'
-            )
-        else:
-            alive_rule = "printf 'S\\n'"
-        _write_executable(
-            fake_bin / "ps",
-            'pid=""\n'
-            'previous=""\n'
-            'for argument in "$@"; do\n'
-            '    if [ "$previous" = "-p" ]; then pid="$argument"; fi\n'
-            '    previous="$argument"\n'
-            "done\n"
-            'case "$*" in\n'
-            "    *state*)\n"
-            f"        {alive_rule}\n"
-            "        ;;\n"
-            f"    *) printf '%s\\n' '{fake_command_line}' ;;\n"
-            "esac\n"
-            "exit 0\n",
-        )
-
-    # Removal is confined to the sandbox HOME: anything the uninstaller asks to
-    # delete outside it is recorded as a no-op so a developer machine can never
-    # be reached by a test run.
-    _write_executable(
-        fake_bin / "rm",
-        f"""for argument in "$@"; do
-    case "$argument" in
-        -*) ;;
-        '{home}'/*)
-            printf 'rm:%s\\n' "$argument" >> '{calls}'
-            /bin/rm -rf -- "$argument"
-            ;;
-        *) printf 'rm-outside-noop:%s\\n' "$argument" >> '{calls}' ;;
-    esac
-done
-""",
+def source_helper(env: dict[str, str], body: str, *args: str) -> subprocess.CompletedProcess[str]:
+    source = (
+        'uninstall="$1"\n'
+        'shift\n'
+        'argv=("$@")\n'
+        'source "$uninstall"\n'
+        f"{body}\n"
     )
-
-    env = os.environ.copy()
-    env.update({"HOME": str(home), "PATH": f"{fake_bin}:/usr/bin:/bin"})
-    env.pop("CUA_DRIVER_HOME", None)
-    env.pop("CUA_DRIVER_RS_HOME", None)
-    return home, calls, env
-
-
-def _install_rust_marker(home: Path) -> None:
-    """Lay down the versioned package store the uninstaller keys off."""
-    release_binary = (
-        home / ".cua-driver/packages/releases" / RELEASE_DIR_NAME / "cua-driver"
-    )
-    release_binary.parent.mkdir(parents=True)
-    release_binary.write_text("fixture\n", encoding="utf-8")
-    release_binary.chmod(0o755)
-
-
-def _run_uninstall(
-    env: dict[str, str], expected_returncode: int = 0
-) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ["/bin/bash", str(UNINSTALL)],
-        cwd=REPO_ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == expected_returncode, result.stdout + result.stderr
-    return result
-
-
-def _source_only(
-    script: str, env: dict[str, str], *args: str
-) -> subprocess.CompletedProcess[str]:
-    """Call the uninstaller's helpers directly through its source-only seam.
-
-    Sourcing runs the script's own flag parser, which shifts the positional
-    parameters away, so extra arguments are saved into an `argv` array — with
-    their boundaries intact — before the source.
-    """
-    env = {**env, "CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY": "1"}
-    prologue = 'uninstall="$1"\nshift\nargv=("$@")\n'
     return subprocess.run(
-        [
-            "/bin/bash",
-            "-c",
-            f'{prologue}source "$uninstall"\n{script}',
-            "bash",
-            str(UNINSTALL),
-            *args,
-        ],
+        ["/bin/bash", "-c", source, "bash", str(UNINSTALL), *args],
         cwd=REPO_ROOT,
-        env=env,
+        env={**env, "CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY": "1"},
         text=True,
         capture_output=True,
         check=False,
     )
 
 
-# The stop helpers read their candidate lists from the globals the uninstall
-# branch sets up, so a direct call has to declare them the same way. argv[0] is
-# the install path under test; the bare-name pass is exercised separately.
-_CANDIDATE_SETUP = (
-    'DAEMON_ARGV0_REGEXES=("$(escape_path_regex "${argv[0]}")")\n'
-    'DAEMON_BARE_ARGV0_REGEXES=()\n'
-    'DAEMON_ORIGIN_PREFIXES=()\n'
-)
-
-
-def _issued_patterns(calls: Path) -> list[str]:
-    """The argv[0] regexes the uninstaller handed to pgrep."""
-    prefix = f"pgrep:-U {FAKE_UID} -f "
-    return [
-        line[len(prefix) :]
-        for line in calls.read_text(encoding="utf-8").splitlines()
-        if line.startswith(prefix)
-    ]
-
-
-def _matched_by(patterns: list[str], command_line: str) -> bool:
-    """Does any issued pattern match this command line under POSIX ERE?"""
-    assert patterns, "no patterns were issued"
-    script = """
-line="$(cat)"
-for pattern in "$@"; do
-    if printf '%s' "$line" | grep -Eq "$pattern"; then
-        printf 'yes'
-        exit 0
-    fi
-done
-printf 'no'
-"""
-    result = subprocess.run(
-        ["/bin/bash", "-c", script, "bash", *patterns],
-        input=command_line,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.stdout in {"yes", "no"}, result.stdout + result.stderr
-    return result.stdout == "yes"
-
-
-def _candidate_patterns(tmp_path: Path) -> tuple[Path, list[str]]:
-    home, calls, env = _sandbox(tmp_path, "Darwin", record_pgrep=True)
-    _install_rust_marker(home)
-    _run_uninstall(env)
-    return home, _issued_patterns(calls)
-
-
-# --- argv[0] candidate selection -------------------------------------------
-
-
-def _release_command_lines(home: Path) -> dict[str, str]:
-    """Command lines whose argv[0] belongs to the release install."""
-    return {
-        # macOS: launched through `open -a`, so argv[0] is the bundle helper.
-        "bundle": f"{BUNDLE_BINARY} serve",
-        "legacy bundle": (
-            "/Applications/CuaDriverRs.app/Contents/MacOS/cua-driver serve"
-        ),
-        "cli symlink": f"{home}/.local/bin/cua-driver serve",
-        "packages current": f"{home}/.cua-driver/packages/current/cua-driver serve",
-        # The runtime spawns a daemon for itself through the realpath of the
-        # active release.
-        "versioned release": (
-            f"{home}/.cua-driver/packages/releases/{RELEASE_DIR_NAME}/cua-driver serve"
-        ),
-        # The installer prunes old release directories, so a daemon that
-        # survived an upgrade runs from a release path that no longer exists.
-        "pruned release": (
-            f"{home}/.cua-driver/packages/releases/0.18.0-x86_64-unknown-linux-gnu"
-            "/cua-driver serve"
-        ),
-        "legacy home": f"{home}/.cua-driver-rs/packages/current/cua-driver serve",
-        # Started from a shell with the install dir on PATH: argv[0] is the
-        # word as typed.
-        "bare name": "cua-driver serve",
-        # MCP children are candidates too — that is how the survivor report
-        # finds them. The subcommand scan is what keeps them unsignalled.
-        "mcp child": f"{BUNDLE_BINARY} mcp",
-    }
-
-
-def _foreign_command_lines(home: Path) -> dict[str, str]:
-    """Command lines that must never even be considered."""
-    return {
-        # The separately-installed local product.
-        "local product": f"{home}/.local/bin/cua-driver-local serve",
-        "local packages": (
-            f"{home}/.cua-driver-local/packages/current/cua-driver-local serve"
-        ),
-        # `curl … | bash` puts the whole uninstaller — install paths included —
-        # in the launcher shell's own command line.
-        "launcher shell": f"/bin/bash -c # {BUNDLE_BINARY} serve",
-        "uninstaller itself": f"/bin/bash {UNINSTALL}",
-        "foreign path": "/opt/vendor/cua-driver-shim serve",
-    }
-
-
-@pytest.mark.parametrize("name", sorted(_release_command_lines(Path("/h"))))
-def test_release_paths_are_candidates(tmp_path: Path, name: str) -> None:
-    home, patterns = _candidate_patterns(tmp_path)
-    command_line = _release_command_lines(home)[name]
-    assert _matched_by(patterns, command_line), command_line
-
-
-@pytest.mark.parametrize("name", sorted(_foreign_command_lines(Path("/h"))))
-def test_foreign_paths_are_not_candidates(tmp_path: Path, name: str) -> None:
-    home, patterns = _candidate_patterns(tmp_path)
-    command_line = _foreign_command_lines(home)[name]
-    assert not _matched_by(patterns, command_line), command_line
-
-
-# --- subcommand resolution --------------------------------------------------
-
-
-SUBCOMMAND_CASES: dict[str, tuple[list[str], str]] = {
-    "plain": ([BUNDLE_BINARY, "serve"], "serve"),
-    "bare flag first": ([BUNDLE_BINARY, "--no-overlay", "serve"], "serve"),
-    "value flag first": (
-        [BUNDLE_BINARY, "--cursor-theme", "cua.default", "serve"],
-        "serve",
-    ),
-    "socket value": ([BUNDLE_BINARY, "--socket", "/tmp/cua.sock", "serve"], "serve"),
-    # `--flag=value` is not in VALUE_FLAGS' exact-match list, so it swallows
-    # nothing.
-    "joined value": ([BUNDLE_BINARY, "--socket=/tmp/cua.sock", "serve"], "serve"),
-    "flags after the subcommand": (
-        [BUNDLE_BINARY, "--no-overlay", "serve", "--permission-mode", "bounded"],
-        "serve",
-    ),
-    # A value flag consumes its token, so the word `serve` here is a socket
-    # name and the invocation is an MCP child of a live client.
-    "serve as a socket value": ([BUNDLE_BINARY, "--socket", "serve", "mcp"], "mcp"),
-    "serve as a grant value": ([BUNDLE_BINARY, "--grant", "serve", "mcp"], "mcp"),
-    "serve as a socket value, status": (
-        [BUNDLE_BINARY, "--socket", "serve", "status"],
-        "status",
-    ),
-    # An argument with whitespace inside it is one argument. Real argv keeps
-    # that boundary, so the socket is named "/tmp/foo serve" and this is an
-    # MCP child — the flattened command line cannot tell.
-    "serve inside a socket value": (
-        [BUNDLE_BINARY, "--socket", "/tmp/foo serve", "mcp"],
-        "mcp",
-    ),
-    "whitespace value before serve": (
-        [BUNDLE_BINARY, "--socket", "/tmp/foo bar", "serve"],
-        "serve",
-    ),
-    # A bare flag consumes nothing, so the next token is the subcommand and
-    # `serve` is that command's argument.
-    "serve as a call argument": ([BUNDLE_BINARY, "--no-overlay", "call", "serve"], "call"),
-    "serve as a describe argument": (
-        [BUNDLE_BINARY, "--no-overlay", "describe", "serve"],
-        "describe",
-    ),
-    "flagless call": ([BUNDLE_BINARY, "call", "serve"], "call"),
-    "mcp with trailing flag": (
-        [BUNDLE_BINARY, "mcp", "--claude-code-computer-use-compat"],
-        "mcp",
-    ),
-    "no subcommand at all": ([BUNDLE_BINARY], ""),
-}
-
-
-@pytest.mark.parametrize("name", sorted(SUBCOMMAND_CASES))
-def test_subcommand_scan_matches_the_cli(tmp_path: Path, name: str) -> None:
-    """The scan has to agree with `positionals()` in cli.rs, in both
-    directions: a missed daemon is the bug this phase fixes, and a false
-    daemon is a process the uninstaller kills that it must not touch."""
-    argv, expected = SUBCOMMAND_CASES[name]
-    _home, _calls, env = _sandbox(tmp_path, "Linux", record_pgrep=True)
-
-    result = _source_only('daemon_subcommand exact "${argv[@]}" || true', env, *argv)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == expected
-
-
-FLATTENED_CASES: dict[str, tuple[str, str]] = {
-    # Nothing has been lost while no value flag has been seen: the product
-    # itself always puts `serve` ahead of any flag (the LaunchAgent, the
-    # systemd unit and the runtime's own relaunch all do).
-    "serve first": (f"{BUNDLE_BINARY} serve", "serve"),
-    "bare flags only": (f"{BUNDLE_BINARY} --no-overlay serve", "serve"),
-    "subcommand first, flags after": (
-        f"{BUNDLE_BINARY} serve --socket /tmp/cua.sock",
-        "serve",
-    ),
-    "call first": (f"{BUNDLE_BINARY} --no-overlay call serve", "call"),
-    # Past a value flag the argument boundaries are gone: this line is what
-    # both `--socket "/tmp/foo serve" mcp` and `--socket /tmp/foo serve` (with
-    # a trailing mcp) flatten to. Guessing would either kill an MCP child or
-    # miss a daemon, so the scan says so instead.
-    "value flag hides the boundary": (
-        f"{BUNDLE_BINARY} --socket /tmp/foo serve mcp",
-        "?",
-    ),
-    "value flag before serve": (f"{BUNDLE_BINARY} --socket /tmp/x serve", "?"),
-}
-
-
-@pytest.mark.parametrize("name", sorted(FLATTENED_CASES))
-def test_flattened_scan_declines_to_guess(tmp_path: Path, name: str) -> None:
-    """On a host without real argument boundaries (macOS), the scan resolves
-    what it still can and refuses to invent the rest."""
-    command_line, expected = FLATTENED_CASES[name]
-    _home, _calls, env = _sandbox(tmp_path, "Linux", record_pgrep=True)
-
-    result = _source_only(
-        'read -r -a tokens <<< "${argv[0]}"\n'
-        'daemon_subcommand flattened "${tokens[@]}" || true',
-        env,
-        command_line,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == expected
-
-
-def test_value_flag_list_matches_the_rust_cli(tmp_path: Path) -> None:
-    """The scan can only tell a daemon from a finite CLI call if it knows which
-    flags swallow the token after them. Fail loudly when the CLI grows a value
-    flag the uninstaller has not been taught about."""
-    _home, _calls, env = _sandbox(tmp_path, "Linux", record_pgrep=True)
-    shell_flags = _source_only('printf "%s" "$DAEMON_VALUE_FLAGS"', env)
-    assert shell_flags.returncode == 0, shell_flags.stderr
-
-    source = (REPO_ROOT / CLI_SOURCE).read_text(encoding="utf-8")
-    declaration = source.split("const VALUE_FLAGS: &[&str] = &[", 1)[1].split("];", 1)[0]
-    rust_flags = re.findall(r'"([^"]+)"', declaration)
-
-    assert rust_flags, "VALUE_FLAGS could not be read from the Rust CLI"
-    assert shell_flags.stdout.split() == rust_flags
-
-
-# --- live processes ---------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def sleeper(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A binary that ignores its arguments and blocks.
-
-    Compiled rather than scripted because the whole point is to control argv:
-    an interpreter would parse `--socket` itself, and a `#!` script would put
-    the interpreter in argv[0] where the install path has to be.
-    """
-    compiler = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
-    if compiler is None:
-        pytest.skip("no C compiler available to build the argv fixture")
-    directory = tmp_path_factory.mktemp("sleeper")
-    source = directory / "sleeper.c"
-    source.write_text("#include <unistd.h>\nint main(void){pause();return 0;}\n")
-    binary = directory / "sleeper"
-    subprocess.run(
-        [compiler, str(source), "-o", str(binary)], check=True, capture_output=True
-    )
-    return binary
-
-
-class _Fixtures:
-    """Processes spawned under an argv[0] of an install path."""
-
-    def __init__(self, sleeper: Path) -> None:
-        self._sleeper = sleeper
-        self.processes: dict[str, subprocess.Popen[bytes]] = {}
-
-    def spawn(self, name: str, argv0: Path | str, *arguments: str) -> int:
-        return self.spawn_with(name, self._sleeper, str(argv0), *arguments)
-
-    def spawn_with(
-        self, name: str, executable: Path, argv0: str, *arguments: str
-    ) -> int:
-        """Spawn with argv[0] and the executable chosen independently — which
-        is exactly the case a bare argv[0] cannot distinguish."""
-        process = subprocess.Popen(
-            [argv0, *arguments], executable=str(executable)
+class DaemonStopTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.fake_bin = self.root / "bin"
+        self.fake_bin.mkdir()
+        self.process_map = self.root / "process-map"
+        self.process_map.touch()
+        write_executable(
+            self.fake_bin / "pgrep",
+            f"""
+while IFS='|' read -r pid identity state; do
+    [ "$state" = alive ] || continue
+    printf '%s\n' "$pid"
+done < '{self.process_map}'
+""",
         )
-        self.processes[name] = process
-        return process.pid
+        write_executable(
+            self.fake_bin / "ps",
+            f"""
+pid=""
+previous=""
+for argument in "$@"; do
+    if [ "$previous" = "-p" ]; then pid="$argument"; fi
+    previous="$argument"
+done
+case "$*" in
+    *state=*)
+        state=$(awk -F'|' -v pid="$pid" '$1 == pid {{ print $3 }}' '{self.process_map}')
+        [ "$state" = alive ] && printf 'S\n' || printf 'Z\n'
+        ;;
+    *)
+        identity=$(awk -F'|' -v pid="$pid" '$1 == pid {{ print $2 }}' '{self.process_map}')
+        [ -z "$identity" ] || printf '%s serve\n' "$identity"
+        ;;
+esac
+""",
+        )
+        self.env = os.environ.copy()
+        self.env.update(
+            {"HOME": str(self.home), "PATH": f"{self.fake_bin}:/usr/bin:/bin"}
+        )
+        self.processes: list[subprocess.Popen[bytes]] = []
 
-    def alive(self, name: str) -> bool:
-        process = self.processes[name]
-        if process.poll() is not None:
-            return False
-        # A killed-but-unreaped child is not alive; reap what has exited.
-        try:
-            process.wait(timeout=0)
-        except subprocess.TimeoutExpired:
-            return True
-        return False
-
-    def wait_started(self) -> None:
-        # Popen has already forked; give the exec a moment to land so the new
-        # command line is visible to ps/pgrep.
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            listed = subprocess.run(
-                ["ps", "-ww", "-o", "args=", "-p"]
-                + [",".join(str(p.pid) for p in self.processes.values())],
-                text=True,
-                capture_output=True,
-                check=False,
-            ).stdout
-            if listed.count("\n") >= len(self.processes):
-                return
-            time.sleep(0.1)
-        raise AssertionError("fixture processes did not start")
-
-    def cleanup(self) -> None:
-        for process in self.processes.values():
+    def tearDown(self) -> None:
+        for process in self.processes:
             if process.poll() is None:
                 process.kill()
-            process.wait(timeout=30)
-
-
-@pytest.fixture
-def fixtures(sleeper: Path):
-    running = _Fixtures(sleeper)
-    try:
-        yield running
-    finally:
-        running.cleanup()
-
-
-def test_only_serve_invocations_are_stopped(tmp_path: Path, fixtures) -> None:
-    """The regression that matters: every shape below has the same argv[0], so
-    the kill decision rests entirely on the subcommand scan."""
-    binary = tmp_path / "packages/releases" / RELEASE_DIR_NAME / "cua-driver"
-    fixtures.spawn("plain serve", binary, "serve")
-    fixtures.spawn("flagged serve", binary, "--no-overlay", "serve")
-    fixtures.spawn("socket serve", binary, "--socket", "/tmp/cua.sock", "serve")
-    # An MCP child whose socket is named `serve`, and a call whose argument is.
-    fixtures.spawn("mcp with serve socket", binary, "--socket", "serve", "mcp")
-    fixtures.spawn("call with serve argument", binary, "--no-overlay", "call", "serve")
-    fixtures.spawn("plain mcp", binary, "mcp")
-    fixtures.wait_started()
-
-    stop = _source_only(
-        f'{_CANDIDATE_SETUP}'
-        'status=0\n'
-        'stop_release_serve_daemons || status=$?\n'
-        'printf "stopped=%s\\n" "$status"\n'
-        'report_surviving_release_processes && printf "survivors=yes\\n"\n',
-        os.environ.copy(),
-        str(binary),
-    )
-
-    assert "stopped=0" in stop.stdout, stop.stdout + stop.stderr
-    assert not fixtures.alive("plain serve")
-    assert not fixtures.alive("flagged serve")
-    assert not fixtures.alive("socket serve")
-    assert fixtures.alive("mcp with serve socket")
-    assert fixtures.alive("call with serve argument")
-    assert fixtures.alive("plain mcp")
-    assert "survivors=yes" in stop.stdout
-
-
-def test_whitespace_in_an_argument_does_not_move_the_subcommand(
-    tmp_path: Path, fixtures
-) -> None:
-    """An argument that contains whitespace is still one argument.
-
-    `--socket "/tmp/foo serve" mcp` is an MCP child whose socket is named
-    `/tmp/foo serve`, and `--socket "/tmp/foo bar" serve` is a daemon. Both
-    flatten to command lines a whitespace split cannot tell apart, so the
-    decision has to come from the real argv.
-    """
-    binary = tmp_path / "packages/current/cua-driver"
-    fixtures.spawn("mcp with a serve-suffixed socket", binary, "--socket", "/tmp/foo serve", "mcp")
-    fixtures.spawn("daemon with a spaced socket", binary, "--socket", "/tmp/foo bar", "serve")
-    fixtures.wait_started()
-
-    stop = _source_only(
-        f'{_CANDIDATE_SETUP}'
-        'status=0\n'
-        'stop_release_serve_daemons || status=$?\n'
-        'printf "stopped=%s\\n" "$status"\n'
-        'report_undetermined_release_processes && printf "undetermined=yes\\n"\n',
-        os.environ.copy(),
-        str(binary),
-    )
-
-    # The MCP child is never signalled, on any host.
-    assert fixtures.alive("mcp with a serve-suffixed socket"), stop.stdout + stop.stderr
-    if HAS_PROC:
-        # Real argv is readable, so the daemon is resolved exactly and stopped.
-        assert "stopped=0" in stop.stdout, stop.stdout + stop.stderr
-        assert not fixtures.alive("daemon with a spaced socket")
-        assert "undetermined=yes" not in stop.stdout
-    else:
-        # Without it the uninstaller declines to guess and says so, rather
-        # than killing the MCP child to reach the daemon.
-        assert "stopped=1" in stop.stdout, stop.stdout + stop.stderr
-        assert fixtures.alive("daemon with a spaced socket")
-        assert "undetermined=yes" in stop.stdout
-
-
-def test_a_foreign_binary_named_cua_driver_is_not_killed(
-    tmp_path: Path, fixtures, sleeper: Path
-) -> None:
-    """argv[0] `cua-driver` says nothing about which build is behind it.
-
-    A vendored or hand-built binary started from PATH looks exactly like ours
-    on the command line, so the executable behind the pid is what decides.
-    """
-    install_home = tmp_path / "home/.cua-driver"
-    (install_home / "packages/current").mkdir(parents=True)
-    ours = install_home / "packages/current/cua-driver"
-    shutil.copy2(sleeper, ours)
-    foreign = tmp_path / "vendor/cua-driver"
-    foreign.parent.mkdir()
-    shutil.copy2(sleeper, foreign)
-
-    # Both are `cua-driver serve` in ps; only one is the release install's.
-    fixtures.spawn_with("ours", ours, "cua-driver", "serve")
-    fixtures.spawn_with("foreign", foreign, "cua-driver", "serve")
-    fixtures.wait_started()
-
-    stop = _source_only(
-        'DAEMON_ARGV0_REGEXES=()\n'
-        'DAEMON_BARE_ARGV0_REGEXES=("cua-driver")\n'
-        'DAEMON_ORIGIN_PREFIXES=("${argv[0]}")\n'
-        'status=0\n'
-        'stop_release_serve_daemons || status=$?\n'
-        'printf "stopped=%s\\n" "$status"\n',
-        os.environ.copy(),
-        str(install_home),
-    )
-
-    assert "stopped=0" in stop.stdout, stop.stdout + stop.stderr
-    assert not fixtures.alive("ours")
-    assert fixtures.alive("foreign")
-
-
-def test_a_respawning_daemon_is_never_reported_as_stopped(tmp_path: Path) -> None:
-    """The autostart teardown swallows its errors, so a KeepAlive agent or a
-    `Restart=on-failure` unit can still be there. Each round has to re-scan:
-    the first pid dying is not the daemon stopping."""
-    home, _calls, env = _sandbox(
-        tmp_path,
-        "Linux",
-        fake_command_line=f"{BUNDLE_BINARY} serve",
-        respawning=True,
-    )
-    _install_rust_marker(home)
-
-    result = _run_uninstall(env, expected_returncode=1)
-
-    assert "daemon_stop_incomplete" in result.stderr
-    assert "supervisor keeps restarting" in result.stdout
-    assert STOPPED not in result.stdout
-
-
-def test_a_failed_stop_is_visible_in_the_closing_line_and_exit_code(
-    tmp_path: Path,
-) -> None:
-    """Everything on disk is still removed, but "uninstalled." on its own would
-    be a lie, and a chained reinstall would run against a live daemon."""
-    home, _calls, env = _sandbox(
-        tmp_path, "Linux", fake_command_line=f"{BUNDLE_BINARY} serve"
-    )
-    _install_rust_marker(home)
-
-    result = _run_uninstall(env, expected_returncode=1)
-
-    assert "uninstalled, but a cua-driver process is still running" in result.stdout
-    # The rest of the uninstall still ran.
-    assert "removed runtime payloads" in result.stdout
-
-
-def test_uninstall_stops_a_live_daemon_and_reports_it(
-    tmp_path: Path, fixtures
-) -> None:
-    home, _calls, env = _sandbox(tmp_path, "Linux", real_uid=True)
-    _install_rust_marker(home)
-    fixtures.spawn(
-        "daemon", home / ".cua-driver/packages/current/cua-driver", "--no-overlay", "serve"
-    )
-    fixtures.wait_started()
-
-    result = _run_uninstall(env)
-
-    assert STOPPED in result.stdout
-    assert not fixtures.alive("daemon")
-
-
-def test_live_mcp_child_is_reported_not_killed(tmp_path: Path, fixtures) -> None:
-    home, _calls, env = _sandbox(tmp_path, "Linux", real_uid=True)
-    _install_rust_marker(home)
-    fixtures.spawn(
-        "mcp", home / ".cua-driver/packages/current/cua-driver", "--socket", "serve", "mcp"
-    )
-    fixtures.wait_started()
-
-    result = _run_uninstall(env)
-
-    assert fixtures.alive("mcp")
-    assert STOPPED not in result.stdout
-    assert "no running cua-driver serve daemon (skipping)" in result.stdout
-    assert "cua-driver mcp` runs as a stdio child of your MCP client" in result.stdout
-
-
-# --- ordering, gating and failure reporting ---------------------------------
-
-
-def test_serve_stop_runs_before_tcc_reset_and_bundle_removal(
-    tmp_path: Path, fixtures
-) -> None:
-    home, _calls, env = _sandbox(tmp_path, "Darwin", real_uid=True)
-    _install_rust_marker(home)
-    fixtures.spawn("daemon", home / ".cua-driver/packages/current/cua-driver", "serve")
-    fixtures.wait_started()
-
-    lines = _run_uninstall(env).stdout.splitlines()
-    stopped = next(index for index, line in enumerate(lines) if STOPPED in line)
-    # tccutil resolves com.trycua.driver through LaunchServices, so the reset
-    # already has to precede the bundle removal; the daemon has to stop ahead
-    # of both, or the grants are revoked underneath a live process.
-    revoked = next(
-        index for index, line in enumerate(lines) if "revoking TCC grants" in line
-    )
-    bundle = next(
-        index
-        for index, line in enumerate(lines)
-        if "/Applications/CuaDriver.app" in line
-    )
-    assert stopped < revoked < bundle
-
-
-def test_autostart_teardown_runs_before_the_daemon_is_stopped(
-    tmp_path: Path, fixtures
-) -> None:
-    """A KeepAlive LaunchAgent would respawn anything stopped ahead of it."""
-    home, _calls, env = _sandbox(tmp_path, "Darwin", real_uid=True)
-    _install_rust_marker(home)
-    plist = home / "Library/LaunchAgents/com.trycua.cua-driver.plist"
-    plist.parent.mkdir(parents=True)
-    plist.write_text("fixture\n", encoding="utf-8")
-    fixtures.spawn("daemon", home / ".cua-driver/packages/current/cua-driver", "serve")
-    fixtures.wait_started()
-
-    lines = _run_uninstall(env).stdout.splitlines()
-    unloaded = next(
-        index for index, line in enumerate(lines) if "removed LaunchAgent" in line
-    )
-    stopped = next(index for index, line in enumerate(lines) if STOPPED in line)
-    assert unloaded < stopped
-
-
-def test_no_matching_process_is_reported_as_a_skip(tmp_path: Path) -> None:
-    home, _calls, env = _sandbox(tmp_path, "Linux")
-    _install_rust_marker(home)
-
-    result = _run_uninstall(env)
-
-    assert "no running cua-driver serve daemon (skipping)" in result.stdout
-    assert STOPPED not in result.stdout
-
-
-def test_swift_only_install_keeps_its_processes(tmp_path: Path) -> None:
-    """No Rust marker: the shared bundle path belongs to the retired Swift
-    driver, and its daemon is not ours to stop."""
-    _home, calls, env = _sandbox(tmp_path, "Darwin", record_pgrep=True)
-
-    result = _run_uninstall(env)
-
-    assert not calls.read_text(encoding="utf-8").count("pgrep:")
-    assert "leaving any running cua-driver process untouched" in result.stdout
-
-
-def test_a_daemon_that_survives_sigkill_is_never_reported_as_stopped(
-    tmp_path: Path,
-) -> None:
-    """The one outcome a real process cannot produce, faked: a candidate that
-    answers every liveness probe."""
-    home, _calls, env = _sandbox(
-        tmp_path,
-        "Linux",
-        fake_command_line=f"{BUNDLE_BINARY} serve",
-    )
-    _install_rust_marker(home)
-
-    result = _run_uninstall(env, expected_returncode=1)
-
-    assert "daemon_stop_incomplete" in result.stderr
-    assert "warning: could not stop the running cua-driver serve daemon" in result.stdout
-    assert STOPPED not in result.stdout
-
-
-def test_unresolvable_command_line_is_reported_not_guessed(tmp_path: Path) -> None:
-    """Faked because /proc exists on the CI host: a candidate whose flattened
-    command line hides its argument boundaries must be left alone and
-    reported, not killed on a guess."""
-    home, _calls, env = _sandbox(
-        tmp_path,
-        "Linux",
-        fake_command_line=f"{BUNDLE_BINARY} --socket /tmp/foo serve mcp",
-    )
-    _install_rust_marker(home)
-
-    result = _run_uninstall(env, expected_returncode=1)
-
-    assert "daemon_stop_undetermined" in result.stderr
-    assert "could not be resolved" in result.stdout
-    assert STOPPED not in result.stdout
-
-
-def test_process_tools_are_required_before_signalling(tmp_path: Path) -> None:
-    """Without pgrep and ps a stop can be neither targeted nor confirmed, and
-    the phase must decline rather than claim one."""
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    _write_executable(fake_bin / "id", f"printf '%s\\n' '{FAKE_UID}'\n")
-    env = {**os.environ, "PATH": str(fake_bin), "HOME": str(tmp_path)}
-
-    # Declared literally: PATH has neither sed nor a candidate to escape.
-    # `set -e` is live in the sourced script, so the status has to be caught.
-    result = _source_only(
-        'DAEMON_ARGV0_REGEXES=("/opt/cua/cua-driver")\n'
-        'DAEMON_BARE_ARGV0_REGEXES=()\n'
-        'DAEMON_ORIGIN_PREFIXES=()\n'
-        'status=0\n'
-        'stop_release_serve_daemons || status=$?\n'
-        'printf "status=%s" "$status"',
-        env,
-    )
-
-    assert result.stdout.endswith("status=2"), result.stdout + result.stderr
-
-
-def test_argv0_patterns_escape_regex_metacharacters(tmp_path: Path) -> None:
-    _home, _calls, env = _sandbox(tmp_path, "Linux", record_pgrep=True)
-
-    result = _source_only('escape_path_regex "/opt/c.d+e(1)/cua-driver"', env)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == "/opt/c\\.d\\+e\\(1\\)/cua-driver"
+            process.wait(timeout=10)
+        self.temp_dir.cleanup()
+
+    def compile_sleeper(self, destination: Path) -> Path:
+        compiler = next(
+            (shutil.which(name) for name in ("cc", "gcc", "clang") if shutil.which(name)),
+            None,
+        )
+        if compiler is None:
+            self.skipTest("no C compiler available")
+        source = self.root / "sleeper.c"
+        source.write_text("#include <unistd.h>\nint main(void){pause();return 0;}\n")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [compiler, str(source), "-o", str(destination)],
+            check=True,
+            capture_output=True,
+        )
+        destination.chmod(0o755)
+        return destination
+
+    def spawn(self, executable: Path, *arguments: str, argv0: str | None = None) -> subprocess.Popen[bytes]:
+        process = subprocess.Popen(
+            [argv0 or str(executable), *arguments],
+            executable=str(executable),
+        )
+        self.processes.append(process)
+        with self.process_map.open("a", encoding="utf-8") as handle:
+            handle.write(f"{process.pid}|{executable}|alive\n")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if process.poll() is None:
+                return process
+            time.sleep(0.01)
+        raise AssertionError("fixture process did not start")
+
+    def shell_setup(self, pid_file: Path, helper: Path | None, executable: Path) -> str:
+        helper_value = str(helper) if helper else ""
+        return f"""
+OS=Linux
+HOME_DIR="$HOME/.cua-driver"
+LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
+APP_BUNDLE="/Applications/CuaDriver.app"
+LEGACY_APP_BUNDLE="/Applications/CuaDriverRs.app"
+PACKAGES_DIR="$HOME_DIR/packages"
+DAEMON_PID_FILE="{pid_file}"
+DAEMON_STOP_HELPER="{helper_value}"
+DAEMON_EXECUTABLES=("{executable}")
+"""
+
+    def make_stop_helper(self, pid_file: Path, target_pid_file: Path | None = None) -> Path:
+        helper = self.home / "cua-driver"
+        log = self.root / "stop.log"
+        target = target_pid_file or pid_file
+        write_executable(
+            helper,
+            f"""
+if [ "$1" = stop ]; then
+    printf 'stop\n' >> '{log}'
+    pid=$(cat '{target}')
+    awk -F'|' -v pid="$pid" 'BEGIN {{ OFS="|" }} $1 == pid {{ $3="dead" }} {{ print }}' '{self.process_map}' > '{self.process_map}.tmp'
+    mv '{self.process_map}.tmp' '{self.process_map}'
+    kill "$pid" 2>/dev/null || true
+    exit 0
+fi
+exit 64
+""",
+        )
+        return helper
+
+    def test_pid_file_path_matches_runtime_defaults(self) -> None:
+        result = source_helper(
+            self.env,
+            'OS=Darwin; HOME=/users/test; daemon_pid_file_path',
+        )
+        self.assertEqual(
+            result.stdout,
+            "/users/test/Library/Caches/cua-driver/cua-driver.pid",
+            result.stderr,
+        )
+
+        result = source_helper(
+            self.env,
+            'OS=Linux; HOME=/users/test; daemon_pid_file_path',
+        )
+        self.assertEqual(
+            result.stdout,
+            "/users/test/.cache/cua-driver/cua-driver.pid",
+            result.stderr,
+        )
+
+    def test_stop_helper_resolves_cli_symlink_before_unlink(self) -> None:
+        executable = self.compile_sleeper(
+            self.home / ".cua-driver/packages/current/cua-driver"
+        )
+        link = self.home / ".local/bin/cua-driver"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(executable)
+        result = source_helper(
+            self.env,
+            f'''
+OS=Linux
+USER_BIN_LINK="{link}"
+APP_BUNDLE="/Applications/CuaDriver.app"
+LEGACY_APP_BUNDLE="/Applications/CuaDriverRs.app"
+PACKAGES_DIR="$HOME/.cua-driver/packages"
+LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
+select_daemon_stop_helper
+''',
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, str(executable))
+
+    def test_pid_file_and_stop_command_are_authoritative(self) -> None:
+        executable = self.compile_sleeper(
+            self.home / ".cua-driver/packages/current/cua-driver"
+        )
+        pid_file = self.home / "cua-driver.pid"
+        process = self.spawn(executable, "serve")
+        pid_file.write_text(str(process.pid), encoding="utf-8")
+        helper = self.make_stop_helper(pid_file)
+
+        result = source_helper(
+            self.env,
+            self.shell_setup(pid_file, helper, executable)
+            + """
+status=0
+stop_release_daemon || status=$?
+printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
+""",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("status=0 result=stopped", result.stdout)
+        self.assertEqual((self.root / "stop.log").read_text(), "stop\n")
+        process.wait(timeout=5)
+
+    def test_pid_file_path_does_not_kill_an_mcp_sibling(self) -> None:
+        executable = self.compile_sleeper(
+            self.home / ".cua-driver/packages/current/cua-driver"
+        )
+        pid_file = self.home / "cua-driver.pid"
+        daemon = self.spawn(executable, "serve")
+        mcp = self.spawn(executable, "mcp")
+        pid_file.write_text(str(daemon.pid), encoding="utf-8")
+        helper = self.make_stop_helper(pid_file)
+
+        result = source_helper(
+            self.env,
+            self.shell_setup(pid_file, helper, executable)
+            + """
+status=0
+stop_release_daemon || status=$?
+printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
+""",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("status=0 result=stopped", result.stdout)
+        daemon.wait(timeout=5)
+        self.assertIsNone(mcp.poll(), result.stdout + result.stderr)
+
+    def test_stale_pid_uses_executable_identity_fallback(self) -> None:
+        executable = self.compile_sleeper(
+            self.home / ".cua-driver/packages/current/cua-driver"
+        )
+        pid_file = self.home / "cua-driver.pid"
+        pid_file.write_text("2147483646\n", encoding="utf-8")
+        process = self.spawn(executable, "serve")
+        target_pid_file = self.home / "actual.pid"
+        target_pid_file.write_text(str(process.pid), encoding="utf-8")
+        helper = self.make_stop_helper(pid_file, target_pid_file)
+
+        result = source_helper(
+            self.env,
+            self.shell_setup(pid_file, helper, executable)
+            + """
+status=0
+stop_release_daemon || status=$?
+printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
+""",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("status=0 result=stopped", result.stdout)
+        process.wait(timeout=5)
+
+    def test_foreign_executable_is_not_killed_by_fallback(self) -> None:
+        installed = self.compile_sleeper(
+            self.home / ".cua-driver/packages/current/cua-driver"
+        )
+        foreign = self.compile_sleeper(self.root / "vendor/cua-driver")
+        process = self.spawn(foreign, "serve", argv0="cua-driver")
+        pid_file = self.home / "cua-driver.pid"
+
+        result = source_helper(
+            self.env,
+            self.shell_setup(pid_file, None, installed)
+            + """
+status=0
+stop_release_daemon || status=$?
+printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
+""",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("status=0 result=none", result.stdout)
+        self.assertIsNone(process.poll(), result.stdout + result.stderr)
+
+    def test_missing_process_tools_fail_closed(self) -> None:
+        path = self.root / "empty-bin"
+        path.mkdir()
+        env = {**self.env, "PATH": str(path)}
+        pid_file = self.home / "missing.pid"
+        result = source_helper(
+            env,
+            self.shell_setup(pid_file, None, self.home / "cua-driver")
+            + """
+status=0
+stop_release_daemon || status=$?
+printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
+""",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("status=2 result=failed", result.stdout)
+        self.assertIn("pgrep and ps are required", result.stderr)
+
+    def test_main_marks_process_inspection_failure(self) -> None:
+        path = self.root / "full-bin"
+        path.mkdir()
+        write_executable(path / "id", "printf '501\\n'")
+        write_executable(path / "uname", "printf 'Linux\\n'")
+        os.symlink("/bin/cat", path / "cat")
+        os.symlink("/bin/rm", path / "rm")
+        env = {**self.env, "PATH": str(path)}
+        (self.home / ".cua-driver/packages").mkdir(parents=True)
+
+        result = subprocess.run(
+            ["/bin/bash", str(UNINSTALL)],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("daemon_stop_incomplete", result.stderr)
+        self.assertIn("process inspection tools are unavailable", result.stdout)
+        self.assertIn(
+            "cua-driver uninstalled, but a cua-driver process is still running",
+            result.stdout,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

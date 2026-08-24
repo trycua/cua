@@ -95,44 +95,14 @@ The local uninstaller leaves `cua-driver`, `CuaDriver.app`, release services,
 release state, and release TCC grants untouched. On macOS it revokes only
 `com.trycua.driver.local`; pass `--keep-tcc` to retain that local grant.
 
-Every uninstaller stops the running daemon before it deletes anything:
-`uninstall.ps1` stops each `cua-driver.exe`, and `uninstall.sh` stops
-`cua-driver serve` on macOS and Linux by matching argv[0] over the release
-install paths, gated on the same on-disk Rust marker that guards every other
-shared-path removal. Selecting candidates by argv[0] also covers versioned
-release paths the installer has already pruned, since a daemon that survived an
-upgrade runs from a directory that no longer exists. Whether a candidate is a
-daemon is then decided by scanning its real command line the way the CLI does,
-not by pattern: flags may precede the subcommand (`cua-driver --no-overlay
-serve` is a daemon) and only a value-taking flag consumes the token after it,
-so `cua-driver --socket serve mcp` is an MCP child whose socket is named
-`serve`, and `cua-driver --no-overlay call serve` is a `call`. Neither is
-signalled.
+The release Unix uninstaller stops the daemon before removing the runtime. It
+uses the PID file written by `cua-driver serve`, invokes the installed
+`cua-driver stop` command, and verifies that the owned PID has exited. This
+keeps shutdown in the Rust daemon lifecycle instead of duplicating the CLI's
+argument parsing in Bash, and leaves MCP stdio children alone.
 
-That scan needs real argument boundaries, which Linux provides through
-`/proc/<pid>/cmdline`. macOS exposes no equivalent to a shell — `ps` joins the
-arguments with spaces — so when a value-taking flag precedes the subcommand
-there, the uninstaller cannot tell `--socket "/tmp/a serve" mcp` from
-`--socket /tmp/a serve`. It reports `daemon_stop_undetermined` and leaves the
-process alone rather than guessing. Daemons started the way the product starts
-them are unaffected: the LaunchAgent, the systemd unit, `install-local.sh
---autostart` and the runtime's own relaunch all put `serve` ahead of any flag.
-
-A daemon started from PATH has argv[0] `cua-driver`, which any build on the
-machine can have, so those candidates are kept only when the executable behind
-the pid resolves into the install — a vendored or hand-built `cua-driver serve`
-is not the uninstaller's to stop.
-
-`cua-driver mcp` runs as a stdio child of a live MCP client and exits with that
-client, so a surviving one is reported rather than killed.
-
-Stopping a pid is not the same as stopping the daemon: the autostart teardown
-is best-effort, so after the pids are confirmed gone the scan runs again and a
-supervisor that survived it is caught by the new pid it started. A daemon that
-outlives SIGTERM and SIGKILL, or one that keeps coming back, is reported on
-stderr as `daemon_stop_incomplete`; a process whose subcommand could not be
-resolved is reported as `daemon_stop_undetermined`. In either case the removal
-still completes, but the closing line says a cua-driver process is still
-running and the script exits non-zero — the uninstaller never reports a stop it
-did not achieve, and a script that chains a reinstall should not proceed against
-a live daemon holding the old socket.
+If the PID file is missing or stale, the script falls back to a small
+executable-identity check limited to the release install paths. A failure to
+inspect or stop an owned process is reported as `daemon_stop_incomplete`, the
+closing message reflects the incomplete stop, and the uninstaller exits
+non-zero rather than claiming a clean uninstall.

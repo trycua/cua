@@ -89,7 +89,7 @@ while [[ $# -gt 0 ]]; do
         --backend=rust)      shift ;;
         --backend=swift)     shift ;;  # retired Swift (no-op)
         --reset-tcc)         RESET_TCC=1; shift ;;  # legacy/explicit default: revoke TCC grants
-        --keep-tcc)          RESET_TCC=0; shift ;;  # preserve TCC grants across reinstall/reinstall
+        --keep-tcc)          RESET_TCC=0; shift ;;  # preserve TCC grants across reinstall
         --purge)             PURGE_DATA=1; shift ;;  # also delete pseudonymous identity + preference
         --backend=*)
             printf 'error: unknown backend %q; supported: rust\n' "${1#*=}" >&2
@@ -668,7 +668,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
 
     # --- Revoke TCC grants BEFORE removing the app ---
     # tccutil resolves com.trycua.driver through LaunchServices, so the reset
-    # only works while /Applications/CuaDriver.app still installed. Running
+    # only works while /Applications/CuaDriver.app is still installed. Running
     # it here (not at the closing message) is what makes the revoke actually
     # take — otherwise it fails with -10814 and the grant silently survives.
     maybe_reset_tcc

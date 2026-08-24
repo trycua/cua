@@ -676,6 +676,18 @@ test_image_namespaced_crud_allowed if {
 	route_allow with input as spa_request("DELETE", item)
 }
 
+test_image_patch_status_denied if {
+	path := "apis/images.cua.ai/v1alpha1/namespaces/ns-a/images/image-demo/status"
+
+	not route_allow with input as spa_request("PATCH", path)
+}
+
+test_image_other_subresource_denied if {
+	path := "apis/images.cua.ai/v1alpha1/namespaces/ns-a/images/image-demo/manifest"
+
+	not route_allow with input as spa_request("GET", path)
+}
+
 # Core reads: pods, pod logs, services.
 test_core_reads_allowed if {
 	route_allow with input as spa_request("GET", "api/v1/namespaces/ns-a/pods")

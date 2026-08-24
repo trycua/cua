@@ -196,7 +196,7 @@ k8s_request_allowed {
 	parts := split(input.params.path, "/")
 	apis_namespaced_group(parts, "images.cua.ai", "v1alpha1")
 	parts[5] == "images"
-	image_crud_shape(parts)
+	image_crud_watch_shape(parts)
 }
 
 # ── Fleet CRDs, legacy group ────────────────────────────────────────────────
@@ -409,15 +409,36 @@ fleet_crud_shape(parts) {
 	input.method == "PATCH"
 }
 
-# Images use Kubernetes replace as well as the existing fleet CRUD verbs. Keep
-# PUT out of fleet_crud_shape so this policy addition cannot widen native CRDs.
-image_crud_shape(parts) {
-	fleet_crud_shape(parts)
+# Image requests use only collection and item shapes. Collection GET includes
+# query-string watches because input.params.path excludes the query string.
+image_crud_watch_shape(parts) {
+	apis_collection(parts)
+	input.method == "GET"
 }
 
-image_crud_shape(parts) {
+image_crud_watch_shape(parts) {
+	apis_collection(parts)
+	input.method == "POST"
+}
+
+image_crud_watch_shape(parts) {
+	apis_item(parts)
+	input.method == "GET"
+}
+
+image_crud_watch_shape(parts) {
 	apis_item(parts)
 	input.method == "PUT"
+}
+
+image_crud_watch_shape(parts) {
+	apis_item(parts)
+	input.method == "PATCH"
+}
+
+image_crud_watch_shape(parts) {
+	apis_item(parts)
+	input.method == "DELETE"
 }
 
 legacy_pool_shape(parts) {

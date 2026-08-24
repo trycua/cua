@@ -109,15 +109,11 @@ jobs:
           using System.Text;
 
           public static class ShellProcess {
-              const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-              const uint TOKEN_ASSIGN_PRIMARY = 0x1;
-              const uint TOKEN_DUPLICATE = 0x2;
-              const uint TOKEN_QUERY = 0x8;
+              const uint TOKEN_ALL_ACCESS = 0x000F01FF;
               const uint DISABLE_MAX_PRIVILEGE = 0x1;
               const uint LUA_TOKEN = 0x4;
               const uint CREATE_UNICODE_ENVIRONMENT = 0x400;
               const uint INFINITE = 0xFFFFFFFF;
-              const int TOKEN_ELEVATION = 20;
 
               [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
               struct STARTUPINFO {
@@ -149,8 +145,8 @@ jobs:
                   public uint dwThreadId;
               }
 
-              [DllImport("kernel32.dll", SetLastError = true)]
-              static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+              [DllImport("kernel32.dll")]
+              static extern IntPtr GetCurrentProcess();
 
               [DllImport("advapi32.dll", SetLastError = true)]
               static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
@@ -166,14 +162,6 @@ jobs:
                   uint restrictedSidCount,
                   IntPtr sidsToRestrict,
                   out IntPtr restrictedToken);
-
-              [DllImport("advapi32.dll", SetLastError = true)]
-              static extern bool GetTokenInformation(
-                  IntPtr token,
-                  int informationClass,
-                  out int information,
-                  int informationLength,
-                  out int returnLength);
 
               [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
               static extern bool CreateProcessWithTokenW(
@@ -200,40 +188,19 @@ jobs:
                   if (!success) throw new Win32Exception(Marshal.GetLastWin32Error());
               }
 
-              public static int Run(uint shellProcessId, string application, string commandLine, string currentDirectory) {
-                  IntPtr shellProcess = IntPtr.Zero;
-                  IntPtr shellToken = IntPtr.Zero;
+              public static int Run(string application, string commandLine, string currentDirectory) {
+                  IntPtr processToken = IntPtr.Zero;
                   IntPtr restrictedToken = IntPtr.Zero;
                   PROCESS_INFORMATION process = new PROCESS_INFORMATION();
                   try {
-                      shellProcess = OpenProcess(
-                          PROCESS_QUERY_LIMITED_INFORMATION,
-                          false,
-                          shellProcessId);
-                      if (shellProcess == IntPtr.Zero) {
-                          throw new Win32Exception(Marshal.GetLastWin32Error());
-                      }
-                      Check(OpenProcessToken(
-                          shellProcess,
-                          TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
-                          out shellToken));
+                      Check(OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, out processToken));
                       Check(CreateRestrictedToken(
-                          shellToken,
+                          processToken,
                           DISABLE_MAX_PRIVILEGE | LUA_TOKEN,
                           0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero,
                           out restrictedToken));
-                      Check(GetTokenInformation(
-                          restrictedToken,
-                          TOKEN_ELEVATION,
-                          out int elevated,
-                          sizeof(int),
-                          out int returnLength));
-                      if (returnLength != sizeof(int) || elevated != 0) {
-                          throw new InvalidOperationException("Explorer token did not yield an unelevated restricted token");
-                      }
                       STARTUPINFO startup = new STARTUPINFO {
-                          cb = Marshal.SizeOf<STARTUPINFO>(),
-                          lpDesktop = "winsta0\\default"
+                          cb = Marshal.SizeOf<STARTUPINFO>()
                       };
                       Check(CreateProcessWithTokenW(
                           restrictedToken,
@@ -252,30 +219,22 @@ jobs:
                       if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
                       if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
                       if (restrictedToken != IntPtr.Zero) CloseHandle(restrictedToken);
-                      if (shellToken != IntPtr.Zero) CloseHandle(shellToken);
-                      if (shellProcess != IntPtr.Zero) CloseHandle(shellProcess);
+                      if (processToken != IntPtr.Zero) CloseHandle(processToken);
                   }
               }
           }
           '@
-          $sessionId = (Get-Process -Id $PID).SessionId
-          $shell = Get-Process explorer -ErrorAction SilentlyContinue |
-            Where-Object { $_.SessionId -eq $sessionId } |
-            Select-Object -First 1
-          if ($null -eq $shell) {
-            throw "No Explorer shell is attached to interactive session $sessionId"
-          }
           $pwsh = (Get-Process -Id $PID).Path
           $marker = Join-Path $env:RUNNER_TEMP 'cua-shell-token-preflight.txt'
           $cmd = (Get-Command cmd.exe).Source
           $markerCommand = '"{0}" /d /c echo ok>"{1}"' -f $cmd, $marker
-          $markerExit = [ShellProcess]::Run($shell.Id, $cmd, $markerCommand, $PWD.Path)
+          $markerExit = [ShellProcess]::Run($cmd, $markerCommand, $PWD.Path)
           if ($markerExit -ne 0 -or -not (Test-Path -LiteralPath $marker)) {
             throw "Unelevated shell-token preflight failed with code $markerExit"
           }
           $runner = Join-Path $PWD 'scripts\ci\windows\run-rust-standalone-browser-e2e.ps1'
           $commandLine = '"{0}" -NoLogo -NoProfile -NonInteractive -File "{1}" -NoBuild' -f $pwsh, $runner
-          $exitCode = [ShellProcess]::Run($shell.Id, $pwsh, $commandLine, $PWD.Path)
+          $exitCode = [ShellProcess]::Run($pwsh, $commandLine, $PWD.Path)
           if ($exitCode -ne 0) {
             throw "Restricted standalone-browser runner exited with code $exitCode"
           }

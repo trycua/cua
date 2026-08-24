@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.22.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.21.0...cua-driver-rs-v0.22.0) (2026-08-24)
+
+
+### Features
+
+* **cua-driver:** configure embedded daemon overlay ([#3280](https://github.com/trycua/cua/issues/3280)) ([3ae080d](https://github.com/trycua/cua/commit/3ae080d366b0fc514ef03b8f5136f29e7477c2ae))
+
+
+### Bug Fixes
+
+* **cua-driver:** block uinput pointer hotplug on KDE X11 ([#2888](https://github.com/trycua/cua/issues/2888)) ([56f13c3](https://github.com/trycua/cua/commit/56f13c360a8b678960747c50f2680e40c14ae346))
+* **cua-driver:** honor HERMES_HOME for skill links ([#3291](https://github.com/trycua/cua/issues/3291)) ([9a61050](https://github.com/trycua/cua/commit/9a61050e3474fc9488d7adc85184299f02514d0e))
+* **cua-driver:** make Windows browser prepare language independent ([#3135](https://github.com/trycua/cua/issues/3135)) ([9bf47f6](https://github.com/trycua/cua/commit/9bf47f65dda1bc33bdd19dabb94c56b691f39ca0))
+* **cua-driver:** match canonical Windows executable paths ([#3299](https://github.com/trycua/cua/issues/3299)) ([a682895](https://github.com/trycua/cua/commit/a6828955187f3554682065c88f6cb770f107095a))
+* **cua-driver:** normalize legacy dispatch before authorization ([#3037](https://github.com/trycua/cua/issues/3037)) ([d138baa](https://github.com/trycua/cua/commit/d138baa96a1b4a379dfb498c17101f20cfcf7aef))
+* **cua-driver:** preserve embedded telemetry preference ([#3277](https://github.com/trycua/cua/issues/3277)) ([2c8fa2a](https://github.com/trycua/cua/commit/2c8fa2a73d87d858520a3acfabc9b6a54479960c))
+* **cua-driver:** preserve TCC across release updates ([#3297](https://github.com/trycua/cua/issues/3297)) ([1542a71](https://github.com/trycua/cua/commit/1542a717ac65b500d1a524152bcf742d4d311c63))
+* **cua-driver:** reset stale local TCC rows after ad-hoc rebuilds ([#2747](https://github.com/trycua/cua/issues/2747)) ([ee09e86](https://github.com/trycua/cua/commit/ee09e869727ce1f80793b0dd830a29139cb6fffa))
+
 ## [0.21.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.20.0...cua-driver-rs-v0.21.0) (2026-08-19)
 
 

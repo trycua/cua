@@ -1,23 +1,29 @@
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 
 use clipboard_rs::{common::RustImage, Clipboard, ClipboardContext, ContentFormat};
 use cua_driver_core::clipboard::ClipboardBackend;
 
 pub struct LinuxClipboard {
-    context: Result<Mutex<ClipboardContext>, String>,
+    context: OnceLock<Result<Mutex<ClipboardContext>, String>>,
 }
 
 impl LinuxClipboard {
     pub fn new() -> Self {
         Self {
-            context: ClipboardContext::new()
-                .map(Mutex::new)
-                .map_err(|error| error.to_string()),
+            context: OnceLock::new(),
         }
     }
 
     fn context(&self) -> Result<std::sync::MutexGuard<'_, ClipboardContext>, String> {
         self.context
+            .get_or_init(|| {
+                ClipboardContext::new()
+                    .map(Mutex::new)
+                    .map_err(|error| error.to_string())
+            })
             .as_ref()
             .map_err(Clone::clone)?
             .lock()
@@ -74,6 +80,12 @@ impl ClipboardBackend for LinuxClipboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn construction_does_not_start_native_clipboard() {
+        let backend = LinuxClipboard::new();
+        assert!(backend.context.get().is_none());
+    }
 
     #[test]
     fn rejects_relative_local_paths_before_clipboard_access() {

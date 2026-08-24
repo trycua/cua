@@ -140,6 +140,14 @@ fn active_proxy_sessions() -> &'static Mutex<HashSet<String>> {
     ACTIVE_PROXY_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+fn release_active_proxy_sessions() {
+    if let Some(sessions) = ACTIVE_PROXY_SESSIONS.get() {
+        let mut sessions = sessions.lock().unwrap();
+        sessions.clear();
+        sessions.shrink_to_fit();
+    }
+}
+
 fn is_active_proxy_session(session: Option<&str>) -> bool {
     session.is_some_and(|session| active_proxy_sessions().lock().unwrap().contains(session))
 }
@@ -1399,6 +1407,7 @@ pub async fn run_serve(
     // Accepted connections may still own SDK/session state after the listener
     // stops. Abort and join them before tearing down the SDK runtime.
     connection_tasks.shutdown().await;
+    release_active_proxy_sessions();
 
     // Do not unlink a replacement socket created after this listener was bound.
     remove_owned_socket(socket_path, bound_socket);

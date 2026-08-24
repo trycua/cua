@@ -20,7 +20,7 @@ use cursor_overlay::CursorConfig;
 use serde_json::Value;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
@@ -162,7 +162,13 @@ pub(crate) struct DriverRuntime {
     /// admission. Therefore shutdown is idempotent and does not return while a
     /// previously admitted operation is still executing.
     lifecycle: tokio::sync::RwLock<()>,
+    lifecycle_maintenance: Mutex<Option<LifecycleMaintenance>>,
     activity_observer: Option<Arc<dyn DriverActivityObserver>>,
+}
+
+struct LifecycleMaintenance {
+    shutdown: std::sync::mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<()>,
 }
 
 impl DriverRuntime {
@@ -198,9 +204,11 @@ impl DriverRuntime {
             shutdown: AtomicBool::new(false),
             last_activity: AtomicU64::new(now_unix_secs()),
             lifecycle: tokio::sync::RwLock::new(()),
+            lifecycle_maintenance: Mutex::new(None),
             activity_observer: options.activity_observer.clone(),
         });
-        spawn_lifecycle_maintenance(&runtime);
+        *runtime.lifecycle_maintenance.lock().unwrap() =
+            Some(spawn_lifecycle_maintenance(&runtime));
         Ok(runtime)
     }
 
@@ -215,6 +223,7 @@ impl DriverRuntime {
     pub(crate) async fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
         let _drained = self.lifecycle.write().await;
+        self.stop_lifecycle_maintenance();
         self.authorization_registry.revoke_all();
         let runtime_prefix = format!(
             "__cua_runtime_{}:",
@@ -229,6 +238,15 @@ impl DriverRuntime {
             .clear_runtime_scope(&self.compatibility_context.runtime_scope_key());
         let recording = self.registry.recording.clone();
         let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
+    }
+
+    fn stop_lifecycle_maintenance(&self) {
+        if let Some(maintenance) = self.lifecycle_maintenance.lock().unwrap().take() {
+            let _ = maintenance.shutdown.send(());
+            if maintenance.thread.thread().id() != std::thread::current().id() {
+                let _ = maintenance.thread.join();
+            }
+        }
     }
 
     pub(crate) fn tools_list(&self) -> Option<Value> {
@@ -429,7 +447,8 @@ fn activity_lifecycle_event(
 
 impl Drop for DriverRuntime {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
+        let was_running = !self.shutdown.swap(true, Ordering::AcqRel);
+        self.stop_lifecycle_maintenance();
         self.authorization_registry.revoke_all();
         let runtime_scope = self.compatibility_context.runtime_scope_key();
         let runtime_prefix = format!("__cua_runtime_{runtime_scope}:");
@@ -440,10 +459,10 @@ impl Drop for DriverRuntime {
         // Explicit `shutdown()` drains work and finalizes recordings. Drop is
         // runtime-scoped and non-blocking so a retained binding cannot affect
         // another generation.
-        let recording = self.registry.recording.clone();
-        std::thread::spawn(move || {
+        if was_running {
+            let recording = self.registry.recording.clone();
             let _ = recording.stop_owner(None);
-        });
+        }
     }
 }
 
@@ -472,8 +491,9 @@ fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
-fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
+fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) -> LifecycleMaintenance {
     let runtime = Arc::downgrade(runtime);
+    let (shutdown, shutdown_rx) = std::sync::mpsc::channel();
     let recording_ttl = configured_ttl(
         "CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS",
         RECORDING_IDLE_TTL_SECS_DEFAULT,
@@ -482,8 +502,13 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
         "CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS",
         SESSION_IDLE_TTL_SECS_DEFAULT,
     ));
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(30));
+    let thread = std::thread::spawn(move || loop {
+        if shutdown_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .is_ok()
+        {
+            break;
+        }
         let Some(runtime) = runtime.upgrade() else {
             break;
         };
@@ -509,6 +534,7 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
             let _ = runtime.registry.recording.stop_owner(None);
         }
     });
+    LifecycleMaintenance { shutdown, thread }
 }
 
 /// Build the canonical SDK tool inventory without acquiring runtime ownership.
@@ -874,4 +900,16 @@ mod tests {
 
         runtime.shutdown().await;
     }
+
+    #[tokio::test]
+    async fn shutdown_joins_lifecycle_maintenance() {
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let runtime = DriverRuntime::create(standard_options()).unwrap();
+        assert!(runtime.lifecycle_maintenance.lock().unwrap().is_some());
+
+        runtime.shutdown().await;
+
+        assert!(runtime.lifecycle_maintenance.lock().unwrap().is_none());
+    }
+
 }

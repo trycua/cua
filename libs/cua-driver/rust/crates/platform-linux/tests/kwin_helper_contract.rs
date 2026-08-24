@@ -1,5 +1,6 @@
 use platform_linux::wayland::kwin_helper::{
-    correlate_atspi_window, parse_snapshot, require_active_target, CorrelationError,
+    activate_window, available, correlate_atspi_window, parse_snapshot, require_active_target,
+    with_focused_window, CorrelationError,
 };
 use platform_linux::x11::WindowInfo;
 
@@ -58,8 +59,6 @@ fn correlates_one_same_pid_window_with_bounded_frame_delta() {
     )
     .unwrap();
 
-    // AT-SPI reports client geometry; KWin reports frame geometry. A normal
-    // decoration inset is accepted, but identity still requires one candidate.
     let target = correlate_atspi_window(&atspi_window(1200, 104, 112, 792, 560), &snapshot)
         .expect("one bounded geometry match");
     assert_eq!(target.token, 41);
@@ -126,4 +125,20 @@ fn refuses_when_a_different_token_is_active() {
         require_active_target(&snapshot, 41),
         Err(CorrelationError::WrongActiveTarget)
     );
+}
+
+#[test]
+fn raw_kwin_input_is_refused_before_dispatch() {
+    assert!(!available(), "focus-bound KWin input must not be advertised as safe");
+    assert!(!activate_window(1200, 41), "activation must not authorize global input");
+
+    let called = std::cell::Cell::new(false);
+    let error = with_focused_window(1200, 41, || {
+        called.set(true);
+        Ok(())
+    })
+    .expect_err("focus-bound KWin input must refuse");
+
+    assert!(!called.get(), "input body must not run on the focus-only KWin path");
+    assert!(error.to_string().contains("target-bound KWin input path"));
 }

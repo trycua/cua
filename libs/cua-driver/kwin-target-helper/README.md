@@ -1,9 +1,17 @@
 # Cua KWin target helper
 
 This is an **optional KDE Plasma/KWin Wayland integration**. It is not part of
- the portable `cua-driver` binary and must be built against the user's installed
+the portable `cua-driver` binary and must be built against the user's installed
 KWin/Qt/KF6 development files. Do not use a helper built for a different KWin
 or Qt ABI.
+
+The helper currently provides trusted KWin window identity and state metadata:
+stable opaque tokens, PID, geometry, active/minimized state, stacking order,
+and an activation method for diagnostics. **Activation is not used as input
+authorization.** KWin portal/libei input is focus-bound, so focus can change
+after activation/read-back and before the compositor processes an input event.
+Cua therefore refuses raw target-addressed KWin keyboard/pointer actions until
+a target-bound KWin input path exists.
 
 ## Requirements
 
@@ -35,8 +43,8 @@ cmake --install build --prefix "$HOME/.local"
 ```
 
 If the local KWin installation does not search that prefix, use the
- distribution's native packaging mechanism or an explicitly approved
- system-local installation. Never copy the module into an arbitrary plugin
+distribution's native packaging mechanism or an explicitly approved
+system-local installation. Never copy the module into an arbitrary plugin
 directory and never overwrite an existing file.
 
 Load/reload through KWin's supported Effects interface where available:
@@ -46,9 +54,18 @@ qdbus6 org.kde.KWin /Effects loadEffect cua_kwin_target_helper
 ```
 
 The helper exposes the Cua-owned service `org.cua.KWinTarget` only while the
- effect is loaded by the current `kwin_wayland` process. Verify the service
- owner, protocol version, target snapshots, activation read-back, and rollback
- path before enabling foreground CUA actions.
+effect is loaded by the current `kwin_wayland` process. Verify the service
+owner, protocol version, and target snapshots before trusting identity data.
+The `Activate` method may be used for diagnostics, but the Rust driver does not
+use it to authorize portal/libei input.
+
+## Input safety boundary
+
+Portal/libei events are delivered according to compositor focus when KWin
+processes them. A target focus check immediately before dispatch cannot bind the
+later event to that target, so adding more checks does not remove the race.
+Until the helper exposes a target-bound input operation, Cua fails closed rather
+than sending raw focus-based input to a requested KWin window.
 
 ## ABI and rollback
 

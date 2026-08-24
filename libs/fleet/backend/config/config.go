@@ -291,7 +291,7 @@ func LoadConfig() (*Configuration, error) {
 		},
 		Metrics: MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
 		ImageUploads: ImageUploadConfiguration{
-			Bucket:             viper.GetString("image-uploads.bucket"),
+			Bucket:             strings.TrimSpace(viper.GetString("image-uploads.bucket")),
 			Region:             viper.GetString("image-uploads.region"),
 			URLLifetime:        imageUploadURLLifetime,
 			MaxFileBytes:       viper.GetInt64("image-uploads.max-file-bytes"),
@@ -311,6 +311,9 @@ func LoadConfig() (*Configuration, error) {
 	}
 	if cfg.Chat.Access.Enabled() && (cfg.Chat.BaseURL == "" || cfg.Chat.APIKey == "") {
 		return nil, fmt.Errorf("enabled chat access requires LITELLM_BASE_URL and LITELLM_API_KEY")
+	}
+	if cfg.ImageUploads.Bucket == "" {
+		return nil, fmt.Errorf("IMAGE_UPLOAD_BUCKET is required")
 	}
 	if cfg.ImageUploads.URLLifetime <= 0 || cfg.ImageUploads.MaxFileBytes <= 0 || cfg.ImageUploads.MaxFilesPerRequest <= 0 {
 		return nil, fmt.Errorf("image upload bounds must be positive")

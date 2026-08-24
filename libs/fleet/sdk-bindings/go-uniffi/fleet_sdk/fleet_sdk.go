@@ -432,6 +432,51 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads()
+		})
+		if checksum != 53280 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image()
+		})
+		if checksum != 51053 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image()
+		})
+		if checksum != 24680 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image()
+		})
+		if checksum != 56969 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images()
+		})
+		if checksum != 31215 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace()
 		})
 		if checksum != 38049 {
@@ -2021,6 +2066,11 @@ type CyclopsClientInterface interface {
 	// can be mutated through the SDK.
 	RenewClaim(claim Claim, shutdownTime string) (Claim, error)
 	WaitClaim(claim Claim) (Sandbox, error)
+	PresignImageUploads(request ImageUploadRequest) (ImageUploadResponse, error)
+	CreateImage(namespace string, manifest *cyclops_sdk_schema.PreservedJson) (*cyclops_sdk_schema.PreservedJson, error)
+	DeleteImage(namespace string, name string) error
+	GetImage(namespace string, name string) (*cyclops_sdk_schema.PreservedJson, error)
+	ListImages(namespace string) ([]*cyclops_sdk_schema.PreservedJson, error)
 	CreateNamespace(name string) (Namespace, error)
 	DeleteNamespace(name string) error
 	GetNamespace(name string) (Namespace, error)
@@ -2325,6 +2375,179 @@ func (_self *CyclopsClient) WaitClaim(claim Claim) (Sandbox, error) {
 		},
 		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(
 			_pointer, FfiConverterClaimINSTANCE.Lower(claim)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) PresignImageUploads(request ImageUploadRequest) (ImageUploadResponse, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) ImageUploadResponse {
+			return FfiConverterImageUploadResponseINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+			_pointer, FfiConverterImageUploadRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) CreateImage(namespace string, manifest *cyclops_sdk_schema.PreservedJson) (*cyclops_sdk_schema.PreservedJson, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+			res := C.ffi_cyclops_sdk_rust_future_complete_u64(handle, status)
+			return res
+		},
+		// liftFn
+		func(ffi C.uint64_t) *cyclops_sdk_schema.PreservedJson {
+			return func(handle C.uint64_t) *cyclops_sdk_schema.PreservedJson {
+				return cyclops_sdk_schema.LiftFromExternalPreservedJson(uint64(handle))
+			}(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+			_pointer, FfiConverterStringINSTANCE.Lower(namespace), func(value *cyclops_sdk_schema.PreservedJson) C.uint64_t {
+				return C.uint64_t(cyclops_sdk_schema.LowerToExternalPreservedJson(value))
+			}(manifest)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_u64(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_u64(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) DeleteImage(namespace string, name string) error {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	_, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) struct{} {
+			C.ffi_cyclops_sdk_rust_future_complete_void(handle, status)
+			return struct{}{}
+		},
+		// liftFn
+		func(_ struct{}) struct{} { return struct{}{} },
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+			_pointer, FfiConverterStringINSTANCE.Lower(namespace), FfiConverterStringINSTANCE.Lower(name)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_void(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_void(handle)
+		},
+	)
+
+	if err == nil {
+		return nil
+	}
+
+	return err
+}
+
+func (_self *CyclopsClient) GetImage(namespace string, name string) (*cyclops_sdk_schema.PreservedJson, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+			res := C.ffi_cyclops_sdk_rust_future_complete_u64(handle, status)
+			return res
+		},
+		// liftFn
+		func(ffi C.uint64_t) *cyclops_sdk_schema.PreservedJson {
+			return func(handle C.uint64_t) *cyclops_sdk_schema.PreservedJson {
+				return cyclops_sdk_schema.LiftFromExternalPreservedJson(uint64(handle))
+			}(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+			_pointer, FfiConverterStringINSTANCE.Lower(namespace), FfiConverterStringINSTANCE.Lower(name)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_u64(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_u64(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) ListImages(namespace string) ([]*cyclops_sdk_schema.PreservedJson, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) []*cyclops_sdk_schema.PreservedJson {
+			return FfiConverterSequencePreservedJsonINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+			_pointer, FfiConverterStringINSTANCE.Lower(namespace)),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
@@ -4263,6 +4486,190 @@ func (_ FfiDestroyerHttpResponse) Destroy(value HttpResponse) {
 	value.Destroy()
 }
 
+type ImageUploadFileRequest struct {
+	Digest    string
+	SizeBytes uint64
+	Name      string
+}
+
+func (r *ImageUploadFileRequest) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Digest)
+	FfiDestroyerUint64{}.Destroy(r.SizeBytes)
+	FfiDestroyerString{}.Destroy(r.Name)
+}
+
+type FfiConverterImageUploadFileRequest struct{}
+
+var FfiConverterImageUploadFileRequestINSTANCE = FfiConverterImageUploadFileRequest{}
+
+func (c FfiConverterImageUploadFileRequest) Lift(rb RustBufferI) ImageUploadFileRequest {
+	return LiftFromRustBuffer[ImageUploadFileRequest](c, rb)
+}
+
+func (c FfiConverterImageUploadFileRequest) Read(reader io.Reader) ImageUploadFileRequest {
+	return ImageUploadFileRequest{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterUint64INSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterImageUploadFileRequest) Lower(value ImageUploadFileRequest) C.RustBuffer {
+	return LowerIntoRustBuffer[ImageUploadFileRequest](c, value)
+}
+
+func (c FfiConverterImageUploadFileRequest) LowerExternal(value ImageUploadFileRequest) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[ImageUploadFileRequest](c, value))
+}
+
+func (c FfiConverterImageUploadFileRequest) Write(writer io.Writer, value ImageUploadFileRequest) {
+	FfiConverterStringINSTANCE.Write(writer, value.Digest)
+	FfiConverterUint64INSTANCE.Write(writer, value.SizeBytes)
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+}
+
+type FfiDestroyerImageUploadFileRequest struct{}
+
+func (_ FfiDestroyerImageUploadFileRequest) Destroy(value ImageUploadFileRequest) {
+	value.Destroy()
+}
+
+type ImageUploadInstruction struct {
+	Digest    string
+	SizeBytes uint64
+	Reference string
+	Upload    *PresignedPut
+}
+
+func (r *ImageUploadInstruction) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Digest)
+	FfiDestroyerUint64{}.Destroy(r.SizeBytes)
+	FfiDestroyerString{}.Destroy(r.Reference)
+	FfiDestroyerOptionalPresignedPut{}.Destroy(r.Upload)
+}
+
+type FfiConverterImageUploadInstruction struct{}
+
+var FfiConverterImageUploadInstructionINSTANCE = FfiConverterImageUploadInstruction{}
+
+func (c FfiConverterImageUploadInstruction) Lift(rb RustBufferI) ImageUploadInstruction {
+	return LiftFromRustBuffer[ImageUploadInstruction](c, rb)
+}
+
+func (c FfiConverterImageUploadInstruction) Read(reader io.Reader) ImageUploadInstruction {
+	return ImageUploadInstruction{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterUint64INSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterOptionalPresignedPutINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterImageUploadInstruction) Lower(value ImageUploadInstruction) C.RustBuffer {
+	return LowerIntoRustBuffer[ImageUploadInstruction](c, value)
+}
+
+func (c FfiConverterImageUploadInstruction) LowerExternal(value ImageUploadInstruction) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[ImageUploadInstruction](c, value))
+}
+
+func (c FfiConverterImageUploadInstruction) Write(writer io.Writer, value ImageUploadInstruction) {
+	FfiConverterStringINSTANCE.Write(writer, value.Digest)
+	FfiConverterUint64INSTANCE.Write(writer, value.SizeBytes)
+	FfiConverterStringINSTANCE.Write(writer, value.Reference)
+	FfiConverterOptionalPresignedPutINSTANCE.Write(writer, value.Upload)
+}
+
+type FfiDestroyerImageUploadInstruction struct{}
+
+func (_ FfiDestroyerImageUploadInstruction) Destroy(value ImageUploadInstruction) {
+	value.Destroy()
+}
+
+type ImageUploadRequest struct {
+	Namespace string
+	Files     []ImageUploadFileRequest
+}
+
+func (r *ImageUploadRequest) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Namespace)
+	FfiDestroyerSequenceImageUploadFileRequest{}.Destroy(r.Files)
+}
+
+type FfiConverterImageUploadRequest struct{}
+
+var FfiConverterImageUploadRequestINSTANCE = FfiConverterImageUploadRequest{}
+
+func (c FfiConverterImageUploadRequest) Lift(rb RustBufferI) ImageUploadRequest {
+	return LiftFromRustBuffer[ImageUploadRequest](c, rb)
+}
+
+func (c FfiConverterImageUploadRequest) Read(reader io.Reader) ImageUploadRequest {
+	return ImageUploadRequest{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterSequenceImageUploadFileRequestINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterImageUploadRequest) Lower(value ImageUploadRequest) C.RustBuffer {
+	return LowerIntoRustBuffer[ImageUploadRequest](c, value)
+}
+
+func (c FfiConverterImageUploadRequest) LowerExternal(value ImageUploadRequest) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[ImageUploadRequest](c, value))
+}
+
+func (c FfiConverterImageUploadRequest) Write(writer io.Writer, value ImageUploadRequest) {
+	FfiConverterStringINSTANCE.Write(writer, value.Namespace)
+	FfiConverterSequenceImageUploadFileRequestINSTANCE.Write(writer, value.Files)
+}
+
+type FfiDestroyerImageUploadRequest struct{}
+
+func (_ FfiDestroyerImageUploadRequest) Destroy(value ImageUploadRequest) {
+	value.Destroy()
+}
+
+type ImageUploadResponse struct {
+	Files []ImageUploadInstruction
+}
+
+func (r *ImageUploadResponse) Destroy() {
+	FfiDestroyerSequenceImageUploadInstruction{}.Destroy(r.Files)
+}
+
+type FfiConverterImageUploadResponse struct{}
+
+var FfiConverterImageUploadResponseINSTANCE = FfiConverterImageUploadResponse{}
+
+func (c FfiConverterImageUploadResponse) Lift(rb RustBufferI) ImageUploadResponse {
+	return LiftFromRustBuffer[ImageUploadResponse](c, rb)
+}
+
+func (c FfiConverterImageUploadResponse) Read(reader io.Reader) ImageUploadResponse {
+	return ImageUploadResponse{
+		FfiConverterSequenceImageUploadInstructionINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterImageUploadResponse) Lower(value ImageUploadResponse) C.RustBuffer {
+	return LowerIntoRustBuffer[ImageUploadResponse](c, value)
+}
+
+func (c FfiConverterImageUploadResponse) LowerExternal(value ImageUploadResponse) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[ImageUploadResponse](c, value))
+}
+
+func (c FfiConverterImageUploadResponse) Write(writer io.Writer, value ImageUploadResponse) {
+	FfiConverterSequenceImageUploadInstructionINSTANCE.Write(writer, value.Files)
+}
+
+type FfiDestroyerImageUploadResponse struct{}
+
+func (_ FfiDestroyerImageUploadResponse) Destroy(value ImageUploadResponse) {
+	value.Destroy()
+}
+
 type Namespace struct {
 	Name      string
 	Status    string
@@ -4431,6 +4838,54 @@ func (c FfiConverterPool) Write(writer io.Writer, value Pool) {
 type FfiDestroyerPool struct{}
 
 func (_ FfiDestroyerPool) Destroy(value Pool) {
+	value.Destroy()
+}
+
+type PresignedPut struct {
+	Method  string
+	Url     string
+	Headers map[string]string
+}
+
+func (r *PresignedPut) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Method)
+	FfiDestroyerString{}.Destroy(r.Url)
+	FfiDestroyerMapStringString{}.Destroy(r.Headers)
+}
+
+type FfiConverterPresignedPut struct{}
+
+var FfiConverterPresignedPutINSTANCE = FfiConverterPresignedPut{}
+
+func (c FfiConverterPresignedPut) Lift(rb RustBufferI) PresignedPut {
+	return LiftFromRustBuffer[PresignedPut](c, rb)
+}
+
+func (c FfiConverterPresignedPut) Read(reader io.Reader) PresignedPut {
+	return PresignedPut{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterMapStringStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterPresignedPut) Lower(value PresignedPut) C.RustBuffer {
+	return LowerIntoRustBuffer[PresignedPut](c, value)
+}
+
+func (c FfiConverterPresignedPut) LowerExternal(value PresignedPut) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[PresignedPut](c, value))
+}
+
+func (c FfiConverterPresignedPut) Write(writer io.Writer, value PresignedPut) {
+	FfiConverterStringINSTANCE.Write(writer, value.Method)
+	FfiConverterStringINSTANCE.Write(writer, value.Url)
+	FfiConverterMapStringStringINSTANCE.Write(writer, value.Headers)
+}
+
+type FfiDestroyerPresignedPut struct{}
+
+func (_ FfiDestroyerPresignedPut) Destroy(value PresignedPut) {
 	value.Destroy()
 }
 
@@ -5648,6 +6103,47 @@ func (_ FfiDestroyerOptionalBytes) Destroy(value *[]byte) {
 	}
 }
 
+type FfiConverterOptionalPresignedPut struct{}
+
+var FfiConverterOptionalPresignedPutINSTANCE = FfiConverterOptionalPresignedPut{}
+
+func (c FfiConverterOptionalPresignedPut) Lift(rb RustBufferI) *PresignedPut {
+	return LiftFromRustBuffer[*PresignedPut](c, rb)
+}
+
+func (_ FfiConverterOptionalPresignedPut) Read(reader io.Reader) *PresignedPut {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterPresignedPutINSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalPresignedPut) Lower(value *PresignedPut) C.RustBuffer {
+	return LowerIntoRustBuffer[*PresignedPut](c, value)
+}
+
+func (c FfiConverterOptionalPresignedPut) LowerExternal(value *PresignedPut) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*PresignedPut](c, value))
+}
+
+func (_ FfiConverterOptionalPresignedPut) Write(writer io.Writer, value *PresignedPut) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterPresignedPutINSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalPresignedPut struct{}
+
+func (_ FfiDestroyerOptionalPresignedPut) Destroy(value *PresignedPut) {
+	if value != nil {
+		FfiDestroyerPresignedPut{}.Destroy(*value)
+	}
+}
+
 type FfiConverterOptionalClaimSpec struct{}
 
 var FfiConverterOptionalClaimSpecINSTANCE = FfiConverterOptionalClaimSpec{}
@@ -5859,6 +6355,53 @@ func (FfiDestroyerSequenceString) Destroy(sequence []string) {
 	}
 }
 
+type FfiConverterSequencePreservedJson struct{}
+
+var FfiConverterSequencePreservedJsonINSTANCE = FfiConverterSequencePreservedJson{}
+
+func (c FfiConverterSequencePreservedJson) Lift(rb RustBufferI) []*cyclops_sdk_schema.PreservedJson {
+	return LiftFromRustBuffer[[]*cyclops_sdk_schema.PreservedJson](c, rb)
+}
+
+func (c FfiConverterSequencePreservedJson) Read(reader io.Reader) []*cyclops_sdk_schema.PreservedJson {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]*cyclops_sdk_schema.PreservedJson, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, cyclops_sdk_schema.FfiConverterPreservedJsonINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequencePreservedJson) Lower(value []*cyclops_sdk_schema.PreservedJson) C.RustBuffer {
+	return LowerIntoRustBuffer[[]*cyclops_sdk_schema.PreservedJson](c, value)
+}
+
+func (c FfiConverterSequencePreservedJson) LowerExternal(value []*cyclops_sdk_schema.PreservedJson) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]*cyclops_sdk_schema.PreservedJson](c, value))
+}
+
+func (c FfiConverterSequencePreservedJson) Write(writer io.Writer, value []*cyclops_sdk_schema.PreservedJson) {
+	if len(value) > math.MaxInt32 {
+		panic("[]*cyclops_sdk_schema.PreservedJson is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		cyclops_sdk_schema.FfiConverterPreservedJsonINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequencePreservedJson struct{}
+
+func (FfiDestroyerSequencePreservedJson) Destroy(sequence []*cyclops_sdk_schema.PreservedJson) {
+	for _, value := range sequence {
+		cyclops_sdk_schema.FfiDestroyerPreservedJson{}.Destroy(value)
+	}
+}
+
 type FfiConverterSequenceClaim struct{}
 
 var FfiConverterSequenceClaimINSTANCE = FfiConverterSequenceClaim{}
@@ -5950,6 +6493,100 @@ type FfiDestroyerSequenceHttpHeader struct{}
 func (FfiDestroyerSequenceHttpHeader) Destroy(sequence []HttpHeader) {
 	for _, value := range sequence {
 		FfiDestroyerHttpHeader{}.Destroy(value)
+	}
+}
+
+type FfiConverterSequenceImageUploadFileRequest struct{}
+
+var FfiConverterSequenceImageUploadFileRequestINSTANCE = FfiConverterSequenceImageUploadFileRequest{}
+
+func (c FfiConverterSequenceImageUploadFileRequest) Lift(rb RustBufferI) []ImageUploadFileRequest {
+	return LiftFromRustBuffer[[]ImageUploadFileRequest](c, rb)
+}
+
+func (c FfiConverterSequenceImageUploadFileRequest) Read(reader io.Reader) []ImageUploadFileRequest {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]ImageUploadFileRequest, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, FfiConverterImageUploadFileRequestINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequenceImageUploadFileRequest) Lower(value []ImageUploadFileRequest) C.RustBuffer {
+	return LowerIntoRustBuffer[[]ImageUploadFileRequest](c, value)
+}
+
+func (c FfiConverterSequenceImageUploadFileRequest) LowerExternal(value []ImageUploadFileRequest) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]ImageUploadFileRequest](c, value))
+}
+
+func (c FfiConverterSequenceImageUploadFileRequest) Write(writer io.Writer, value []ImageUploadFileRequest) {
+	if len(value) > math.MaxInt32 {
+		panic("[]ImageUploadFileRequest is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		FfiConverterImageUploadFileRequestINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequenceImageUploadFileRequest struct{}
+
+func (FfiDestroyerSequenceImageUploadFileRequest) Destroy(sequence []ImageUploadFileRequest) {
+	for _, value := range sequence {
+		FfiDestroyerImageUploadFileRequest{}.Destroy(value)
+	}
+}
+
+type FfiConverterSequenceImageUploadInstruction struct{}
+
+var FfiConverterSequenceImageUploadInstructionINSTANCE = FfiConverterSequenceImageUploadInstruction{}
+
+func (c FfiConverterSequenceImageUploadInstruction) Lift(rb RustBufferI) []ImageUploadInstruction {
+	return LiftFromRustBuffer[[]ImageUploadInstruction](c, rb)
+}
+
+func (c FfiConverterSequenceImageUploadInstruction) Read(reader io.Reader) []ImageUploadInstruction {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]ImageUploadInstruction, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, FfiConverterImageUploadInstructionINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequenceImageUploadInstruction) Lower(value []ImageUploadInstruction) C.RustBuffer {
+	return LowerIntoRustBuffer[[]ImageUploadInstruction](c, value)
+}
+
+func (c FfiConverterSequenceImageUploadInstruction) LowerExternal(value []ImageUploadInstruction) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]ImageUploadInstruction](c, value))
+}
+
+func (c FfiConverterSequenceImageUploadInstruction) Write(writer io.Writer, value []ImageUploadInstruction) {
+	if len(value) > math.MaxInt32 {
+		panic("[]ImageUploadInstruction is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		FfiConverterImageUploadInstructionINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequenceImageUploadInstruction struct{}
+
+func (FfiDestroyerSequenceImageUploadInstruction) Destroy(sequence []ImageUploadInstruction) {
+	for _, value := range sequence {
+		FfiDestroyerImageUploadInstruction{}.Destroy(value)
 	}
 }
 

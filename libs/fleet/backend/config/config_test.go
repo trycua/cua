@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -10,6 +11,30 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
+
+func TestMain(m *testing.M) {
+	if err := os.Setenv("IMAGE_UPLOAD_BUCKET", "test-image-uploads"); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
+func TestLoadConfig_RequiresImageUploadBucket(t *testing.T) {
+	for _, value := range []string{"", "   "} {
+		t.Run(fmt.Sprintf("value_%q", value), func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+			t.Setenv("IMAGE_UPLOAD_BUCKET", value)
+			RegisterFlags(pflag.NewFlagSet("missing-image-upload-bucket", pflag.ContinueOnError))
+
+			_, err := LoadConfig()
+			if err == nil || !strings.Contains(err.Error(), "IMAGE_UPLOAD_BUCKET") {
+				t.Fatalf("LoadConfig() error = %v, want IMAGE_UPLOAD_BUCKET requirement", err)
+			}
+		})
+	}
+}
 
 func TestLoadConfig_UsesPublicIssuerForTokenURL(t *testing.T) {
 	viper.Reset()

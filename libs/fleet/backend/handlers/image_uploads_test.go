@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +123,62 @@ func TestPresignImageUploadsRejectsUnauthorizedNamespaceBeforeStoreCalls(t *test
 	assertImageObjectStoreUnused(t, store)
 }
 
+func TestPresignImageUploadsAllowsPerKeyPrincipalInClaimedNamespace(t *testing.T) {
+	store := &fakeImageObjectStore{exists: true}
+	response := presignImageUploads(t, imageUploadHandlers(store), &auth.User{
+		ID: "service-account-key-one", AZP: "key-one", Namespace: "workers",
+	}, ImageUploadRequest{
+		Namespace: "workers",
+		Files:     []ImageUploadFileRequest{{Digest: imageUploadDigest, SizeBytes: 12, Name: "worker-rootfs"}},
+	})
+
+	if len(response.Files) != 1 {
+		t.Fatalf("files = %d, want 1", len(response.Files))
+	}
+}
+
+func TestPresignImageUploadsDeniesPerKeyPrincipalOutsideClaimedNamespace(t *testing.T) {
+	store := &fakeImageObjectStore{}
+	w := httptest.NewRecorder()
+	r := withUser(jsonRequest(t, ImageUploadRequest{
+		Namespace: "other",
+		Files:     []ImageUploadFileRequest{{Digest: imageUploadDigest, SizeBytes: 12, Name: "worker-rootfs"}},
+	}), &auth.User{
+		ID: "service-account-key-one", AZP: "key-one", Namespace: "workers",
+		AllowedNamespaces: []string{"other"},
+	})
+	imageUploadHandlers(store).PresignImageUploads(w, r)
+
+	if got, want := w.Code, http.StatusForbidden; got != want {
+		t.Fatalf("status = %d, want %d; body = %s", got, want, w.Body.String())
+	}
+	assertImageObjectStoreUnused(t, store)
+}
+
+func TestPresignImageUploadsUsesStableTenantIdentityAcrossCredentials(t *testing.T) {
+	firstStore := &fakeImageObjectStore{exists: true}
+	first := presignImageUploads(t, imageUploadHandlers(firstStore), &auth.User{
+		ID: "service-account-key-one", AZP: "key-one", Namespace: "workers",
+	}, ImageUploadRequest{
+		Namespace: "workers",
+		Files:     []ImageUploadFileRequest{{Digest: imageUploadDigest, SizeBytes: 12, Name: "worker-rootfs"}},
+	})
+	secondStore := &fakeImageObjectStore{exists: true}
+	second := presignImageUploads(t, imageUploadHandlers(secondStore), &auth.User{
+		ID: "service-account-key-two", AZP: "key-two", Namespace: "workers",
+	}, ImageUploadRequest{
+		Namespace: "workers",
+		Files:     []ImageUploadFileRequest{{Digest: imageUploadDigest, SizeBytes: 12, Name: "worker-rootfs"}},
+	})
+
+	if got, want := second.Files[0].Reference, first.Files[0].Reference; got != want {
+		t.Fatalf("reference = %q, want %q", got, want)
+	}
+	if got, want := secondStore.existsCalls[0].key, firstStore.existsCalls[0].key; got != want {
+		t.Fatalf("store key = %q, want %q", got, want)
+	}
+}
+
 func TestPresignImageUploadsRejectsInvalidRequestsBeforeStoreCalls(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -159,6 +216,13 @@ func TestPresignImageUploadsRejectsInvalidRequestsBeforeStoreCalls(t *testing.T)
 				Digest: imageUploadDigest, SizeBytes: 12, Name: "worker-rootfs",
 			}}},
 		},
+		{name: "empty file name", request: validImageUploadRequest("")},
+		{name: "slash in file name", request: validImageUploadRequest("dir/file")},
+		{name: "backslash in file name", request: validImageUploadRequest(`dir\file`)},
+		{name: "dot file name", request: validImageUploadRequest(".")},
+		{name: "dot dot file name", request: validImageUploadRequest("..")},
+		{name: "control in file name", request: validImageUploadRequest("worker\nrootfs")},
+		{name: "oversized file name", request: validImageUploadRequest(strings.Repeat("a", 256))},
 	}
 
 	for _, test := range tests {
@@ -178,14 +242,39 @@ func TestPresignImageUploadsRejectsInvalidRequestsBeforeStoreCalls(t *testing.T)
 	}
 }
 
+func TestPresignImageUploadsRejectsInvalidUTF8BeforeStoreCalls(t *testing.T) {
+	store := &fakeImageObjectStore{existsErr: errors.New("must not be called")}
+	body := append([]byte(`{"namespace":"workers","files":[{"digest":"`+imageUploadDigest+`","sizeBytes":12,"name":"`), 0xff)
+	body = append(body, []byte(`"}]}`)...)
+	r := httptest.NewRequest(http.MethodPost, "/api/image-uploads/presign", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r = withUser(r, &auth.User{ID: "user-123", AllowedNamespaces: []string{"workers"}})
+	w := httptest.NewRecorder()
+
+	imageUploadHandlers(store).PresignImageUploads(w, r)
+
+	if got, want := w.Code, http.StatusBadRequest; got != want {
+		t.Fatalf("status = %d, want %d; body = %s", got, want, w.Body.String())
+	}
+	assertImageObjectStoreUnused(t, store)
+}
+
 func imageUploadHandlers(store ImageObjectStore) Handlers {
 	return Handlers{
+		AuthCfg: config.AuthConfiguration{KeyClientPfx: "key-"},
 		ImageUploads: config.ImageUploadConfiguration{
 			MaxFileBytes:       100,
 			MaxFilesPerRequest: 1,
 			URLLifetime:        15 * time.Minute,
 		},
 		ImageObjects: store,
+	}
+}
+
+func validImageUploadRequest(name string) ImageUploadRequest {
+	return ImageUploadRequest{
+		Namespace: "workers",
+		Files:     []ImageUploadFileRequest{{Digest: imageUploadDigest, SizeBytes: 12, Name: name}},
 	}
 }
 

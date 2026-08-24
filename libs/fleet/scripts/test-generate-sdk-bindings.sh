@@ -408,6 +408,17 @@ for typescript_schema in "$node_schema_source" "$browser_schema_source"; do
   grep -Fq -- "containerDiskImage?: string" "$typescript_schema" || fail "TypeScript bindings require VmTemplate.containerDiskImage: $typescript_schema"
   grep -Fq -- "imageRef?: ImageRef" "$typescript_schema" || fail "TypeScript bindings omit VmTemplate.imageRef: $typescript_schema"
 done
+for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
+  for upload_type in ImageUploadFileRequest ImageUploadRequest ImageUploadResponse PresignedPut; do
+    grep -Fq -- "export type $upload_type =" "$typescript_binding" || fail "TypeScript bindings omit $upload_type: $typescript_binding"
+  done
+  grep -Fq -- "presignImageUploads(" "$typescript_binding" || fail "TypeScript bindings omit presignImageUploads: $typescript_binding"
+done
+for upload_type in ImageUploadFileRequest ImageUploadRequest ImageUploadResponse PresignedPut; do
+  grep -Fq -- "type $upload_type struct" "$go_sdk_source" || fail "Go bindings omit $upload_type"
+done
+grep -Fq -- "PresignImageUploads(" "$go_sdk_source" || fail "Go bindings omit PresignImageUploads"
+
 grep -Fq -- "type ImageRef struct" "$go_schema_source" || fail "Go bindings omit ImageRef"
 grep -Eq '^[[:space:]]*ContainerDiskImage[[:space:]]+\*string$' "$go_schema_source" || fail "Go bindings require VmTemplate.ContainerDiskImage"
 grep -Eq '^[[:space:]]*ImageRef[[:space:]]+\*ImageRef$' "$go_schema_source" || fail "Go bindings omit VmTemplate.ImageRef"

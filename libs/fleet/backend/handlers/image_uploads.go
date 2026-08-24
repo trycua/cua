@@ -7,10 +7,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"cyclops-cs-backend/auth"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -55,14 +60,19 @@ type ImageUploadResponse struct {
 // PresignImageUploads returns one stable opaque reference for each requested
 // digest and, only when the exact object is absent, a short-lived PUT upload.
 func (h Handlers) PresignImageUploads(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil || !utf8.Valid(body) {
+		writeErr(w, http.StatusBadRequest, "invalid image upload request")
+		return
+	}
 	var request ImageUploadRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid image upload request")
 		return
 	}
-	if decoder.More() {
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeErr(w, http.StatusBadRequest, "invalid image upload request")
 		return
 	}
@@ -76,7 +86,12 @@ func (h Handlers) PresignImageUploads(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	if !namespaceAllowed(user, request.Namespace) {
+	if h.isPerKeyPrincipal(user) {
+		if user.Namespace == "" || user.Namespace != request.Namespace {
+			writeErr(w, http.StatusForbidden, "namespace access denied")
+			return
+		}
+	} else if !namespaceAllowed(user, request.Namespace) {
 		allowed, err := h.userHasNamespaceRBAC(r.Context(), user.ID, request.Namespace)
 		if err != nil || !allowed {
 			writeErr(w, http.StatusForbidden, "namespace access denied")
@@ -90,7 +105,7 @@ func (h Handlers) PresignImageUploads(w http.ResponseWriter, r *http.Request) {
 
 	response := ImageUploadResponse{Files: make([]ImageUploadInstruction, 0, len(request.Files))}
 	for _, file := range request.Files {
-		key, reference := imageObjectNames(user.ID, file.Digest)
+		key, reference := imageObjectNames(request.Namespace, file.Digest)
 		exists, err := h.ImageObjects.Exists(r.Context(), key, file.SizeBytes)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "image object lookup failed")
@@ -124,16 +139,36 @@ func (h Handlers) validateImageUploadRequest(request ImageUploadRequest) error {
 		if file.SizeBytes <= 0 || file.SizeBytes > h.ImageUploads.MaxFileBytes {
 			return errors.New("file size is outside configured bounds")
 		}
+		if err := validateImageUploadFileName(file.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func imageObjectNames(subject, digest string) (key, reference string) {
-	tenantHash := sha256.Sum256([]byte(subject))
+func (h Handlers) isPerKeyPrincipal(user *auth.User) bool {
+	return h.AuthCfg.KeyClientPfx != "" && strings.HasPrefix(user.AZP, h.AuthCfg.KeyClientPfx)
+}
+
+func validateImageUploadFileName(name string) error {
+	if name == "" || len(name) > 255 || strings.TrimSpace(name) == "" || name == "." || name == ".." ||
+		strings.ContainsAny(name, `/\`) {
+		return errors.New("file name must be a bounded base name")
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return errors.New("file name must not contain control characters")
+		}
+	}
+	return nil
+}
+
+func imageObjectNames(namespace, digest string) (key, reference string) {
+	tenantHash := sha256.Sum256([]byte(namespace))
 	digestHash := sha256.Sum256([]byte(digest))
 	tenantLabel := "tenant-" + hex.EncodeToString(tenantHash[:16])
 	digestToken := base64.RawURLEncoding.EncodeToString(digestHash[:])
-	return "subjects/" + base64.RawURLEncoding.EncodeToString(tenantHash[:]) + "/images/" + digestToken,
+	return "tenants/" + namespace + "/images/" + digestToken,
 		"uploads/" + tenantLabel + "/" + digestToken
 }
 

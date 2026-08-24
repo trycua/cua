@@ -518,6 +518,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -540,6 +545,11 @@ const DEFINITIONS = {
     },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim": {
       args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -568,6 +578,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -584,6 +599,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -605,6 +625,11 @@ const DEFINITIONS = {
     },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys": {
       args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -893,6 +918,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace": {
       args: [],
       ret: FfiType.UInt16,
@@ -914,6 +944,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -943,6 +978,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace": {
       args: [],
       ret: FfiType.UInt16,
@@ -963,6 +1003,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces": {
       args: [],
       ret: FfiType.UInt16,
@@ -979,6 +1024,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1300,24 +1350,29 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(configuration: Uint8Array, tokenProvider: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(configuration: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(uniffiSelf: bigint, request: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(uniffiSelf: bigint, namespace: Uint8Array, manifest: bigint): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(uniffiSelf: bigint, claim: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(uniffiSelf: bigint, pool: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(uniffiSelf: bigint, template: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(uniffiSelf: bigint, claim: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(uniffiSelf: bigint, namespace: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(uniffiSelf: bigint, namespace: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(uniffiSelf: bigint): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools(uniffiSelf: bigint, namespace: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(uniffiSelf: bigint, namespace: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(uniffiSelf: bigint): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(uniffiSelf: bigint, claim: Uint8Array, shutdownTime: Uint8Array): bigint;
@@ -1375,24 +1430,29 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(): number;
     uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(): number;

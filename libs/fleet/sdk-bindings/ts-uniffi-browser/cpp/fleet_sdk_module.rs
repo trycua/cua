@@ -71,6 +71,29 @@ extern "C" {
         ptr: u64,
         claim: u::RustBuffer,
     ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+        ptr: u64,
+        request: u::RustBuffer,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+        ptr: u64,
+        namespace: u::RustBuffer,
+        manifest: u64,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+        ptr: u64,
+        namespace: u::RustBuffer,
+        name: u::RustBuffer,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+        ptr: u64,
+        namespace: u::RustBuffer,
+        name: u::RustBuffer,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+        ptr: u64,
+        namespace: u::RustBuffer,
+    ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(
         ptr: u64,
         name: u::RustBuffer,
@@ -557,6 +580,11 @@ extern "C" {
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() -> u16;
@@ -836,6 +864,67 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(
     uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(
             u64::into_rust(ptr),
             u::RustBuffer::into_rust(claim),
+        )
+        .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+    ptr: js::Handle,
+    request: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(request),
+        )
+        .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+    ptr: js::Handle,
+    namespace: js::ForeignBytes,
+    manifest: js::Handle,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(namespace),
+            u64::into_rust(manifest),
+        )
+        .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+    ptr: js::Handle,
+    namespace: js::ForeignBytes,
+    name: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(namespace),
+            u::RustBuffer::into_rust(name),
+        )
+        .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+    ptr: js::Handle,
+    namespace: js::ForeignBytes,
+    name: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(namespace),
+            u::RustBuffer::into_rust(name),
+        )
+        .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+    ptr: js::Handle,
+    namespace: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(namespace),
         )
         .into_js()
 }
@@ -2409,6 +2498,26 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim()
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim().into_js()
 }
 #[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images().into_js()
+}
+#[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() -> js::UInt16 {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace().into_js()
 }
@@ -2698,26 +2807,29 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new()
 pub unsafe fn ubrn_ffi_cyclops_sdk_uniffi_contract_version() -> js::UInt32 {
     ffi_cyclops_sdk_uniffi_contract_version().into_js()
 }
-mod foreign_future_result_u8 {
+mod foreign_future_dropped_callback_struct {
     use super::*;
+    use super::foreign_future_dropped_callback as method_free;
     #[wasm_bindgen]
     extern "C" {
         pub type VTableJs;
         #[wasm_bindgen(method, getter)]
-        fn return_value(this: &VTableJs) -> js::UInt8;
+        fn handle(this: &VTableJs) -> js::UInt64;
         #[wasm_bindgen(method, getter)]
-        fn call_status(this: &VTableJs) -> js::RustCallStatus;
+        fn free(
+            this: &VTableJs,
+        ) -> method_free::JsCallbackFnForeignFutureDroppedCallback;
     }
     #[repr(C)]
     pub(super) struct VTableRs {
-        return_value: u8,
-        call_status: u::RustCallStatus,
+        handle: u64,
+        free: method_free::FnSig,
     }
     impl IntoRust<VTableJs> for VTableRs {
         fn into_rust(v_: VTableJs) -> Self {
             Self {
-                return_value: u8::into_rust(v_.return_value()),
-                call_status: u::RustCallStatus::into_rust(v_.call_status()),
+                handle: u64::into_rust(v_.handle()),
+                free: method_free::FnSig::into_rust(v_.free()),
             }
         }
     }
@@ -2747,36 +2859,6 @@ mod foreign_future_result_i8 {
         fn into_rust(v_: VTableJs) -> Self {
             Self {
                 return_value: i8::into_rust(v_.return_value()),
-                call_status: u::RustCallStatus::into_rust(v_.call_status()),
-            }
-        }
-    }
-    impl VTableJs {
-        #[allow(unused)]
-        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
-            *rust = <VTableRs>::into_rust(self);
-        }
-    }
-}
-mod foreign_future_result_i16 {
-    use super::*;
-    #[wasm_bindgen]
-    extern "C" {
-        pub type VTableJs;
-        #[wasm_bindgen(method, getter)]
-        fn return_value(this: &VTableJs) -> js::Int16;
-        #[wasm_bindgen(method, getter)]
-        fn call_status(this: &VTableJs) -> js::RustCallStatus;
-    }
-    #[repr(C)]
-    pub(super) struct VTableRs {
-        return_value: i16,
-        call_status: u::RustCallStatus,
-    }
-    impl IntoRust<VTableJs> for VTableRs {
-        fn into_rust(v_: VTableJs) -> Self {
-            Self {
-                return_value: i16::into_rust(v_.return_value()),
                 call_status: u::RustCallStatus::into_rust(v_.call_status()),
             }
         }
@@ -2818,6 +2900,36 @@ mod foreign_future_result_rust_buffer {
         }
     }
 }
+mod foreign_future_result_u64 {
+    use super::*;
+    #[wasm_bindgen]
+    extern "C" {
+        pub type VTableJs;
+        #[wasm_bindgen(method, getter)]
+        fn return_value(this: &VTableJs) -> js::UInt64;
+        #[wasm_bindgen(method, getter)]
+        fn call_status(this: &VTableJs) -> js::RustCallStatus;
+    }
+    #[repr(C)]
+    pub(super) struct VTableRs {
+        return_value: u64,
+        call_status: u::RustCallStatus,
+    }
+    impl IntoRust<VTableJs> for VTableRs {
+        fn into_rust(v_: VTableJs) -> Self {
+            Self {
+                return_value: u64::into_rust(v_.return_value()),
+                call_status: u::RustCallStatus::into_rust(v_.call_status()),
+            }
+        }
+    }
+    impl VTableJs {
+        #[allow(unused)]
+        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
+            *rust = <VTableRs>::into_rust(self);
+        }
+    }
+}
 mod foreign_future_result_u32 {
     use super::*;
     #[wasm_bindgen]
@@ -2837,6 +2949,66 @@ mod foreign_future_result_u32 {
         fn into_rust(v_: VTableJs) -> Self {
             Self {
                 return_value: u32::into_rust(v_.return_value()),
+                call_status: u::RustCallStatus::into_rust(v_.call_status()),
+            }
+        }
+    }
+    impl VTableJs {
+        #[allow(unused)]
+        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
+            *rust = <VTableRs>::into_rust(self);
+        }
+    }
+}
+mod foreign_future_result_f64 {
+    use super::*;
+    #[wasm_bindgen]
+    extern "C" {
+        pub type VTableJs;
+        #[wasm_bindgen(method, getter)]
+        fn return_value(this: &VTableJs) -> js::Float64;
+        #[wasm_bindgen(method, getter)]
+        fn call_status(this: &VTableJs) -> js::RustCallStatus;
+    }
+    #[repr(C)]
+    pub(super) struct VTableRs {
+        return_value: f64,
+        call_status: u::RustCallStatus,
+    }
+    impl IntoRust<VTableJs> for VTableRs {
+        fn into_rust(v_: VTableJs) -> Self {
+            Self {
+                return_value: f64::into_rust(v_.return_value()),
+                call_status: u::RustCallStatus::into_rust(v_.call_status()),
+            }
+        }
+    }
+    impl VTableJs {
+        #[allow(unused)]
+        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
+            *rust = <VTableRs>::into_rust(self);
+        }
+    }
+}
+mod foreign_future_result_i32 {
+    use super::*;
+    #[wasm_bindgen]
+    extern "C" {
+        pub type VTableJs;
+        #[wasm_bindgen(method, getter)]
+        fn return_value(this: &VTableJs) -> js::Int32;
+        #[wasm_bindgen(method, getter)]
+        fn call_status(this: &VTableJs) -> js::RustCallStatus;
+    }
+    #[repr(C)]
+    pub(super) struct VTableRs {
+        return_value: i32,
+        call_status: u::RustCallStatus,
+    }
+    impl IntoRust<VTableJs> for VTableRs {
+        fn into_rust(v_: VTableJs) -> Self {
+            Self {
+                return_value: i32::into_rust(v_.return_value()),
                 call_status: u::RustCallStatus::into_rust(v_.call_status()),
             }
         }
@@ -2959,6 +3131,122 @@ mod v_table_callback_interface_access_token_provider {
         }
     }
 }
+mod foreign_future_result_u8 {
+    use super::*;
+    #[wasm_bindgen]
+    extern "C" {
+        pub type VTableJs;
+        #[wasm_bindgen(method, getter)]
+        fn return_value(this: &VTableJs) -> js::UInt8;
+        #[wasm_bindgen(method, getter)]
+        fn call_status(this: &VTableJs) -> js::RustCallStatus;
+    }
+    #[repr(C)]
+    pub(super) struct VTableRs {
+        return_value: u8,
+        call_status: u::RustCallStatus,
+    }
+    impl IntoRust<VTableJs> for VTableRs {
+        fn into_rust(v_: VTableJs) -> Self {
+            Self {
+                return_value: u8::into_rust(v_.return_value()),
+                call_status: u::RustCallStatus::into_rust(v_.call_status()),
+            }
+        }
+    }
+    impl VTableJs {
+        #[allow(unused)]
+        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
+            *rust = <VTableRs>::into_rust(self);
+        }
+    }
+}
+mod foreign_future_result_void {
+    use super::*;
+    #[wasm_bindgen]
+    extern "C" {
+        pub type VTableJs;
+        #[wasm_bindgen(method, getter)]
+        fn call_status(this: &VTableJs) -> js::RustCallStatus;
+    }
+    #[repr(C)]
+    pub(super) struct VTableRs {
+        call_status: u::RustCallStatus,
+    }
+    impl IntoRust<VTableJs> for VTableRs {
+        fn into_rust(v_: VTableJs) -> Self {
+            Self {
+                call_status: u::RustCallStatus::into_rust(v_.call_status()),
+            }
+        }
+    }
+    impl VTableJs {
+        #[allow(unused)]
+        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
+            *rust = <VTableRs>::into_rust(self);
+        }
+    }
+}
+mod foreign_future_result_i64 {
+    use super::*;
+    #[wasm_bindgen]
+    extern "C" {
+        pub type VTableJs;
+        #[wasm_bindgen(method, getter)]
+        fn return_value(this: &VTableJs) -> js::Int64;
+        #[wasm_bindgen(method, getter)]
+        fn call_status(this: &VTableJs) -> js::RustCallStatus;
+    }
+    #[repr(C)]
+    pub(super) struct VTableRs {
+        return_value: i64,
+        call_status: u::RustCallStatus,
+    }
+    impl IntoRust<VTableJs> for VTableRs {
+        fn into_rust(v_: VTableJs) -> Self {
+            Self {
+                return_value: i64::into_rust(v_.return_value()),
+                call_status: u::RustCallStatus::into_rust(v_.call_status()),
+            }
+        }
+    }
+    impl VTableJs {
+        #[allow(unused)]
+        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
+            *rust = <VTableRs>::into_rust(self);
+        }
+    }
+}
+mod foreign_future_result_u16 {
+    use super::*;
+    #[wasm_bindgen]
+    extern "C" {
+        pub type VTableJs;
+        #[wasm_bindgen(method, getter)]
+        fn return_value(this: &VTableJs) -> js::UInt16;
+        #[wasm_bindgen(method, getter)]
+        fn call_status(this: &VTableJs) -> js::RustCallStatus;
+    }
+    #[repr(C)]
+    pub(super) struct VTableRs {
+        return_value: u16,
+        call_status: u::RustCallStatus,
+    }
+    impl IntoRust<VTableJs> for VTableRs {
+        fn into_rust(v_: VTableJs) -> Self {
+            Self {
+                return_value: u16::into_rust(v_.return_value()),
+                call_status: u::RustCallStatus::into_rust(v_.call_status()),
+            }
+        }
+    }
+    impl VTableJs {
+        #[allow(unused)]
+        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
+            *rust = <VTableRs>::into_rust(self);
+        }
+    }
+}
 #[allow(non_snake_case)]
 mod v_table_callback_interface_http_client__free {
     use super::*;
@@ -3065,85 +3353,25 @@ mod v_table_callback_interface_http_client {
         }
     }
 }
-mod foreign_future_result_i32 {
+mod foreign_future_result_i16 {
     use super::*;
     #[wasm_bindgen]
     extern "C" {
         pub type VTableJs;
         #[wasm_bindgen(method, getter)]
-        fn return_value(this: &VTableJs) -> js::Int32;
+        fn return_value(this: &VTableJs) -> js::Int16;
         #[wasm_bindgen(method, getter)]
         fn call_status(this: &VTableJs) -> js::RustCallStatus;
     }
     #[repr(C)]
     pub(super) struct VTableRs {
-        return_value: i32,
+        return_value: i16,
         call_status: u::RustCallStatus,
     }
     impl IntoRust<VTableJs> for VTableRs {
         fn into_rust(v_: VTableJs) -> Self {
             Self {
-                return_value: i32::into_rust(v_.return_value()),
-                call_status: u::RustCallStatus::into_rust(v_.call_status()),
-            }
-        }
-    }
-    impl VTableJs {
-        #[allow(unused)]
-        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
-            *rust = <VTableRs>::into_rust(self);
-        }
-    }
-}
-mod foreign_future_result_u16 {
-    use super::*;
-    #[wasm_bindgen]
-    extern "C" {
-        pub type VTableJs;
-        #[wasm_bindgen(method, getter)]
-        fn return_value(this: &VTableJs) -> js::UInt16;
-        #[wasm_bindgen(method, getter)]
-        fn call_status(this: &VTableJs) -> js::RustCallStatus;
-    }
-    #[repr(C)]
-    pub(super) struct VTableRs {
-        return_value: u16,
-        call_status: u::RustCallStatus,
-    }
-    impl IntoRust<VTableJs> for VTableRs {
-        fn into_rust(v_: VTableJs) -> Self {
-            Self {
-                return_value: u16::into_rust(v_.return_value()),
-                call_status: u::RustCallStatus::into_rust(v_.call_status()),
-            }
-        }
-    }
-    impl VTableJs {
-        #[allow(unused)]
-        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
-            *rust = <VTableRs>::into_rust(self);
-        }
-    }
-}
-mod foreign_future_result_i64 {
-    use super::*;
-    #[wasm_bindgen]
-    extern "C" {
-        pub type VTableJs;
-        #[wasm_bindgen(method, getter)]
-        fn return_value(this: &VTableJs) -> js::Int64;
-        #[wasm_bindgen(method, getter)]
-        fn call_status(this: &VTableJs) -> js::RustCallStatus;
-    }
-    #[repr(C)]
-    pub(super) struct VTableRs {
-        return_value: i64,
-        call_status: u::RustCallStatus,
-    }
-    impl IntoRust<VTableJs> for VTableRs {
-        fn into_rust(v_: VTableJs) -> Self {
-            Self {
-                return_value: i64::into_rust(v_.return_value()),
+                return_value: i16::into_rust(v_.return_value()),
                 call_status: u::RustCallStatus::into_rust(v_.call_status()),
             }
         }
@@ -3185,196 +3413,77 @@ mod foreign_future_result_f32 {
         }
     }
 }
-mod foreign_future_result_u64 {
+mod foreign_future_complete_u8 {
     use super::*;
-    #[wasm_bindgen]
-    extern "C" {
-        pub type VTableJs;
-        #[wasm_bindgen(method, getter)]
-        fn return_value(this: &VTableJs) -> js::UInt64;
-        #[wasm_bindgen(method, getter)]
-        fn call_status(this: &VTableJs) -> js::RustCallStatus;
-    }
-    #[repr(C)]
-    pub(super) struct VTableRs {
-        return_value: u64,
-        call_status: u::RustCallStatus,
-    }
-    impl IntoRust<VTableJs> for VTableRs {
-        fn into_rust(v_: VTableJs) -> Self {
-            Self {
-                return_value: u64::into_rust(v_.return_value()),
-                call_status: u::RustCallStatus::into_rust(v_.call_status()),
-            }
-        }
-    }
-    impl VTableJs {
-        #[allow(unused)]
-        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
-            *rust = <VTableRs>::into_rust(self);
-        }
-    }
-}
-mod foreign_future_dropped_callback_struct {
-    use super::*;
-    use super::foreign_future_dropped_callback as method_free;
-    #[wasm_bindgen]
-    extern "C" {
-        pub type VTableJs;
-        #[wasm_bindgen(method, getter)]
-        fn handle(this: &VTableJs) -> js::UInt64;
-        #[wasm_bindgen(method, getter)]
-        fn free(
-            this: &VTableJs,
-        ) -> method_free::JsCallbackFnForeignFutureDroppedCallback;
-    }
-    #[repr(C)]
-    pub(super) struct VTableRs {
-        handle: u64,
-        free: method_free::FnSig,
-    }
-    impl IntoRust<VTableJs> for VTableRs {
-        fn into_rust(v_: VTableJs) -> Self {
-            Self {
-                handle: u64::into_rust(v_.handle()),
-                free: method_free::FnSig::into_rust(v_.free()),
-            }
-        }
-    }
-    impl VTableJs {
-        #[allow(unused)]
-        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
-            *rust = <VTableRs>::into_rust(self);
-        }
-    }
-}
-mod foreign_future_result_void {
-    use super::*;
-    #[wasm_bindgen]
-    extern "C" {
-        pub type VTableJs;
-        #[wasm_bindgen(method, getter)]
-        fn call_status(this: &VTableJs) -> js::RustCallStatus;
-    }
-    #[repr(C)]
-    pub(super) struct VTableRs {
-        call_status: u::RustCallStatus,
-    }
-    impl IntoRust<VTableJs> for VTableRs {
-        fn into_rust(v_: VTableJs) -> Self {
-            Self {
-                call_status: u::RustCallStatus::into_rust(v_.call_status()),
-            }
-        }
-    }
-    impl VTableJs {
-        #[allow(unused)]
-        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
-            *rust = <VTableRs>::into_rust(self);
-        }
-    }
-}
-mod foreign_future_result_f64 {
-    use super::*;
-    #[wasm_bindgen]
-    extern "C" {
-        pub type VTableJs;
-        #[wasm_bindgen(method, getter)]
-        fn return_value(this: &VTableJs) -> js::Float64;
-        #[wasm_bindgen(method, getter)]
-        fn call_status(this: &VTableJs) -> js::RustCallStatus;
-    }
-    #[repr(C)]
-    pub(super) struct VTableRs {
-        return_value: f64,
-        call_status: u::RustCallStatus,
-    }
-    impl IntoRust<VTableJs> for VTableRs {
-        fn into_rust(v_: VTableJs) -> Self {
-            Self {
-                return_value: f64::into_rust(v_.return_value()),
-                call_status: u::RustCallStatus::into_rust(v_.call_status()),
-            }
-        }
-    }
-    impl VTableJs {
-        #[allow(unused)]
-        pub(super) fn copy_into_return(self, rust: &mut VTableRs) {
-            *rust = <VTableRs>::into_rust(self);
-        }
-    }
-}
-mod foreign_future_complete_u32 {
-    use super::*;
-    #[wasm_bindgen(js_name = ForeignFutureCompleteU32)]
-    pub struct JsCallbackFnForeignFutureCompleteU32 {
+    #[wasm_bindgen(js_name = ForeignFutureCompleteU8)]
+    pub struct JsCallbackFnForeignFutureCompleteU8 {
         callback: FnSig,
     }
-    impl JsCallbackFnForeignFutureCompleteU32 {
+    impl JsCallbackFnForeignFutureCompleteU8 {
         fn new(callback: FnSig) -> Self {
             Self { callback }
         }
     }
-    #[wasm_bindgen(js_class = ForeignFutureCompleteU32)]
-    impl JsCallbackFnForeignFutureCompleteU32 {
+    #[wasm_bindgen(js_class = ForeignFutureCompleteU8)]
+    impl JsCallbackFnForeignFutureCompleteU8 {
         #[wasm_bindgen]
         pub fn call(
             &self,
             _ctx: &Self,
             callback_data: js::UInt64,
-            result: foreign_future_result_u32::VTableJs,
+            result: foreign_future_result_u8::VTableJs,
         ) {
             (self
                 .callback)(
                 u64::into_rust(callback_data),
-                foreign_future_result_u32::VTableRs::into_rust(result),
+                foreign_future_result_u8::VTableRs::into_rust(result),
             )
         }
     }
     pub(super) type FnSig = extern "C" fn(
         callback_data: u64,
-        result: foreign_future_result_u32::VTableRs,
+        result: foreign_future_result_u8::VTableRs,
     );
-    impl IntoJs<JsCallbackFnForeignFutureCompleteU32> for FnSig {
-        fn into_js(self) -> JsCallbackFnForeignFutureCompleteU32 {
-            JsCallbackFnForeignFutureCompleteU32::new(self)
+    impl IntoJs<JsCallbackFnForeignFutureCompleteU8> for FnSig {
+        fn into_js(self) -> JsCallbackFnForeignFutureCompleteU8 {
+            JsCallbackFnForeignFutureCompleteU8::new(self)
         }
     }
 }
-mod foreign_future_complete_rust_buffer {
+mod foreign_future_complete_i8 {
     use super::*;
-    #[wasm_bindgen(js_name = ForeignFutureCompleteRustBuffer)]
-    pub struct JsCallbackFnForeignFutureCompleteRustBuffer {
+    #[wasm_bindgen(js_name = ForeignFutureCompleteI8)]
+    pub struct JsCallbackFnForeignFutureCompleteI8 {
         callback: FnSig,
     }
-    impl JsCallbackFnForeignFutureCompleteRustBuffer {
+    impl JsCallbackFnForeignFutureCompleteI8 {
         fn new(callback: FnSig) -> Self {
             Self { callback }
         }
     }
-    #[wasm_bindgen(js_class = ForeignFutureCompleteRustBuffer)]
-    impl JsCallbackFnForeignFutureCompleteRustBuffer {
+    #[wasm_bindgen(js_class = ForeignFutureCompleteI8)]
+    impl JsCallbackFnForeignFutureCompleteI8 {
         #[wasm_bindgen]
         pub fn call(
             &self,
             _ctx: &Self,
             callback_data: js::UInt64,
-            result: foreign_future_result_rust_buffer::VTableJs,
+            result: foreign_future_result_i8::VTableJs,
         ) {
             (self
                 .callback)(
                 u64::into_rust(callback_data),
-                foreign_future_result_rust_buffer::VTableRs::into_rust(result),
+                foreign_future_result_i8::VTableRs::into_rust(result),
             )
         }
     }
     pub(super) type FnSig = extern "C" fn(
         callback_data: u64,
-        result: foreign_future_result_rust_buffer::VTableRs,
+        result: foreign_future_result_i8::VTableRs,
     );
-    impl IntoJs<JsCallbackFnForeignFutureCompleteRustBuffer> for FnSig {
-        fn into_js(self) -> JsCallbackFnForeignFutureCompleteRustBuffer {
-            JsCallbackFnForeignFutureCompleteRustBuffer::new(self)
+    impl IntoJs<JsCallbackFnForeignFutureCompleteI8> for FnSig {
+        fn into_js(self) -> JsCallbackFnForeignFutureCompleteI8 {
+            JsCallbackFnForeignFutureCompleteI8::new(self)
         }
     }
 }
@@ -3411,6 +3520,43 @@ mod rust_future_continuation_callback {
                         callback_.call(callback_, data.into_js(), poll_result.into_js())
                     })
             });
+    }
+}
+mod foreign_future_complete_i16 {
+    use super::*;
+    #[wasm_bindgen(js_name = ForeignFutureCompleteI16)]
+    pub struct JsCallbackFnForeignFutureCompleteI16 {
+        callback: FnSig,
+    }
+    impl JsCallbackFnForeignFutureCompleteI16 {
+        fn new(callback: FnSig) -> Self {
+            Self { callback }
+        }
+    }
+    #[wasm_bindgen(js_class = ForeignFutureCompleteI16)]
+    impl JsCallbackFnForeignFutureCompleteI16 {
+        #[wasm_bindgen]
+        pub fn call(
+            &self,
+            _ctx: &Self,
+            callback_data: js::UInt64,
+            result: foreign_future_result_i16::VTableJs,
+        ) {
+            (self
+                .callback)(
+                u64::into_rust(callback_data),
+                foreign_future_result_i16::VTableRs::into_rust(result),
+            )
+        }
+    }
+    pub(super) type FnSig = extern "C" fn(
+        callback_data: u64,
+        result: foreign_future_result_i16::VTableRs,
+    );
+    impl IntoJs<JsCallbackFnForeignFutureCompleteI16> for FnSig {
+        fn into_js(self) -> JsCallbackFnForeignFutureCompleteI16 {
+            JsCallbackFnForeignFutureCompleteI16::new(self)
+        }
     }
 }
 mod foreign_future_complete_u16 {
@@ -3510,6 +3656,222 @@ mod callback_interface_access_token_provider_method0 {
         uniffi_result_.copy_into_return(rs_return_);
     }
 }
+mod foreign_future_dropped_callback {
+    use super::*;
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen]
+        pub type JsCallbackFnForeignFutureDroppedCallback;
+        #[wasm_bindgen(method)]
+        pub fn call(
+            this_: &JsCallbackFnForeignFutureDroppedCallback,
+            ctx_: &JsCallbackFnForeignFutureDroppedCallback,
+            handle: js::UInt64,
+        );
+    }
+    thread_local! {
+        static CALLBACK : js::ForeignCell < JsCallbackFnForeignFutureDroppedCallback > =
+        js::ForeignCell::new();
+    }
+    impl IntoRust<JsCallbackFnForeignFutureDroppedCallback> for FnSig {
+        fn into_rust(callback: JsCallbackFnForeignFutureDroppedCallback) -> Self {
+            CALLBACK.with(|cell| cell.set(callback));
+            implementation
+        }
+    }
+    pub(super) type FnSig = extern "C" fn(handle: u64);
+    extern "C" fn implementation(handle: u64) {
+        CALLBACK
+            .with(|cell_| {
+                cell_.with_value(|callback_| callback_.call(callback_, handle.into_js()))
+            });
+    }
+}
+mod foreign_future_complete_f64 {
+    use super::*;
+    #[wasm_bindgen(js_name = ForeignFutureCompleteF64)]
+    pub struct JsCallbackFnForeignFutureCompleteF64 {
+        callback: FnSig,
+    }
+    impl JsCallbackFnForeignFutureCompleteF64 {
+        fn new(callback: FnSig) -> Self {
+            Self { callback }
+        }
+    }
+    #[wasm_bindgen(js_class = ForeignFutureCompleteF64)]
+    impl JsCallbackFnForeignFutureCompleteF64 {
+        #[wasm_bindgen]
+        pub fn call(
+            &self,
+            _ctx: &Self,
+            callback_data: js::UInt64,
+            result: foreign_future_result_f64::VTableJs,
+        ) {
+            (self
+                .callback)(
+                u64::into_rust(callback_data),
+                foreign_future_result_f64::VTableRs::into_rust(result),
+            )
+        }
+    }
+    pub(super) type FnSig = extern "C" fn(
+        callback_data: u64,
+        result: foreign_future_result_f64::VTableRs,
+    );
+    impl IntoJs<JsCallbackFnForeignFutureCompleteF64> for FnSig {
+        fn into_js(self) -> JsCallbackFnForeignFutureCompleteF64 {
+            JsCallbackFnForeignFutureCompleteF64::new(self)
+        }
+    }
+}
+mod foreign_future_complete_i32 {
+    use super::*;
+    #[wasm_bindgen(js_name = ForeignFutureCompleteI32)]
+    pub struct JsCallbackFnForeignFutureCompleteI32 {
+        callback: FnSig,
+    }
+    impl JsCallbackFnForeignFutureCompleteI32 {
+        fn new(callback: FnSig) -> Self {
+            Self { callback }
+        }
+    }
+    #[wasm_bindgen(js_class = ForeignFutureCompleteI32)]
+    impl JsCallbackFnForeignFutureCompleteI32 {
+        #[wasm_bindgen]
+        pub fn call(
+            &self,
+            _ctx: &Self,
+            callback_data: js::UInt64,
+            result: foreign_future_result_i32::VTableJs,
+        ) {
+            (self
+                .callback)(
+                u64::into_rust(callback_data),
+                foreign_future_result_i32::VTableRs::into_rust(result),
+            )
+        }
+    }
+    pub(super) type FnSig = extern "C" fn(
+        callback_data: u64,
+        result: foreign_future_result_i32::VTableRs,
+    );
+    impl IntoJs<JsCallbackFnForeignFutureCompleteI32> for FnSig {
+        fn into_js(self) -> JsCallbackFnForeignFutureCompleteI32 {
+            JsCallbackFnForeignFutureCompleteI32::new(self)
+        }
+    }
+}
+mod foreign_future_complete_u64 {
+    use super::*;
+    #[wasm_bindgen(js_name = ForeignFutureCompleteU64)]
+    pub struct JsCallbackFnForeignFutureCompleteU64 {
+        callback: FnSig,
+    }
+    impl JsCallbackFnForeignFutureCompleteU64 {
+        fn new(callback: FnSig) -> Self {
+            Self { callback }
+        }
+    }
+    #[wasm_bindgen(js_class = ForeignFutureCompleteU64)]
+    impl JsCallbackFnForeignFutureCompleteU64 {
+        #[wasm_bindgen]
+        pub fn call(
+            &self,
+            _ctx: &Self,
+            callback_data: js::UInt64,
+            result: foreign_future_result_u64::VTableJs,
+        ) {
+            (self
+                .callback)(
+                u64::into_rust(callback_data),
+                foreign_future_result_u64::VTableRs::into_rust(result),
+            )
+        }
+    }
+    pub(super) type FnSig = extern "C" fn(
+        callback_data: u64,
+        result: foreign_future_result_u64::VTableRs,
+    );
+    impl IntoJs<JsCallbackFnForeignFutureCompleteU64> for FnSig {
+        fn into_js(self) -> JsCallbackFnForeignFutureCompleteU64 {
+            JsCallbackFnForeignFutureCompleteU64::new(self)
+        }
+    }
+}
+mod foreign_future_complete_u32 {
+    use super::*;
+    #[wasm_bindgen(js_name = ForeignFutureCompleteU32)]
+    pub struct JsCallbackFnForeignFutureCompleteU32 {
+        callback: FnSig,
+    }
+    impl JsCallbackFnForeignFutureCompleteU32 {
+        fn new(callback: FnSig) -> Self {
+            Self { callback }
+        }
+    }
+    #[wasm_bindgen(js_class = ForeignFutureCompleteU32)]
+    impl JsCallbackFnForeignFutureCompleteU32 {
+        #[wasm_bindgen]
+        pub fn call(
+            &self,
+            _ctx: &Self,
+            callback_data: js::UInt64,
+            result: foreign_future_result_u32::VTableJs,
+        ) {
+            (self
+                .callback)(
+                u64::into_rust(callback_data),
+                foreign_future_result_u32::VTableRs::into_rust(result),
+            )
+        }
+    }
+    pub(super) type FnSig = extern "C" fn(
+        callback_data: u64,
+        result: foreign_future_result_u32::VTableRs,
+    );
+    impl IntoJs<JsCallbackFnForeignFutureCompleteU32> for FnSig {
+        fn into_js(self) -> JsCallbackFnForeignFutureCompleteU32 {
+            JsCallbackFnForeignFutureCompleteU32::new(self)
+        }
+    }
+}
+mod foreign_future_complete_rust_buffer {
+    use super::*;
+    #[wasm_bindgen(js_name = ForeignFutureCompleteRustBuffer)]
+    pub struct JsCallbackFnForeignFutureCompleteRustBuffer {
+        callback: FnSig,
+    }
+    impl JsCallbackFnForeignFutureCompleteRustBuffer {
+        fn new(callback: FnSig) -> Self {
+            Self { callback }
+        }
+    }
+    #[wasm_bindgen(js_class = ForeignFutureCompleteRustBuffer)]
+    impl JsCallbackFnForeignFutureCompleteRustBuffer {
+        #[wasm_bindgen]
+        pub fn call(
+            &self,
+            _ctx: &Self,
+            callback_data: js::UInt64,
+            result: foreign_future_result_rust_buffer::VTableJs,
+        ) {
+            (self
+                .callback)(
+                u64::into_rust(callback_data),
+                foreign_future_result_rust_buffer::VTableRs::into_rust(result),
+            )
+        }
+    }
+    pub(super) type FnSig = extern "C" fn(
+        callback_data: u64,
+        result: foreign_future_result_rust_buffer::VTableRs,
+    );
+    impl IntoJs<JsCallbackFnForeignFutureCompleteRustBuffer> for FnSig {
+        fn into_js(self) -> JsCallbackFnForeignFutureCompleteRustBuffer {
+            JsCallbackFnForeignFutureCompleteRustBuffer::new(self)
+        }
+    }
+}
 mod callback_interface_http_client_method0 {
     use super::*;
     #[wasm_bindgen]
@@ -3567,43 +3929,6 @@ mod callback_interface_http_client_method0 {
         uniffi_result_.copy_into_return(rs_return_);
     }
 }
-mod foreign_future_complete_i32 {
-    use super::*;
-    #[wasm_bindgen(js_name = ForeignFutureCompleteI32)]
-    pub struct JsCallbackFnForeignFutureCompleteI32 {
-        callback: FnSig,
-    }
-    impl JsCallbackFnForeignFutureCompleteI32 {
-        fn new(callback: FnSig) -> Self {
-            Self { callback }
-        }
-    }
-    #[wasm_bindgen(js_class = ForeignFutureCompleteI32)]
-    impl JsCallbackFnForeignFutureCompleteI32 {
-        #[wasm_bindgen]
-        pub fn call(
-            &self,
-            _ctx: &Self,
-            callback_data: js::UInt64,
-            result: foreign_future_result_i32::VTableJs,
-        ) {
-            (self
-                .callback)(
-                u64::into_rust(callback_data),
-                foreign_future_result_i32::VTableRs::into_rust(result),
-            )
-        }
-    }
-    pub(super) type FnSig = extern "C" fn(
-        callback_data: u64,
-        result: foreign_future_result_i32::VTableRs,
-    );
-    impl IntoJs<JsCallbackFnForeignFutureCompleteI32> for FnSig {
-        fn into_js(self) -> JsCallbackFnForeignFutureCompleteI32 {
-            JsCallbackFnForeignFutureCompleteI32::new(self)
-        }
-    }
-}
 mod foreign_future_complete_void {
     use super::*;
     #[wasm_bindgen(js_name = ForeignFutureCompleteVoid)]
@@ -3641,185 +3966,6 @@ mod foreign_future_complete_void {
         }
     }
 }
-mod foreign_future_complete_f64 {
-    use super::*;
-    #[wasm_bindgen(js_name = ForeignFutureCompleteF64)]
-    pub struct JsCallbackFnForeignFutureCompleteF64 {
-        callback: FnSig,
-    }
-    impl JsCallbackFnForeignFutureCompleteF64 {
-        fn new(callback: FnSig) -> Self {
-            Self { callback }
-        }
-    }
-    #[wasm_bindgen(js_class = ForeignFutureCompleteF64)]
-    impl JsCallbackFnForeignFutureCompleteF64 {
-        #[wasm_bindgen]
-        pub fn call(
-            &self,
-            _ctx: &Self,
-            callback_data: js::UInt64,
-            result: foreign_future_result_f64::VTableJs,
-        ) {
-            (self
-                .callback)(
-                u64::into_rust(callback_data),
-                foreign_future_result_f64::VTableRs::into_rust(result),
-            )
-        }
-    }
-    pub(super) type FnSig = extern "C" fn(
-        callback_data: u64,
-        result: foreign_future_result_f64::VTableRs,
-    );
-    impl IntoJs<JsCallbackFnForeignFutureCompleteF64> for FnSig {
-        fn into_js(self) -> JsCallbackFnForeignFutureCompleteF64 {
-            JsCallbackFnForeignFutureCompleteF64::new(self)
-        }
-    }
-}
-mod foreign_future_complete_i16 {
-    use super::*;
-    #[wasm_bindgen(js_name = ForeignFutureCompleteI16)]
-    pub struct JsCallbackFnForeignFutureCompleteI16 {
-        callback: FnSig,
-    }
-    impl JsCallbackFnForeignFutureCompleteI16 {
-        fn new(callback: FnSig) -> Self {
-            Self { callback }
-        }
-    }
-    #[wasm_bindgen(js_class = ForeignFutureCompleteI16)]
-    impl JsCallbackFnForeignFutureCompleteI16 {
-        #[wasm_bindgen]
-        pub fn call(
-            &self,
-            _ctx: &Self,
-            callback_data: js::UInt64,
-            result: foreign_future_result_i16::VTableJs,
-        ) {
-            (self
-                .callback)(
-                u64::into_rust(callback_data),
-                foreign_future_result_i16::VTableRs::into_rust(result),
-            )
-        }
-    }
-    pub(super) type FnSig = extern "C" fn(
-        callback_data: u64,
-        result: foreign_future_result_i16::VTableRs,
-    );
-    impl IntoJs<JsCallbackFnForeignFutureCompleteI16> for FnSig {
-        fn into_js(self) -> JsCallbackFnForeignFutureCompleteI16 {
-            JsCallbackFnForeignFutureCompleteI16::new(self)
-        }
-    }
-}
-mod foreign_future_dropped_callback {
-    use super::*;
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen]
-        pub type JsCallbackFnForeignFutureDroppedCallback;
-        #[wasm_bindgen(method)]
-        pub fn call(
-            this_: &JsCallbackFnForeignFutureDroppedCallback,
-            ctx_: &JsCallbackFnForeignFutureDroppedCallback,
-            handle: js::UInt64,
-        );
-    }
-    thread_local! {
-        static CALLBACK : js::ForeignCell < JsCallbackFnForeignFutureDroppedCallback > =
-        js::ForeignCell::new();
-    }
-    impl IntoRust<JsCallbackFnForeignFutureDroppedCallback> for FnSig {
-        fn into_rust(callback: JsCallbackFnForeignFutureDroppedCallback) -> Self {
-            CALLBACK.with(|cell| cell.set(callback));
-            implementation
-        }
-    }
-    pub(super) type FnSig = extern "C" fn(handle: u64);
-    extern "C" fn implementation(handle: u64) {
-        CALLBACK
-            .with(|cell_| {
-                cell_.with_value(|callback_| callback_.call(callback_, handle.into_js()))
-            });
-    }
-}
-mod foreign_future_complete_i8 {
-    use super::*;
-    #[wasm_bindgen(js_name = ForeignFutureCompleteI8)]
-    pub struct JsCallbackFnForeignFutureCompleteI8 {
-        callback: FnSig,
-    }
-    impl JsCallbackFnForeignFutureCompleteI8 {
-        fn new(callback: FnSig) -> Self {
-            Self { callback }
-        }
-    }
-    #[wasm_bindgen(js_class = ForeignFutureCompleteI8)]
-    impl JsCallbackFnForeignFutureCompleteI8 {
-        #[wasm_bindgen]
-        pub fn call(
-            &self,
-            _ctx: &Self,
-            callback_data: js::UInt64,
-            result: foreign_future_result_i8::VTableJs,
-        ) {
-            (self
-                .callback)(
-                u64::into_rust(callback_data),
-                foreign_future_result_i8::VTableRs::into_rust(result),
-            )
-        }
-    }
-    pub(super) type FnSig = extern "C" fn(
-        callback_data: u64,
-        result: foreign_future_result_i8::VTableRs,
-    );
-    impl IntoJs<JsCallbackFnForeignFutureCompleteI8> for FnSig {
-        fn into_js(self) -> JsCallbackFnForeignFutureCompleteI8 {
-            JsCallbackFnForeignFutureCompleteI8::new(self)
-        }
-    }
-}
-mod foreign_future_complete_u8 {
-    use super::*;
-    #[wasm_bindgen(js_name = ForeignFutureCompleteU8)]
-    pub struct JsCallbackFnForeignFutureCompleteU8 {
-        callback: FnSig,
-    }
-    impl JsCallbackFnForeignFutureCompleteU8 {
-        fn new(callback: FnSig) -> Self {
-            Self { callback }
-        }
-    }
-    #[wasm_bindgen(js_class = ForeignFutureCompleteU8)]
-    impl JsCallbackFnForeignFutureCompleteU8 {
-        #[wasm_bindgen]
-        pub fn call(
-            &self,
-            _ctx: &Self,
-            callback_data: js::UInt64,
-            result: foreign_future_result_u8::VTableJs,
-        ) {
-            (self
-                .callback)(
-                u64::into_rust(callback_data),
-                foreign_future_result_u8::VTableRs::into_rust(result),
-            )
-        }
-    }
-    pub(super) type FnSig = extern "C" fn(
-        callback_data: u64,
-        result: foreign_future_result_u8::VTableRs,
-    );
-    impl IntoJs<JsCallbackFnForeignFutureCompleteU8> for FnSig {
-        fn into_js(self) -> JsCallbackFnForeignFutureCompleteU8 {
-            JsCallbackFnForeignFutureCompleteU8::new(self)
-        }
-    }
-}
 mod foreign_future_complete_i64 {
     use super::*;
     #[wasm_bindgen(js_name = ForeignFutureCompleteI64)]
@@ -3854,43 +4000,6 @@ mod foreign_future_complete_i64 {
     impl IntoJs<JsCallbackFnForeignFutureCompleteI64> for FnSig {
         fn into_js(self) -> JsCallbackFnForeignFutureCompleteI64 {
             JsCallbackFnForeignFutureCompleteI64::new(self)
-        }
-    }
-}
-mod foreign_future_complete_u64 {
-    use super::*;
-    #[wasm_bindgen(js_name = ForeignFutureCompleteU64)]
-    pub struct JsCallbackFnForeignFutureCompleteU64 {
-        callback: FnSig,
-    }
-    impl JsCallbackFnForeignFutureCompleteU64 {
-        fn new(callback: FnSig) -> Self {
-            Self { callback }
-        }
-    }
-    #[wasm_bindgen(js_class = ForeignFutureCompleteU64)]
-    impl JsCallbackFnForeignFutureCompleteU64 {
-        #[wasm_bindgen]
-        pub fn call(
-            &self,
-            _ctx: &Self,
-            callback_data: js::UInt64,
-            result: foreign_future_result_u64::VTableJs,
-        ) {
-            (self
-                .callback)(
-                u64::into_rust(callback_data),
-                foreign_future_result_u64::VTableRs::into_rust(result),
-            )
-        }
-    }
-    pub(super) type FnSig = extern "C" fn(
-        callback_data: u64,
-        result: foreign_future_result_u64::VTableRs,
-    );
-    impl IntoJs<JsCallbackFnForeignFutureCompleteU64> for FnSig {
-        fn into_js(self) -> JsCallbackFnForeignFutureCompleteU64 {
-            JsCallbackFnForeignFutureCompleteU64::new(self)
         }
     }
 }

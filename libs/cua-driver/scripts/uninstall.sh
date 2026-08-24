@@ -594,6 +594,24 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         fi
     fi
 
+    # --- Autostart (macOS LaunchAgent) ---
+    # Tear down the supervisor before stopping the daemon so launchd cannot
+    # immediately respawn it while uninstall verifies shutdown.
+    if [[ "$OS" == "Darwin" ]]; then
+        FOUND_LAUNCHAGENT_PLIST=0
+        for LAUNCHAGENT_PLIST_PATH in "$LAUNCHAGENT_PLIST" "$LEGACY_LAUNCHAGENT_PLIST"; do
+            if [[ -f "$LAUNCHAGENT_PLIST_PATH" ]]; then
+                FOUND_LAUNCHAGENT_PLIST=1
+                launchctl unload "$LAUNCHAGENT_PLIST_PATH" 2>/dev/null || true
+                rm -f "$LAUNCHAGENT_PLIST_PATH"
+                log "removed LaunchAgent $LAUNCHAGENT_PLIST_PATH"
+            fi
+        done
+        if [[ "$FOUND_LAUNCHAGENT_PLIST" == "0" ]]; then
+            log "no current or legacy LaunchAgent found (skipping)"
+        fi
+    fi
+
     DAEMON_STOP_FAILED=0
 
     # --- Running daemon ---

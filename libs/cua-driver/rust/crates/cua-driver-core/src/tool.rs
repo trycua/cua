@@ -1495,6 +1495,16 @@ impl ToolRegistry {
                 resolved_name,
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
+        if should_record && self.recording.current_state().enabled && recording_args.is_none() {
+            return ToolResult::error("recording policy unavailable for this operation")
+                .with_structured(serde_json::json!({
+                    "status": "refused",
+                    "refusal": {
+                        "code": "recording_policy_unavailable",
+                        "message": "recording policy unavailable for this operation",
+                    }
+                }));
+        }
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if is_physical_desktop_action(resolved_name) {
             let coordinator = desktop_action_coordinator();
@@ -1512,13 +1522,15 @@ impl ToolRegistry {
         };
         let pending_turn = should_record
             .then(|| {
-                if private_consent_turn {
-                    self.recording
-                        .begin_private_turn(resolved_name, &recording_args, start_ms)
-                } else {
-                    self.recording
-                        .begin_turn(resolved_name, &recording_args, start_ms)
-                }
+                recording_args.as_ref().and_then(|recording_args| {
+                    if private_consent_turn {
+                        self.recording
+                            .begin_private_turn(resolved_name, recording_args, start_ms)
+                    } else {
+                        self.recording
+                            .begin_turn(resolved_name, recording_args, start_ms)
+                    }
+                })
             })
             .flatten();
 
@@ -4678,7 +4690,14 @@ fn is_existing_profile_prepare(tool_name: &str, args: &Value) -> bool {
             == Some("existing_profile")
 }
 
-fn recording_args_for(tool_name: &str, args: &Value) -> Value {
+/// Return the explicitly reviewed recording projection for a mutable tool.
+///
+/// Unknown tools are deliberately non-recordable. This makes adding a new
+/// mutation fail closed until its retained argument shape has been reviewed.
+fn recording_args_for(tool_name: &str, args: &Value) -> Option<Value> {
+    if !has_recording_policy(tool_name) {
+        return None;
+    }
     let mut redacted = args.clone();
     if let Some(arguments) = redacted.as_object_mut() {
         match tool_name {
@@ -4718,11 +4737,98 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
                     );
                 }
             }
-            "browser_pointer" => {}
+            "type_text" | "browser_type" => {
+                if arguments.contains_key("text") {
+                    arguments.insert("text".to_owned(), Value::String("[redacted]".to_owned()));
+                }
+            }
+            "set_value" => {
+                if arguments.contains_key("value") {
+                    arguments.insert("value".to_owned(), Value::String("[redacted]".to_owned()));
+                }
+            }
+            "browser_navigate" => {
+                if arguments.contains_key("url") {
+                    arguments.insert("url".to_owned(), Value::String("[redacted]".to_owned()));
+                }
+            }
+            "page" => {
+                let session = arguments.get("session").cloned();
+                arguments.clear();
+                arguments.insert(
+                    "arguments".to_owned(),
+                    Value::String("[redacted]".to_owned()),
+                );
+                if let Some(session) = session {
+                    arguments.insert("session".to_owned(), session);
+                }
+            }
+            "start_recording" | "replay_trajectory" => {
+                for field in ["output_dir", "input_dir"] {
+                    if arguments.contains_key(field) {
+                        arguments.insert(field.to_owned(), Value::String("[redacted]".to_owned()));
+                    }
+                }
+            }
+            name if recording_passthrough_tool(name) => {}
             _ => {}
         }
     }
-    redacted
+    Some(redacted)
+}
+
+fn recording_passthrough_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "launch_app"
+            | "kill_app"
+            | "bring_to_front"
+            | "set_window_frame"
+            | "invoke_menu"
+            | "click"
+            | "double_click"
+            | "right_click"
+            | "drag"
+            | "mouse_button_down"
+            | "mouse_drag"
+            | "mouse_button_up"
+            | "parallel_mouse_drag"
+            | "press_key"
+            | "hotkey"
+            | "scroll"
+            | "move_cursor"
+            | "set_agent_cursor_enabled"
+            | "set_agent_cursor_motion"
+            | "set_agent_cursor_theme"
+            | "set_config"
+            | "zoom"
+            | "browser_click"
+            | "browser_pointer"
+            | "install_ffmpeg"
+            | "stop_recording"
+            | "start_session"
+            | "escalate_session"
+            | "end_session"
+    )
+}
+
+/// Whether a mutable operation has an explicit retained-argument policy.
+pub fn has_recording_policy(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "browser_prepare"
+            | "browser_dialog"
+            | "clipboard_write"
+            | "browser_set_input_files"
+            | "browser_download"
+            | "type_text"
+            | "browser_type"
+            | "set_value"
+            | "browser_navigate"
+            | "page"
+            | "start_recording"
+            | "replay_trajectory"
+    ) || recording_passthrough_tool(tool_name)
 }
 
 impl Default for ToolRegistry {
@@ -4751,15 +4857,7 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
                 "".into()
             }
         }
-        "type_text" => {
-            let text = arg("text").unwrap_or_default();
-            let trimmed: String = text.chars().take(40).collect();
-            if text.chars().count() > 40 {
-                format!("\"{trimmed}…\"")
-            } else {
-                format!("\"{trimmed}\"")
-            }
-        }
+        "type_text" => return "Type text".to_owned(),
         "press_key" | "hotkey" => arg("key").or_else(|| arg("keys")).unwrap_or_default(),
         "scroll" => format!(
             "dx={} dy={}",
@@ -4767,7 +4865,7 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
             arg("dy").unwrap_or_else(|| "0".into())
         ),
         "drag" => "drag".into(),
-        "set_value" => arg("value").unwrap_or_default(),
+        "set_value" => return "Set value".to_owned(),
         "launch_app" => arg("bundle_id").or_else(|| arg("name")).unwrap_or_default(),
         _ => String::new(),
     };
@@ -4797,7 +4895,8 @@ mod capability_tests {
                 "strategy": {"kind": "existing_profile"},
                 "_transport_session_id": "private-transport",
             }),
-        );
+        )
+        .expect("browser_prepare has an explicit recording policy");
         assert!(recorded.get("_transport_session_id").is_none());
         assert_eq!(recorded["pid"], 42);
         assert_eq!(recorded["window_id"], 7);
@@ -4809,13 +4908,15 @@ mod capability_tests {
         let dialog = recording_args_for(
             "browser_dialog",
             &serde_json::json!({"action": "accept", "prompt_text": "private reply"}),
-        );
+        )
+        .expect("browser_dialog has an explicit recording policy");
         assert_eq!(dialog["prompt_text"], "[redacted]");
 
         let upload = recording_args_for(
             "browser_set_input_files",
             &serde_json::json!({"files": ["/private/one", "/private/two"]}),
-        );
+        )
+        .expect("browser_set_input_files has an explicit recording policy");
         assert_eq!(upload["files"], serde_json::json!({"count": 2}));
 
         let download = recording_args_for(
@@ -4824,7 +4925,8 @@ mod capability_tests {
                 "destination_root": "/private/destination",
                 "_cua_browser_download_mcp_host_approved": true,
             }),
-        );
+        )
+        .expect("browser_download has an explicit recording policy");
         assert_eq!(download["destination_root"], "[redacted]");
         assert!(download
             .get("_cua_browser_download_mcp_host_approved")
@@ -4854,7 +4956,8 @@ mod capability_tests {
                 "file_path": "/private/document.pdf",
                 "session": "public-session",
             }),
-        );
+        )
+        .expect("clipboard_write has an explicit recording policy");
         assert_eq!(recorded["text"], "[redacted]");
         assert_eq!(recorded["image_path"], "[redacted]");
         assert_eq!(recorded["file_path"], "[redacted]");
@@ -4866,6 +4969,64 @@ mod capability_tests {
             "/private/document.pdf",
         ] {
             assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn text_bearing_recording_args_do_not_retain_caller_content() {
+        let canary = "cua-secret-canary-do-not-retain";
+        let cases = [
+            ("type_text", serde_json::json!({"text": canary})),
+            ("set_value", serde_json::json!({"value": canary})),
+            ("browser_type", serde_json::json!({"text": canary})),
+            (
+                "browser_navigate",
+                serde_json::json!({"url": format!("https://example.test/?token={canary}")}),
+            ),
+            (
+                "page",
+                serde_json::json!({"action": "type", "text": canary}),
+            ),
+        ];
+
+        for (tool_name, args) in cases {
+            let recorded = recording_args_for(tool_name, &args)
+                .unwrap_or_else(|| panic!("{tool_name} must have a recording policy"));
+            assert!(
+                !recorded.to_string().contains(canary),
+                "{tool_name} retained caller content: {recorded}"
+            );
+        }
+    }
+
+    #[test]
+    fn unclassified_mutations_are_not_recordable() {
+        assert!(recording_args_for(
+            "new_mutation_without_privacy_review",
+            &serde_json::json!({"text": "must not persist"}),
+        )
+        .is_none());
+        assert!(!has_recording_policy("new_mutation_without_privacy_review"));
+    }
+
+    #[test]
+    fn visible_text_action_labels_never_echo_caller_content() {
+        let canary = "cua-visible-canary";
+        for (tool_name, args, expected) in [
+            (
+                "type_text",
+                serde_json::json!({"text": canary}),
+                "Type text",
+            ),
+            (
+                "set_value",
+                serde_json::json!({"value": canary}),
+                "Set value",
+            ),
+        ] {
+            let label = synthesize_action_label(tool_name, &args);
+            assert_eq!(label, expected);
+            assert!(!label.contains(canary));
         }
     }
 

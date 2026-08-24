@@ -145,7 +145,8 @@ tempfile = "3"
 # falls through.
 tracing-subscriber = { workspace = true }
 
-# Cargo example that exercises the libei input path directly. Lives under
+# Cargo example that probes portal/libei device readiness without sending input.
+# Lives under
 # the `portal-input` feature gate so a stock `cargo build --examples`
 # doesn't try to compile against the (now-optional) reis/xkbcommon deps.
 [[example]]

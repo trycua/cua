@@ -149,15 +149,6 @@ pub fn with_focused_window<T>(
     )
 }
 
-/// The read-only helper deliberately exposes no activation method.
-///
-/// Returning `false` preserves the existing adapter call contract while
-/// preventing callers from treating any focus manipulation as authorization
-/// for a subsequent global libei mutation.
-pub fn activate_window(_pid: u32, _token: u64) -> bool {
-    false
-}
-
 fn geometry_matches(atspi: &WindowInfo, kwin: &KwinWindow) -> bool {
     let right = atspi
         .x
@@ -401,7 +392,6 @@ mod tests {
     #[test]
     fn raw_input_capability_is_fail_closed() {
         assert!(!available());
-        assert!(!activate_window(42, 7));
 
         let called = std::cell::Cell::new(false);
         let error = with_focused_window(42, 7, || {

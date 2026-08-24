@@ -1,6 +1,6 @@
 use platform_linux::wayland::kwin_helper::{
-    activate_window, available, correlate_atspi_window, parse_snapshot, require_active_target,
-    with_focused_window, CorrelationError,
+    available, correlate_atspi_window, parse_snapshot, require_active_target, with_focused_window,
+    CorrelationError,
 };
 use platform_linux::x11::WindowInfo;
 
@@ -129,8 +129,10 @@ fn refuses_when_a_different_token_is_active() {
 
 #[test]
 fn raw_kwin_input_is_refused_before_dispatch() {
-    assert!(!available(), "focus-bound KWin input must not be advertised as safe");
-    assert!(!activate_window(1200, 41), "activation must not authorize global input");
+    assert!(
+        !available(),
+        "focus-bound KWin input must not be advertised as safe"
+    );
 
     let called = std::cell::Cell::new(false);
     let error = with_focused_window(1200, 41, || {
@@ -139,6 +141,9 @@ fn raw_kwin_input_is_refused_before_dispatch() {
     })
     .expect_err("focus-bound KWin input must refuse");
 
-    assert!(!called.get(), "input body must not run on the focus-only KWin path");
+    assert!(
+        !called.get(),
+        "input body must not run on the focus-only KWin path"
+    );
     assert!(error.to_string().contains("target-bound KWin input path"));
 }

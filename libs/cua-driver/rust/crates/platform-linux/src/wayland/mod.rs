@@ -1360,11 +1360,6 @@ pub fn activate_window_for_input_target(
         return Ok(());
     }
 
-    if kwin_helper::activate_window(target_pid.unwrap_or_default(), window_id) {
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        return Ok(());
-    }
-
     if shell_helper::activate_window(window_id) {
         std::thread::sleep(std::time::Duration::from_millis(60));
         return Ok(());

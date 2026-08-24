@@ -55,6 +55,19 @@ export interface PoolInstance {
   name: string
   namespace: string
   phase: string
+  runtime?: string
+  vmName?: string
+  ready?: boolean
+  message?: string
   claimName?: string
   createdAt: string
+}
+
+export interface InstancePod {
+  name: string
+  namespace: string
+  phase: string
+  nodeName?: string
+  createdAt: string
+  containers: string[]
 }

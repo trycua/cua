@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test"
 import {
   mockAuth,
+  mockInstanceDetailApi,
   mockInstancesApi,
   mockNamespacesApi,
   mockPoolsApi,
@@ -476,6 +477,40 @@ test.describe("Pool detail instances", () => {
     await expect(availableRow).toContainText("Unclaimed")
     await expect(availableRow.getByRole("button", { name: "Release" })).toHaveCount(0)
     await expect(page.getByText("other-pool-instance")).toHaveCount(0)
+  })
+
+  test("opens instance details and displays guest console logs", async ({ page }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    await mockInstancesApi(page)
+    await mockClaimsApi(page)
+    await mockInstanceDetailApi(page)
+    await page.context().grantPermissions(
+      ["clipboard-read", "clipboard-write"],
+      { origin: "http://localhost:5180" },
+    )
+
+    await page.goto("/pools/demo-pool/demo-pool")
+    await page.getByRole("link", { name: "vm-xyz789" }).click()
+
+    await expect(page).toHaveURL(
+      /\/pools\/demo-pool\/demo-pool\/instances\/vm-xyz789$/,
+    )
+    await expect(page.getByRole("heading", { name: "vm-xyz789" })).toBeVisible()
+    await expect(
+      page.getByRole("heading", { name: "Guest console logs", exact: true }),
+    ).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Overview" })).toHaveCount(0)
+    await expect(page.getByLabel("Guest console logs")).toContainText(
+      "guest console ready",
+    )
+    await page.getByRole("button", { name: "Copy logs" }).click()
+    await expect(page.getByRole("button", { name: "Copied" })).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toContain("guest console ready")
+    await expect(page.getByLabel("Log container")).toHaveCount(0)
   })
 })
 

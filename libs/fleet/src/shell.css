@@ -136,6 +136,27 @@ body,
   white-space: nowrap;
 }
 
+.cua-instance-log-view {
+  box-sizing: border-box;
+  min-height: 360px;
+  max-height: 65vh;
+  margin: 0;
+  padding: 18px 20px;
+  overflow: auto;
+  border: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: var(--cua-radius-control);
+  background:
+    linear-gradient(180deg, rgba(159, 215, 255, 0.035), transparent 72px),
+    #0a0d10;
+  color: #d9e4ec;
+  font-family: var(--cua-dashboard-font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.65;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 #cua-dashboard-root .cua-dashboard-button button {
   appearance: none;
   display: inline-flex;

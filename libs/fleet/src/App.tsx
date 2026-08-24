@@ -26,6 +26,7 @@ import {
 import { Helmet } from "react-helmet-async";
 import { PoolsList } from "./pages/PoolsList";
 import { ClaimDetail } from "./pages/ClaimDetail";
+import { InstanceDetail } from "./pages/InstanceDetail";
 import { PoolDetail } from "./pages/PoolDetail";
 import { PoolNew } from "./pages/PoolNew";
 import { UserApiKeys } from "./pages/UserApiKeys";
@@ -412,6 +413,10 @@ export function App() {
                   <ClaimDetail />
                 </TitledPage>
               }
+            />
+            <Route
+              path="/pools/:namespace/:poolName/instances/:instanceName"
+              element={<InstanceDetail />}
             />
             <Route path="/modules" element={<Navigate to="/pools" replace />} />
             <Route

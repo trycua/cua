@@ -800,6 +800,84 @@ export async function mockInstancesApi(page: Page): Promise<void> {
   )
 }
 
+export async function mockInstanceDetailApi(page: Page): Promise<void> {
+  await page.route(
+    "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo-pool/osgymsandboxes/vm-xyz789",
+    async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          apiVersion: "osgym.cua.ai/v1alpha1",
+          kind: "OSGymSandbox",
+          metadata: {
+            name: "vm-xyz789",
+            namespace: "demo-pool",
+            creationTimestamp: "2026-05-28T09:55:00Z",
+            annotations: {
+              "osgym.cua.ai/origin-warmpool": "demo-pool",
+              "osgym.cua.ai/origin-warmpool-namespace": "demo-pool",
+            },
+            ownerReferences: [
+              {
+                kind: "OSGymSandboxClaim",
+                name: "claim-abc123",
+                controller: true,
+              },
+            ],
+          },
+          spec: { vmTemplate: { runtime: "kubevirt" } },
+          status: {
+            phase: "Ready",
+            ready: true,
+            vmName: "vm-xyz789",
+          },
+        }),
+      })
+    },
+  )
+
+  await page.route(
+    "**/api/k8s/api/v1/namespaces/demo-pool/pods?labelSelector=*",
+    async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              metadata: {
+                name: "virt-launcher-vm-xyz789-abcde",
+                namespace: "demo-pool",
+                creationTimestamp: "2026-05-28T09:55:10Z",
+              },
+              spec: {
+                nodeName: "kubevirt-worker-1",
+                containers: [{ name: "compute" }, { name: "guest-console-log" }],
+              },
+              status: { phase: "Running" },
+            },
+          ],
+        }),
+      })
+    },
+  )
+
+  await page.route(
+    "**/api/k8s/api/v1/namespaces/demo-pool/pods/virt-launcher-vm-xyz789-abcde/log?*",
+    async route => {
+      const url = new URL(route.request().url())
+      const container = url.searchParams.get("container")
+      if (container !== "guest-console-log") {
+        await route.fulfill({ status: 400, body: "unexpected log container" })
+        return
+      }
+      await route.fulfill({
+        contentType: "text/plain",
+        body: "2026-05-28T10:00:00Z guest console ready\n",
+      })
+    },
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Claims API mocking (OSGymSandboxClaim CRD)
 // ---------------------------------------------------------------------------

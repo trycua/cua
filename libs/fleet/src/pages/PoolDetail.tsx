@@ -559,7 +559,19 @@ function InstancesTable({ pool }: { pool: PoolData }) {
           {
             id: "name",
             header: "Name",
-            cell: (instance: InstanceRow) => instance.name,
+            cell: (instance: InstanceRow) => (
+              <Link
+                href={`#/pools/${pool.namespace}/${pool.name}/instances/${instance.name}`}
+                onFollow={event => {
+                  event.preventDefault()
+                  navigate(
+                    `/pools/${pool.namespace}/${pool.name}/instances/${instance.name}`,
+                  )
+                }}
+              >
+                {instance.name}
+              </Link>
+            ),
             sortingField: "name",
           },
           {

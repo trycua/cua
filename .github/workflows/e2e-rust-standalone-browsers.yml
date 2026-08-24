@@ -113,6 +113,8 @@ jobs:
               const uint TOKEN_ASSIGN_PRIMARY = 0x1;
               const uint TOKEN_DUPLICATE = 0x2;
               const uint TOKEN_QUERY = 0x8;
+              const uint DISABLE_MAX_PRIVILEGE = 0x1;
+              const uint LUA_TOKEN = 0x4;
               const uint CREATE_UNICODE_ENVIRONMENT = 0x400;
               const uint INFINITE = 0xFFFFFFFF;
               const int TOKEN_ELEVATION = 20;
@@ -154,6 +156,18 @@ jobs:
               static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
 
               [DllImport("advapi32.dll", SetLastError = true)]
+              static extern bool CreateRestrictedToken(
+                  IntPtr existingToken,
+                  uint flags,
+                  uint disableSidCount,
+                  IntPtr sidsToDisable,
+                  uint deletePrivilegeCount,
+                  IntPtr privilegesToDelete,
+                  uint restrictedSidCount,
+                  IntPtr sidsToRestrict,
+                  out IntPtr restrictedToken);
+
+              [DllImport("advapi32.dll", SetLastError = true)]
               static extern bool GetTokenInformation(
                   IntPtr token,
                   int informationClass,
@@ -189,6 +203,7 @@ jobs:
               public static int Run(uint shellProcessId, string application, string commandLine, string currentDirectory) {
                   IntPtr shellProcess = IntPtr.Zero;
                   IntPtr shellToken = IntPtr.Zero;
+                  IntPtr restrictedToken = IntPtr.Zero;
                   PROCESS_INFORMATION process = new PROCESS_INFORMATION();
                   try {
                       shellProcess = OpenProcess(
@@ -202,21 +217,26 @@ jobs:
                           shellProcess,
                           TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
                           out shellToken));
-                      Check(GetTokenInformation(
+                      Check(CreateRestrictedToken(
                           shellToken,
+                          DISABLE_MAX_PRIVILEGE | LUA_TOKEN,
+                          0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero,
+                          out restrictedToken));
+                      Check(GetTokenInformation(
+                          restrictedToken,
                           TOKEN_ELEVATION,
                           out int elevated,
                           sizeof(int),
                           out int returnLength));
                       if (returnLength != sizeof(int) || elevated != 0) {
-                          throw new InvalidOperationException("Explorer did not provide an unelevated shell token");
+                          throw new InvalidOperationException("Explorer token did not yield an unelevated restricted token");
                       }
                       STARTUPINFO startup = new STARTUPINFO {
                           cb = Marshal.SizeOf<STARTUPINFO>(),
                           lpDesktop = "winsta0\\default"
                       };
                       Check(CreateProcessWithTokenW(
-                          shellToken,
+                          restrictedToken,
                           0,
                           application,
                           new StringBuilder(commandLine),
@@ -231,6 +251,7 @@ jobs:
                   } finally {
                       if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
                       if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
+                      if (restrictedToken != IntPtr.Zero) CloseHandle(restrictedToken);
                       if (shellToken != IntPtr.Zero) CloseHandle(shellToken);
                       if (shellProcess != IntPtr.Zero) CloseHandle(shellProcess);
                   }

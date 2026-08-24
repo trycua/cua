@@ -7,6 +7,7 @@ import { applyTheme } from "@cloudscape-design/components/theming"
 import urbanistFont from "@cua/design/assets/fonts/urbanist-normal-latin.woff2"
 import monoFont from "@cua/design/assets/fonts/jetbrains-mono-normal-latin.woff2"
 import displayFont from "@cua/design/assets/fonts/instrument-serif-normal-latin.woff2"
+import { HelmetProvider } from "react-helmet-async"
 import { App } from "./App"
 import { AuthProvider } from "./auth/AuthProvider"
 import "./shell.css"
@@ -55,8 +56,10 @@ for (const href of [urbanistFont, monoFont, displayFont]) {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <AuthProvider>
-      <App />
-    </AuthProvider>
+    <HelmetProvider>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </HelmetProvider>
   </React.StrictMode>,
 )

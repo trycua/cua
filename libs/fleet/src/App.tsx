@@ -15,7 +15,15 @@ import TopNavigation from "@cloudscape-design/components/top-navigation";
 import Flashbar, {
   type FlashbarProps,
 } from "@cloudscape-design/components/flashbar";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Helmet } from "react-helmet-async";
 import { PoolsList } from "./pages/PoolsList";
 import { ClaimDetail } from "./pages/ClaimDetail";
 import { PoolDetail } from "./pages/PoolDetail";
@@ -44,6 +52,17 @@ import {
 } from "./components/ThreadNavigation";
 
 const VERSION_CHECK_INTERVAL_MS = 60_000;
+
+function TitledPage({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <>
+      <Helmet>
+        <title>{title} · Cua</title>
+      </Helmet>
+      {children}
+    </>
+  );
+}
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(
@@ -181,27 +200,6 @@ function ShellLayout({
     previousPath.current = location.pathname;
   }, [location.pathname, mobile]);
 
-  useEffect(() => {
-    const path = location.pathname;
-    const pageTitle =
-      path === "/usage"
-        ? "Usage"
-        : path.startsWith("/agent")
-          ? "Threads"
-          : path === "/user-keys"
-            ? "User API keys"
-            : path === "/settings"
-              ? "Settings"
-              : path === "/pools/new"
-                ? "New pool"
-                : path.includes("/claims/")
-                  ? "Claim details"
-                  : path.startsWith("/pools/")
-                    ? "Pool details"
-                    : "Pools";
-    document.title = `${pageTitle} · Cua`;
-  }, [location.pathname]);
-
   return (
     <div className="cua-dashboard-theme cua-shell">
       <div id="cua-shell-topnav" className="cua-shell__topnav">
@@ -317,29 +315,103 @@ export function App() {
         <Routes>
           <Route element={<Shell />}>
             <Route index element={<Navigate to="/pools" replace />} />
-            <Route path="/pools" element={<PoolsList />} />
-            <Route path="/pools/new" element={<PoolNew />} />
+            <Route
+              path="/pools"
+              element={
+                <TitledPage title="Pools">
+                  <PoolsList />
+                </TitledPage>
+              }
+            />
+            <Route
+              path="/pools/new"
+              element={
+                <TitledPage title="New pool">
+                  <PoolNew />
+                </TitledPage>
+              }
+            />
             <Route
               path="/pools/templates"
               element={<Navigate to="/pools" replace />}
             />
-            <Route path="/pools/:namespace/:name" element={<PoolDetail />} />
-            <Route path="/user-keys" element={<UserApiKeys />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/usage" element={<BillingUsagePage />} />
-            <Route path="/agent" element={<ChatRoute />} />
-            <Route path="/agent/archived" element={<ArchivedThreadsRoute />} />
-            <Route path="/agent/:threadId" element={<ChatRoute />} />
+            <Route
+              path="/pools/:namespace/:name"
+              element={
+                <TitledPage title="Pool details">
+                  <PoolDetail />
+                </TitledPage>
+              }
+            />
+            <Route
+              path="/user-keys"
+              element={
+                <TitledPage title="User API keys">
+                  <UserApiKeys />
+                </TitledPage>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <TitledPage title="Settings">
+                  <Settings />
+                </TitledPage>
+              }
+            />
+            <Route
+              path="/usage"
+              element={
+                <TitledPage title="Usage">
+                  <BillingUsagePage />
+                </TitledPage>
+              }
+            />
+            <Route
+              path="/agent"
+              element={
+                <TitledPage title="Threads">
+                  <ChatRoute />
+                </TitledPage>
+              }
+            />
+            <Route
+              path="/agent/archived"
+              element={
+                <TitledPage title="Threads">
+                  <ArchivedThreadsRoute />
+                </TitledPage>
+              }
+            />
+            <Route
+              path="/agent/:threadId"
+              element={
+                <TitledPage title="Threads">
+                  <ChatRoute />
+                </TitledPage>
+              }
+            />
             <Route
               path="/billing"
               element={<Navigate to="/settings" replace />}
             />
             <Route element={<AdminRoute />}>
-              <Route path="/admin/feature-flags" element={<FeatureFlags />} />
+              <Route
+                path="/admin/feature-flags"
+                element={
+                  <TitledPage title="Feature flags">
+                    <FeatureFlags />
+                  </TitledPage>
+                }
+              />
             </Route>
             <Route
               path="/pools/:namespace/:poolName/claims/:claimName"
-              element={<ClaimDetail />}
+              element={
+                <TitledPage title="Claim details">
+                  <ClaimDetail />
+                </TitledPage>
+              }
             />
             <Route path="/modules" element={<Navigate to="/pools" replace />} />
             <Route

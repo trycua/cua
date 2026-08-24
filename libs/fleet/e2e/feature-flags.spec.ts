@@ -50,6 +50,7 @@ test.describe("feature flag admin route", () => {
     await expect(page).toHaveURL(/\/admin\/feature-flags$/)
     await expect(page.getByRole("heading", { name: "Feature flags" })).toBeVisible()
     await expect(page.getByText("Admin only · Feature flagged", { exact: true })).toBeVisible()
+    await expect(page).toHaveTitle("Feature flags · Cua")
   })
 
   test("redirects non-admin direct navigation without requesting admin flags", async ({

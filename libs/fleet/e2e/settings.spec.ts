@@ -25,6 +25,7 @@ for (const viewport of [
     await page.goto("/settings")
 
     await expectSharedPageShell(page)
+    await expect(page).toHaveTitle("Settings · Cua")
     await expect(page.getByLabel("Display name")).toBeHidden()
     expect(
       await page.locator("html").evaluate(

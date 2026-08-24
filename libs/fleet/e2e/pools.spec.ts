@@ -38,6 +38,7 @@ test.describe("Pools page header", () => {
       const status = page.getByRole("columnheader", { name: "Status" })
 
       await expect(mesh).toHaveCount(0)
+      await expect(page).toHaveTitle("Pools · Cua")
       await expect(page.locator(".cua-pagehead canvas")).toHaveCount(0)
       const [topNavigationBox, navigationBox, headerBox, tableBox] = await Promise.all([
         topNavigation.boundingBox(),

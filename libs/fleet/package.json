@@ -31,6 +31,7 @@
     "keycloak-js": "^25.0.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-helmet-async": "^3.0.0",
     "react-router-dom": "^6.28.0",
     "@cloudscape-design/chat-components": "^1.0.157",
     "just-bash": "^3.2.0",

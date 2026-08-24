@@ -13,6 +13,7 @@
 //!   - click_target   : right_click / double_click recognised by NSView
 //!   - scroll_target  : scroll updates VerticalOffset label
 //!   - ns_menubar     : main menubar item enumerable (Mac-specific)
+//!   - native_sheet   : NSOpenPanel descendant token targets its parent window
 //!
 //! Run locally (after `libs/cua-driver/tests/fixtures/build/macos.sh`):
 //!   cargo test --test harness_appkit_test -- --ignored --nocapture

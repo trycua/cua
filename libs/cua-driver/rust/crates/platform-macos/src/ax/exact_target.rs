@@ -62,10 +62,12 @@ pub unsafe fn element_window_ancestry(
     let mut mapped_window_ids = Vec::new();
 
     if let Some(window) = copy_element_attr(element, "AXWindow") {
-        if let Some(window_id) = ax_get_window_id(window) {
-            mapped_window_ids.push(window_id);
-        }
+        let window_id = ax_get_window_id(window);
         CFRelease(window as CFTypeRef);
+        if window_id == Some(target_window_id) {
+            return ElementAncestry::ProvenDescendant;
+        }
+        mapped_window_ids.extend(window_id);
     }
 
     let mut current: AXUIElementRef = element;

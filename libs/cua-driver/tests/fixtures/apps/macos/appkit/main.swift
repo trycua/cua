@@ -15,6 +15,7 @@
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
+//   native_sheet   — NSOpenPanel exposes controls beneath the parent AX window
 //   exit           — NSButton terminates the app
 //
 // AX identifiers (via `setAccessibilityIdentifier(_:)`) match the IDs in

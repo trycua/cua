@@ -6,6 +6,13 @@ use std::{collections::HashMap, sync::Arc};
 pub(crate) fn string_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     String::json_schema(generator)
 }
+pub(crate) fn dns_label_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "string",
+        "maxLength": 63,
+        "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    })
+}
 
 pub(crate) fn bool_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     bool::json_schema(generator)
@@ -188,11 +195,34 @@ pub struct OidcConfig {
 )]
 #[uniffi_builder(crate::SchemaBuildError)]
 #[serde(rename_all = "camelCase")]
+pub struct ImageRef {
+    #[schemars(schema_with = "dns_label_schema")]
+    pub name: String,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError, validate = crate::common::validate_vm_template)]
+#[serde(rename_all = "camelCase")]
 pub struct VmTemplate {
     #[schemars(
         description = "KubeVirt containerDisk OCI image (runtime=kubevirt) or the sandbox pod image ref (runtime=macos/gvisor)."
     )]
-    pub container_disk_image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub container_disk_image: Option<String>,
+    #[schemars(description = "KubeVirt Image resource name.")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    pub image_ref: Option<ImageRef>,
     #[schemars(
         description = "Pod runtimes (macos/gvisor) only. Entrypoint command for the sandbox container (overrides the image default)."
     )]
@@ -280,6 +310,32 @@ pub struct VmTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub oidc: Option<OidcConfig>,
+}
+
+fn validate_vm_template(template: &VmTemplate) -> Result<(), crate::SchemaBuildError> {
+    match template.runtime.as_ref().unwrap_or(&RuntimeKind::Kubevirt) {
+        RuntimeKind::Kubevirt => {
+            if template.container_disk_image.is_some() == template.image_ref.is_some() {
+                return Err(crate::SchemaBuildError::invalid(
+                    "VmTemplate requires exactly one of container_disk_image or image_ref for kubevirt",
+                ));
+            }
+        }
+        RuntimeKind::Macos | RuntimeKind::Gvisor => {
+            if template.image_ref.is_some() {
+                return Err(crate::SchemaBuildError::invalid(
+                    "VmTemplate image_ref is supported only for kubevirt",
+                ));
+            }
+            if template.container_disk_image.is_none() {
+                return Err(crate::SchemaBuildError::invalid(
+                    "VmTemplate requires container_disk_image for pod runtimes",
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) fn date_time_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {

@@ -516,6 +516,140 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 
+public protocol ImageRefBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> ImageRef
+
+    func name(value: String)  -> ImageRefBuilder
+
+}
+open class ImageRefBuilder: ImageRefBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_schema_fn_clone_imagerefbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_constructor_imagerefbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_schema_fn_free_imagerefbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> ImageRef  {
+    return try  FfiConverterTypeImageRef_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
+    uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func name(value: String) -> ImageRefBuilder  {
+    return try!  FfiConverterTypeImageRefBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageRefBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ImageRefBuilder
+
+    public static func lift(_ handle: UInt64) throws -> ImageRefBuilder {
+        return ImageRefBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ImageRefBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageRefBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ImageRefBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageRefBuilder_lift(_ handle: UInt64) throws -> ImageRefBuilder {
+    return try FfiConverterTypeImageRefBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageRefBuilder_lower(_ value: ImageRefBuilder) -> UInt64 {
+    return FfiConverterTypeImageRefBuilder.lower(value)
+}
+
+
+
+
+
+
 public protocol OsGymSandboxTemplateSpecBuilderProtocol: AnyObject, Sendable {
 
     func build() throws  -> OsGymSandboxTemplateSpec
@@ -1236,6 +1370,8 @@ public protocol VmTemplateBuilderProtocol: AnyObject, Sendable {
 
     func imagePullSecret(value: String)  -> VmTemplateBuilder
 
+    func imageRef(value: ImageRef)  -> VmTemplateBuilder
+
     func memory(value: String)  -> VmTemplateBuilder
 
     func nestedVirtualization(value: Bool)  -> VmTemplateBuilder
@@ -1373,6 +1509,15 @@ open func imagePullSecret(value: String) -> VmTemplateBuilder  {
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func imageRef(value: ImageRef) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_ref(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeImageRef_lower(value),$0
     )
 })
 }
@@ -1779,6 +1924,56 @@ public func FfiConverterTypeClaimSpec_lift(_ buf: RustBuffer) throws -> ClaimSpe
 #endif
 public func FfiConverterTypeClaimSpec_lower(_ value: ClaimSpec) -> RustBuffer {
     return FfiConverterTypeClaimSpec.lower(value)
+}
+
+
+public struct ImageRef: Equatable, Hashable {
+    public var name: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String) {
+        self.name = name
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ImageRef: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImageRef: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImageRef {
+        return
+            try ImageRef(
+                name: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImageRef, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageRef_lift(_ buf: RustBuffer) throws -> ImageRef {
+    return try FfiConverterTypeImageRef.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImageRef_lower(_ value: ImageRef) -> RustBuffer {
+    return FfiConverterTypeImageRef.lower(value)
 }
 
 
@@ -2429,7 +2624,8 @@ public func FfiConverterTypeSandboxTemplateRef_lower(_ value: SandboxTemplateRef
 
 
 public struct VmTemplate {
-    public var containerDiskImage: String
+    public var containerDiskImage: String?
+    public var imageRef: ImageRef?
     public var command: [String]?
     public var runtime: RuntimeKind?
     public var runtimeClassName: String?
@@ -2447,8 +2643,9 @@ public struct VmTemplate {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(containerDiskImage: String, command: [String]?, runtime: RuntimeKind?, runtimeClassName: String?, nodeSelector: [String: String]?, tolerations: [PreservedJson]?, imagePullPolicy: ImagePullPolicy?, imagePullSecret: String?, cpuCores: UInt32?, memory: String?, firmware: Firmware?, nestedVirtualization: Bool?, probes: PreservedJson?, services: [SandboxService]?, oidc: OidcConfig?) {
+    public init(containerDiskImage: String?, imageRef: ImageRef?, command: [String]?, runtime: RuntimeKind?, runtimeClassName: String?, nodeSelector: [String: String]?, tolerations: [PreservedJson]?, imagePullPolicy: ImagePullPolicy?, imagePullSecret: String?, cpuCores: UInt32?, memory: String?, firmware: Firmware?, nestedVirtualization: Bool?, probes: PreservedJson?, services: [SandboxService]?, oidc: OidcConfig?) {
         self.containerDiskImage = containerDiskImage
+        self.imageRef = imageRef
         self.command = command
         self.runtime = runtime
         self.runtimeClassName = runtimeClassName
@@ -2481,7 +2678,8 @@ public struct FfiConverterTypeVmTemplate: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VmTemplate {
         return
             try VmTemplate(
-                containerDiskImage: FfiConverterString.read(from: &buf),
+                containerDiskImage: FfiConverterOptionString.read(from: &buf),
+                imageRef: FfiConverterOptionTypeImageRef.read(from: &buf),
                 command: FfiConverterOptionSequenceString.read(from: &buf),
                 runtime: FfiConverterOptionTypeRuntimeKind.read(from: &buf),
                 runtimeClassName: FfiConverterOptionString.read(from: &buf),
@@ -2500,7 +2698,8 @@ public struct FfiConverterTypeVmTemplate: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: VmTemplate, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.containerDiskImage, into: &buf)
+        FfiConverterOptionString.write(value.containerDiskImage, into: &buf)
+        FfiConverterOptionTypeImageRef.write(value.imageRef, into: &buf)
         FfiConverterOptionSequenceString.write(value.command, into: &buf)
         FfiConverterOptionTypeRuntimeKind.write(value.runtime, into: &buf)
         FfiConverterOptionString.write(value.runtimeClassName, into: &buf)
@@ -2887,6 +3086,8 @@ public enum SchemaBuildError: Swift.Error, Equatable, Hashable, Foundation.Local
 
     case MissingRequiredField(recordType: String, field: String
     )
+    case Invalid(message: String
+    )
 
 
 
@@ -2920,6 +3121,9 @@ public struct FfiConverterTypeSchemaBuildError: FfiConverterRustBuffer {
             recordType: try FfiConverterString.read(from: &buf),
             field: try FfiConverterString.read(from: &buf)
             )
+        case 2: return .Invalid(
+            message: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2936,6 +3140,11 @@ public struct FfiConverterTypeSchemaBuildError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
             FfiConverterString.write(recordType, into: &buf)
             FfiConverterString.write(field, into: &buf)
+
+
+        case let .Invalid(message):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(message, into: &buf)
 
         }
     }
@@ -3138,6 +3347,30 @@ fileprivate struct FfiConverterOptionTypeClaimLifecycle: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeClaimLifecycle.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImageRef: FfiConverterRustBuffer {
+    typealias SwiftType = ImageRef?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImageRef.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImageRef.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -3572,6 +3805,12 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_build() != 42434) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_name() != 43667) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build() != 62919) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3609,6 +3848,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret() != 40154) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_ref() != 11892) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory() != 55615) {
@@ -3669,6 +3911,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size() != 46153) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_constructor_imagerefbuilder_new() != 48335) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new() != 21082) {

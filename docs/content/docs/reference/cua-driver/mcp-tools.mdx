@@ -661,14 +661,14 @@ Caveats:
 
 ### `set_config`
 
-Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (Agent View is initialised once at startup).
+Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The agent_view keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (Agent View is initialised once at startup).
 
 Note: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.
 
 **Arguments:**
 
-- `experimental_pip` (boolean, optional): Enable the experimental multi-target Agent View. Exact native windows and Chrome tabs are grouped automatically by session; no target claiming is involved. Applies on next daemon restart.
-- `experimental_pip_geometry` (string, optional): Agent View size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
+- `agent_view` (boolean, optional): Enable the experimental multi-target Agent View. Exact native windows and Chrome tabs are grouped automatically by session; no target claiming is involved. Applies on next daemon restart.
+- `agent_view_geometry` (string, optional): Agent View size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
 - `key` (string, optional): Name of a single config field to write (&#123;key, value&#125; shape, matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. Equivalent to passing the field directly.
 - `max_image_dimension` (integer, optional): Max dimension for screenshot resizing (0 = no limit).
 - `value` (unknown, optional): New value for `key`. JSON type depends on the key.

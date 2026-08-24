@@ -1,5 +1,5 @@
-//! Agent View event hook, registered once by `main.rs` when the legacy
-//! `--experimental-pip` compatibility flag is enabled.
+//! Agent View event hook, registered once by `main.rs` when `--agent-view`
+//! is enabled.
 //!
 //! The trait + factory live in the `pip-preview` crate so the platform
 //! backends can implement them without depending on `cua-driver-core`.
@@ -56,7 +56,7 @@ pub fn set_pip_event_fn(f: impl Fn(PipHookEvent) + Send + Sync + 'static) {
 
 /// True when a PiP backend is wired up. Tool dispatcher uses this to
 /// skip the screenshot-bytes path when nothing would consume the
-/// frame (avoiding wasted capture work in the common --pip-off case).
+/// frame (avoiding wasted capture work when Agent View is disabled).
 pub fn pip_enabled() -> bool {
     PIP_EVENT_FN.get().is_some()
 }

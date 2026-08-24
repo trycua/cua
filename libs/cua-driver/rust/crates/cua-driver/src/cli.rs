@@ -230,10 +230,10 @@ const VALUE_FLAGS: &[&str] = &[
     "--session",
     "--profile-mode",
     "--profile-name",
-    // Experimental Agent View (legacy PiP flag) — value flag for geometry
-    // override (--experimental-pip itself is a bare flag and doesn't
+    // Experimental Agent View value flag for geometry override
+    // (`--agent-view` itself is a bare flag and doesn't
     // need to be listed here).
-    "--experimental-pip-geometry",
+    "--agent-view-geometry",
 ];
 
 /// Authorization selectors are trusted-daemon startup inputs. Direct MCP
@@ -642,7 +642,7 @@ pub fn parse_command() -> Command {
         println!("  cua-driver history enable   Opt in and initialize encrypted local history.");
         println!("  cua-driver history status|pause|resume|flush|list|show|disable|delete");
         println!(
-            "  --experimental-pip          Show the always-on-top Agent View with one card per"
+            "  --agent-view                Show the always-on-top Agent View with one card per"
         );
         println!(
             "                              exact native window or Chrome tab. Existing sessions"
@@ -651,9 +651,7 @@ pub fn parse_command() -> Command {
             "                              group the cards; no claim/release API is involved."
         );
         println!("                              macOS only today; Win/Linux print a notice.");
-        println!(
-            "  --experimental-pip-geometry WxH[+X+Y]   Override window size (and optional top-left"
-        );
+        println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 320x200 in the top-right");
         println!("                                          corner of the main display.");
         std::process::exit(0);

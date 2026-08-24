@@ -3136,7 +3136,7 @@ mod runtime_isolation_tests {
                     "key": {"type": "string"},
                     "value": {},
                     "max_image_dimension": {"type": "integer"},
-                    "experimental_pip": {"type": "boolean"}
+                    "agent_view": {"type": "boolean"}
                 },
                 "additionalProperties": false
             })

@@ -1,7 +1,6 @@
 //! Shared model and platform contract for the experimental Agent View.
 //!
-//! The existing PiP flags remain the compatibility entry point, but the
-//! surface is no longer modeled as one process-global "latest screenshot".
+//! Agent View is an opt-in surface rather than one process-global "latest screenshot".
 //! Frames carry an existing session/workspace identity and an exact native
 //! window or browser-tab identity. Platform backends can therefore keep
 //! several target cards visible without introducing target claims or leases.
@@ -43,8 +42,8 @@ pub fn read_config_value(key: &str) -> Option<serde_json::Value> {
 
 /// Merge a single `key`/`value` into `~/.cua-driver/config.json`,
 /// preserving any other keys that are already there. Used by the
-/// per-platform `set_config` tools to persist `experimental_pip` /
-/// `experimental_pip_geometry` so the next daemon restart picks them up.
+/// per-platform `set_config` tools to persist `agent_view` /
+/// `agent_view_geometry` so the next daemon restart picks them up.
 pub fn write_config_key(key: &str, value: serde_json::Value) -> Result<(), String> {
     let path = default_config_path().ok_or_else(|| "$HOME is not set".to_string())?;
     let mut json: serde_json::Value = path
@@ -62,11 +61,11 @@ pub fn write_config_key(key: &str, value: serde_json::Value) -> Result<(), Strin
     Ok(())
 }
 
-/// Read `experimental_pip` + `experimental_pip_geometry` from the
+/// Read `agent_view` + `agent_view_geometry` from the
 /// config file, falling back to defaults when missing or malformed.
 /// Surfaced by the per-platform `get_config` tools alongside the
 /// in-memory `DriverConfig` fields.
-pub fn read_pip_keys_from_file() -> (bool, Option<String>) {
+pub fn read_agent_view_keys_from_file() -> (bool, Option<String>) {
     let path = match default_config_path() {
         Some(p) => p,
         None => return (false, None),
@@ -80,11 +79,11 @@ pub fn read_pip_keys_from_file() -> (bool, Option<String>) {
         Err(_) => return (false, None),
     };
     let enabled = json
-        .get("experimental_pip")
+        .get("agent_view")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let geometry = json
-        .get("experimental_pip_geometry")
+        .get("agent_view_geometry")
         .and_then(|v| v.as_str())
         .map(|s| s.to_owned());
     (enabled, geometry)
@@ -92,7 +91,7 @@ pub fn read_pip_keys_from_file() -> (bool, Option<String>) {
 
 /// Geometry of the PiP window, in screen points (top-left origin).
 ///
-/// Parsed from `--experimental-pip-geometry WxH+X+Y`. `x` / `y` are
+/// Parsed from `--agent-view-geometry WxH+X+Y`. `x` / `y` are
 /// optional; when `None` the platform backend picks a sensible
 /// "top-right corner with a small inset" default so a user enabling
 /// the feature without any geometry flags still sees a window.
@@ -148,7 +147,7 @@ impl PipGeometry {
 /// flags and handed to `PipBackendFactory::start`.
 #[derive(Debug, Clone)]
 pub struct PipConfig {
-    /// `--experimental-pip` is on argv. The factory is only consulted
+    /// `--agent-view` is on argv. The factory is only consulted
     /// when this is true; the field is kept here so backends that
     /// share a `start()` path can early-return.
     pub enabled: bool,
@@ -169,12 +168,11 @@ impl Default for PipConfig {
 }
 
 impl PipConfig {
-    /// Parse the PiP-related CLI flags out of `std::env::args()`.
+    /// Parse the Agent View CLI flags out of `std::env::args()`.
     /// Recognised flags (all opt-in):
     /// ```text
-    /// --experimental-pip
-    /// --pip                        (short alias)
-    /// --experimental-pip-geometry  WxH | WxH+X+Y
+    /// --agent-view
+    /// --agent-view-geometry  WxH | WxH+X+Y
     /// ```
     /// Unknown flags are ignored so this never conflicts with the
     /// other arg-parser passes (CursorConfig, the subcommand router).
@@ -188,8 +186,8 @@ impl PipConfig {
         let mut i = 0usize;
         while i < args.len() {
             match args[i].as_str() {
-                "--experimental-pip" | "--pip" => cfg.enabled = true,
-                "--experimental-pip-geometry" => {
+                "--agent-view" => cfg.enabled = true,
+                "--agent-view-geometry" => {
                     if let Some(geom) = args.get(i + 1).and_then(|s| PipGeometry::parse(s)) {
                         cfg.geometry = geom;
                         i += 1;
@@ -205,10 +203,10 @@ impl PipConfig {
     /// Resolve the config from (in order of precedence, low → high):
     ///
     ///   defaults  →  `~/.cua-driver/config.json` keys
-    ///                  (`experimental_pip` bool, `experimental_pip_geometry` string)
+    ///                  (`agent_view` bool, `agent_view_geometry` string)
     ///              →  CLI flags
     ///
-    /// Lets users persist `--experimental-pip` across daemon restarts by
+    /// Lets users persist `--agent-view` across daemon restarts by
     /// editing `~/.cua-driver/config.json` once, instead of re-running
     /// `claude mcp add` with the flag baked into the args list.
     /// Malformed or missing file falls back to the next layer silently.
@@ -216,13 +214,10 @@ impl PipConfig {
         let mut cfg = PipConfig::default();
         if let Ok(text) = std::fs::read_to_string(config_path) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(b) = json.get("experimental_pip").and_then(|v| v.as_bool()) {
+                if let Some(b) = json.get("agent_view").and_then(|v| v.as_bool()) {
                     cfg.enabled = b;
                 }
-                if let Some(s) = json
-                    .get("experimental_pip_geometry")
-                    .and_then(|v| v.as_str())
-                {
+                if let Some(s) = json.get("agent_view_geometry").and_then(|v| v.as_str()) {
                     if let Some(g) = PipGeometry::parse(s) {
                         cfg.geometry = g;
                     }
@@ -474,5 +469,74 @@ mod tests {
             Some("agent-a:old".to_owned())
         );
         assert_eq!(model.len(), 2);
+    }
+
+    #[test]
+    fn parses_agent_view_cli_names() {
+        let cfg = PipConfig::parse(&[
+            "--agent-view".to_owned(),
+            "--agent-view-geometry".to_owned(),
+            "640x420+24+36".to_owned(),
+        ]);
+        assert!(cfg.enabled);
+        assert_eq!(cfg.geometry.width, 640);
+        assert_eq!(cfg.geometry.height, 420);
+        assert_eq!(cfg.geometry.x, Some(24));
+        assert_eq!(cfg.geometry.y, Some(36));
+    }
+
+    #[test]
+    fn ignores_removed_pip_cli_names() {
+        let cfg = PipConfig::parse(&[
+            "--experimental-pip".to_owned(),
+            "--experimental-pip-geometry".to_owned(),
+            "640x420".to_owned(),
+            "--pip".to_owned(),
+        ]);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.geometry.width, PipGeometry::default().width);
+        assert_eq!(cfg.geometry.height, PipGeometry::default().height);
+    }
+
+    #[test]
+    fn reads_agent_view_config_names() {
+        let path = std::env::temp_dir().join(format!(
+            "cua-agent-view-config-{}-new.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{"agent_view":true,"agent_view_geometry":"800x600+12+24"}"#,
+        )
+        .unwrap();
+
+        let cfg = PipConfig::from_args_and_file(&path);
+        assert!(cfg.enabled);
+        assert_eq!(cfg.geometry.width, 800);
+        assert_eq!(cfg.geometry.height, 600);
+        assert_eq!(cfg.geometry.x, Some(12));
+        assert_eq!(cfg.geometry.y, Some(24));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ignores_removed_pip_config_names() {
+        let path = std::env::temp_dir().join(format!(
+            "cua-agent-view-config-{}-old.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{"experimental_pip":true,"experimental_pip_geometry":"800x600"}"#,
+        )
+        .unwrap();
+
+        let cfg = PipConfig::from_args_and_file(&path);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.geometry.width, PipGeometry::default().width);
+        assert_eq!(cfg.geometry.height, PipGeometry::default().height);
+
+        let _ = std::fs::remove_file(path);
     }
 }

@@ -222,7 +222,6 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
 /// per-call binaries don't keep an AppKit/event loop alive long
 /// enough to be useful).
 ///
-/// The legacy `--experimental-pip` flag remains the compatibility switch.
 /// On Windows / Linux
 /// the factory returns "not yet implemented" — we log and continue
 /// without a window so the rest of the daemon keeps working.
@@ -290,8 +289,7 @@ fn maybe_init_pip() {
                 }
             });
             eprintln!(
-                "⚗️  Agent View enabled via experimental PiP compatibility flag \
-                 (macOS only today; \
+                "⚗️  Agent View enabled (macOS only today; \
                  see https://github.com/trycua/cua/issues for follow-up)"
             );
         }
@@ -731,9 +729,9 @@ fn main() {
 
             // Keep the main thread alive for the daemon.
             //
-            // PiP needs the AppKit main run loop to process the
+            // Agent View needs the AppKit main run loop to process the
             // dispatch_async_f calls that push frames into NSImageView;
-            // park main in NSApplication.run() when --experimental-pip is
+            // park main in NSApplication.run() when --agent-view is
             // on. Otherwise just join the serve thread so the process
             // stays up as long as the daemon does.
             if pip_cfg.enabled {

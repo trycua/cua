@@ -152,6 +152,22 @@ def _render_models(schema_path: Path, output_path: Path) -> None:
     )
 
 
+def _format_model(output_path: Path) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "black",
+            "--quiet",
+            "--config",
+            str(REPO_ROOT / "pyproject.toml"),
+            str(output_path),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+
 def _schema_validation_wrapper(schema_content: str) -> str:
     schema_literal = json.dumps(schema_content)
     return f"""
@@ -217,6 +233,9 @@ def generate(*, check: bool) -> None:
         model_content += (
             "\n# Stable public name derived from the CRD title.\nImageFileReference = Source\n"
         )
+        temporary_model.write_text(model_content)
+        _format_model(temporary_model)
+        model_content = temporary_model.read_text()
     _write_or_check(SCHEMA_PATH, schema_content, check=check)
     _write_or_check(MODEL_PATH, model_content, check=check)
 

@@ -12,10 +12,15 @@ from pydantic import ValidationError
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PACKAGE_ROOT / "scripts/generate_image_models.py"
 SCHEMA = PACKAGE_ROOT / "schemas/image-v1alpha1.schema.json"
+MODEL = PACKAGE_ROOT / "cua_sandbox/generated/image_models.py"
 
 
 def test_generated_artifacts_match_the_canonical_crd() -> None:
     subprocess.run([sys.executable, str(SCRIPT), "--check"], check=True)
+
+
+def test_generated_model_is_black_formatted() -> None:
+    subprocess.run([sys.executable, "-m", "black", "--check", str(MODEL)], check=True)
 
 
 def test_generated_schema_identifies_the_image_resource() -> None:

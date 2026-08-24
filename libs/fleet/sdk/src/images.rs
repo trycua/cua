@@ -92,16 +92,17 @@ impl CyclopsClient {
 }
 
 fn validate_manifest_namespace(namespace: &str, manifest: &PreservedJson) -> Result<(), SdkError> {
-    let manifest_namespace = manifest
-        .as_value()
-        .pointer("/metadata/namespace")
-        .and_then(serde_json::Value::as_str);
-    if manifest_namespace.is_some_and(|value| value != namespace) {
-        return Err(SdkError::Configuration {
-            reason: "image metadata.namespace must match the requested namespace".into(),
-        });
-    }
-    Ok(())
+    let reason = match manifest.as_value().pointer("/metadata/namespace") {
+        Some(serde_json::Value::String(value)) if value == namespace => return Ok(()),
+        Some(serde_json::Value::String(_)) => {
+            "image metadata.namespace must match the requested namespace"
+        }
+        Some(_) => "image metadata.namespace must be a string",
+        None => "image metadata.namespace is required",
+    };
+    Err(SdkError::Configuration {
+        reason: reason.into(),
+    })
 }
 
 fn json_request(method: &str, url: url::Url, body: Option<Vec<u8>>) -> HttpRequest {

@@ -125,6 +125,37 @@ async fn image_validation_and_namespace_mismatches_do_not_reach_http() {
     assert_eq!(http.request_count().await, 0);
 }
 
+#[tokio::test]
+async fn image_create_rejects_missing_namespace_without_http() {
+    assert_create_image_rejected_without_request(
+        r#"{"apiVersion":"images.cua.ai/v1alpha1","kind":"Image","metadata":{"name":"image-demo"}}"#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn image_create_rejects_non_string_namespaces_without_http() {
+    for namespace in ["null", "false", "1", "{}", "[]"] {
+        let manifest = format!(
+            r#"{{"apiVersion":"images.cua.ai/v1alpha1","kind":"Image","metadata":{{"namespace":{namespace},"name":"image-demo"}}}}"#
+        );
+        assert_create_image_rejected_without_request(&manifest).await;
+    }
+}
+
+async fn assert_create_image_rejected_without_request(manifest_json: &str) {
+    let http = Arc::new(ScriptedHttpClient::new([]));
+    let manifest = PreservedJson::from_json(manifest_json.into()).unwrap();
+
+    let error = client(Arc::clone(&http))
+        .create_image(NAMESPACE.into(), manifest)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, SdkError::Configuration { .. }));
+    assert_eq!(http.request_count().await, 0);
+}
+
 fn client(http: Arc<ScriptedHttpClient>) -> Arc<CyclopsClient> {
     CyclopsClient::connect(
         CyclopsConfiguration {

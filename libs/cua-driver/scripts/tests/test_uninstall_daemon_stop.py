@@ -98,6 +98,8 @@ DAEMON_EXECUTABLES=("{identity}")
             helper,
             f"""
 if [ "$1" = stop ]; then
+  awk -F'|' -v p='{target.pid}' 'BEGIN {{ OFS="|" }} $1 == p {{ $3="dead" }} {{ print }}' '{self.map}' > '{self.map}.tmp'
+  mv '{self.map}.tmp' '{self.map}'
   kill {target.pid} 2>/dev/null || true
   exit 0
 fi
@@ -152,8 +154,6 @@ printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
         result = self.run_stop(self.setup(self.home / "missing.pid", None, installed))
 
         self.assertIn("status=1 result=failed", result.stdout)
-        # The installed sleeper makes the fallback ambiguous and fail-closed;
-        # the foreign executable must remain untouched as well.
         self.assertIsNone(foreign.poll())
 
     def test_identity_fallback_does_not_signal_ambiguous_owned_process(self) -> None:
@@ -186,6 +186,7 @@ printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
         tools.mkdir()
         executable(tools / "id", "printf '501\\n'")
         executable(tools / "uname", "printf 'Linux\\n'")
+        os.symlink("/bin/cat", tools / "cat")
         os.symlink("/bin/rm", tools / "rm")
         (self.home / ".cua-driver/packages").mkdir(parents=True)
 

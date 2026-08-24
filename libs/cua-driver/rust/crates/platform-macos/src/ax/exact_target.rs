@@ -21,29 +21,6 @@ use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
 
-/// Classify all mapped window identities found while proving one element's
-/// ancestry. A native sheet can expose its panel CGWindowID through `AXWindow`
-/// while its `AXParent` chain continues to the application window that owns the
-/// sheet. The intermediate panel identity must not make a valid parent-window
-/// target look like a sibling.
-fn classify_window_ancestry(
-    target_window_id: u32,
-    mapped_window_ids: impl IntoIterator<Item = u32>,
-) -> ElementAncestry {
-    let mut found_window = false;
-    for window_id in mapped_window_ids {
-        found_window = true;
-        if window_id == target_window_id {
-            return ElementAncestry::ProvenDescendant;
-        }
-    }
-    if found_window {
-        ElementAncestry::OutsideTargetWindow
-    } else {
-        ElementAncestry::Unproven
-    }
-}
-
 /// Prove whether `element` belongs to `target_window_id`.
 ///
 /// Both the direct `AXWindow` attribute and every window-like node in a bounded
@@ -59,49 +36,55 @@ pub unsafe fn element_window_ancestry(
     element: AXUIElementRef,
     target_window_id: u32,
 ) -> ElementAncestry {
-    let mut mapped_window_ids = Vec::new();
-
+    let mut saw_other_window = false;
     if let Some(window) = copy_element_attr(element, "AXWindow") {
         let window_id = ax_get_window_id(window);
         CFRelease(window as CFTypeRef);
         if window_id == Some(target_window_id) {
             return ElementAncestry::ProvenDescendant;
         }
-        mapped_window_ids.extend(window_id);
+        saw_other_window = window_id.is_some();
     }
 
     let mut current: AXUIElementRef = element;
     let mut owned = false;
     for _ in 0..MAX_ANCESTRY_DEPTH {
-        match copy_string_attr(current, "AXRole").as_deref() {
-            Some("AXWindow") | Some("AXSheet") => {
-                if let Some(window_id) = ax_get_window_id(current) {
-                    mapped_window_ids.push(window_id);
+        let role = copy_string_attr(current, "AXRole");
+        if matches!(role.as_deref(), Some("AXWindow" | "AXSheet")) {
+            match ax_get_window_id(current) {
+                Some(window_id) if window_id == target_window_id => {
+                    if owned {
+                        CFRelease(current as CFTypeRef);
+                    }
+                    return ElementAncestry::ProvenDescendant;
                 }
+                Some(_) => saw_other_window = true,
+                None => {}
             }
-            Some("AXApplication") | None => break,
-            _ => {}
+        }
+        if matches!(role.as_deref(), Some("AXApplication") | None) {
+            break;
         }
         let parent = copy_element_attr(current, "AXParent");
         if owned {
             CFRelease(current as CFTypeRef);
         }
-        match parent {
-            Some(parent) => {
-                current = parent;
-                owned = true;
-            }
-            None => {
-                owned = false;
-                break;
-            }
-        }
+        let Some(parent) = parent else {
+            owned = false;
+            break;
+        };
+        current = parent;
+        owned = true;
     }
     if owned {
         CFRelease(current as CFTypeRef);
     }
 
-    classify_window_ancestry(target_window_id, mapped_window_ids)
+    if saw_other_window {
+        ElementAncestry::OutsideTargetWindow
+    } else {
+        ElementAncestry::Unproven
+    }
 }
 
 /// The process's focused AX element, but only when it provably belongs to the
@@ -239,29 +222,7 @@ pub fn gather_background_facts(
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_window_ancestry, count_competing_keyboard_destinations, AxWindowRecord};
-    use cua_driver_core::background_input::ElementAncestry;
-
-    #[test]
-    fn sheet_identity_before_parent_identity_is_a_proven_descendant() {
-        assert_eq!(
-            classify_window_ancestry(41, [73, 73, 41]),
-            ElementAncestry::ProvenDescendant
-        );
-    }
-
-    #[test]
-    fn sibling_identity_without_target_identity_stays_outside() {
-        assert_eq!(
-            classify_window_ancestry(41, [73, 73, 52]),
-            ElementAncestry::OutsideTargetWindow
-        );
-    }
-
-    #[test]
-    fn missing_window_identity_stays_unproven() {
-        assert_eq!(classify_window_ancestry(41, []), ElementAncestry::Unproven);
-    }
+    use super::{count_competing_keyboard_destinations, AxWindowRecord};
 
     fn ax_window(window_id: u32, minimized: Option<bool>) -> AxWindowRecord {
         AxWindowRecord {

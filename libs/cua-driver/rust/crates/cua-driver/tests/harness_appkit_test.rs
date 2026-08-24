@@ -63,10 +63,18 @@ struct Harness {
 
 impl Harness {
     fn launch() -> Self {
-        Self::launch_with_command_oracle(None)
+        Self::launch_with_options(None, false)
+    }
+
+    fn launch_native_sheet() -> Self {
+        Self::launch_with_options(None, true)
     }
 
     fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
+        Self::launch_with_options(command_oracle, false)
+    }
+
+    fn launch_with_options(command_oracle: Option<&Path>, native_sheet: bool) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -79,6 +87,9 @@ impl Harness {
         command.stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(path) = command_oracle {
             command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        if native_sheet {
+            command.env("CUA_HARNESS_OPEN_PANEL", "1");
         }
         let app = command
             .spawn()
@@ -332,23 +343,11 @@ fn harness_appkit_query_projects_structured_elements() {
 fn harness_appkit_native_sheet_descendant_targets_parent_window() {
     let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-appkit-native-sheet")
         .expect("start installed macOS daemon proxy");
-    let harness = Harness::launch();
+    let harness = Harness::launch_native_sheet();
     let pid = harness.pid;
     let (wid, _) = driver
         .find_window(pid as i64, "CuaTestHarness AppKit")
         .expect("AppKit main window not found");
-
-    let parent = snapshot_elements(&mut driver, pid, wid);
-    let open_panel = element_token_by_id(&parent, "btn-open-panel");
-    let opened = driver.call(
-        "click",
-        serde_json::json!({
-            "pid": pid as i64,
-            "window_id": wid,
-            "element_token": open_panel
-        }),
-    );
-    assert!(!opened.is_error(), "open panel failed: {}", opened.text());
 
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let sheet = loop {

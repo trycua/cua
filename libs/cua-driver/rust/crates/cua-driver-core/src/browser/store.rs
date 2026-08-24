@@ -240,6 +240,10 @@ pub struct TargetRecord {
     /// CDP connection generation that minted this capability. Zero denotes
     /// the legacy/non-grant route.
     pub generation: u64,
+    /// Always-nonzero identity generation for the exact endpoint binding.
+    /// Unlike `generation`, this also covers driver-owned and embedded routes
+    /// whose socket is re-proven directly instead of owned by a grant.
+    pub endpoint_generation: u64,
     /// Internal transport owner that proved an existing-profile grant or a
     /// driver-owned browser lifecycle. The public session remains the target
     /// namespace and is checked independently.
@@ -321,6 +325,12 @@ impl BrowserStore {
     /// Mint a fresh snapshot id.
     pub fn mint_snapshot_id(&self) -> u64 {
         self.next()
+    }
+
+    /// Mint an identity generation for one freshly proven endpoint binding.
+    pub fn mint_endpoint_generation(&self) -> u64 {
+        static NEXT_ENDPOINT_GENERATION: AtomicU64 = AtomicU64::new(1);
+        NEXT_ENDPOINT_GENERATION.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Look up a target capability. Unknown ids — including ids minted
@@ -500,6 +510,7 @@ mod tests {
             endpoint_transport: EndpointTransport::LegacyJsonVersion,
             endpoint_access_class: EndpointAccessClass::EmbeddedApplication,
             generation: 0,
+            endpoint_generation: 1,
             transport_session: None,
             fingerprint: ProcessFingerprint {
                 pid: 42,

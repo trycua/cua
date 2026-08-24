@@ -1137,6 +1137,11 @@ impl SecretBroker {
         &self.runtime_scope
     }
 
+    #[cfg(test)]
+    pub(crate) fn active_handle_count(&self) -> usize {
+        self.state.lock().unwrap().handles.len()
+    }
+
     pub fn find_credentials(
         &self,
         target: &VerifiedBrowserSecretTarget,

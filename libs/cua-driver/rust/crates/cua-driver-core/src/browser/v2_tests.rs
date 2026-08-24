@@ -6,9 +6,10 @@
 
 use std::io::Cursor;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex as StdMutex,
 };
+use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -16,6 +17,13 @@ use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use serde_json::{json, Value};
 
 use crate::action_record::ActionExecutionRecord;
+use crate::credentials::{
+    BrowserSecretTargetConstraint, CredentialBindingSpec, CredentialField, CredentialProvider,
+    CredentialProviderClass, CredentialProviderError, CredentialProviderId, PrivateCredentialField,
+    PrivateCredentialFieldLocator, ProviderHealth, ProviderHealthState, ProviderReleaseId,
+    ProviderReleaseRequest, ReleasePlan, SafeCredentialLabel, SecretBroker, SecretBrokerBuilder,
+    SecretReleaseAuthorization, SecretTargetConstraint,
+};
 use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
 
@@ -63,6 +71,7 @@ struct FixtureState {
     viewport_css_width: f64,
     viewport_css_height: f64,
     tab_visible: bool,
+    password_target_live: bool,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -89,6 +98,7 @@ impl Default for FixtureState {
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
             tab_visible: true,
+            password_target_live: true,
             calls: Vec::new(),
         }
     }
@@ -601,6 +611,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "Page.captureScreenshot" if is_tab => {
                 MockReply::ok(json!({"data": st.screenshot_data.clone()}))
             }
+            "Page.createIsolatedWorld" => {
+                let context = match call.params["frameId"].as_str() {
+                    Some("F_MAIN") => 101,
+                    Some("F_IFRAME") => 102,
+                    Some("F_OOPIF") => 103,
+                    _ => return MockReply::err(-32000, "Unknown frame"),
+                };
+                MockReply::ok(json!({ "executionContextId": context }))
+            }
             "Page.navigate" if is_tab => MockReply::ok(json!({
                 "frameId": "F_MAIN",
                 "loaderId": "L_MAIN_NAVIGATED",
@@ -699,10 +718,35 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             | "Emulation.setFocusEmulationEnabled"
             | "Input.dispatchMouseEvent"
             | "Input.insertText" => MockReply::ok(json!({})),
+            "DOM.resolveNode"
+                if call.params["objectGroup"].as_str() == Some("__cua_secret_target_v1") =>
+            {
+                let backend = call.params["backendNodeId"].as_i64().unwrap_or_default();
+                let expected_context = match backend {
+                    30 => 102,
+                    100 => 103,
+                    _ => 101,
+                };
+                if call.params["executionContextId"].as_i64() != Some(expected_context) {
+                    MockReply::err(-32000, "Node belongs to a different document")
+                } else {
+                    MockReply::ok(json!({
+                        "object": { "objectId": format!("secret-obj-{backend}") }
+                    }))
+                }
+            }
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| function.contains("this.type === 'password'")) =>
+            {
+                MockReply::ok(json!({ "result": { "value": st.password_target_live } }))
+            }
             "Runtime.callFunctionOn" => MockReply::ok(json!({ "result": { "value": true } })),
+            "Runtime.releaseObject" => MockReply::ok(json!({})),
             other => MockReply::method_not_found(other),
         }
     })
@@ -968,6 +1012,395 @@ impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
             request_digest: request.request_digest.clone(),
         })
     }
+}
+
+struct DiscoveryCredentialProvider {
+    id: CredentialProviderId,
+    releases: AtomicUsize,
+    cancellations: AtomicUsize,
+}
+
+impl DiscoveryCredentialProvider {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            id: CredentialProviderId::new("fixture-credential-provider").unwrap(),
+            releases: AtomicUsize::new(0),
+            cancellations: AtomicUsize::new(0),
+        })
+    }
+}
+
+#[async_trait]
+impl CredentialProvider for DiscoveryCredentialProvider {
+    fn id(&self) -> &CredentialProviderId {
+        &self.id
+    }
+
+    fn class(&self) -> CredentialProviderClass {
+        CredentialProviderClass::Fake
+    }
+
+    async fn release(
+        &self,
+        _request: &ProviderReleaseRequest,
+    ) -> Result<ReleasePlan, CredentialProviderError> {
+        self.releases.fetch_add(1, Ordering::SeqCst);
+        Err(CredentialProviderError::new(
+            crate::credentials::CredentialProviderErrorKind::Unavailable,
+        ))
+    }
+
+    async fn cancel(&self, _release: ProviderReleaseId) -> Result<(), CredentialProviderError> {
+        self.cancellations.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn health(&self) -> ProviderHealth {
+        ProviderHealth {
+            state: ProviderHealthState::Available,
+        }
+    }
+}
+
+struct CredentialDiscoveryFixture {
+    state: SharedState,
+    _server: MockCdpServer,
+    engine: Arc<BrowserEngine>,
+    broker: Arc<SecretBroker>,
+    provider: Arc<DiscoveryCredentialProvider>,
+    context: Arc<crate::session_authorization::EffectiveAuthorizationContext>,
+    session: String,
+    target_id: String,
+    tab_id: String,
+    password_ref: String,
+    ordinary_ref: String,
+}
+
+async fn credential_discovery_fixture() -> CredentialDiscoveryFixture {
+    let mut initial = FixtureState {
+        semantic_large_page: true,
+        main_url: "https://fixture.test/login".to_owned(),
+        ..FixtureState::default()
+    };
+    initial.password_target_live = true;
+    let state = Arc::new(StdMutex::new(initial));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+
+    let ceiling = crate::session_authorization::SessionModeCeiling::for_trusted_sessions(
+        [crate::authorization::PermissionMode::Unrestricted],
+        true,
+        Duration::from_secs(60),
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    let context = crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
+        .compatibility_context(crate::authorization::PermissionMode::Unrestricted, None)
+        .unwrap();
+    let provider = DiscoveryCredentialProvider::new();
+    let mut builder = SecretBrokerBuilder::new(context.runtime_scope_key()).unwrap();
+    let session = builder.runtime_session_key("credential-discovery").unwrap();
+    builder.add_provider(provider.clone()).unwrap();
+    builder
+        .add_binding(CredentialBindingSpec {
+            session: session.clone(),
+            provider: provider.id().clone(),
+            private_fields: vec![PrivateCredentialField {
+                field: CredentialField::Password,
+                locator: PrivateCredentialFieldLocator::new(
+                    "synthetic://fixture-vault/login/password",
+                )
+                .unwrap(),
+            }],
+            safe_label: Some(SafeCredentialLabel::new("Synthetic login").unwrap()),
+            allowed_targets: vec![SecretTargetConstraint::Browser(
+                BrowserSecretTargetConstraint::exact_password_origin("https://fixture.test")
+                    .unwrap(),
+            )],
+            expires_at: None,
+            max_releases: None,
+            authorization: SecretReleaseAuthorization::trusted_scope("fixture-login").unwrap(),
+        })
+        .unwrap();
+    let broker = builder.build().unwrap();
+    let engine = BrowserEngine::new_with_runtime_services_and_secret_broker(
+        Arc::new(FixturePlatform {
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+        }),
+        Arc::new(crate::consent::ApprovalBroker::new(Some(Arc::new(
+            FixtureProtectedProvider {
+                consent_seen: AtomicBool::new(false),
+            },
+        )))),
+        Arc::new(crate::consent::ProtectedResourceOwnershipStore::default()),
+        Some(broker.clone()),
+    );
+    let transport = format!("credential-transport-{}", context.runtime_scope_key());
+    let prepared = BrowserPrepareTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": session,
+            "_transport_session_id": transport,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepared)["status"],
+        "ok",
+        "credential fixture prepare failed: {}",
+        structured(&prepared)
+    );
+    let bound = GetBrowserStateTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": session,
+            "_transport_session_id": transport,
+        }))
+        .await;
+    let bound = structured(&bound);
+    assert_eq!(
+        bound["status"], "ok",
+        "credential fixture bind failed: {bound}"
+    );
+    let target_id = bound["target_id"].as_str().unwrap().to_owned();
+    let tab_id = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+    let snapshot = GetBrowserStateTool::new(engine.clone())
+        .invoke(json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": session,
+            "snapshot_format": "semantic_v2",
+        }))
+        .await;
+    let snapshot = structured(&snapshot);
+    assert_eq!(
+        snapshot["status"], "ok",
+        "credential fixture snapshot failed: {snapshot}"
+    );
+    let password_ref = snapshot["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["secure_field"] == "password")
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("semantic password ref")
+        .to_owned();
+    let ordinary_ref = snapshot["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Password hint")
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("ordinary text ref")
+        .to_owned();
+
+    CredentialDiscoveryFixture {
+        state,
+        _server: server,
+        engine,
+        broker,
+        provider,
+        context,
+        session,
+        target_id,
+        tab_id,
+        password_ref,
+        ordinary_ref,
+    }
+}
+
+#[tokio::test]
+async fn credential_discovery_mints_fresh_handles_only_after_exact_target_proof() {
+    let fixture = credential_discovery_fixture().await;
+    let first = fixture
+        .engine
+        .discover_credentials_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(
+        first[0].label.as_ref().map(SafeCredentialLabel::as_str),
+        Some("Synthetic login")
+    );
+    assert_eq!(first[0].fields, vec![CredentialField::Password]);
+    assert_eq!(first[0].provider_class, Some(CredentialProviderClass::Fake));
+
+    let second = fixture
+        .engine
+        .discover_credentials_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 1);
+    assert_ne!(first[0].handle.as_str(), second[0].handle.as_str());
+    assert_eq!(fixture.broker.active_handle_count(), 2);
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.provider.cancellations.load(Ordering::SeqCst), 0);
+
+    let proof_calls_before = fixture
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .filter(|(_, method, _)| method == "Page.createIsolatedWorld")
+        .count();
+    let ordinary = fixture
+        .engine
+        .discover_credentials_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.ordinary_ref,
+        )
+        .await
+        .unwrap();
+    assert!(ordinary.is_empty());
+    assert_eq!(fixture.broker.active_handle_count(), 2);
+    let calls = fixture.state.lock().unwrap().calls.clone();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(_, method, _)| method == "Page.createIsolatedWorld")
+            .count(),
+        proof_calls_before,
+        "ordinary fields must be rejected before secure-node instrumentation"
+    );
+    assert!(calls.iter().any(|(_, method, params)| {
+        method == "DOM.resolveNode"
+            && params["objectGroup"].as_str() == Some("__cua_secret_target_v1")
+            && params["executionContextId"].as_i64() == Some(101)
+    }));
+    assert!(
+        calls
+            .iter()
+            .all(|(_, method, _)| method != "Input.insertText"),
+        "discovery must never deliver input"
+    );
+}
+
+#[tokio::test]
+async fn credential_discovery_rejects_tab_and_document_substitution_before_minting() {
+    let fixture = credential_discovery_fixture().await;
+    let wrong_tab = fixture
+        .engine
+        .discover_credentials_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            "tab-substituted",
+            &fixture.password_ref,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        wrong_tab.code,
+        super::refusal::BrowserRefusalCode::BrowserTabNotFound
+    );
+    assert_eq!(fixture.broker.active_handle_count(), 0);
+
+    fixture.state.lock().unwrap().main_loader = "L_MAIN_NAVIGATED".to_owned();
+    let navigated = fixture
+        .engine
+        .discover_credentials_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        navigated.code,
+        super::refusal::BrowserRefusalCode::BrowserRefStale
+    );
+    assert_eq!(fixture.broker.active_handle_count(), 0);
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn credential_discovery_resolves_the_node_inside_its_exact_frame_world() {
+    let fixture = credential_discovery_fixture().await;
+    let (snapshot_id, index) = super::store::parse_ref(&fixture.password_ref).unwrap();
+    fixture
+        .engine
+        .store
+        .update_target(&fixture.session, &fixture.target_id, |target| {
+            let entry = target
+                .tabs
+                .get_mut(&fixture.tab_id)
+                .and_then(|tab| tab.snapshots.get_mut(&snapshot_id))
+                .and_then(|snapshot| snapshot.refs.get_mut(&index))
+                .unwrap();
+            entry.frame.kind = super::store::FrameKind::Iframe;
+            entry.frame.identity = Some(super::store::FrameIdentity {
+                frame_id: "F_IFRAME".to_owned(),
+                loader_id: "L_IFRAME_1".to_owned(),
+            });
+        });
+
+    let substituted = fixture
+        .engine
+        .discover_credentials_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        substituted.code,
+        super::refusal::BrowserRefusalCode::BrowserRefStale
+    );
+    assert_eq!(fixture.broker.active_handle_count(), 0);
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn credential_discovery_reproves_current_password_semantics_before_minting() {
+    let fixture = credential_discovery_fixture().await;
+    fixture.state.lock().unwrap().password_target_live = false;
+    let changed = fixture
+        .engine
+        .discover_credentials_for_ref_with_context(
+            fixture.context.as_ref(),
+            &fixture.session,
+            &fixture.target_id,
+            &fixture.tab_id,
+            &fixture.password_ref,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        changed.code,
+        super::refusal::BrowserRefusalCode::BrowserRefStale
+    );
+    assert_eq!(fixture.broker.active_handle_count(), 0);
+    assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
 }
 
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {

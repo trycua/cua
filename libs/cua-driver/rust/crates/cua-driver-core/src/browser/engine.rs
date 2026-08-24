@@ -25,6 +25,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::SystemTime;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
@@ -80,6 +81,7 @@ pub struct BrowserEngine {
     pub(crate) existing_profile_grants: ExistingProfileGrants,
     pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+    secret_broker: Option<Arc<crate::credentials::SecretBroker>>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
@@ -498,6 +500,7 @@ impl OopifStatus {
 pub(crate) struct LocalFrameTree {
     main_frame_id: String,
     frames: HashMap<String, String>,
+    urls: HashMap<String, String>,
 }
 
 impl LocalFrameTree {
@@ -520,6 +523,12 @@ impl LocalFrameTree {
         self.frames.get(&identity.frame_id) == Some(&identity.loader_id)
     }
 
+    fn live_url(&self, identity: &FrameIdentity) -> Option<&str> {
+        self.proves(identity)
+            .then(|| self.urls.get(&identity.frame_id).map(String::as_str))
+            .flatten()
+    }
+
     fn identities(&self) -> Vec<FrameIdentity> {
         let mut identities = self
             .frames
@@ -538,23 +547,32 @@ impl LocalFrameTree {
 /// id are omitted (their refs will be omitted / refused, never
 /// guessed); a malformed root fails the whole parse.
 fn parse_frame_tree(v: &Value) -> Option<LocalFrameTree> {
-    fn walk(node: &Value, frames: &mut HashMap<String, String>) -> Option<String> {
+    fn walk(
+        node: &Value,
+        frames: &mut HashMap<String, String>,
+        urls: &mut HashMap<String, String>,
+    ) -> Option<String> {
         let frame = node.get("frame")?;
         let id = frame.get("id").and_then(Value::as_str)?.to_owned();
         let loader = frame.get("loaderId").and_then(Value::as_str)?.to_owned();
         frames.insert(id.clone(), loader);
+        if let Some(url) = frame.get("url").and_then(Value::as_str) {
+            urls.insert(id.clone(), url.to_owned());
+        }
         if let Some(children) = node.get("childFrames").and_then(Value::as_array) {
             for child in children {
-                let _ = walk(child, frames);
+                let _ = walk(child, frames, urls);
             }
         }
         Some(id)
     }
     let mut frames = HashMap::new();
-    let main_frame_id = walk(v.get("frameTree")?, &mut frames)?;
+    let mut urls = HashMap::new();
+    let main_frame_id = walk(v.get("frameTree")?, &mut frames, &mut urls)?;
     Some(LocalFrameTree {
         main_frame_id,
         frames,
+        urls,
     })
 }
 
@@ -625,6 +643,24 @@ impl BrowserEngine {
         approval_broker: Arc<crate::consent::ApprovalBroker>,
         protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     ) -> Arc<Self> {
+        Self::new_with_runtime_services_and_secret_broker(
+            platform,
+            approval_broker,
+            protected_resource_ownership,
+            None,
+        )
+    }
+
+    /// Construct a browser engine with an immutable credential broker supplied
+    /// by the trusted host before agent work begins. Public tools cannot add or
+    /// replace this broker after startup.
+    #[doc(hidden)]
+    pub fn new_with_runtime_services_and_secret_broker(
+        platform: Arc<dyn BrowserPlatform>,
+        approval_broker: Arc<crate::consent::ApprovalBroker>,
+        protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+        secret_broker: Option<Arc<crate::credentials::SecretBroker>>,
+    ) -> Arc<Self> {
         let engine = Arc::new(Self {
             platform,
             store: BrowserStore::new(),
@@ -633,6 +669,7 @@ impl BrowserEngine {
             existing_profile_grants: ExistingProfileGrants::new(),
             approval_broker,
             protected_resource_ownership,
+            secret_broker,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
             session_end_hook: Mutex::new(None),
@@ -1278,6 +1315,7 @@ impl BrowserEngine {
             endpoint_transport: endpoint.transport,
             endpoint_access_class: access_class,
             generation: grant.as_ref().map_or(0, |grant| grant.generation),
+            endpoint_generation: self.store.mint_endpoint_generation(),
             transport_session: grant
                 .as_ref()
                 .map(|grant| grant.transport_session.clone())
@@ -1836,6 +1874,275 @@ impl BrowserEngine {
                     ))
                 }
             }
+        }
+    }
+
+    /// Target-first credential discovery for the current trusted dispatch.
+    /// The public contract is intentionally not registered yet; this entry
+    /// point exists so the exact browser path can be certified first.
+    #[allow(dead_code)]
+    pub(crate) async fn discover_credentials_for_ref(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        external_ref: &str,
+    ) -> Result<Vec<crate::credentials::CredentialDescriptor>, BrowserRefusal> {
+        let context = crate::tool::current_dispatch_authorization_context().ok_or_else(|| {
+            refuse(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "credential discovery requires a trusted runtime authorization context",
+            )
+        })?;
+        self.discover_credentials_for_ref_with_context(
+            context.as_ref(),
+            session,
+            target_id,
+            tab_id,
+            external_ref,
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn discover_credentials_for_ref_with_context(
+        &self,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        external_ref: &str,
+    ) -> Result<Vec<crate::credentials::CredentialDescriptor>, BrowserRefusal> {
+        let Some(broker) = self.secret_broker.as_ref() else {
+            return Ok(Vec::new());
+        };
+        if context.is_expired() {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "credential discovery authorization is no longer live",
+            ));
+        }
+        let runtime_scope = context.runtime_scope_key();
+        let runtime_prefix = format!("__cua_runtime_{runtime_scope}:");
+        if broker.runtime_scope() != runtime_scope
+            || !session.starts_with(&runtime_prefix)
+            || session.len() == runtime_prefix.len()
+            || context
+                .public_session()
+                .is_some_and(|bound| context.runtime_session_key(bound) != session)
+        {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "credential discovery does not belong to this runtime session",
+            ));
+        }
+
+        // Hold the same exact CDP-target coordinator used by browser mutation
+        // from the first live proof through handle minting. Discovery performs
+        // no provider call and never accepts a caller-supplied locator.
+        let _mutation = self.lock_mutation(session, target_id, tab_id).await?;
+        let validated = self
+            .revalidate_for_mutation(session, target_id, Some(tab_id))
+            .await?;
+        let classification = self.platform.classify_browser(validated.record.pid).await?;
+        if !classification.supports_cdp
+            || classification.engine != BrowserEngineFamily::Chromium
+            || classification.process_role != BrowserProcessRole::StandaloneConsumer
+            || !matches!(
+                classification.product_kind,
+                super::types::BrowserProduct::GoogleChrome
+                    | super::types::BrowserProduct::MicrosoftEdge
+            )
+        {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "credential delivery is certified only for standalone Chrome and Edge targets",
+            ));
+        }
+        let entry = self
+            .store
+            .resolve_ref(session, target_id, tab_id, external_ref)?;
+        if !entry.semantic || entry.secure_field != Some(super::store::SecureFieldKind::Password) {
+            return Ok(Vec::new());
+        }
+        let identity = entry.frame.identity.as_ref().ok_or_else(|| {
+            refuse(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "the secure field has no provable frame and document identity",
+            )
+        })?;
+        let frame_session = self
+            .frame_session_for_mutation(session, target_id, tab_id, &validated, &entry.frame)
+            .await?;
+        let live_tree = self
+            .local_frame_tree(&validated.conn, &frame_session)
+            .await
+            .map_err(|error| match error {
+                FrameTreeError::Unsupported => refuse(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "the browser cannot prove the secure field's live document identity",
+                ),
+                FrameTreeError::Failed(error) => route_err(
+                    "Page.getFrameTree failed during credential target proof",
+                    error,
+                ),
+            })?;
+        let live_url = live_tree.live_url(identity).ok_or_else(|| {
+            self.store
+                .invalidate_tab_snapshots(session, target_id, tab_id);
+            refuse(
+                BrowserRefusalCode::BrowserRefStale,
+                "the secure field's document changed since the semantic snapshot",
+            )
+        })?;
+        if context.capability_manifest().is_some() {
+            authorize_live_browser_origin(context.capability_manifest(), live_url)?;
+        }
+        self.reprove_live_password_node(
+            session,
+            target_id,
+            tab_id,
+            &validated.conn,
+            &frame_session,
+            identity,
+            entry.backend_node_id,
+        )
+        .await?;
+
+        let frame_kind = match entry.frame.kind {
+            FrameKind::Main => crate::credentials::BrowserSecretFrameKind::Main,
+            FrameKind::Iframe => crate::credentials::BrowserSecretFrameKind::Iframe,
+            FrameKind::Oopif => crate::credentials::BrowserSecretFrameKind::Oopif,
+        };
+        let target = crate::credentials::VerifiedBrowserSecretTarget::new(
+            runtime_scope,
+            session.to_owned(),
+            validated.record.fingerprint.clone(),
+            validated.record.endpoint_generation,
+            target_id.to_owned(),
+            tab_id.to_owned(),
+            crate::credentials::BrowserSecretFrameIdentity {
+                kind: frame_kind,
+                frame_id: identity.frame_id.clone(),
+                loader_id: identity.loader_id.clone(),
+            },
+            live_url,
+            external_ref.to_owned(),
+            super::store::SecureFieldKind::Password,
+        )
+        .map_err(|_| {
+            refuse(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the secure browser target could not be proven",
+            )
+        })?;
+        broker
+            .find_credentials(&target, SystemTime::now())
+            .map_err(|_| {
+                refuse(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "credential discovery is temporarily unavailable",
+                )
+            })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn reprove_live_password_node(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        conn: &CdpConnection,
+        cdp_session: &str,
+        identity: &FrameIdentity,
+        backend_node_id: i64,
+    ) -> Result<(), BrowserRefusal> {
+        let stale = |message: &'static str| {
+            self.store
+                .invalidate_tab_snapshots(session, target_id, tab_id);
+            refuse(BrowserRefusalCode::BrowserRefStale, message)
+        };
+        let isolated = conn
+            .call(
+                Some(cdp_session),
+                "Page.createIsolatedWorld",
+                json!({
+                    "frameId": identity.frame_id,
+                    "worldName": "__cua_secret_target_v1",
+                    "grantUniveralAccess": false,
+                }),
+            )
+            .await
+            .map_err(|error| {
+                if is_method_unsupported(&error) {
+                    refuse(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "the browser lacks the isolated-world route required for secure target proof",
+                    )
+                } else {
+                    route_err("could not create the secure target proof world", error)
+                }
+            })?;
+        let execution_context_id = isolated
+            .get("executionContextId")
+            .and_then(Value::as_i64)
+            .filter(|id| *id > 0)
+            .ok_or_else(|| {
+                route_err(
+                    "Page.createIsolatedWorld returned malformed data",
+                    "missing execution context identity",
+                )
+            })?;
+        let resolved = conn
+            .call(
+                Some(cdp_session),
+                "DOM.resolveNode",
+                json!({
+                    "backendNodeId": backend_node_id,
+                    "executionContextId": execution_context_id,
+                    "objectGroup": "__cua_secret_target_v1",
+                }),
+            )
+            .await
+            .map_err(|_| stale("the secure ref no longer resolves inside its exact live frame"))?;
+        let object_id = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| stale("the secure ref no longer has a live DOM object"))?;
+        let proof = conn
+            .call(
+                Some(cdp_session),
+                "Runtime.callFunctionOn",
+                json!({
+                    "objectId": object_id,
+                    "functionDeclaration": "function() { return this !== null && this.nodeType === 1 && this.isConnected === true && this.localName === 'input' && this.type === 'password' && this.ownerDocument !== null && this.ownerDocument.defaultView !== null; }",
+                    "returnByValue": true,
+                    "silent": true,
+                }),
+            )
+            .await;
+        let _ = conn
+            .call(
+                Some(cdp_session),
+                "Runtime.releaseObject",
+                json!({ "objectId": object_id }),
+            )
+            .await;
+        match proof {
+            Ok(value) if value.pointer("/result/value").and_then(Value::as_bool) == Some(true) => {
+                Ok(())
+            }
+            Ok(_) => Err(stale(
+                "the secure ref is no longer a live input with type password",
+            )),
+            Err(error) if is_method_unsupported(&error) => Err(refuse(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "the browser lacks the boolean route required for secure target proof",
+            )),
+            Err(_) => Err(stale(
+                "the secure ref could not be re-proven immediately before discovery",
+            )),
         }
     }
 

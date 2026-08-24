@@ -3026,6 +3026,7 @@ mod tests {
                 endpoint_access_class:
                     crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
+                endpoint_generation: 1,
                 transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
@@ -3087,6 +3088,7 @@ mod tests {
                 endpoint_access_class:
                     crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
+                endpoint_generation: 1,
                 transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
@@ -3133,6 +3135,7 @@ mod tests {
                 endpoint_access_class:
                     crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
+                endpoint_generation: 1,
                 transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,

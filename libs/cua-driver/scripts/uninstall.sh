@@ -89,7 +89,7 @@ while [[ $# -gt 0 ]]; do
         --backend=rust)      shift ;;
         --backend=swift)     shift ;;  # retired Swift (no-op)
         --reset-tcc)         RESET_TCC=1; shift ;;  # legacy/explicit default: revoke TCC grants
-        --keep-tcc)          RESET_TCC=0; shift ;;  # preserve TCC grants across reinstall
+        --keep-tcc)          RESET_TCC=0; shift ;;  # preserve TCC grants across reinstall/reinstall
         --purge)             PURGE_DATA=1; shift ;;  # also delete pseudonymous identity + preference
         --backend=*)
             printf 'error: unknown backend %q; supported: rust\n' "${1#*=}" >&2
@@ -333,10 +333,11 @@ stop_release_daemon() {
         fi
     fi
 
-    # The helper could not establish a stopped endpoint. Locate only
-    # processes whose executable is in the release install. This is a recovery
-    # path for old installs and unlinked binaries, not the normal shutdown
-    # mechanism.
+    # The helper could not establish a stopped endpoint. Locate only processes
+    # whose executable belongs to this release install. Executable identity is
+    # sufficient to establish ownership, but not daemon role: the same binary
+    # can host MCP stdio children. Do not guess or signal those processes when
+    # the authoritative PID/control path is unavailable.
     fallback_pids="$(release_daemon_fallback_pids 2>/dev/null)" || fallback_status=$?
     if [[ "$fallback_status" == "2" ]]; then
         printf 'daemon_stop_incomplete: cannot verify a stale or missing daemon PID because pgrep and ps are required for the executable-identity fallback.\n' >&2
@@ -348,23 +349,9 @@ stop_release_daemon() {
         return 0
     fi
 
-    local fallback_pid
-    while IFS= read -r fallback_pid; do
-        [[ -n "$fallback_pid" ]] || continue
-        if daemon_pid_alive "$fallback_pid"; then
-            force_stop_daemon_pid "$fallback_pid" || true
-        fi
-    done <<< "$fallback_pids"
-    while IFS= read -r fallback_pid; do
-        [[ -n "$fallback_pid" ]] || continue
-        if daemon_pid_alive "$fallback_pid"; then
-            printf 'daemon_stop_incomplete: release cua-driver process %s is still running after stop.\n' "$fallback_pid" >&2
-            DAEMON_STOP_RESULT=failed
-            return 1
-        fi
-    done <<< "$fallback_pids"
-    DAEMON_STOP_RESULT=stopped
-    return 0
+    printf 'daemon_stop_incomplete: found a release cua-driver process, but cannot safely identify the daemon without its PID file or native control path.\n' >&2
+    DAEMON_STOP_RESULT=failed
+    return 1
 }
 
 reject_root_invocation() {
@@ -663,7 +650,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
 
     # --- Revoke TCC grants BEFORE removing the app ---
     # tccutil resolves com.trycua.driver through LaunchServices, so the reset
-    # only works while /Applications/CuaDriver.app is still installed. Running
+    # only works while /Applications/CuaDriver.app still installed. Running
     # it here (not at the closing message) is what makes the revoke actually
     # take — otherwise it fails with -10814 and the grant silently survives.
     maybe_reset_tcc

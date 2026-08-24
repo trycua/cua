@@ -236,6 +236,7 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "list_windows",
     "debug_window_info",
     "get_browser_state",
+    "find_credentials",
     "browser_dialog[action=inspect]",
     "page[action=get_text|query_dom]",
     "escalate_session",
@@ -363,7 +364,7 @@ const BROWSER_BOUND_INPUT_SCOPE_KEYS: &[&str] = &[
     "user_policy_sha256",
 ];
 
-const SECRET_RELEASE_OPERATIONS: &[&str] = &["secret_release"];
+const SECRET_RELEASE_OPERATIONS: &[&str] = &["secret_release", "type_secret"];
 const SECRET_RELEASE_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
     "public_session",
@@ -784,6 +785,7 @@ pub fn enforcement_adapters_for_call(
             | "list_windows"
             | "debug_window_info"
             | "get_browser_state"
+            | "find_credentials"
             | "escalate_session"
             | "zoom"
             | "start_recording"
@@ -962,6 +964,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "escalate_session"
         | "start_recording"
         | "get_browser_state"
+        | "find_credentials"
         | "browser_prepare"
         | "browser_navigate"
         | "browser_click"
@@ -982,7 +985,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_set_input_files"
         | "browser_download" => RiskClass::R3,
 
-        "secret_release" => RiskClass::R3,
+        "secret_release" | "type_secret" => RiskClass::R3,
 
         _ => RiskClass::Unclassified,
     };

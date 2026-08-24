@@ -402,6 +402,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // input.pointer/keyboard families) because they act inside a
         // page via CDP, not on the OS input layer.
         "get_browser_state" => &["browser.state"],
+        "find_credentials" => &["credentials.find", "browser.state"],
         "browser_prepare" => &["browser.prepare"],
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
@@ -410,6 +411,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_set_input_files" => &["browser.input.files"],
         "browser_download" => &["browser.download"],
         "browser_pointer" => &["browser.input.pointer"],
+        "type_secret" => &["credentials.release", "browser.input.secret"],
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
@@ -1505,7 +1507,8 @@ impl ToolRegistry {
                     }
                 }));
         }
-        let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
+        let fixed_recording_turn = resolved_name == "type_secret";
+        let private_recording_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if is_physical_desktop_action(resolved_name) {
             let coordinator = desktop_action_coordinator();
             // Avoid yielding the dispatch task when the process-wide input
@@ -1523,7 +1526,9 @@ impl ToolRegistry {
         let pending_turn = should_record
             .then(|| {
                 recording_args.as_ref().and_then(|recording_args| {
-                    if private_consent_turn {
+                    if fixed_recording_turn {
+                        self.recording.begin_fixed_turn(resolved_name, start_ms)
+                    } else if private_recording_turn {
                         self.recording
                             .begin_private_turn(resolved_name, recording_args, start_ms)
                     } else {
@@ -1664,7 +1669,11 @@ impl ToolRegistry {
         // of action tools the recording pipeline cares about (non-read-only,
         // not the recording-control meta-tools) so the live view matches
         // what the recorder would have captured for the turn.
-        if pip_hook::pip_enabled() && should_record && !private_consent_turn {
+        if pip_hook::pip_enabled()
+            && should_record
+            && !private_recording_turn
+            && !fixed_recording_turn
+        {
             let window_id = args.opt_u64("window_id");
             let pid = args.opt_i64("pid");
             if let Some(png_bytes) = screenshot_for(window_id, pid) {
@@ -4737,6 +4746,9 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Option<Value> {
                     );
                 }
             }
+            "type_secret" => {
+                arguments.clear();
+            }
             "type_text" | "browser_type" => {
                 if arguments.contains_key("text") {
                     arguments.insert("text".to_owned(), Value::String("[redacted]".to_owned()));
@@ -4800,6 +4812,7 @@ fn recording_passthrough_tool(tool_name: &str) -> bool {
             | "set_agent_cursor_enabled"
             | "set_agent_cursor_motion"
             | "set_agent_cursor_theme"
+            | "check_permissions"
             | "set_config"
             | "zoom"
             | "browser_click"
@@ -4823,6 +4836,7 @@ pub fn has_recording_policy(tool_name: &str) -> bool {
             | "browser_download"
             | "type_text"
             | "browser_type"
+            | "type_secret"
             | "set_value"
             | "browser_navigate"
             | "page"
@@ -4858,6 +4872,7 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
             }
         }
         "type_text" => return "Type text".to_owned(),
+        "type_secret" => return "Fill saved secret".to_owned(),
         "press_key" | "hotkey" => arg("key").or_else(|| arg("keys")).unwrap_or_default(),
         "scroll" => format!(
             "dx={} dy={}",
@@ -5007,6 +5022,25 @@ mod capability_tests {
         )
         .is_none());
         assert!(!has_recording_policy("new_mutation_without_privacy_review"));
+    }
+
+    #[test]
+    fn permission_prompt_recording_retains_only_reviewed_boolean_controls() {
+        let recorded = recording_args_for(
+            "check_permissions",
+            &serde_json::json!({
+                "prompt": true,
+                "probe_direct_capture": false,
+            }),
+        )
+        .expect("check_permissions has an explicit recording policy");
+        assert_eq!(
+            recorded,
+            serde_json::json!({
+                "prompt": true,
+                "probe_direct_capture": false,
+            })
+        );
     }
 
     #[test]
@@ -5467,6 +5501,14 @@ mod capability_tests {
         assert_eq!(entry["risk"]["enforcement"], "active");
         assert_eq!(entry["risk"]["operation_sensitive"], true);
         assert_eq!(entry["risk"]["version"], "1");
+
+        let discovery = dummy_def("find_credentials").to_list_entry();
+        assert_eq!(discovery["risk"]["class"], "r2");
+        assert_eq!(discovery["risk"]["enforcement"], "active");
+
+        let delivery = dummy_def("type_secret").to_list_entry();
+        assert_eq!(delivery["risk"]["class"], "r3");
+        assert_eq!(delivery["risk"]["enforcement"], "active");
     }
 
     #[test]
@@ -5526,7 +5568,13 @@ mod capability_tests {
     fn action_tools_advertise_the_same_closed_output_schema() {
         let expected =
             <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema();
-        for name in ["click", "browser_click", "browser_pointer", "browser_type"] {
+        for name in [
+            "click",
+            "browser_click",
+            "browser_pointer",
+            "browser_type",
+            "type_secret",
+        ] {
             let entry = action_tool_entry(name);
             // The success variant is unchanged and still closed; it now sits
             // beside the refusal envelope instead of standing alone.

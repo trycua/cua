@@ -216,6 +216,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
         | "browser_screenshot"
         | "browser_tabs"
         | "browser_get_tabs" => CursorAction::Observe,
+        "find_credentials" => CursorAction::Observe,
 
         "click"
         | "double_click"
@@ -226,7 +227,9 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
 
         "drag" | "browser_drag" => CursorAction::Drag,
         "scroll" | "browser_scroll" => CursorAction::Scroll,
-        "type_text" | "set_value" | "browser_type" | "browser_fill" => CursorAction::Text,
+        "type_text" | "set_value" | "browser_type" | "browser_fill" | "type_secret" => {
+            CursorAction::Text
+        }
         "press_key" | "hotkey" | "browser_press_key" | "browser_hotkey" => CursorAction::Key,
 
         "move_cursor" | "browser_navigate" | "browser_go_back" | "browser_go_forward"

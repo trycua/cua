@@ -1395,7 +1395,7 @@ async fn credential_discovery_mints_fresh_handles_only_after_exact_target_proof(
         .unwrap();
     assert_eq!(second.len(), 1);
     assert_ne!(first[0].handle.as_str(), second[0].handle.as_str());
-    assert_eq!(fixture.broker.active_handle_count(), 2);
+    assert_eq!(fixture.broker.active_handle_count(), 1);
     assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.provider.cancellations.load(Ordering::SeqCst), 0);
 
@@ -1419,7 +1419,7 @@ async fn credential_discovery_mints_fresh_handles_only_after_exact_target_proof(
         .await
         .unwrap();
     assert!(ordinary.is_empty());
-    assert_eq!(fixture.broker.active_handle_count(), 2);
+    assert_eq!(fixture.broker.active_handle_count(), 1);
     let calls = fixture.state.lock().unwrap().calls.clone();
     assert_eq!(
         calls
@@ -1764,7 +1764,7 @@ async fn credential_delivery_maps_non_runtime_plans_without_provider_metadata() 
 }
 
 #[tokio::test]
-async fn credential_delivery_missing_events_is_misdirected_and_never_retried() {
+async fn credential_delivery_missing_events_is_unverified_and_never_retried() {
     let fixture = credential_discovery_fixture().await;
     let handle = discover_fixture_credential(&fixture).await;
     fixture.state.lock().unwrap().secret_input_observed = false;
@@ -1783,7 +1783,7 @@ async fn credential_delivery_missing_events_is_misdirected_and_never_retried() {
         .unwrap_err();
     assert_eq!(
         error.code,
-        super::refusal::BrowserRefusalCode::SecretDeliveryMisdirected
+        super::refusal::BrowserRefusalCode::SecretDeliveryUnverified
     );
     assert_eq!(fixture.provider.releases.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.broker.active_handle_count(), 0);

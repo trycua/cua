@@ -295,6 +295,7 @@ fn build_driver(
         register_host_tools: Some(history_runtime::register_host_tools),
         authorization_host: None,
         activity_observer: None,
+        credential_host_factory: None,
     })
 }
 
@@ -329,6 +330,7 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         register_host_tools: Some(history_runtime::register_host_tools),
         authorization_host: None,
         activity_observer: None,
+        credential_host_factory: None,
     })
 }
 

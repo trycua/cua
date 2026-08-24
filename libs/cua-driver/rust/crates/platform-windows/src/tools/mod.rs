@@ -23,13 +23,22 @@ pub fn build_registry_with_provider(
     compat: bool,
     provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 ) -> ToolRegistry {
+    build_registry_with_provider_and_secret_broker(compat, provider, None)
+}
+
+pub fn build_registry_with_provider_and_secret_broker(
+    compat: bool,
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    secret_broker: Option<std::sync::Arc<cua_driver_core::credentials::SecretBroker>>,
+) -> ToolRegistry {
     #[cfg(target_os = "windows")]
-    return impl_::build_registry_with_provider(compat, provider);
+    return impl_::build_registry_with_provider_and_secret_broker(compat, provider, secret_broker);
 
     #[cfg(not(target_os = "windows"))]
     {
         let _ = compat;
         let _ = provider;
+        let _ = secret_broker;
         stubs::build_registry()
     }
 }

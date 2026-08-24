@@ -4,7 +4,10 @@
 //! objects and the daemon host construct the same runtime here; transport
 //! adapters are downstream consumers of `CuaDriver`.
 
-use crate::{DriverActivityEvent, DriverActivityKind, DriverActivityObserver};
+use crate::{
+    DriverActivityEvent, DriverActivityKind, DriverActivityObserver, DriverCredentialHost,
+    DriverCredentialHostFactory,
+};
 use cua_driver_core::{
     authorization::PermissionMode,
     protocol::ToolResult as CoreToolResult,
@@ -20,7 +23,7 @@ use cursor_overlay::CursorConfig;
 use serde_json::Value;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
@@ -59,6 +62,9 @@ pub(crate) struct RuntimeOptions {
     /// public tool arguments or transport metadata.
     pub authorization_host: Option<Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
     pub activity_observer: Option<Arc<dyn DriverActivityObserver>>,
+    /// Rust-only credential composition invoked after the runtime scope exists
+    /// and before the platform registry begins accepting work.
+    pub credential_host_factory: Option<Arc<dyn DriverCredentialHostFactory>>,
 }
 
 impl RuntimeOptions {
@@ -77,6 +83,7 @@ impl RuntimeOptions {
             compatibility_authorization: None,
             authorization_host: None,
             activity_observer: None,
+            credential_host_factory: None,
         }
     }
 
@@ -163,6 +170,7 @@ pub(crate) struct DriverRuntime {
     /// previously admitted operation is still executing.
     lifecycle: tokio::sync::RwLock<()>,
     activity_observer: Option<Arc<dyn DriverActivityObserver>>,
+    credential_host: Mutex<Option<DriverCredentialHost>>,
 }
 
 impl DriverRuntime {
@@ -186,9 +194,29 @@ impl DriverRuntime {
                 .legacy_context()
                 .map_err(RuntimeCreateError::Authorization)?,
         };
+        let runtime_scope = compatibility_context.runtime_scope_key();
+        let credential_host = options
+            .credential_host_factory
+            .as_ref()
+            .map(|factory| factory.build(&runtime_scope))
+            .transpose()
+            .map_err(|_| {
+                RuntimeCreateError::Authorization(
+                    "credential host configuration is unavailable".to_owned(),
+                )
+            })?;
+        if credential_host
+            .as_ref()
+            .is_some_and(|host| host.broker().runtime_scope() != runtime_scope)
+        {
+            return Err(RuntimeCreateError::Authorization(
+                "credential host runtime scope does not match the driver runtime".to_owned(),
+            ));
+        }
+        let secret_broker = credential_host.as_ref().map(DriverCredentialHost::broker);
         let registry = Arc::new(cua_driver_core::tool::with_runtime_scope(
-            compatibility_context.runtime_scope_key(),
-            || build_registry(&options),
+            runtime_scope,
+            || build_registry(&options, secret_broker),
         ));
         registry.init_self_weak();
         let runtime = Arc::new(Self {
@@ -199,6 +227,7 @@ impl DriverRuntime {
             last_activity: AtomicU64::new(now_unix_secs()),
             lifecycle: tokio::sync::RwLock::new(()),
             activity_observer: options.activity_observer.clone(),
+            credential_host: Mutex::new(credential_host),
         });
         spawn_lifecycle_maintenance(&runtime);
         Ok(runtime)
@@ -215,6 +244,10 @@ impl DriverRuntime {
     pub(crate) async fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
         let _drained = self.lifecycle.write().await;
+        cua_driver_core::session::suspend_runtime_scope(
+            &self.compatibility_context.runtime_scope_key(),
+        );
+        self.credential_host.lock().unwrap().take();
         self.authorization_registry.revoke_all();
         let runtime_prefix = format!(
             "__cua_runtime_{}:",
@@ -518,15 +551,19 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
 /// Session 0). Finite CLI inspection commands use it to preserve their
 /// desktop-free compatibility contract without weakening runtime admission.
 pub(crate) fn tool_inventory(options: RuntimeOptions) -> Value {
-    build_registry(&options).tools_list()
+    build_registry(&options, None).tools_list()
 }
 
-fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
+fn build_registry(
+    options: &RuntimeOptions,
+    secret_broker: Option<Arc<cua_driver_core::credentials::SecretBroker>>,
+) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     let mut registry = {
         configure_macos_runtime();
-        platform_macos::register_tools_with_cursor_and_provider(
+        platform_macos::register_tools_with_cursor_provider_and_secret_broker(
             options.authorization_host.clone(),
+            secret_broker.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
             options.host_owns_permission_ux,
@@ -537,8 +574,9 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "windows")]
     let mut registry = {
         configure_windows_runtime();
-        platform_windows::register_tools_with_cursor_and_provider(
+        platform_windows::register_tools_with_cursor_provider_and_secret_broker(
             options.authorization_host.clone(),
+            secret_broker.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
         )
@@ -547,8 +585,9 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "linux")]
     let mut registry = {
         configure_linux_runtime(options.prepare_desktop_environment);
-        platform_linux::register_tools_with_cursor_and_provider(
+        platform_linux::register_tools_with_cursor_provider_and_secret_broker(
             options.authorization_host.clone(),
+            secret_broker.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
         )
@@ -557,6 +596,7 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     let mut registry = {
         let _ = options;
+        let _ = secret_broker;
         ToolRegistry::new()
     };
 

@@ -83,7 +83,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.7.0",
+                    "contract_version": "0.8.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -167,7 +167,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.7.0",
+                                "contract_version": "0.8.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",

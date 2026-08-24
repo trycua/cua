@@ -215,6 +215,7 @@ const FfiConverterTypeActionEscalation = (() => {
 
 export enum ActionEvidenceKind {
     ValueReadback,
+    TargetEvent,
     WindowChange
 }
 
@@ -225,14 +226,16 @@ const FfiConverterTypeActionEvidenceKind = (() => {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
                 case 1: return ActionEvidenceKind.ValueReadback;
-                case 2: return ActionEvidenceKind.WindowChange;
+                case 2: return ActionEvidenceKind.TargetEvent;
+                case 3: return ActionEvidenceKind.WindowChange;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
         write(value: TypeName, into: RustBuffer): void {
             switch (value) {
                 case ActionEvidenceKind.ValueReadback: return ordinalConverter.write(1, into);
-                case ActionEvidenceKind.WindowChange: return ordinalConverter.write(2, into);
+                case ActionEvidenceKind.TargetEvent: return ordinalConverter.write(2, into);
+                case ActionEvidenceKind.WindowChange: return ordinalConverter.write(3, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -997,6 +1000,112 @@ const FfiConverterTypeClipboardWriteOutput = (() => {
     return new FFIConverter();
 })();
 
+export enum CredentialField {
+    Password
+}
+
+const FfiConverterTypeCredentialField = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CredentialField;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CredentialField.Password;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case CredentialField.Password: return ordinalConverter.write(1, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum CredentialProviderClass {
+    ServiceAccountVault,
+    InteractiveDesktop
+}
+
+const FfiConverterTypeCredentialProviderClass = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CredentialProviderClass;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CredentialProviderClass.ServiceAccountVault;
+                case 2: return CredentialProviderClass.InteractiveDesktop;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case CredentialProviderClass.ServiceAccountVault: return ordinalConverter.write(1, into);
+                case CredentialProviderClass.InteractiveDesktop: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type CredentialDescriptor = {
+    handle: string,
+    label?: string,
+    fields: Array<CredentialField>,
+    providerClass?: CredentialProviderClass
+}
+
+/**
+ * Generated factory for {@link CredentialDescriptor} record objects.
+ */
+export const CredentialDescriptor = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CredentialDescriptor, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CredentialDescriptor>,
+    });
+})();
+
+const FfiConverterTypeCredentialDescriptor = (() => {
+    type TypeName = CredentialDescriptor;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                handle: FfiConverterString.read(from),
+                label: FfiConverterOptionalString.read(from),
+                fields: FfiConverterSequenceTypeCredentialField.read(from),
+                providerClass: FfiConverterOptionalTypeCredentialProviderClass.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.handle, into);
+            FfiConverterOptionalString.write(value.label, into);
+            FfiConverterSequenceTypeCredentialField.write(value.fields, into);
+            FfiConverterOptionalTypeCredentialProviderClass.write(value.providerClass, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.handle) +
+             FfiConverterOptionalString.allocationSize(value.label) +
+             FfiConverterSequenceTypeCredentialField.allocationSize(value.fields) +
+             FfiConverterOptionalTypeCredentialProviderClass.allocationSize(value.providerClass);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type CursorMotionOutput = {
     startHandle: number,
     endHandle: number,
@@ -1721,6 +1830,96 @@ const FfiConverterTypeEscalateSessionInput = (() => {
             return FfiConverterString.allocationSize(value.session) +
              FfiConverterTypeEscalationReason.allocationSize(value.reason) +
              FfiConverterOptionalString.allocationSize(value.detail);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type FindCredentialsInput = {
+    session?: string,
+    targetId: string,
+    tabId: string,
+    elementRef: string
+}
+
+/**
+ * Generated factory for {@link FindCredentialsInput} record objects.
+ */
+export const FindCredentialsInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<FindCredentialsInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<FindCredentialsInput>,
+    });
+})();
+
+const FfiConverterTypeFindCredentialsInput = (() => {
+    type TypeName = FindCredentialsInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterOptionalString.read(from),
+                targetId: FfiConverterString.read(from),
+                tabId: FfiConverterString.read(from),
+                elementRef: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.session, into);
+            FfiConverterString.write(value.targetId, into);
+            FfiConverterString.write(value.tabId, into);
+            FfiConverterString.write(value.elementRef, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.session) +
+             FfiConverterString.allocationSize(value.targetId) +
+             FfiConverterString.allocationSize(value.tabId) +
+             FfiConverterString.allocationSize(value.elementRef);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type FindCredentialsOutput = {
+    credentials: Array<CredentialDescriptor>
+}
+
+/**
+ * Generated factory for {@link FindCredentialsOutput} record objects.
+ */
+export const FindCredentialsOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<FindCredentialsOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<FindCredentialsOutput>,
+    });
+})();
+
+const FfiConverterTypeFindCredentialsOutput = (() => {
+    type TypeName = FindCredentialsOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                credentials: FfiConverterSequenceTypeCredentialDescriptor.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterSequenceTypeCredentialDescriptor.write(value.credentials, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterSequenceTypeCredentialDescriptor.allocationSize(value.credentials);
 
         }
     };
@@ -3512,6 +3711,65 @@ const FfiConverterTypeStatePredicate = (() => {
     return new FFIConverter();
 })();
 
+export type TypeSecretInput = {
+    session?: string,
+    targetId: string,
+    tabId: string,
+    elementRef: string,
+    handle: string,
+    field: CredentialField
+}
+
+/**
+ * Generated factory for {@link TypeSecretInput} record objects.
+ */
+export const TypeSecretInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<TypeSecretInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<TypeSecretInput>,
+    });
+})();
+
+const FfiConverterTypeTypeSecretInput = (() => {
+    type TypeName = TypeSecretInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterOptionalString.read(from),
+                targetId: FfiConverterString.read(from),
+                tabId: FfiConverterString.read(from),
+                elementRef: FfiConverterString.read(from),
+                handle: FfiConverterString.read(from),
+                field: FfiConverterTypeCredentialField.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.session, into);
+            FfiConverterString.write(value.targetId, into);
+            FfiConverterString.write(value.tabId, into);
+            FfiConverterString.write(value.elementRef, into);
+            FfiConverterString.write(value.handle, into);
+            FfiConverterTypeCredentialField.write(value.field, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.session) +
+             FfiConverterString.allocationSize(value.targetId) +
+             FfiConverterString.allocationSize(value.tabId) +
+             FfiConverterString.allocationSize(value.elementRef) +
+             FfiConverterString.allocationSize(value.handle) +
+             FfiConverterTypeCredentialField.allocationSize(value.field);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type TypeTextInput = {
     text: string,
     target?: ActionTarget,
@@ -3777,6 +4035,12 @@ const FfiConverterOptionalTypeClickButton = new FfiConverterOptional(FfiConverte
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
+// FfiConverter for Array<CredentialField>
+const FfiConverterSequenceTypeCredentialField = new FfiConverterArray(FfiConverterTypeCredentialField);
+
+// FfiConverter for CredentialProviderClass | undefined
+const FfiConverterOptionalTypeCredentialProviderClass = new FfiConverterOptional(FfiConverterTypeCredentialProviderClass);
+
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
@@ -3785,6 +4049,9 @@ const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverter
 
 // FfiConverter for boolean | undefined
 const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+
+// FfiConverter for Array<CredentialDescriptor>
+const FfiConverterSequenceTypeCredentialDescriptor = new FfiConverterArray(FfiConverterTypeCredentialDescriptor);
 
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
@@ -3866,6 +4133,9 @@ export default Object.freeze({
     FfiConverterTypeClipboardReadOutput,
     FfiConverterTypeClipboardWriteInput,
     FfiConverterTypeClipboardWriteOutput,
+    FfiConverterTypeCredentialDescriptor,
+    FfiConverterTypeCredentialField,
+    FfiConverterTypeCredentialProviderClass,
     FfiConverterTypeCursorAction,
     FfiConverterTypeCursorMotionOutput,
     FfiConverterTypeCursorPointOutput,
@@ -3882,6 +4152,8 @@ export default Object.freeze({
     FfiConverterTypeEndSessionOutput,
     FfiConverterTypeEscalateSessionInput,
     FfiConverterTypeEscalationReason,
+    FfiConverterTypeFindCredentialsInput,
+    FfiConverterTypeFindCredentialsOutput,
     FfiConverterTypeGetAgentCursorStateInput,
     FfiConverterTypeGetAgentCursorStateOutput,
     FfiConverterTypeGetCursorPositionInput,
@@ -3915,6 +4187,7 @@ export default Object.freeze({
     FfiConverterTypeStartSessionInput,
     FfiConverterTypeStartSessionOutput,
     FfiConverterTypeStatePredicate,
+    FfiConverterTypeTypeSecretInput,
     FfiConverterTypeTypeTextInput,
     FfiConverterTypeUnknownReason,
     FfiConverterTypeVerificationStatus,

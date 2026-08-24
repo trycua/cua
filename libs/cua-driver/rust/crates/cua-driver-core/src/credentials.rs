@@ -45,9 +45,16 @@ impl CredentialField {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Password => "password",
+        }
+    }
+
+    pub fn parse_public(value: &str) -> Result<Self, CredentialConfigurationError> {
+        match value {
+            "password" => Ok(Self::Password),
+            _ => Err(CredentialConfigurationError::MissingPrivateField),
         }
     }
 }
@@ -82,7 +89,7 @@ pub enum CredentialProviderClass {
 }
 
 impl CredentialProviderClass {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Fake => "fake",
             Self::ServiceAccountVault => "service_account_vault",
@@ -405,6 +412,18 @@ pub enum SecretTargetError {
 pub struct CredentialHandle(Arc<str>);
 
 impl CredentialHandle {
+    pub fn parse_public(value: &str) -> Result<Self, SecretBrokerError> {
+        if value.len() != 35
+            || !value.starts_with("ch-")
+            || !value[3..]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(SecretBrokerError::InvalidHandle);
+        }
+        Ok(Self(value.to_owned().into()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -1242,6 +1261,10 @@ impl SecretBroker {
         if is_session_ended(target.session()) {
             return Ok(Vec::new());
         }
+        // A fresh discovery supersedes every earlier capability for this exact
+        // target. This keeps one bounded live set per field snapshot and
+        // prevents repeated target-first lookup from exhausting handle caps.
+        revoke_matching_handles(&mut state, |handle| handle.target == *target);
 
         let mut candidates = Vec::new();
         for (binding_index, binding) in state.bindings.iter().enumerate() {
@@ -2633,6 +2656,17 @@ allow:
         assert_eq!(first[0].fields, vec![CredentialField::Password]);
         assert_eq!(first[0].provider_class, Some(CredentialProviderClass::Fake));
         assert_ne!(first[0].handle.as_str(), second[0].handle.as_str());
+        assert_eq!(
+            broker
+                .prepare_secret_release(
+                    &first[0].handle,
+                    CredentialField::Password,
+                    &expected,
+                    now(),
+                )
+                .unwrap_err(),
+            SecretBrokerError::HandleRevoked
+        );
         assert!(!format!("{:?}", first[0]).contains(first[0].handle.as_str()));
         assert_eq!(provider.releases.load(Ordering::SeqCst), 0);
     }
@@ -2674,13 +2708,13 @@ allow:
             MAX_ACTIVE_HANDLES_PER_SESSION
         );
         assert_eq!(
-            broker.find_credentials(&target_a, now()).unwrap_err(),
-            SecretBrokerError::Capacity
+            broker.find_credentials(&target_a, now()).unwrap().len(),
+            MAX_ACTIVE_HANDLES_PER_SESSION
         );
         assert_eq!(
             broker.state.lock().unwrap().handles.len(),
             MAX_ACTIVE_HANDLES_PER_SESSION,
-            "a failed discovery must not mint a partial batch"
+            "rediscovery must replace rather than accumulate handles"
         );
         assert_eq!(broker.find_credentials(&target_b, now()).unwrap().len(), 1);
 
@@ -2844,20 +2878,32 @@ allow:
             value: b"synthetic-secret".to_vec(),
         }]);
         let (broker, _, session, context) = broker_with(provider.clone(), Some(1));
-        let target = target(
+        let first_target = target(
             broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p4:1",
         );
-        let first = broker.find_credentials(&target, now()).unwrap().remove(0);
-        let second = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let second_target = target(
+            broker.runtime_scope(),
+            &session,
+            "https://accounts.example.test/login",
+            "p4:2",
+        );
+        let first = broker
+            .find_credentials(&first_target, now())
+            .unwrap()
+            .remove(0);
+        let second = broker
+            .find_credentials(&second_target, now())
+            .unwrap()
+            .remove(0);
         let first_permit = permit(
             &broker,
             &context,
             &first.handle,
             CredentialField::Password,
-            &target,
+            &first_target,
             now(),
         );
         let second_permit = permit(
@@ -2865,11 +2911,11 @@ allow:
             &context,
             &second.handle,
             CredentialField::Password,
-            &target,
+            &second_target,
             now(),
         );
         let broker_for_task = broker.clone();
-        let target_for_task = target.clone();
+        let target_for_task = first_target.clone();
         let first_handle = first.handle.clone();
         let pending = tokio::spawn(async move {
             broker_for_task
@@ -2888,7 +2934,7 @@ allow:
                 .release(
                     &second.handle,
                     CredentialField::Password,
-                    &target,
+                    &second_target,
                     now(),
                     second_permit,
                 )

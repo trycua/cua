@@ -437,6 +437,7 @@ mod tests {
             register_host_tools: None,
             authorization_host: None,
             activity_observer: None,
+            credential_host_factory: None,
         })
     }
 

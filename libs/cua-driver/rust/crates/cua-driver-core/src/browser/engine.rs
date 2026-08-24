@@ -1952,9 +1952,6 @@ impl BrowserEngine {
     }
 
     /// Target-first credential discovery for the current trusted dispatch.
-    /// The public contract is intentionally not registered yet; this entry
-    /// point exists so the exact browser path can be certified first.
-    #[allow(dead_code)]
     pub(crate) async fn discover_credentials_for_ref(
         &self,
         session: &str,
@@ -2020,9 +2017,7 @@ impl BrowserEngine {
     }
 
     /// Deliver one brokered credential to an exact semantic password ref for
-    /// the current trusted dispatch. The public contract is registered only
-    /// after the internal route completes cross-platform certification.
-    #[allow(dead_code)]
+    /// the current trusted dispatch.
     pub(crate) async fn deliver_credential_for_ref(
         &self,
         session: &str,
@@ -2196,8 +2191,8 @@ impl BrowserEngine {
             .filter(|attested| attested.target == initial.target)
             .ok_or_else(|| {
                 refuse(
-                    BrowserRefusalCode::SecretDeliveryMisdirected,
-                    "credential delivery did not remain bound to the secure browser target",
+                    BrowserRefusalCode::SecretDeliveryUnverified,
+                    "credential insertion may have occurred but the final secure-target proof failed; do not retry automatically",
                 )
             })?;
         debug_assert_eq!(final_attested.target, current.target);
@@ -2583,8 +2578,8 @@ impl BrowserEngine {
                 })?;
             if verified.pointer("/result/value").and_then(Value::as_bool) != Some(true) {
                 return Err(refuse(
-                    BrowserRefusalCode::SecretDeliveryMisdirected,
-                    "credential insertion was not proven on the exact secure browser target; do not retry automatically",
+                    BrowserRefusalCode::SecretDeliveryUnverified,
+                    "credential insertion may have occurred but exact-target events were not verified; do not retry automatically",
                 ));
             }
             Ok(())

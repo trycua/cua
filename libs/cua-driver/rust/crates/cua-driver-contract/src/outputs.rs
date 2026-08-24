@@ -55,7 +55,9 @@ pub fn advertised_output_schema(success: Value) -> Value {
     serde_json::json!({ "type": "object", "anyOf": [success, refusal_envelope_schema()] })
 }
 
-fn output_schema_with_additional_properties<T: JsonSchema>(additional_properties: bool) -> Value {
+pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
+    additional_properties: bool,
+) -> Value {
     let mut settings = SchemaSettings::draft2020_12();
     settings.inline_subschemas = true;
     settings.meta_schema = None;
@@ -441,6 +443,7 @@ pub struct ActionDelivery {
 #[serde(rename_all = "snake_case")]
 pub enum ActionEvidenceKind {
     ValueReadback,
+    TargetEvent,
     WindowChange,
 }
 
@@ -686,7 +689,7 @@ mod tests {
         assert_eq!(evidence["required"], json!(["kind"]));
         assert_eq!(
             evidence["properties"]["kind"]["enum"],
-            json!(["value_readback", "window_change"])
+            json!(["value_readback", "target_event", "window_change"])
         );
 
         let escalation = object_variant(&properties["escalation"]);

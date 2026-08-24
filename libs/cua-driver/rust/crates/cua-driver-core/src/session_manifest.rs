@@ -1176,6 +1176,7 @@ fn validate_tools(section: &str, tools: Vec<String>) -> Result<HashSet<String>, 
 fn canonical_tool_name(tool: &str) -> &str {
     match tool {
         "type_text_chars" => "type_text",
+        "type_secret" => "secret_release",
         other => other,
     }
 }
@@ -2191,6 +2192,28 @@ allow:
         )
         .unwrap_err()
         .contains("requires an exact credential binding resource"));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn public_type_secret_alias_authorizes_the_internal_release_decision() {
+        let loaded = manifest(
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 5m
+resources:
+  credentials:
+    secret_release:
+      - authorization: login-recovery
+        origins: [https://accounts.example.test]
+allow:
+  tools: [type_secret]
+"#,
+        )
+        .unwrap();
+        assert_eq!(loaded.decision("type_secret"), ManifestDecision::Allow);
+        assert_eq!(loaded.decision("secret_release"), ManifestDecision::Allow);
     }
 
     #[test]

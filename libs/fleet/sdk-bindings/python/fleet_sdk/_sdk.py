@@ -480,6 +480,16 @@ def _uniffi_check_contract_api_version(lib):
         raise InternalError("UniFFI contract version mismatch: try cleaning and rebuilding your project")
 
 def _uniffi_check_api_checksums(lib):
+    if lib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_func_pool_display_status() != 8587:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() != 48761:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status() != 41320:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status() != 39929:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() != 10967:
@@ -1040,6 +1050,27 @@ _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.argtypes = (
     ctypes.POINTER(_UniffiVTableCallbackInterfaceFleetSdkHttpClient),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_func_pool_display_status.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_pool_display_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_func_removed_pool_display_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_removed_pool_display_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token.argtypes = (
     ctypes.c_uint64,
     ctypes.c_int8,
@@ -1442,6 +1473,21 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_templatebuilder_spec.restype = ctypes.c_
 _UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.argtypes = (
 )
 _UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.restype = ctypes.c_uint32
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_pool_display_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token.restype = ctypes.c_uint16
@@ -2903,6 +2949,112 @@ class _UniffiFfiConverterTypeNewUserApiKey(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.token_url, buf)
         _UniffiFfiConverterString.write(value.name, buf)
         _UniffiFfiConverterSequenceString.write(value.scope, buf)
+
+
+
+
+
+
+class PoolDisplayStatusKind(enum.Enum):
+
+    HEALTHY = 0
+
+    SCALED_TO_ZERO = 1
+
+    REMOVED = 2
+
+    TERMINATING = 3
+
+    UNKNOWN = 4
+
+
+
+class _UniffiFfiConverterTypePoolDisplayStatusKind(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return PoolDisplayStatusKind.HEALTHY
+        if variant == 2:
+            return PoolDisplayStatusKind.SCALED_TO_ZERO
+        if variant == 3:
+            return PoolDisplayStatusKind.REMOVED
+        if variant == 4:
+            return PoolDisplayStatusKind.TERMINATING
+        if variant == 5:
+            return PoolDisplayStatusKind.UNKNOWN
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == PoolDisplayStatusKind.HEALTHY:
+            return
+        if value == PoolDisplayStatusKind.SCALED_TO_ZERO:
+            return
+        if value == PoolDisplayStatusKind.REMOVED:
+            return
+        if value == PoolDisplayStatusKind.TERMINATING:
+            return
+        if value == PoolDisplayStatusKind.UNKNOWN:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == PoolDisplayStatusKind.HEALTHY:
+            buf.write_i32(1)
+        if value == PoolDisplayStatusKind.SCALED_TO_ZERO:
+            buf.write_i32(2)
+        if value == PoolDisplayStatusKind.REMOVED:
+            buf.write_i32(3)
+        if value == PoolDisplayStatusKind.TERMINATING:
+            buf.write_i32(4)
+        if value == PoolDisplayStatusKind.UNKNOWN:
+            buf.write_i32(5)
+
+
+
+@dataclass
+class PoolDisplayStatus:
+    def __init__(self, *, kind:PoolDisplayStatusKind, label:str, indicator:str):
+        self.kind = kind
+        self.label = label
+        self.indicator = indicator
+
+
+
+
+    def __str__(self):
+        return "PoolDisplayStatus(kind={}, label={}, indicator={})".format(self.kind, self.label, self.indicator)
+    def __eq__(self, other):
+        if self.kind != other.kind:
+            return False
+        if self.label != other.label:
+            return False
+        if self.indicator != other.indicator:
+            return False
+        return True
+
+class _UniffiFfiConverterTypePoolDisplayStatus(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return PoolDisplayStatus(
+            kind=_UniffiFfiConverterTypePoolDisplayStatusKind.read(buf),
+            label=_UniffiFfiConverterString.read(buf),
+            indicator=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypePoolDisplayStatusKind.check_lower(value.kind)
+        _UniffiFfiConverterString.check_lower(value.label)
+        _UniffiFfiConverterString.check_lower(value.indicator)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypePoolDisplayStatusKind.write(value.kind, buf)
+        _UniffiFfiConverterString.write(value.label, buf)
+        _UniffiFfiConverterString.write(value.indicator, buf)
 
 @dataclass
 class Sandbox:
@@ -5640,9 +5792,68 @@ class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
     @staticmethod
     def write(value, buf):
         buf.write_u8(value)
+def healthy_pool_display_status() -> PoolDisplayStatus:
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def pool_display_status(pool: Pool) -> PoolDisplayStatus:
+
+    _UniffiFfiConverterTypePool.check_lower(pool)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterTypePool.lower(pool),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def removed_pool_display_status() -> PoolDisplayStatus:
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_removed_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def terminating_pool_display_status() -> PoolDisplayStatus:
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def unknown_pool_display_status() -> PoolDisplayStatus:
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 
 __all__ = [
     "InternalError",
+    "PoolDisplayStatusKind",
     "AccessTokenProviderError",
     "HttpError",
     "SdkBuildError",
@@ -5661,9 +5872,15 @@ __all__ = [
     "HttpResponse",
     "Namespace",
     "NewUserApiKey",
+    "PoolDisplayStatus",
     "Sandbox",
     "Template",
     "UserApiKey",
+    "healthy_pool_display_status",
+    "pool_display_status",
+    "removed_pool_display_status",
+    "terminating_pool_display_status",
+    "unknown_pool_display_status",
     "CyclopsCredentials",
     "CyclopsCredentialsProtocol",
     "AccessTokenProviderImpl",

@@ -454,6 +454,27 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Record type PoolDisplayStatus.
+
+  def self.check_lower_TypePoolDisplayStatus(v)
+    RustBuffer.check_lower_TypePoolDisplayStatusKind(v.kind)
+
+
+  end
+
+  def self.alloc_from_TypePoolDisplayStatus(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypePoolDisplayStatus(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypePoolDisplayStatus
+    consumeWithStream do |stream|
+      return stream.readTypePoolDisplayStatus
+    end
+  end
+
   # The Record type ResourceMetadata.
 
   def self.check_lower_TypeResourceMetadata(v)
@@ -544,6 +565,25 @@ private_constant :UniffiHandleMap
 
 
 
+
+
+  # The Enum type PoolDisplayStatusKind.
+
+  def self.check_lower_TypePoolDisplayStatusKind(v)
+  end
+
+  def self.alloc_from_TypePoolDisplayStatusKind(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypePoolDisplayStatusKind(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypePoolDisplayStatusKind
+    consumeWithStream do |stream|
+      return stream.readTypePoolDisplayStatusKind
+    end
+  end
 
 
 
@@ -1166,6 +1206,16 @@ class RustBufferStream
     )
   end
 
+  # The Record type PoolDisplayStatus.
+
+  def readTypePoolDisplayStatus
+    PoolDisplayStatus.new(
+      kind: readTypePoolDisplayStatusKind,
+      label: readString,
+      indicator: readString
+    )
+  end
+
   # The Record type ResourceMetadata.
 
   def readTypeResourceMetadata
@@ -1246,6 +1296,34 @@ class RustBufferStream
 
     raise InternalError, 'Unexpected variant tag for TypeHttpError'
   end
+
+
+
+
+  # The Enum type PoolDisplayStatusKind.
+
+  def readTypePoolDisplayStatusKind
+    variant = unpack_from 4, 'l>'
+
+    if variant == 1
+      return PoolDisplayStatusKind::HEALTHY
+    end
+    if variant == 2
+      return PoolDisplayStatusKind::SCALED_TO_ZERO
+    end
+    if variant == 3
+      return PoolDisplayStatusKind::REMOVED
+    end
+    if variant == 4
+      return PoolDisplayStatusKind::TERMINATING
+    end
+    if variant == 5
+      return PoolDisplayStatusKind::UNKNOWN
+    end
+
+    raise InternalError, 'Unexpected variant tag for TypePoolDisplayStatusKind'
+  end
+
 
 
 
@@ -1837,6 +1915,14 @@ class RustBufferBuilder
     self.write_OptionalTypeOSGymSandboxWarmPoolStatus(v.status)
   end
 
+  # The Record type PoolDisplayStatus.
+
+  def write_TypePoolDisplayStatus(v)
+    self.write_TypePoolDisplayStatusKind(v.kind)
+    self.write_String(v.label)
+    self.write_String(v.indicator)
+  end
+
   # The Record type ResourceMetadata.
 
   def write_TypeResourceMetadata(v)
@@ -1875,6 +1961,13 @@ class RustBufferBuilder
 
 
 
+
+
+  # The Enum type PoolDisplayStatusKind.
+
+  def write_TypePoolDisplayStatusKind(v)
+    pack_into(4, 'l>', v)
+ end
 
 
 
@@ -2295,6 +2388,7 @@ module SdkError
 end
 
 
+
 # Map error modules to the RustBuffer method name that reads them
 ERROR_MODULE_TO_READER_METHOD = {
 
@@ -2308,6 +2402,7 @@ ERROR_MODULE_TO_READER_METHOD = {
 
 
   SdkError => :readTypeSdkError,
+
 
 }
 
@@ -2839,6 +2934,21 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_templatebuilder_spec,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_pool_display_status,
+    [RustBuffer.by_value, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_removed_pool_display_status,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_terminating_pool_display_status,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_unknown_pool_display_status,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
   attach_function :ffi_cyclops_sdk_rustbuffer_alloc,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -2851,6 +2961,21 @@ module UniFFILib
   attach_function :ffi_cyclops_sdk_rustbuffer_reserve,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_removed_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim,
     [RustCallStatus.by_ref],
     :uint16
@@ -3085,6 +3210,45 @@ end
 
 
 
+
+
+
+
+class PoolDisplayStatusKind
+  HEALTHY = 1
+  SCALED_TO_ZERO = 2
+  REMOVED = 3
+  TERMINATING = 4
+  UNKNOWN = 5
+
+end
+
+
+
+  # Record type PoolDisplayStatus
+class PoolDisplayStatus
+  attr_reader :kind, :label, :indicator
+
+  def initialize(kind:, label:, indicator:)
+    @kind = kind
+    @label = label
+    @indicator = indicator
+  end
+
+  def ==(other)
+    if @kind != other.kind
+      return false
+    end
+    if @label != other.label
+      return false
+    end
+    if @indicator != other.indicator
+      return false
+    end
+
+    true
+  end
+end
 
   # Record type Claim
 class Claim
@@ -3573,6 +3737,54 @@ class UserApiKey
 
     true
   end
+end
+
+
+
+
+
+def self.healthy_pool_display_status()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,)
+  return result.consumeIntoTypePoolDisplayStatus
+end
+
+
+
+
+
+def self.pool_display_status(pool)
+    pool = pool
+    RustBuffer.check_lower_TypePool(pool)
+
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_pool_display_status,RustBuffer.alloc_from_TypePool(pool))
+  return result.consumeIntoTypePoolDisplayStatus
+end
+
+
+
+
+
+def self.removed_pool_display_status()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_removed_pool_display_status,)
+  return result.consumeIntoTypePoolDisplayStatus
+end
+
+
+
+
+
+def self.terminating_pool_display_status()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_terminating_pool_display_status,)
+  return result.consumeIntoTypePoolDisplayStatus
+end
+
+
+
+
+
+def self.unknown_pool_display_status()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_unknown_pool_display_status,)
+  return result.consumeIntoTypePoolDisplayStatus
 end
 
 

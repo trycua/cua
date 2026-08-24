@@ -3733,6 +3733,64 @@ public func FfiConverterTypePool_lower(_ value: Pool) -> RustBuffer {
 }
 
 
+public struct PoolDisplayStatus: Equatable, Hashable {
+    public var kind: PoolDisplayStatusKind
+    public var label: String
+    public var indicator: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: PoolDisplayStatusKind, label: String, indicator: String) {
+        self.kind = kind
+        self.label = label
+        self.indicator = indicator
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PoolDisplayStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePoolDisplayStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PoolDisplayStatus {
+        return
+            try PoolDisplayStatus(
+                kind: FfiConverterTypePoolDisplayStatusKind.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                indicator: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PoolDisplayStatus, into buf: inout [UInt8]) {
+        FfiConverterTypePoolDisplayStatusKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.indicator, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePoolDisplayStatus_lift(_ buf: RustBuffer) throws -> PoolDisplayStatus {
+    return try FfiConverterTypePoolDisplayStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePoolDisplayStatus_lower(_ value: PoolDisplayStatus) -> RustBuffer {
+    return FfiConverterTypePoolDisplayStatus.lower(value)
+}
+
+
 public struct ResourceMetadata: Equatable, Hashable {
     public var namespace: String
     public var name: String
@@ -4131,6 +4189,94 @@ public func FfiConverterTypeHttpError_lift(_ buf: RustBuffer) throws -> HttpErro
 public func FfiConverterTypeHttpError_lower(_ value: HttpError) -> RustBuffer {
     return FfiConverterTypeHttpError.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum PoolDisplayStatusKind: Equatable, Hashable {
+
+    case healthy
+    case scaledToZero
+    case removed
+    case terminating
+    case unknown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PoolDisplayStatusKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePoolDisplayStatusKind: FfiConverterRustBuffer {
+    typealias SwiftType = PoolDisplayStatusKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PoolDisplayStatusKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .healthy
+
+        case 2: return .scaledToZero
+
+        case 3: return .removed
+
+        case 4: return .terminating
+
+        case 5: return .unknown
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PoolDisplayStatusKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .healthy:
+            writeInt(&buf, Int32(1))
+
+
+        case .scaledToZero:
+            writeInt(&buf, Int32(2))
+
+
+        case .removed:
+            writeInt(&buf, Int32(3))
+
+
+        case .terminating:
+            writeInt(&buf, Int32(4))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePoolDisplayStatusKind_lift(_ buf: RustBuffer) throws -> PoolDisplayStatusKind {
+    return try FfiConverterTypePoolDisplayStatusKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePoolDisplayStatusKind_lower(_ value: PoolDisplayStatusKind) -> RustBuffer {
+    return FfiConverterTypePoolDisplayStatusKind.lower(value)
+}
+
 
 
 public enum SdkBuildError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
@@ -4902,6 +5048,37 @@ private func uniffiForeignFutureDroppedCallback(handle: UInt64) {
 public func uniffiForeignFutureHandleCountFleetSdk() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
+public func healthyPoolDisplayStatus() -> PoolDisplayStatus  {
+    return try!  FfiConverterTypePoolDisplayStatus_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_healthy_pool_display_status($0
+    )
+})
+}
+public func poolDisplayStatus(pool: Pool) -> PoolDisplayStatus  {
+    return try!  FfiConverterTypePoolDisplayStatus_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_pool_display_status(
+        FfiConverterTypePool_lower(pool),$0
+    )
+})
+}
+public func removedPoolDisplayStatus() -> PoolDisplayStatus  {
+    return try!  FfiConverterTypePoolDisplayStatus_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_removed_pool_display_status($0
+    )
+})
+}
+public func terminatingPoolDisplayStatus() -> PoolDisplayStatus  {
+    return try!  FfiConverterTypePoolDisplayStatus_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_terminating_pool_display_status($0
+    )
+})
+}
+public func unknownPoolDisplayStatus() -> PoolDisplayStatus  {
+    return try!  FfiConverterTypePoolDisplayStatus_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_unknown_pool_display_status($0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -4917,6 +5094,21 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_cyclops_sdk_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_func_pool_display_status() != 8587) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() != 48761) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status() != 41320) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status() != 39929) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330) {
         return InitializationResult.apiChecksumMismatch

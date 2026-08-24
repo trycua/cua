@@ -702,6 +702,16 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_pool_display_status(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_removed_pool_display_status(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim(
@@ -1067,6 +1077,16 @@ external fun uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(`ptr`: Long,`
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_templatebuilder_spec(`ptr`: Long,`value`: RustBufferOSGymSandboxTemplateSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_pool_display_status(`pool`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_removed_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_terminating_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_unknown_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun ffi_cyclops_sdk_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun ffi_cyclops_sdk_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -1186,6 +1206,21 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_pool_display_status() != 8587.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() != 48761.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status() != 41320.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status() != 39929.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -6571,6 +6606,49 @@ public object FfiConverterTypePool: FfiConverterRustBuffer<Pool> {
 
 
 
+data class PoolDisplayStatus (
+    var `kind`: PoolDisplayStatusKind
+    ,
+    var `label`: kotlin.String
+    ,
+    var `indicator`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePoolDisplayStatus: FfiConverterRustBuffer<PoolDisplayStatus> {
+    override fun read(buf: ByteBuffer): PoolDisplayStatus {
+        return PoolDisplayStatus(
+            FfiConverterTypePoolDisplayStatusKind.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PoolDisplayStatus) = (
+            FfiConverterTypePoolDisplayStatusKind.allocationSize(value.`kind`) +
+            FfiConverterString.allocationSize(value.`label`) +
+            FfiConverterString.allocationSize(value.`indicator`)
+    )
+
+    override fun write(value: PoolDisplayStatus, buf: ByteBuffer) {
+            FfiConverterTypePoolDisplayStatusKind.write(value.`kind`, buf)
+            FfiConverterString.write(value.`label`, buf)
+            FfiConverterString.write(value.`indicator`, buf)
+    }
+}
+
+
+
 data class ResourceMetadata (
     var `namespace`: kotlin.String
     ,
@@ -6888,6 +6966,43 @@ public object FfiConverterTypeHttpError : FfiConverterRustBuffer<HttpException> 
     }
 
 }
+
+
+
+
+enum class PoolDisplayStatusKind {
+
+    HEALTHY,
+    SCALED_TO_ZERO,
+    REMOVED,
+    TERMINATING,
+    UNKNOWN;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePoolDisplayStatusKind: FfiConverterRustBuffer<PoolDisplayStatusKind> {
+    override fun read(buf: ByteBuffer) = try {
+        PoolDisplayStatusKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: PoolDisplayStatusKind) = 4UL
+
+    override fun write(value: PoolDisplayStatusKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -7725,3 +7840,69 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ fun `healthyPoolDisplayStatus`(): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(
+
+        _status)
+}
+    )
+    }
+
+ fun `poolDisplayStatus`(`pool`: Pool): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_pool_display_status(
+
+        FfiConverterTypePool.lower(`pool`),_status)
+}
+    )
+    }
+
+ fun `removedPoolDisplayStatus`(): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_removed_pool_display_status(
+
+        _status)
+}
+    )
+    }
+
+ fun `terminatingPoolDisplayStatus`(): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status(
+
+        _status)
+}
+    )
+    }
+
+ fun `unknownPoolDisplayStatus`(): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status(
+
+        _status)
+}
+    )
+    }

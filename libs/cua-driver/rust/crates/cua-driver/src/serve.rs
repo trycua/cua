@@ -2227,7 +2227,7 @@ pub fn run_serve_cmd(
         }
     };
     let result = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref()));
-    rt.shutdown_timeout(std::time::Duration::from_secs(5));
+    rt.shutdown_timeout(std::time::Duration::from_secs(30));
     cua_driver_core::session::release_process_state_for_shutdown();
     if let Err(e) = result {
         eprintln!("cua-driver serve error: {e}");

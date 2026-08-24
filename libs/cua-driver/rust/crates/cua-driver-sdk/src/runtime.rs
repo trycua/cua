@@ -236,8 +236,7 @@ impl DriverRuntime {
         );
         cua_driver_core::element_token::global()
             .clear_runtime_scope(&self.compatibility_context.runtime_scope_key());
-        let recording = self.registry.recording.clone();
-        let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
+        let _ = self.registry.recording.stop_owner(None);
     }
 
     fn stop_lifecycle_maintenance(&self) {
@@ -911,5 +910,4 @@ mod tests {
 
         assert!(runtime.lifecycle_maintenance.lock().unwrap().is_none());
     }
-
 }

@@ -19,12 +19,17 @@ use zeroize::Zeroizing;
 
 use crate::browser::store::{parse_ref, SecureFieldKind};
 use crate::browser::types::ProcessFingerprint;
-use crate::session::{register_scoped_session_end_hook, SessionEndHookRegistration};
+use crate::session::{
+    is_runtime_scope_suspended, is_session_ended, register_scoped_runtime_suspend_hook,
+    register_scoped_session_end_hook, RuntimeSuspendHookRegistration, SessionEndHookRegistration,
+};
 
 pub const MAX_SECRET_BYTES: usize = 4 * 1024;
 pub const MAX_BOOTSTRAP_SECRET_BYTES: usize = 64 * 1024;
 pub const DEFAULT_CREDENTIAL_HANDLE_TTL: Duration = Duration::from_secs(60);
 const MAX_ACTIVE_HANDLES: usize = 4_096;
+const MAX_ACTIVE_HANDLES_PER_SESSION: usize = 256;
+const MAX_HANDLE_TOMBSTONES: usize = 4_096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CredentialField {
@@ -35,6 +40,12 @@ impl CredentialField {
     fn digest_tag(self) -> &'static [u8] {
         match self {
             Self::Password => b"password",
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Password => "password",
         }
     }
 }
@@ -66,6 +77,16 @@ pub enum CredentialProviderClass {
     Fake,
     ServiceAccountVault,
     InteractiveDesktop,
+}
+
+impl CredentialProviderClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Fake => "fake",
+            Self::ServiceAccountVault => "service_account_vault",
+            Self::InteractiveDesktop => "interactive_desktop",
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -284,11 +305,11 @@ impl fmt::Debug for VerifiedBrowserSecretTarget {
             .field("runtime_scope", &"[private]")
             .field("session", &"[private]")
             .field("process", &"[bound process]")
-            .field("endpoint_generation", &self.endpoint_generation)
+            .field("endpoint_generation", &"[bound generation]")
             .field("target_id", &"[private]")
             .field("tab_id", &"[private]")
             .field("frame", &"[bound frame]")
-            .field("origin", &self.origin)
+            .field("origin", &"[bound origin]")
             .field("semantic_ref", &"[private]")
             .field("secure_field", &self.secure_field)
             .finish()
@@ -312,7 +333,7 @@ impl VerifiedBrowserSecretTarget {
         semantic_ref: String,
         secure_field: SecureFieldKind,
     ) -> Result<Self, SecretTargetError> {
-        if runtime_scope.is_empty()
+        if validate_runtime_scope(&runtime_scope).is_err()
             || !session.starts_with(&format!("__cua_runtime_{runtime_scope}:"))
             || process.pid <= 0
             || (process.start_time.is_none() && process.executable.is_none())
@@ -358,6 +379,18 @@ impl VerifiedBrowserSecretTarget {
     pub(crate) fn secure_field(&self) -> SecureFieldKind {
         self.secure_field
     }
+
+    fn context_matches(
+        &self,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+    ) -> bool {
+        if context.runtime_scope_key() != self.runtime_scope {
+            return false;
+        }
+        context
+            .public_session()
+            .is_none_or(|session| context.runtime_session_key(session) == self.session)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -379,6 +412,119 @@ impl fmt::Debug for CredentialHandle {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("CredentialHandle([opaque])")
     }
+}
+
+/// Exact, content-free authorization resource prepared by the broker before a
+/// provider can be invoked. It is intentionally non-serializable and its Debug
+/// representation never exposes binding, handle, provider, or target identity.
+pub(crate) struct SecretReleaseResource {
+    handle_digest: [u8; 32],
+    binding_digest: BindingDigest,
+    authorization: SecretReleaseAuthorization,
+    provider: CredentialProviderId,
+    provider_class: CredentialProviderClass,
+    field: CredentialField,
+    target: VerifiedBrowserSecretTarget,
+}
+
+impl fmt::Debug for SecretReleaseResource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SecretReleaseResource")
+            .field("provider_class", &self.provider_class)
+            .field("field", &self.field)
+            .field("target", &"[bound target]")
+            .finish()
+    }
+}
+
+impl SecretReleaseResource {
+    pub(crate) fn validate_context(
+        &self,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+    ) -> Result<(), SecretReleaseAuthorizationError> {
+        if context.is_expired() {
+            return Err(SecretReleaseAuthorizationError::ContextExpired);
+        }
+        if !self.target.context_matches(context) {
+            return Err(SecretReleaseAuthorizationError::ScopeMismatch);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn policy_args(&self) -> serde_json::Value {
+        serde_json::json!({
+            "resource_kind": "bound_secret_release_to_verified_target",
+            "provider_class": self.provider_class.as_str(),
+            "field": self.field.as_str(),
+            "target_kind": "browser_password",
+            "origin": self.target.origin.as_str(),
+        })
+    }
+
+    pub(crate) fn manifest_resource(&self) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "bound_secret_release_to_verified_target",
+            "authorization": self.authorization.as_str(),
+            "origin": self.target.origin.as_str(),
+            "field": self.field.as_str(),
+            "secure_field": self.target.secure_field.as_str(),
+        })
+    }
+
+    pub(crate) fn authorize(
+        &self,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+    ) -> SecretReleasePermit {
+        SecretReleasePermit {
+            digest: secret_release_authorization_digest(self, context),
+            context: context.clone(),
+        }
+    }
+}
+
+/// Single-use process-local proof that the exact broker resource passed the R3
+/// permission, policy, and manifest boundary.
+pub(crate) struct SecretReleasePermit {
+    digest: [u8; 32],
+    context: crate::session_authorization::EffectiveAuthorizationContext,
+}
+
+impl SecretReleasePermit {
+    fn validate(
+        &self,
+        resource: &SecretReleaseResource,
+    ) -> Result<(), SecretReleaseAuthorizationError> {
+        resource.validate_context(&self.context)?;
+        if self.digest != secret_release_authorization_digest(resource, &self.context) {
+            return Err(SecretReleaseAuthorizationError::ScopeMismatch);
+        }
+        Ok(())
+    }
+
+    fn ensure_live(&self) -> Result<(), SecretReleaseAuthorizationError> {
+        if self.context.is_expired() {
+            Err(SecretReleaseAuthorizationError::ContextExpired)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum SecretReleaseAuthorizationError {
+    #[error("secret release is denied in standard mode")]
+    StandardDenied,
+    #[error("secret release requires an approved capability manifest")]
+    ManifestRequired,
+    #[error("secret release is outside the capability manifest")]
+    ManifestDenied,
+    #[error("secret release is denied by policy")]
+    PolicyDenied,
+    #[error("secret release authorization context expired")]
+    ContextExpired,
+    #[error("secret release authorization scope does not match")]
+    ScopeMismatch,
 }
 
 #[derive(Clone)]
@@ -415,6 +561,7 @@ pub struct ProviderReleaseRequest {
     field: CredentialField,
     locator: PrivateCredentialFieldLocator,
     target: VerifiedBrowserSecretTarget,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl ProviderReleaseRequest {
@@ -432,6 +579,24 @@ impl ProviderReleaseRequest {
 
     pub fn target(&self) -> &VerifiedBrowserSecretTarget {
         &self.target
+    }
+
+    /// Providers must call this immediately before every external effect,
+    /// including prompts, unlock attempts, IPC writes, and secret reads.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(AtomicOrdering::Acquire)
+            || is_runtime_scope_suspended(self.target.runtime_scope())
+            || is_session_ended(self.target.session())
+    }
+
+    pub fn ensure_not_cancelled(&self) -> Result<(), CredentialProviderError> {
+        if self.is_cancelled() {
+            Err(CredentialProviderError::new(
+                CredentialProviderErrorKind::Cancelled,
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -576,11 +741,16 @@ pub trait CredentialProvider: Send + Sync {
     fn id(&self) -> &CredentialProviderId;
     fn class(&self) -> CredentialProviderClass;
 
+    /// Implementations must recheck [`ProviderReleaseRequest::is_cancelled`]
+    /// immediately before each provider-side effect.
     async fn release(
         &self,
         request: &ProviderReleaseRequest,
     ) -> Result<ReleasePlan, CredentialProviderError>;
 
+    /// Cancellation is idempotent and may arrive before `release` observes the
+    /// ID. Providers must retain a bounded tombstone so that a later release
+    /// cannot prompt, unlock, fetch, fill, or otherwise create an effect.
     async fn cancel(&self, release: ProviderReleaseId) -> Result<(), CredentialProviderError>;
 
     async fn health(&self) -> ProviderHealth;
@@ -693,6 +863,10 @@ pub enum CredentialConfigurationError {
     RuntimeMismatch,
     #[error("credential binding has an invalid lifecycle session")]
     InvalidSession,
+    #[error("credential binding belongs to an ended lifecycle session")]
+    SessionEnded,
+    #[error("credential broker runtime is terminally suspended")]
+    RuntimeSuspended,
     #[error("credential binding has no private fields")]
     MissingPrivateField,
     #[error("credential binding repeats a private field")]
@@ -709,10 +883,16 @@ pub enum CredentialConfigurationError {
     InvalidReleaseLimit,
     #[error("invalid credential authorization scope")]
     InvalidAuthorizationScope,
+    #[error("credential bindings repeat an authorization scope")]
+    DuplicateAuthorizationScope,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SecretBrokerError {
+    #[error("credential broker runtime is terminally suspended")]
+    RuntimeSuspended,
+    #[error("credential lifecycle session has ended")]
+    SessionEnded,
     #[error("credential handle capacity is exhausted")]
     Capacity,
     #[error("credential handle is invalid")]
@@ -737,6 +917,8 @@ pub enum SecretBrokerError {
     ProviderUnavailable,
     #[error("credential provider release failed")]
     Provider(CredentialProviderErrorKind),
+    #[error("credential release authorization failed")]
+    Authorization(SecretReleaseAuthorizationError),
 }
 
 pub struct SecretBrokerBuilder {
@@ -749,7 +931,7 @@ pub struct SecretBrokerBuilder {
 impl SecretBrokerBuilder {
     pub fn new(runtime_scope: impl Into<String>) -> Result<Self, CredentialConfigurationError> {
         let runtime_scope = runtime_scope.into();
-        validate_identifier(&runtime_scope, 128)
+        validate_runtime_scope(&runtime_scope)
             .map_err(|_| CredentialConfigurationError::InvalidRuntimeScope)?;
         Ok(Self {
             runtime_scope,
@@ -804,14 +986,30 @@ impl SecretBrokerBuilder {
         spec: CredentialBindingSpec,
     ) -> Result<BindingRegistrationId, CredentialConfigurationError> {
         validate_binding_spec(&self.runtime_scope, &spec)?;
+        if is_session_ended(&spec.session) {
+            return Err(CredentialConfigurationError::SessionEnded);
+        }
+        if self
+            .bindings
+            .iter()
+            .any(|(_, existing)| existing.authorization == spec.authorization)
+        {
+            return Err(CredentialConfigurationError::DuplicateAuthorizationScope);
+        }
         let id = BindingRegistrationId(Uuid::new_v4());
         self.bindings.push((id, spec));
         Ok(id)
     }
 
     pub fn build(self) -> Result<Arc<SecretBroker>, CredentialConfigurationError> {
+        if is_runtime_scope_suspended(&self.runtime_scope) {
+            return Err(CredentialConfigurationError::RuntimeSuspended);
+        }
         let mut records = Vec::with_capacity(self.bindings.len());
         for (id, spec) in self.bindings {
+            if is_session_ended(&spec.session) {
+                return Err(CredentialConfigurationError::SessionEnded);
+            }
             let provider = self
                 .providers
                 .get(&spec.provider)
@@ -832,10 +1030,13 @@ impl SecretBrokerBuilder {
             state: Arc::new(Mutex::new(BrokerState {
                 bindings: records,
                 handles: HashMap::new(),
+                handle_tombstones: HashMap::new(),
                 revoked_providers: HashSet::new(),
                 active_releases: HashMap::new(),
+                runtime_revoked: false,
             })),
             session_end_hook: Mutex::new(None),
+            runtime_suspend_hook: Mutex::new(None),
         });
         let weak: Weak<SecretBroker> = Arc::downgrade(&broker);
         let registration = register_scoped_session_end_hook(move |session| {
@@ -844,6 +1045,31 @@ impl SecretBrokerBuilder {
             }
         });
         *broker.session_end_hook.lock().unwrap() = Some(registration);
+        let weak: Weak<SecretBroker> = Arc::downgrade(&broker);
+        let registration = register_scoped_runtime_suspend_hook(move |runtime_scope| {
+            if let Some(broker) = weak.upgrade() {
+                if broker.runtime_scope == runtime_scope {
+                    broker.revoke_runtime();
+                }
+            }
+        });
+        *broker.runtime_suspend_hook.lock().unwrap() = Some(registration);
+
+        // Close races where teardown completed before either hook registration.
+        if is_runtime_scope_suspended(&broker.runtime_scope) {
+            broker.revoke_runtime();
+            return Err(CredentialConfigurationError::RuntimeSuspended);
+        }
+        if broker
+            .state
+            .lock()
+            .unwrap()
+            .bindings
+            .iter()
+            .any(|binding| is_session_ended(&binding.spec.session))
+        {
+            return Err(CredentialConfigurationError::SessionEnded);
+        }
         Ok(broker)
     }
 }
@@ -854,13 +1080,16 @@ pub struct SecretBroker {
     providers: HashMap<CredentialProviderId, Arc<dyn CredentialProvider>>,
     state: Arc<Mutex<BrokerState>>,
     session_end_hook: Mutex<Option<SessionEndHookRegistration>>,
+    runtime_suspend_hook: Mutex<Option<RuntimeSuspendHookRegistration>>,
 }
 
 struct BrokerState {
     bindings: Vec<BindingRecord>,
     handles: HashMap<String, HandleRecord>,
+    handle_tombstones: HashMap<String, HandleTombstone>,
     revoked_providers: HashSet<CredentialProviderId>,
     active_releases: HashMap<ProviderReleaseId, ActiveRelease>,
+    runtime_revoked: bool,
 }
 
 struct ActiveRelease {
@@ -882,10 +1111,10 @@ struct BindingRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HandleState {
-    Ready,
+enum HandleTerminalState {
     Consumed,
     Revoked,
+    Expired,
 }
 
 #[derive(Clone)]
@@ -896,7 +1125,11 @@ struct HandleRecord {
     field: CredentialField,
     target: VerifiedBrowserSecretTarget,
     expires_at: SystemTime,
-    state: HandleState,
+}
+
+struct HandleTombstone {
+    state: HandleTerminalState,
+    forget_after: SystemTime,
 }
 
 impl SecretBroker {
@@ -913,10 +1146,14 @@ impl SecretBroker {
             return Err(SecretBrokerError::TargetMismatch);
         }
         let mut state = self.state.lock().unwrap();
-        state.handles.retain(|_, handle| handle.expires_at > now);
-        let mut descriptors = Vec::new();
-        let mut minted = Vec::new();
-        for binding in &state.bindings {
+        self.prune_handle_state(&mut state, now);
+        self.ensure_runtime_live(&state)?;
+        if is_session_ended(target.session()) {
+            return Ok(Vec::new());
+        }
+
+        let mut candidates = Vec::new();
+        for (binding_index, binding) in state.bindings.iter().enumerate() {
             if binding.revoked
                 || binding.spec.session != target.session()
                 || binding
@@ -939,118 +1176,204 @@ impl SecretBroker {
             if !self.providers.contains_key(&binding.spec.provider) {
                 return Err(SecretBrokerError::ProviderUnavailable);
             }
-            for private_field in &binding.spec.private_fields {
-                if state.handles.len() + minted.len() >= MAX_ACTIVE_HANDLES {
-                    return Err(SecretBrokerError::Capacity);
-                }
-                let expires_at = now
-                    .checked_add(self.handle_ttl)
-                    .unwrap_or(SystemTime::UNIX_EPOCH);
-                let expires_at = binding
-                    .spec
-                    .expires_at
-                    .map_or(expires_at, |binding_expiry| expires_at.min(binding_expiry));
-                let raw_handle = format!("ch-{}", Uuid::new_v4().simple());
-                minted.push((
-                    raw_handle.clone(),
-                    HandleRecord {
-                        binding_id: binding.id,
-                        binding_digest: binding.digest,
-                        provider: binding.spec.provider.clone(),
-                        field: private_field.field,
-                        target: target.clone(),
-                        expires_at,
-                        state: HandleState::Ready,
-                    },
-                ));
-                descriptors.push(CredentialDescriptor {
-                    handle: CredentialHandle(raw_handle.into()),
-                    label: binding.spec.safe_label.clone(),
-                    fields: vec![private_field.field],
-                    provider_class: Some(binding.provider_class),
-                });
+            for (field_index, _) in binding.spec.private_fields.iter().enumerate() {
+                candidates.push((binding_index, field_index));
             }
+        }
+
+        let active_for_session = state
+            .handles
+            .values()
+            .filter(|handle| handle.target.session() == target.session())
+            .count();
+        if state.handles.len().saturating_add(candidates.len()) > MAX_ACTIVE_HANDLES
+            || active_for_session.saturating_add(candidates.len()) > MAX_ACTIVE_HANDLES_PER_SESSION
+        {
+            return Err(SecretBrokerError::Capacity);
+        }
+
+        let mut descriptors = Vec::with_capacity(candidates.len());
+        let mut minted = Vec::with_capacity(candidates.len());
+        for (binding_index, field_index) in candidates {
+            let binding = &state.bindings[binding_index];
+            let private_field = &binding.spec.private_fields[field_index];
+            let expires_at = now
+                .checked_add(self.handle_ttl)
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let expires_at = binding
+                .spec
+                .expires_at
+                .map_or(expires_at, |binding_expiry| expires_at.min(binding_expiry));
+            let raw_handle = format!("ch-{}", Uuid::new_v4().simple());
+            minted.push((
+                raw_handle.clone(),
+                HandleRecord {
+                    binding_id: binding.id,
+                    binding_digest: binding.digest,
+                    provider: binding.spec.provider.clone(),
+                    field: private_field.field,
+                    target: target.clone(),
+                    expires_at,
+                },
+            ));
+            descriptors.push(CredentialDescriptor {
+                handle: CredentialHandle(raw_handle.into()),
+                label: binding.spec.safe_label.clone(),
+                fields: vec![private_field.field],
+                provider_class: Some(binding.provider_class),
+            });
         }
         state.handles.extend(minted);
         Ok(descriptors)
     }
 
-    pub async fn release(
+    pub(crate) fn prepare_secret_release(
         &self,
         handle: &CredentialHandle,
         field: CredentialField,
         target: &VerifiedBrowserSecretTarget,
         now: SystemTime,
+    ) -> Result<SecretReleaseResource, SecretBrokerError> {
+        let mut state = self.state.lock().unwrap();
+        self.prune_handle_state(&mut state, now);
+        let (record, binding_index) =
+            self.validate_release_state(&state, handle, field, target, now)?;
+        Ok(secret_release_resource(
+            handle,
+            &record,
+            &state.bindings[binding_index],
+            field,
+            target,
+        ))
+    }
+
+    fn validate_release_state(
+        &self,
+        state: &BrokerState,
+        handle: &CredentialHandle,
+        field: CredentialField,
+        target: &VerifiedBrowserSecretTarget,
+        now: SystemTime,
+    ) -> Result<(HandleRecord, usize), SecretBrokerError> {
+        self.ensure_runtime_live(state)?;
+        let record = match state.handles.get(handle.as_str()).cloned() {
+            Some(record) => record,
+            None => {
+                return Err(
+                    match state
+                        .handle_tombstones
+                        .get(handle.as_str())
+                        .map(|tombstone| tombstone.state)
+                    {
+                        Some(HandleTerminalState::Consumed) => SecretBrokerError::HandleConsumed,
+                        Some(HandleTerminalState::Revoked) => SecretBrokerError::HandleRevoked,
+                        Some(HandleTerminalState::Expired) => SecretBrokerError::HandleExpired,
+                        None => SecretBrokerError::InvalidHandle,
+                    },
+                )
+            }
+        };
+        if is_session_ended(target.session()) {
+            return Err(SecretBrokerError::SessionEnded);
+        }
+        if record.expires_at <= now {
+            return Err(SecretBrokerError::HandleExpired);
+        }
+        if record.field != field {
+            return Err(SecretBrokerError::FieldMismatch);
+        }
+        if record.target != *target || target.runtime_scope() != self.runtime_scope {
+            return Err(SecretBrokerError::TargetMismatch);
+        }
+        let binding_index = state
+            .bindings
+            .iter()
+            .position(|binding| binding.id == record.binding_id)
+            .ok_or(SecretBrokerError::BindingRevoked)?;
+        let binding = &state.bindings[binding_index];
+        if binding.digest != record.binding_digest
+            || binding.spec.provider != record.provider
+            || binding.revoked
+        {
+            return Err(SecretBrokerError::BindingRevoked);
+        }
+        if binding
+            .spec
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= now)
+        {
+            return Err(SecretBrokerError::BindingExpired);
+        }
+        if binding
+            .spec
+            .max_releases
+            .is_some_and(|maximum| binding.releases_reserved >= maximum)
+        {
+            return Err(SecretBrokerError::ReleaseLimitReached);
+        }
+        if state.revoked_providers.contains(&record.provider)
+            || !self.providers.contains_key(&record.provider)
+        {
+            return Err(SecretBrokerError::ProviderUnavailable);
+        }
+        if !binding
+            .spec
+            .private_fields
+            .iter()
+            .any(|private_field| private_field.field == field)
+        {
+            return Err(SecretBrokerError::FieldMismatch);
+        }
+        Ok((record, binding_index))
+    }
+
+    pub(crate) async fn release(
+        &self,
+        handle: &CredentialHandle,
+        field: CredentialField,
+        target: &VerifiedBrowserSecretTarget,
+        now: SystemTime,
+        permit: SecretReleasePermit,
     ) -> Result<BrokeredRelease, SecretBrokerError> {
         let release_id = ProviderReleaseId(Uuid::new_v4());
         let revoked = Arc::new(AtomicBool::new(false));
         let (provider, request) = {
             let mut state = self.state.lock().unwrap();
-            let record = state
-                .handles
-                .get(handle.as_str())
-                .cloned()
-                .ok_or(SecretBrokerError::InvalidHandle)?;
-            match record.state {
-                HandleState::Consumed => return Err(SecretBrokerError::HandleConsumed),
-                HandleState::Revoked => return Err(SecretBrokerError::HandleRevoked),
-                HandleState::Ready => {}
-            }
-            if record.expires_at <= now {
-                return Err(SecretBrokerError::HandleExpired);
-            }
-            if record.field != field {
-                return Err(SecretBrokerError::FieldMismatch);
-            }
-            if record.target != *target || target.runtime_scope() != self.runtime_scope {
-                return Err(SecretBrokerError::TargetMismatch);
-            }
-            let binding_index = state
-                .bindings
-                .iter()
-                .position(|binding| binding.id == record.binding_id)
-                .ok_or(SecretBrokerError::BindingRevoked)?;
-            let binding = &state.bindings[binding_index];
-            if binding.digest != record.binding_digest
-                || binding.spec.provider != record.provider
-                || binding.revoked
-            {
-                return Err(SecretBrokerError::BindingRevoked);
-            }
-            if binding
-                .spec
-                .expires_at
-                .is_some_and(|expires_at| expires_at <= now)
-            {
-                return Err(SecretBrokerError::BindingExpired);
-            }
-            if binding
-                .spec
-                .max_releases
-                .is_some_and(|maximum| binding.releases_reserved >= maximum)
-            {
-                return Err(SecretBrokerError::ReleaseLimitReached);
-            }
-            if state.revoked_providers.contains(&record.provider) {
-                return Err(SecretBrokerError::ProviderUnavailable);
-            }
-            let private_field = binding
+            self.prune_handle_state(&mut state, now);
+            let (record, binding_index) =
+                self.validate_release_state(&state, handle, field, target, now)?;
+            let resource = secret_release_resource(
+                handle,
+                &record,
+                &state.bindings[binding_index],
+                field,
+                target,
+            );
+            permit
+                .validate(&resource)
+                .map_err(SecretBrokerError::Authorization)?;
+            let locator = state.bindings[binding_index]
                 .spec
                 .private_fields
                 .iter()
                 .find(|private_field| private_field.field == field)
+                .map(|private_field| private_field.locator.clone())
                 .ok_or(SecretBrokerError::FieldMismatch)?;
-            let locator = private_field.locator.clone();
             let provider = self
                 .providers
                 .get(&record.provider)
                 .cloned()
                 .ok_or(SecretBrokerError::ProviderUnavailable)?;
-            state
+            let consumed = state
                 .handles
-                .get_mut(handle.as_str())
-                .expect("validated handle remains present")
-                .state = HandleState::Consumed;
+                .remove(handle.as_str())
+                .expect("validated handle remains present");
+            insert_handle_tombstone(
+                &mut state,
+                handle.as_str().to_owned(),
+                HandleTerminalState::Consumed,
+                consumed.expires_at,
+            );
             state.bindings[binding_index].releases_reserved = state.bindings[binding_index]
                 .releases_reserved
                 .saturating_add(1);
@@ -1072,6 +1395,7 @@ impl SecretBroker {
                     field,
                     locator,
                     target: target.clone(),
+                    cancelled: revoked.clone(),
                 },
             )
         };
@@ -1080,21 +1404,37 @@ impl SecretBroker {
             provider.clone(),
             release_id,
             Arc::downgrade(&self.state),
-            revoked,
+            revoked.clone(),
         );
-        let plan = provider
-            .release(&request)
-            .await
-            .map_err(|error| SecretBrokerError::Provider(error.kind()))?;
-        if cancellation.is_revoked() {
+        if request.is_cancelled() {
+            cancellation.disarm();
+            return Err(SecretBrokerError::HandleRevoked);
+        }
+        if let Err(error) = permit.ensure_live() {
+            return Err(SecretBrokerError::Authorization(error));
+        }
+        let plan = match provider.release(&request).await {
+            Ok(plan) => plan,
+            Err(_) if request.is_cancelled() || cancellation.is_revoked() => {
+                cancellation.disarm();
+                return Err(SecretBrokerError::HandleRevoked);
+            }
+            Err(error) => return Err(SecretBrokerError::Provider(error.kind())),
+        };
+        if request.is_cancelled() || cancellation.is_revoked() {
             drop(plan);
             cancellation.disarm();
             return Err(SecretBrokerError::HandleRevoked);
+        }
+        if let Err(error) = permit.ensure_live() {
+            drop(plan);
+            return Err(SecretBrokerError::Authorization(error));
         }
         Ok(BrokeredRelease {
             cancellation,
             plan: Some(plan),
             target: target.clone(),
+            permit,
         })
     }
 
@@ -1108,11 +1448,7 @@ impl SecretBroker {
             }
         }
         if changed {
-            for handle in state.handles.values_mut() {
-                if handle.binding_id == registration {
-                    handle.state = HandleState::Revoked;
-                }
-            }
+            revoke_matching_handles(&mut state, |handle| handle.binding_id == registration);
         }
         let cancellations =
             take_active_releases(&mut state, |release| release.binding_id == registration);
@@ -1132,11 +1468,7 @@ impl SecretBroker {
                 binding.id
             })
             .collect::<HashSet<_>>();
-        for handle in state.handles.values_mut() {
-            if revoked.contains(&handle.binding_id) {
-                handle.state = HandleState::Revoked;
-            }
-        }
+        revoke_matching_handles(&mut state, |handle| revoked.contains(&handle.binding_id));
         let cancellations = take_active_releases(&mut state, |release| release.session == session);
         drop(state);
         spawn_provider_cancellations(cancellations);
@@ -1155,11 +1487,7 @@ impl SecretBroker {
                     binding.revoked = true;
                 }
             }
-            for handle in state.handles.values_mut() {
-                if &handle.provider == provider {
-                    handle.state = HandleState::Revoked;
-                }
-            }
+            revoke_matching_handles(&mut state, |handle| &handle.provider == provider);
         }
         let cancellations =
             take_active_releases(&mut state, |release| &release.provider_id == provider);
@@ -1167,12 +1495,106 @@ impl SecretBroker {
         spawn_provider_cancellations(cancellations);
         changed
     }
+
+    fn revoke_runtime(&self) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.runtime_revoked {
+            return false;
+        }
+        state.runtime_revoked = true;
+        for binding in &mut state.bindings {
+            binding.revoked = true;
+        }
+        revoke_matching_handles(&mut state, |_| true);
+        let cancellations = take_active_releases(&mut state, |_| true);
+        drop(state);
+        spawn_provider_cancellations(cancellations);
+        true
+    }
+
+    fn ensure_runtime_live(&self, state: &BrokerState) -> Result<(), SecretBrokerError> {
+        if state.runtime_revoked || is_runtime_scope_suspended(&self.runtime_scope) {
+            return Err(SecretBrokerError::RuntimeSuspended);
+        }
+        Ok(())
+    }
+
+    fn prune_handle_state(&self, state: &mut BrokerState, now: SystemTime) {
+        state
+            .handle_tombstones
+            .retain(|_, tombstone| tombstone.forget_after > now);
+        let expired = state
+            .handles
+            .iter()
+            .filter_map(|(handle, record)| (record.expires_at <= now).then_some(handle.clone()))
+            .collect::<Vec<_>>();
+        for handle in expired {
+            if let Some(record) = state.handles.remove(&handle) {
+                let forget_after = now.checked_add(self.handle_ttl).unwrap_or(now);
+                insert_handle_tombstone(
+                    state,
+                    handle,
+                    HandleTerminalState::Expired,
+                    forget_after.max(record.expires_at),
+                );
+            }
+        }
+    }
+}
+
+fn revoke_matching_handles(
+    state: &mut BrokerState,
+    mut should_revoke: impl FnMut(&HandleRecord) -> bool,
+) {
+    let handles = state
+        .handles
+        .iter()
+        .filter_map(|(handle, record)| should_revoke(record).then_some(handle.clone()))
+        .collect::<Vec<_>>();
+    for handle in handles {
+        if let Some(record) = state.handles.remove(&handle) {
+            insert_handle_tombstone(
+                state,
+                handle,
+                HandleTerminalState::Revoked,
+                record.expires_at,
+            );
+        }
+    }
+}
+
+fn insert_handle_tombstone(
+    state: &mut BrokerState,
+    handle: String,
+    terminal: HandleTerminalState,
+    forget_after: SystemTime,
+) {
+    if state.handle_tombstones.len() >= MAX_HANDLE_TOMBSTONES
+        && !state.handle_tombstones.contains_key(&handle)
+    {
+        if let Some(oldest) = state
+            .handle_tombstones
+            .iter()
+            .min_by_key(|(_, tombstone)| tombstone.forget_after)
+            .map(|(handle, _)| handle.clone())
+        {
+            state.handle_tombstones.remove(&oldest);
+        }
+    }
+    state.handle_tombstones.insert(
+        handle,
+        HandleTombstone {
+            state: terminal,
+            forget_after,
+        },
+    );
 }
 
 pub struct BrokeredRelease {
     cancellation: ProviderCancellation,
     plan: Option<ReleasePlan>,
     target: VerifiedBrowserSecretTarget,
+    permit: SecretReleasePermit,
 }
 
 impl fmt::Debug for BrokeredRelease {
@@ -1186,11 +1608,8 @@ impl fmt::Debug for BrokeredRelease {
 }
 
 impl BrokeredRelease {
-    pub fn plan_kind(&self) -> ReleasePlanKind {
-        self.plan
-            .as_ref()
-            .expect("brokered release plan remains present")
-            .kind()
+    pub fn plan_kind(&self) -> Option<ReleasePlanKind> {
+        self.plan.as_ref().map(ReleasePlan::kind)
     }
 
     pub fn target(&self) -> &VerifiedBrowserSecretTarget {
@@ -1198,10 +1617,7 @@ impl BrokeredRelease {
     }
 
     pub fn take_runtime_lease(&mut self) -> Result<SecretLease, BrokeredReleaseError> {
-        if self.cancellation.is_revoked() {
-            self.plan.take();
-            return Err(BrokeredReleaseError::Revoked);
-        }
+        self.ensure_plan_live()?;
         match self.plan.take() {
             Some(ReleasePlan::RuntimeDelivers(lease)) => Ok(lease),
             Some(other) => {
@@ -1210,6 +1626,46 @@ impl BrokeredRelease {
             }
             None => Err(BrokeredReleaseError::AlreadyTaken),
         }
+    }
+
+    pub fn take_provider_fill_session(
+        &mut self,
+    ) -> Result<ProviderFillSession, BrokeredReleaseError> {
+        self.ensure_plan_live()?;
+        match self.plan.take() {
+            Some(ReleasePlan::ProviderFills(session)) => Ok(session),
+            Some(other) => {
+                self.plan = Some(other);
+                Err(BrokeredReleaseError::WrongPlan)
+            }
+            None => Err(BrokeredReleaseError::AlreadyTaken),
+        }
+    }
+
+    pub fn take_user_presence_handle(
+        &mut self,
+    ) -> Result<UserPresenceHandle, BrokeredReleaseError> {
+        self.ensure_plan_live()?;
+        match self.plan.take() {
+            Some(ReleasePlan::NeedsUserPresence(handle)) => Ok(handle),
+            Some(other) => {
+                self.plan = Some(other);
+                Err(BrokeredReleaseError::WrongPlan)
+            }
+            None => Err(BrokeredReleaseError::AlreadyTaken),
+        }
+    }
+
+    fn ensure_plan_live(&mut self) -> Result<(), BrokeredReleaseError> {
+        if self.cancellation.is_revoked() {
+            self.plan.take();
+            return Err(BrokeredReleaseError::Revoked);
+        }
+        if self.permit.ensure_live().is_err() {
+            self.plan.take();
+            return Err(BrokeredReleaseError::AuthorizationExpired);
+        }
+        Ok(())
     }
 
     pub fn complete(mut self) {
@@ -1230,6 +1686,8 @@ pub enum BrokeredReleaseError {
     WrongPlan,
     #[error("credential release plan was already taken")]
     AlreadyTaken,
+    #[error("credential release authorization expired")]
+    AuthorizationExpired,
 }
 
 struct ProviderCancellation {
@@ -1363,6 +1821,18 @@ fn validate_identifier(value: &str, maximum: usize) -> Result<(), ()> {
     Ok(())
 }
 
+fn validate_runtime_scope(value: &str) -> Result<(), ()> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(());
+    }
+    Ok(())
+}
+
 fn validate_binding_spec(
     runtime_scope: &str,
     spec: &CredentialBindingSpec,
@@ -1407,6 +1877,102 @@ fn target_matches(
     }
 }
 
+fn secret_release_resource(
+    handle: &CredentialHandle,
+    record: &HandleRecord,
+    binding: &BindingRecord,
+    field: CredentialField,
+    target: &VerifiedBrowserSecretTarget,
+) -> SecretReleaseResource {
+    let mut handle_digest = Sha256::new();
+    digest_field(&mut handle_digest, b"cua-credential-handle-v1");
+    digest_field(&mut handle_digest, handle.as_str().as_bytes());
+    SecretReleaseResource {
+        handle_digest: handle_digest.finalize().into(),
+        binding_digest: record.binding_digest,
+        authorization: binding.spec.authorization.clone(),
+        provider: record.provider.clone(),
+        provider_class: binding.provider_class,
+        field,
+        target: target.clone(),
+    }
+}
+
+fn secret_release_authorization_digest(
+    resource: &SecretReleaseResource,
+    context: &crate::session_authorization::EffectiveAuthorizationContext,
+) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest_field(&mut digest, b"cua-secret-release-authorization-v1");
+    digest_field(&mut digest, &resource.handle_digest);
+    digest_field(&mut digest, &resource.binding_digest.0);
+    digest_field(&mut digest, resource.authorization.as_str().as_bytes());
+    digest_field(&mut digest, resource.provider.as_str().as_bytes());
+    digest_field(&mut digest, resource.provider_class.as_str().as_bytes());
+    digest_field(&mut digest, resource.field.digest_tag());
+    digest_browser_secret_target(&mut digest, &resource.target);
+    digest_field(&mut digest, context.mode().as_str().as_bytes());
+    digest_field(
+        &mut digest,
+        context.public_session().unwrap_or("").as_bytes(),
+    );
+    digest_field(
+        &mut digest,
+        context.transport_session().unwrap_or("").as_bytes(),
+    );
+    digest_field(
+        &mut digest,
+        context
+            .capability_manifest_sha256()
+            .unwrap_or("")
+            .as_bytes(),
+    );
+    digest_field(
+        &mut digest,
+        context.managed_policy_sha256().unwrap_or("").as_bytes(),
+    );
+    digest_field(
+        &mut digest,
+        context.user_policy_sha256().unwrap_or("").as_bytes(),
+    );
+    digest.finalize().into()
+}
+
+fn digest_browser_secret_target(digest: &mut Sha256, target: &VerifiedBrowserSecretTarget) {
+    digest_field(digest, target.runtime_scope.as_bytes());
+    digest_field(digest, target.session.as_bytes());
+    digest_field(digest, &target.process.pid.to_be_bytes());
+    digest_field(
+        digest,
+        &target.process.start_time.unwrap_or(u64::MAX).to_be_bytes(),
+    );
+    digest_field(
+        digest,
+        target
+            .process
+            .executable
+            .as_deref()
+            .unwrap_or("")
+            .as_bytes(),
+    );
+    digest_field(digest, &target.endpoint_generation.to_be_bytes());
+    digest_field(digest, target.target_id.as_bytes());
+    digest_field(digest, target.tab_id.as_bytes());
+    digest_field(
+        digest,
+        match target.frame.kind {
+            BrowserSecretFrameKind::Main => b"main",
+            BrowserSecretFrameKind::Iframe => b"iframe",
+            BrowserSecretFrameKind::Oopif => b"oopif",
+        },
+    );
+    digest_field(digest, target.frame.frame_id.as_bytes());
+    digest_field(digest, target.frame.loader_id.as_bytes());
+    digest_field(digest, target.origin.as_str().as_bytes());
+    digest_field(digest, target.semantic_ref.as_bytes());
+    digest_field(digest, target.secure_field.as_str().as_bytes());
+}
+
 fn binding_digest(runtime_scope: &str, spec: &CredentialBindingSpec) -> BindingDigest {
     let mut digest = Sha256::new();
     digest_field(&mut digest, b"cua-credential-binding-v1");
@@ -1430,7 +1996,7 @@ fn binding_digest(runtime_scope: &str, spec: &CredentialBindingSpec) -> BindingD
             SecretTargetConstraint::Browser(browser) => {
                 digest_field(&mut digest, b"browser");
                 digest_field(&mut digest, browser.origin.as_str().as_bytes());
-                digest_field(&mut digest, b"password");
+                digest_field(&mut digest, browser.secure_field.as_str().as_bytes());
             }
         }
     }
@@ -1478,7 +2044,9 @@ mod tests {
         id: CredentialProviderId,
         outcomes: Mutex<VecDeque<FakeOutcome>>,
         releases: AtomicUsize,
+        effects: AtomicUsize,
         cancellations: AtomicUsize,
+        cancelled_releases: Mutex<HashSet<ProviderReleaseId>>,
     }
 
     impl FakeProvider {
@@ -1487,8 +2055,29 @@ mod tests {
                 id: CredentialProviderId::new("fake-provider").unwrap(),
                 outcomes: Mutex::new(outcomes.into_iter().collect()),
                 releases: AtomicUsize::new(0),
+                effects: AtomicUsize::new(0),
                 cancellations: AtomicUsize::new(0),
+                cancelled_releases: Mutex::new(HashSet::new()),
             })
+        }
+
+        fn before_effect(
+            &self,
+            request: &ProviderReleaseRequest,
+        ) -> Result<(), CredentialProviderError> {
+            request.ensure_not_cancelled()?;
+            if self
+                .cancelled_releases
+                .lock()
+                .unwrap()
+                .contains(&request.release_id())
+            {
+                return Err(CredentialProviderError::new(
+                    CredentialProviderErrorKind::Cancelled,
+                ));
+            }
+            self.effects.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -1504,9 +2093,10 @@ mod tests {
 
         async fn release(
             &self,
-            _request: &ProviderReleaseRequest,
+            request: &ProviderReleaseRequest,
         ) -> Result<ReleasePlan, CredentialProviderError> {
             self.releases.fetch_add(1, Ordering::SeqCst);
+            request.ensure_not_cancelled()?;
             let outcome = self
                 .outcomes
                 .lock()
@@ -1514,25 +2104,35 @@ mod tests {
                 .pop_front()
                 .unwrap_or(FakeOutcome::Error(CredentialProviderErrorKind::NotFound));
             match outcome {
-                FakeOutcome::Runtime(value) => SecretLease::from_utf8_bytes(value)
-                    .map(ReleasePlan::RuntimeDelivers)
-                    .map_err(|error| match error {
-                        SecretLeaseError::Empty => CredentialProviderError::new(
-                            CredentialProviderErrorKind::MalformedResponse,
-                        ),
-                        SecretLeaseError::TooLarge => CredentialProviderError::new(
-                            CredentialProviderErrorKind::OversizedSecret,
-                        ),
-                        SecretLeaseError::InvalidUtf8 => {
-                            CredentialProviderError::new(CredentialProviderErrorKind::InvalidUtf8)
-                        }
-                    }),
-                FakeOutcome::ProviderFill => Ok(ReleasePlan::ProviderFills(
-                    ProviderFillSession::from_opaque_bytes(b"fill-session".to_vec()).unwrap(),
-                )),
-                FakeOutcome::UserPresence => Ok(ReleasePlan::NeedsUserPresence(
-                    UserPresenceHandle::from_opaque_bytes(b"presence-session".to_vec()).unwrap(),
-                )),
+                FakeOutcome::Runtime(value) => {
+                    self.before_effect(request)?;
+                    SecretLease::from_utf8_bytes(value)
+                        .map(ReleasePlan::RuntimeDelivers)
+                        .map_err(|error| match error {
+                            SecretLeaseError::Empty => CredentialProviderError::new(
+                                CredentialProviderErrorKind::MalformedResponse,
+                            ),
+                            SecretLeaseError::TooLarge => CredentialProviderError::new(
+                                CredentialProviderErrorKind::OversizedSecret,
+                            ),
+                            SecretLeaseError::InvalidUtf8 => CredentialProviderError::new(
+                                CredentialProviderErrorKind::InvalidUtf8,
+                            ),
+                        })
+                }
+                FakeOutcome::ProviderFill => {
+                    self.before_effect(request)?;
+                    Ok(ReleasePlan::ProviderFills(
+                        ProviderFillSession::from_opaque_bytes(b"fill-session".to_vec()).unwrap(),
+                    ))
+                }
+                FakeOutcome::UserPresence => {
+                    self.before_effect(request)?;
+                    Ok(ReleasePlan::NeedsUserPresence(
+                        UserPresenceHandle::from_opaque_bytes(b"presence-session".to_vec())
+                            .unwrap(),
+                    ))
+                }
                 FakeOutcome::Error(kind) => Err(CredentialProviderError::new(kind)),
                 FakeOutcome::Wait {
                     entered,
@@ -1541,6 +2141,7 @@ mod tests {
                 } => {
                     entered.notify_waiters();
                     resume.notified().await;
+                    self.before_effect(request)?;
                     SecretLease::from_utf8_bytes(value)
                         .map(ReleasePlan::RuntimeDelivers)
                         .map_err(|_| {
@@ -1552,8 +2153,10 @@ mod tests {
             }
         }
 
-        async fn cancel(&self, _release: ProviderReleaseId) -> Result<(), CredentialProviderError> {
-            self.cancellations.fetch_add(1, Ordering::SeqCst);
+        async fn cancel(&self, release: ProviderReleaseId) -> Result<(), CredentialProviderError> {
+            if self.cancelled_releases.lock().unwrap().insert(release) {
+                self.cancellations.fetch_add(1, Ordering::SeqCst);
+            }
             Ok(())
         }
 
@@ -1597,39 +2200,71 @@ mod tests {
         .unwrap()
     }
 
+    fn binding_spec(session: &str, authorization: &str) -> CredentialBindingSpec {
+        CredentialBindingSpec {
+            session: session.to_owned(),
+            provider: CredentialProviderId::new("fake-provider").unwrap(),
+            private_fields: vec![PrivateCredentialField {
+                field: CredentialField::Password,
+                locator: PrivateCredentialFieldLocator::new("provider://automation/item/password")
+                    .unwrap(),
+            }],
+            safe_label: Some(SafeCredentialLabel::new("Synthetic login").unwrap()),
+            allowed_targets: vec![SecretTargetConstraint::Browser(
+                BrowserSecretTargetConstraint::exact_password_origin(
+                    "https://accounts.example.test",
+                )
+                .unwrap(),
+            )],
+            expires_at: None,
+            max_releases: None,
+            authorization: SecretReleaseAuthorization::trusted_scope(authorization).unwrap(),
+        }
+    }
+
     fn broker_with(
         provider: Arc<FakeProvider>,
         max_releases: Option<u32>,
-    ) -> (Arc<SecretBroker>, BindingRegistrationId, String) {
+    ) -> (
+        Arc<SecretBroker>,
+        BindingRegistrationId,
+        String,
+        Arc<crate::session_authorization::EffectiveAuthorizationContext>,
+    ) {
         static NEXT_SESSION: AtomicUsize = AtomicUsize::new(1);
-        let mut builder = SecretBrokerBuilder::new("runtime-a").unwrap();
+        let ceiling = crate::session_authorization::SessionModeCeiling::for_trusted_sessions(
+            [crate::authorization::PermissionMode::Unrestricted],
+            true,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let context =
+            crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
+                .compatibility_context(crate::authorization::PermissionMode::Unrestricted, None)
+                .unwrap();
+        let mut builder = SecretBrokerBuilder::new(context.runtime_scope_key()).unwrap();
         let public_session = format!("agent-{}", NEXT_SESSION.fetch_add(1, Ordering::Relaxed));
         let session = builder.runtime_session_key(&public_session).unwrap();
         builder.add_provider(provider).unwrap();
-        let registration = builder
-            .add_binding(CredentialBindingSpec {
-                session: session.clone(),
-                provider: CredentialProviderId::new("fake-provider").unwrap(),
-                private_fields: vec![PrivateCredentialField {
-                    field: CredentialField::Password,
-                    locator: PrivateCredentialFieldLocator::new(
-                        "provider://automation/item/password",
-                    )
-                    .unwrap(),
-                }],
-                safe_label: Some(SafeCredentialLabel::new("Synthetic login").unwrap()),
-                allowed_targets: vec![SecretTargetConstraint::Browser(
-                    BrowserSecretTargetConstraint::exact_password_origin(
-                        "https://accounts.example.test",
-                    )
-                    .unwrap(),
-                )],
-                expires_at: None,
-                max_releases,
-                authorization: SecretReleaseAuthorization::trusted_scope("login-recovery").unwrap(),
-            })
+        let mut spec = binding_spec(&session, "login-recovery");
+        spec.max_releases = max_releases;
+        let registration = builder.add_binding(spec).unwrap();
+        (builder.build().unwrap(), registration, session, context)
+    }
+
+    fn permit(
+        broker: &SecretBroker,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        handle: &CredentialHandle,
+        field: CredentialField,
+        target: &VerifiedBrowserSecretTarget,
+        at: SystemTime,
+    ) -> SecretReleasePermit {
+        let resource = broker
+            .prepare_secret_release(handle, field, target, at)
             .unwrap();
-        (builder.build().unwrap(), registration, session)
+        crate::authorization::authorize_secret_release(context, &resource).unwrap()
     }
 
     #[test]
@@ -1698,11 +2333,195 @@ mod tests {
     }
 
     #[test]
+    fn runtime_scope_encoding_is_unambiguous_and_ended_sessions_are_rejected() {
+        assert!(matches!(
+            SecretBrokerBuilder::new("runtime:ambiguous"),
+            Err(CredentialConfigurationError::InvalidRuntimeScope)
+        ));
+
+        let runtime = format!("runtime-ended-{}", Uuid::new_v4().simple());
+        let mut builder = SecretBrokerBuilder::new(&runtime).unwrap();
+        let provider = FakeProvider::new([]);
+        builder.add_provider(provider.clone()).unwrap();
+        let ended_before_add = builder.runtime_session_key("ended-before-add").unwrap();
+        crate::session::fire_session_end(&ended_before_add);
+        assert_eq!(
+            builder
+                .add_binding(binding_spec(&ended_before_add, "ended-before-add"))
+                .unwrap_err(),
+            CredentialConfigurationError::SessionEnded
+        );
+
+        let ended_before_build = builder.runtime_session_key("ended-before-build").unwrap();
+        builder
+            .add_binding(binding_spec(&ended_before_build, "ended-before-build"))
+            .unwrap();
+        crate::session::fire_session_end(&ended_before_build);
+        assert!(matches!(
+            builder.build(),
+            Err(CredentialConfigurationError::SessionEnded)
+        ));
+    }
+
+    #[test]
+    fn target_debug_omits_origin_endpoint_generation_and_private_identity() {
+        let value = target(
+            "runtime-safe",
+            "__cua_runtime_runtime-safe:agent",
+            "https://accounts.example.test/login",
+            "p99:1",
+        );
+        let debug = format!("{value:?}");
+        assert!(!debug.contains("accounts.example.test"));
+        assert!(!debug.contains("endpoint_generation: 3"));
+        assert!(!debug.contains("p99:1"));
+        assert!(!debug.contains("tab-synthetic"));
+    }
+
+    #[test]
+    fn secret_release_authorization_is_distinct_across_permission_modes() {
+        let load_manifest = |source: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("manifest.yaml");
+            std::fs::write(&path, source).unwrap();
+            Arc::new(crate::session_manifest::load_manifest(&path).unwrap())
+        };
+        let exact_manifest = load_manifest(
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 5m
+resources:
+  credentials:
+    secret_release:
+      - authorization: login-recovery
+        origins: [https://accounts.example.test]
+allow:
+  tools: [secret_release]
+"#,
+        );
+        let generic_input_manifest = load_manifest(
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 5m
+resources:
+  browser:
+    origins: [https://accounts.example.test]
+allow:
+  tools: [browser_type]
+"#,
+        );
+        let ceiling = crate::session_authorization::SessionModeCeiling::for_trusted_sessions(
+            [
+                crate::authorization::PermissionMode::Standard,
+                crate::authorization::PermissionMode::Bounded,
+                crate::authorization::PermissionMode::Unrestricted,
+            ],
+            true,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let registry =
+            crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling);
+        let standard = registry
+            .compatibility_context(
+                crate::authorization::PermissionMode::Standard,
+                Some(exact_manifest.clone()),
+            )
+            .unwrap();
+        let bounded = registry
+            .compatibility_context(
+                crate::authorization::PermissionMode::Bounded,
+                Some(exact_manifest),
+            )
+            .unwrap();
+        let bounded_generic = registry
+            .compatibility_context(
+                crate::authorization::PermissionMode::Bounded,
+                Some(generic_input_manifest.clone()),
+            )
+            .unwrap();
+        let unrestricted = registry
+            .compatibility_context(crate::authorization::PermissionMode::Unrestricted, None)
+            .unwrap();
+        let unrestricted_narrowed = registry
+            .compatibility_context(
+                crate::authorization::PermissionMode::Unrestricted,
+                Some(generic_input_manifest),
+            )
+            .unwrap();
+
+        let provider = FakeProvider::new([]);
+        let mut builder = SecretBrokerBuilder::new(standard.runtime_scope_key()).unwrap();
+        let session = builder.runtime_session_key("authorization-matrix").unwrap();
+        builder.add_provider(provider).unwrap();
+        builder
+            .add_binding(CredentialBindingSpec {
+                session: session.clone(),
+                provider: CredentialProviderId::new("fake-provider").unwrap(),
+                private_fields: vec![PrivateCredentialField {
+                    field: CredentialField::Password,
+                    locator: PrivateCredentialFieldLocator::new("private-locator").unwrap(),
+                }],
+                safe_label: None,
+                allowed_targets: vec![SecretTargetConstraint::Browser(
+                    BrowserSecretTargetConstraint::exact_password_origin(
+                        "https://accounts.example.test",
+                    )
+                    .unwrap(),
+                )],
+                expires_at: None,
+                max_releases: Some(1),
+                authorization: SecretReleaseAuthorization::trusted_scope("login-recovery").unwrap(),
+            })
+            .unwrap();
+        let broker = builder.build().unwrap();
+        let target = target(
+            broker.runtime_scope(),
+            &session,
+            "https://accounts.example.test/login",
+            "p11:1",
+        );
+        let descriptor = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let resource = broker
+            .prepare_secret_release(
+                &descriptor.handle,
+                CredentialField::Password,
+                &target,
+                now(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            crate::authorization::authorize_secret_release(&standard, &resource)
+                .err()
+                .unwrap(),
+            SecretReleaseAuthorizationError::StandardDenied
+        );
+        assert_eq!(
+            crate::authorization::authorize_secret_release(&bounded_generic, &resource)
+                .err()
+                .unwrap(),
+            SecretReleaseAuthorizationError::ManifestDenied
+        );
+        assert_eq!(
+            crate::authorization::authorize_secret_release(&unrestricted_narrowed, &resource)
+                .err()
+                .unwrap(),
+            SecretReleaseAuthorizationError::ManifestDenied
+        );
+        assert!(crate::authorization::authorize_secret_release(&bounded, &resource).is_ok());
+        assert!(crate::authorization::authorize_secret_release(&unrestricted, &resource).is_ok());
+    }
+
+    #[test]
     fn discovery_is_target_first_safe_and_mints_fresh_handles() {
         let provider = FakeProvider::new([]);
-        let (broker, _, session) = broker_with(provider.clone(), Some(1));
+        let (broker, _, session, _) = broker_with(provider.clone(), Some(1));
         let wrong = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://other.example.test/login",
             "p1:1",
@@ -1711,7 +2530,7 @@ mod tests {
         assert_eq!(provider.releases.load(Ordering::SeqCst), 0);
 
         let expected = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p2:1",
@@ -1727,32 +2546,148 @@ mod tests {
         assert_eq!(provider.releases.load(Ordering::SeqCst), 0);
     }
 
+    #[test]
+    fn handle_capacity_is_atomic_per_session_and_expiry_frees_it() {
+        let runtime = format!("runtime-capacity-{}", Uuid::new_v4().simple());
+        let provider = FakeProvider::new([]);
+        let mut builder = SecretBrokerBuilder::new(&runtime).unwrap();
+        let session_a = builder.runtime_session_key("capacity-a").unwrap();
+        let session_b = builder.runtime_session_key("capacity-b").unwrap();
+        builder.add_provider(provider).unwrap();
+        let mut first_registration = None;
+        for index in 0..MAX_ACTIVE_HANDLES_PER_SESSION {
+            let registration = builder
+                .add_binding(binding_spec(&session_a, &format!("capacity-a-{index}")))
+                .unwrap();
+            first_registration.get_or_insert(registration);
+        }
+        builder
+            .add_binding(binding_spec(&session_b, "capacity-b"))
+            .unwrap();
+        let broker = builder.build().unwrap();
+        let target_a = target(
+            broker.runtime_scope(),
+            &session_a,
+            "https://accounts.example.test/login",
+            "p100:1",
+        );
+        let target_b = target(
+            broker.runtime_scope(),
+            &session_b,
+            "https://accounts.example.test/login",
+            "p100:2",
+        );
+
+        assert_eq!(
+            broker.find_credentials(&target_a, now()).unwrap().len(),
+            MAX_ACTIVE_HANDLES_PER_SESSION
+        );
+        assert_eq!(
+            broker.find_credentials(&target_a, now()).unwrap_err(),
+            SecretBrokerError::Capacity
+        );
+        assert_eq!(
+            broker.state.lock().unwrap().handles.len(),
+            MAX_ACTIVE_HANDLES_PER_SESSION,
+            "a failed discovery must not mint a partial batch"
+        );
+        assert_eq!(broker.find_credentials(&target_b, now()).unwrap().len(), 1);
+
+        assert!(broker.revoke_binding(first_registration.unwrap()));
+        assert_eq!(
+            broker
+                .state
+                .lock()
+                .unwrap()
+                .handles
+                .values()
+                .filter(|handle| handle.target.session() == session_a)
+                .count(),
+            MAX_ACTIVE_HANDLES_PER_SESSION - 1
+        );
+
+        let after_expiry = now() + DEFAULT_CREDENTIAL_HANDLE_TTL;
+        assert_eq!(
+            broker
+                .find_credentials(&target_a, after_expiry)
+                .unwrap()
+                .len(),
+            MAX_ACTIVE_HANDLES_PER_SESSION - 1
+        );
+    }
+
+    #[test]
+    fn handles_cannot_cross_brokers_even_with_the_same_runtime_and_target() {
+        let runtime = format!("runtime-cross-broker-{}", Uuid::new_v4().simple());
+        let provider = FakeProvider::new([]);
+        let build = || {
+            let mut builder = SecretBrokerBuilder::new(&runtime).unwrap();
+            let session = builder.runtime_session_key("same-session").unwrap();
+            builder.add_provider(provider.clone()).unwrap();
+            builder
+                .add_binding(binding_spec(&session, "same-authorization"))
+                .unwrap();
+            (builder.build().unwrap(), session)
+        };
+        let (first, session) = build();
+        let (second, _) = build();
+        let target = target(
+            &runtime,
+            &session,
+            "https://accounts.example.test/login",
+            "p101:1",
+        );
+        let descriptor = first.find_credentials(&target, now()).unwrap().remove(0);
+
+        assert_eq!(
+            second
+                .prepare_secret_release(
+                    &descriptor.handle,
+                    CredentialField::Password,
+                    &target,
+                    now(),
+                )
+                .unwrap_err(),
+            SecretBrokerError::InvalidHandle
+        );
+        assert_eq!(provider.releases.load(Ordering::SeqCst), 0);
+    }
+
     #[tokio::test]
     async fn handle_is_exact_target_bound_and_runtime_lease_is_single_use() {
         let provider = FakeProvider::new([FakeOutcome::Runtime(
             b"CREDENTIAL_CANARY_NOT_PUBLIC".to_vec(),
         )]);
-        let (broker, _, session) = broker_with(provider.clone(), Some(2));
+        let (broker, _, session, context) = broker_with(provider.clone(), Some(2));
         let expected = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p3:1",
         );
         let other_ref = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p3:2",
         );
         let descriptor = broker.find_credentials(&expected, now()).unwrap().remove(0);
+        let mismatch_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &expected,
+            now(),
+        );
         assert_eq!(
             broker
                 .release(
                     &descriptor.handle,
                     CredentialField::Password,
                     &other_ref,
-                    now()
+                    now(),
+                    mismatch_permit,
                 )
                 .await
                 .unwrap_err(),
@@ -1760,17 +2695,35 @@ mod tests {
         );
         assert_eq!(provider.releases.load(Ordering::SeqCst), 0);
 
+        let success_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &expected,
+            now(),
+        );
+        let replay_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &expected,
+            now(),
+        );
         let mut release = broker
             .release(
                 &descriptor.handle,
                 CredentialField::Password,
                 &expected,
                 now(),
+                success_permit,
             )
             .await
             .unwrap();
-        assert_eq!(release.plan_kind(), ReleasePlanKind::RuntimeDelivers);
+        assert_eq!(release.plan_kind(), Some(ReleasePlanKind::RuntimeDelivers));
         let lease = release.take_runtime_lease().expect("runtime lease");
+        assert_eq!(release.plan_kind(), None);
         assert_eq!(lease.expose_for_delivery(), "CREDENTIAL_CANARY_NOT_PUBLIC");
         release.complete();
         drop(lease);
@@ -1780,7 +2733,8 @@ mod tests {
                     &descriptor.handle,
                     CredentialField::Password,
                     &expected,
-                    now()
+                    now(),
+                    replay_permit,
                 )
                 .await
                 .unwrap_err(),
@@ -1798,15 +2752,31 @@ mod tests {
             resume: resume.clone(),
             value: b"synthetic-secret".to_vec(),
         }]);
-        let (broker, _, session) = broker_with(provider.clone(), Some(1));
+        let (broker, _, session, context) = broker_with(provider.clone(), Some(1));
         let target = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p4:1",
         );
         let first = broker.find_credentials(&target, now()).unwrap().remove(0);
         let second = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let first_permit = permit(
+            &broker,
+            &context,
+            &first.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
+        let second_permit = permit(
+            &broker,
+            &context,
+            &second.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
         let broker_for_task = broker.clone();
         let target_for_task = target.clone();
         let first_handle = first.handle.clone();
@@ -1817,13 +2787,20 @@ mod tests {
                     CredentialField::Password,
                     &target_for_task,
                     now(),
+                    first_permit,
                 )
                 .await
         });
         entered.notified().await;
         assert_eq!(
             broker
-                .release(&second.handle, CredentialField::Password, &target, now(),)
+                .release(
+                    &second.handle,
+                    CredentialField::Password,
+                    &target,
+                    now(),
+                    second_permit,
+                )
                 .await
                 .unwrap_err(),
             SecretBrokerError::ReleaseLimitReached
@@ -1838,14 +2815,30 @@ mod tests {
         let provider = FakeProvider::new([FakeOutcome::Error(
             CredentialProviderErrorKind::ProviderDied,
         )]);
-        let (broker, _, session) = broker_with(provider.clone(), Some(2));
+        let (broker, _, session, context) = broker_with(provider.clone(), Some(2));
         let target = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p5:1",
         );
         let descriptor = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let failure_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
+        let replay_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
         assert_eq!(
             broker
                 .release(
@@ -1853,6 +2846,7 @@ mod tests {
                     CredentialField::Password,
                     &target,
                     now(),
+                    failure_permit,
                 )
                 .await
                 .unwrap_err(),
@@ -1865,6 +2859,7 @@ mod tests {
                     CredentialField::Password,
                     &target,
                     now(),
+                    replay_permit,
                 )
                 .await
                 .unwrap_err(),
@@ -1881,20 +2876,42 @@ mod tests {
             resume,
             value: b"synthetic-secret".to_vec(),
         }]);
-        let (broker, _, session) = broker_with(provider.clone(), Some(2));
+        let (broker, _, session, context) = broker_with(provider.clone(), Some(2));
         let target = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p6:1",
         );
         let descriptor = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let pending_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
+        let replay_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
         let broker_for_task = broker.clone();
         let target_for_task = target.clone();
         let handle = descriptor.handle.clone();
         let pending = tokio::spawn(async move {
             broker_for_task
-                .release(&handle, CredentialField::Password, &target_for_task, now())
+                .release(
+                    &handle,
+                    CredentialField::Password,
+                    &target_for_task,
+                    now(),
+                    pending_permit,
+                )
                 .await
         });
         entered.notified().await;
@@ -1915,6 +2932,7 @@ mod tests {
                     CredentialField::Password,
                     &target,
                     now(),
+                    replay_permit,
                 )
                 .await
                 .unwrap_err(),
@@ -1923,46 +2941,182 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_or_revoking_a_returned_release_cancels_exactly_once() {
+        let dropped_provider =
+            FakeProvider::new([FakeOutcome::Runtime(b"drop-cancellation-canary".to_vec())]);
+        let (dropped_broker, _, dropped_session, dropped_context) =
+            broker_with(dropped_provider.clone(), Some(1));
+        let dropped_target = target(
+            dropped_broker.runtime_scope(),
+            &dropped_session,
+            "https://accounts.example.test/login",
+            "p102:1",
+        );
+        let dropped_descriptor = dropped_broker
+            .find_credentials(&dropped_target, now())
+            .unwrap()
+            .remove(0);
+        let dropped_permit = permit(
+            &dropped_broker,
+            &dropped_context,
+            &dropped_descriptor.handle,
+            CredentialField::Password,
+            &dropped_target,
+            now(),
+        );
+        let dropped_release = dropped_broker
+            .release(
+                &dropped_descriptor.handle,
+                CredentialField::Password,
+                &dropped_target,
+                now(),
+                dropped_permit,
+            )
+            .await
+            .unwrap();
+        drop(dropped_release);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while dropped_provider.cancellations.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("drop cancellation");
+        assert_eq!(dropped_provider.cancellations.load(Ordering::SeqCst), 1);
+
+        let revoked_provider = FakeProvider::new([FakeOutcome::Runtime(
+            b"post-return-revocation-canary".to_vec(),
+        )]);
+        let (revoked_broker, registration, revoked_session, revoked_context) =
+            broker_with(revoked_provider.clone(), Some(1));
+        let revoked_target = target(
+            revoked_broker.runtime_scope(),
+            &revoked_session,
+            "https://accounts.example.test/login",
+            "p103:1",
+        );
+        let revoked_descriptor = revoked_broker
+            .find_credentials(&revoked_target, now())
+            .unwrap()
+            .remove(0);
+        let revoked_permit = permit(
+            &revoked_broker,
+            &revoked_context,
+            &revoked_descriptor.handle,
+            CredentialField::Password,
+            &revoked_target,
+            now(),
+        );
+        let mut revoked_release = revoked_broker
+            .release(
+                &revoked_descriptor.handle,
+                CredentialField::Password,
+                &revoked_target,
+                now(),
+                revoked_permit,
+            )
+            .await
+            .unwrap();
+        assert!(revoked_broker.revoke_binding(registration));
+        assert_eq!(
+            revoked_release.take_runtime_lease().err(),
+            Some(BrokeredReleaseError::Revoked)
+        );
+        drop(revoked_release);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while revoked_provider.cancellations.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("post-return cancellation");
+        assert_eq!(revoked_provider.cancellations.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn release_plan_variants_remain_distinct() {
         let provider = FakeProvider::new([FakeOutcome::ProviderFill, FakeOutcome::UserPresence]);
-        let (broker, _, session) = broker_with(provider, Some(2));
+        let (broker, _, session, context) = broker_with(provider, Some(2));
         let target = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p7:1",
         );
         let first = broker.find_credentials(&target, now()).unwrap().remove(0);
-        let first_release = broker
-            .release(&first.handle, CredentialField::Password, &target, now())
+        let first_permit = permit(
+            &broker,
+            &context,
+            &first.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
+        let mut first_release = broker
+            .release(
+                &first.handle,
+                CredentialField::Password,
+                &target,
+                now(),
+                first_permit,
+            )
             .await
             .unwrap();
-        assert_eq!(first_release.plan_kind(), ReleasePlanKind::ProviderFills);
+        assert_eq!(
+            first_release.plan_kind(),
+            Some(ReleasePlanKind::ProviderFills)
+        );
+        assert!(first_release.take_provider_fill_session().is_ok());
+        assert_eq!(first_release.plan_kind(), None);
         first_release.complete();
 
         let second = broker.find_credentials(&target, now()).unwrap().remove(0);
-        let second_release = broker
-            .release(&second.handle, CredentialField::Password, &target, now())
+        let second_permit = permit(
+            &broker,
+            &context,
+            &second.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
+        let mut second_release = broker
+            .release(
+                &second.handle,
+                CredentialField::Password,
+                &target,
+                now(),
+                second_permit,
+            )
             .await
             .unwrap();
         assert_eq!(
             second_release.plan_kind(),
-            ReleasePlanKind::NeedsUserPresence
+            Some(ReleasePlanKind::NeedsUserPresence)
         );
+        assert!(second_release.take_user_presence_handle().is_ok());
+        assert_eq!(second_release.plan_kind(), None);
         second_release.complete();
     }
 
     #[tokio::test]
     async fn expiry_and_revocation_fail_before_provider_release() {
         let provider = FakeProvider::new([]);
-        let (broker, registration, session) = broker_with(provider.clone(), Some(2));
+        let (broker, registration, session, context) = broker_with(provider.clone(), Some(2));
         let target = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p8:1",
         );
         let expired = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let expired_permit = permit(
+            &broker,
+            &context,
+            &expired.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
         assert_eq!(
             broker
                 .release(
@@ -1970,16 +3124,31 @@ mod tests {
                     CredentialField::Password,
                     &target,
                     now() + DEFAULT_CREDENTIAL_HANDLE_TTL,
+                    expired_permit,
                 )
                 .await
                 .unwrap_err(),
             SecretBrokerError::HandleExpired
         );
         let revoked = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let revoked_permit = permit(
+            &broker,
+            &context,
+            &revoked.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
         assert!(broker.revoke_binding(registration));
         assert_eq!(
             broker
-                .release(&revoked.handle, CredentialField::Password, &target, now(),)
+                .release(
+                    &revoked.handle,
+                    CredentialField::Password,
+                    &target,
+                    now(),
+                    revoked_permit,
+                )
                 .await
                 .unwrap_err(),
             SecretBrokerError::HandleRevoked
@@ -1990,14 +3159,22 @@ mod tests {
     #[tokio::test]
     async fn lifecycle_session_end_revokes_bindings_and_handles() {
         let provider = FakeProvider::new([]);
-        let (broker, _, session) = broker_with(provider.clone(), Some(2));
+        let (broker, _, session, context) = broker_with(provider.clone(), Some(2));
         let target = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p9:1",
         );
         let descriptor = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let release_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
         crate::session::fire_session_end(&session);
         assert_eq!(
             broker
@@ -2006,6 +3183,7 @@ mod tests {
                     CredentialField::Password,
                     &target,
                     now(),
+                    release_permit,
                 )
                 .await
                 .unwrap_err(),
@@ -2024,20 +3202,34 @@ mod tests {
             resume: resume.clone(),
             value: b"late-synthetic-secret".to_vec(),
         }]);
-        let (broker, _, session) = broker_with(provider.clone(), Some(2));
+        let (broker, _, session, context) = broker_with(provider.clone(), Some(2));
         let target = target(
-            "runtime-a",
+            broker.runtime_scope(),
             &session,
             "https://accounts.example.test/login",
             "p10:1",
         );
         let descriptor = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let release_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
         let broker_for_task = broker.clone();
         let target_for_task = target.clone();
         let handle = descriptor.handle.clone();
         let pending = tokio::spawn(async move {
             broker_for_task
-                .release(&handle, CredentialField::Password, &target_for_task, now())
+                .release(
+                    &handle,
+                    CredentialField::Password,
+                    &target_for_task,
+                    now(),
+                    release_permit,
+                )
                 .await
         });
         entered.notified().await;
@@ -2057,6 +3249,147 @@ mod tests {
             SecretBrokerError::HandleRevoked
         );
         assert_eq!(provider.cancellations.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.effects.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn provider_revocation_cancels_before_effect_and_blocks_discovery() {
+        let entered = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let provider = FakeProvider::new([FakeOutcome::Wait {
+            entered: entered.clone(),
+            resume: resume.clone(),
+            value: b"provider-revocation-canary".to_vec(),
+        }]);
+        let (broker, _, session, context) = broker_with(provider.clone(), Some(2));
+        let target = target(
+            broker.runtime_scope(),
+            &session,
+            "https://accounts.example.test/login",
+            "p104:1",
+        );
+        let descriptor = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let release_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
+        let broker_for_task = broker.clone();
+        let target_for_task = target.clone();
+        let handle = descriptor.handle.clone();
+        let pending = tokio::spawn(async move {
+            broker_for_task
+                .release(
+                    &handle,
+                    CredentialField::Password,
+                    &target_for_task,
+                    now(),
+                    release_permit,
+                )
+                .await
+        });
+        entered.notified().await;
+
+        assert!(broker.revoke_provider(provider.id()));
+        resume.notify_waiters();
+        assert_eq!(
+            pending.await.unwrap().unwrap_err(),
+            SecretBrokerError::HandleRevoked
+        );
+        assert_eq!(provider.effects.load(Ordering::SeqCst), 0);
+        assert!(broker.find_credentials(&target, now()).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn provider_cancel_tombstone_blocks_a_later_release_effect() {
+        let provider = FakeProvider::new([FakeOutcome::Runtime(
+            b"cancel-before-release-canary".to_vec(),
+        )]);
+        let release_id = ProviderReleaseId(Uuid::new_v4());
+        provider.cancel(release_id).await.unwrap();
+        let request = ProviderReleaseRequest {
+            release_id,
+            field: CredentialField::Password,
+            locator: PrivateCredentialFieldLocator::new("provider://cancelled/password").unwrap(),
+            target: target(
+                "runtime-cancelled",
+                "__cua_runtime_runtime-cancelled:agent",
+                "https://accounts.example.test/login",
+                "p106:1",
+            ),
+            cancelled: Arc::new(AtomicBool::new(false)),
+        };
+
+        assert_eq!(
+            provider
+                .release(&request)
+                .await
+                .err()
+                .map(|error| error.kind()),
+            Some(CredentialProviderErrorKind::Cancelled)
+        );
+        assert_eq!(provider.effects.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn terminal_runtime_suspension_revokes_broker_and_inflight_release() {
+        let entered = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let provider = FakeProvider::new([FakeOutcome::Wait {
+            entered: entered.clone(),
+            resume: resume.clone(),
+            value: b"runtime-suspension-canary".to_vec(),
+        }]);
+        let (broker, _, session, context) = broker_with(provider.clone(), Some(2));
+        let runtime_scope = broker.runtime_scope().to_owned();
+        let target = target(
+            &runtime_scope,
+            &session,
+            "https://accounts.example.test/login",
+            "p105:1",
+        );
+        let descriptor = broker.find_credentials(&target, now()).unwrap().remove(0);
+        let release_permit = permit(
+            &broker,
+            &context,
+            &descriptor.handle,
+            CredentialField::Password,
+            &target,
+            now(),
+        );
+        let broker_for_task = broker.clone();
+        let target_for_task = target.clone();
+        let handle = descriptor.handle.clone();
+        let pending = tokio::spawn(async move {
+            broker_for_task
+                .release(
+                    &handle,
+                    CredentialField::Password,
+                    &target_for_task,
+                    now(),
+                    release_permit,
+                )
+                .await
+        });
+        entered.notified().await;
+
+        assert!(crate::session::suspend_runtime_scope(&runtime_scope));
+        resume.notify_waiters();
+        assert_eq!(
+            pending.await.unwrap().unwrap_err(),
+            SecretBrokerError::HandleRevoked
+        );
+        assert_eq!(provider.effects.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            broker.find_credentials(&target, now()).unwrap_err(),
+            SecretBrokerError::RuntimeSuspended
+        );
+        assert!(crate::session::forget_suspended_runtime_scope(
+            &runtime_scope
+        ));
     }
 
     #[test]

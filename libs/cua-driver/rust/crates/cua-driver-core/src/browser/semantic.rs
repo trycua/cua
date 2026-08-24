@@ -526,9 +526,9 @@ pub(crate) fn compose_accessibility_tree(
         let visibility = classify_visibility(dom_meta, layout_meta, viewport);
         let actions = action_kinds(&role, dom_meta, &states, layout_meta);
         let secure_field = secure_field_kind(backend_node_id, dom_meta);
+        let redact_value = secure_field.is_some() || ax_reports_protected(ax);
         let name = ax_value_string(ax.get("name")).and_then(clean_semantic_text);
-        let value = secure_field
-            .is_none()
+        let value = (!redact_value)
             .then(|| ax_value_string(ax.get("value")).and_then(clean_semantic_text))
             .flatten();
         let document_order = dom_meta.map_or(fallback_order, |meta| meta.order);
@@ -721,6 +721,17 @@ fn secure_field_kind(
             .get("type")
             .is_some_and(|value| value.eq_ignore_ascii_case("password")))
     .then_some(SecureFieldKind::Password)
+}
+
+fn ax_reports_protected(node: &Value) -> bool {
+    node.get("properties")
+        .and_then(Value::as_array)
+        .is_some_and(|properties| {
+            properties.iter().any(|property| {
+                property.get("name").and_then(Value::as_str) == Some("protected")
+                    && property.pointer("/value/value").and_then(Value::as_bool) == Some(true)
+            })
+        })
 }
 
 fn attributes(node: &Value) -> HashMap<String, String> {
@@ -1245,6 +1256,36 @@ mod tests {
             None
         );
         assert_eq!(classified("input", &[("type", "password")], None), None);
+    }
+
+    #[test]
+    fn ax_protected_nodes_redact_values_without_becoming_delivery_targets() {
+        let document = compose_accessibility_tree(
+            &json!({"nodes": [{
+                "nodeId": "protected-without-dom",
+                "ignored": false,
+                "role": {"value": "textbox"},
+                "name": {"value": "Account secret"},
+                "value": {"value": "************"},
+                "properties": [{
+                    "name": "protected",
+                    "value": {"type": "boolean", "value": true}
+                }]
+            }]}),
+            &DomIndex::default(),
+            &LayoutIndex::default(),
+            &Viewport::default(),
+            frame(),
+        );
+
+        let node = document
+            .nodes
+            .iter()
+            .find(|node| node.ax_id == "protected-without-dom")
+            .unwrap();
+        assert_eq!(node.value, None);
+        assert_eq!(node.secure_field, None);
+        assert!(node.to_ref_entry().is_none());
     }
     use crate::browser::store::FrameRef;
 

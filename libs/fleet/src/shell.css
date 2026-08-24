@@ -138,23 +138,60 @@ body,
 
 .cua-instance-log-view {
   box-sizing: border-box;
-  min-height: 360px;
-  max-height: 65vh;
-  margin: 0;
-  padding: 18px 20px;
-  overflow: auto;
+  height: clamp(360px, 60vh, 720px);
+  overflow: hidden;
   border: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.12));
   border-radius: var(--cua-radius-control);
   background:
     linear-gradient(180deg, rgba(159, 215, 255, 0.035), transparent 72px),
     #0a0d10;
+}
+
+#cua-dashboard-root .cua-instance-log-lines {
+  box-sizing: border-box;
+  padding: 12px 0;
+  background: transparent;
   color: #d9e4ec;
   font-family: var(--cua-dashboard-font-mono, monospace);
   font-size: 12px;
-  line-height: 1.65;
   tab-size: 2;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+}
+
+#cua-dashboard-root .cua-instance-log-lines .log-line {
+  padding: 0 16px;
+}
+
+#cua-dashboard-root .cua-instance-log-lines .log-line:hover {
+  background: rgba(159, 215, 255, 0.055);
+}
+
+#cua-dashboard-root .cua-instance-log-search {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.12));
+  background: rgba(255, 255, 255, 0.025);
+  color: #d9e4ec;
+  font-family: var(--cua-dashboard-font-mono, monospace);
+}
+
+#cua-dashboard-root .cua-instance-log-search input {
+  min-width: min(280px, 45vw);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: #11161b;
+  color: #f6f8fb;
+  font-family: inherit;
+}
+
+#cua-dashboard-root .cua-instance-log-search input:focus {
+  border-color: #9fd7ff;
+  outline: 2px solid rgba(159, 215, 255, 0.22);
+  outline-offset: 1px;
+}
+
+#cua-dashboard-root .cua-instance-log-search button {
+  color: #d9e4ec;
 }
 
 #cua-dashboard-root .cua-dashboard-button button {

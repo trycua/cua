@@ -5,6 +5,7 @@ import Header from "@cloudscape-design/components/header"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
 import Toggle from "@cloudscape-design/components/toggle"
+import { LazyLog } from "@melloware/react-logviewer"
 import { CuaButton } from "../components/CuaButton"
 import { useFlash } from "../components/FlashContext"
 import { PageEmpty, PageError } from "../components/PageState"
@@ -54,6 +55,7 @@ export function InstanceDetail() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const logRequestRef = useRef(0)
   const copyResetRef = useRef<number | null>(null)
+  const logViewerRef = useRef<LazyLog | null>(null)
 
   const loadInstance = useCallback(async () => {
     setLoading(true)
@@ -132,6 +134,15 @@ export function InstanceDetail() {
     }
   }
 
+  const scrollLogsToTop = () => {
+    logViewerRef.current?.handleScrollToLine(1)
+  }
+
+  const scrollLogsToBottom = () => {
+    const lineCount = logs ? logs.split(/\r?\n/).length : 1
+    logViewerRef.current?.handleScrollToLine(lineCount)
+  }
+
   if (loading && !instance) {
     return (
       <PageShell eyebrow="Fleet / Pool / Instance" title={instanceName || "Instance"}>
@@ -195,6 +206,20 @@ export function InstanceDetail() {
                   Auto-refresh
                 </Toggle>
                 <CuaButton
+                  tone="icon"
+                  ariaLabel="Scroll logs to top"
+                  iconName="angle-up"
+                  disabled={!logs}
+                  onClick={scrollLogsToTop}
+                />
+                <CuaButton
+                  tone="icon"
+                  ariaLabel="Scroll logs to bottom"
+                  iconName="angle-down"
+                  disabled={!logs}
+                  onClick={scrollLogsToBottom}
+                />
+                <CuaButton
                   iconName="copy"
                   disabled={!logs}
                   onClick={copyLogs}
@@ -231,9 +256,20 @@ export function InstanceDetail() {
           <PageEmpty title="Loading guest console logs…" />
         ) : (
           <section aria-label="Guest console logs">
-            <pre className="cua-instance-log-view">
-              {logs || "No guest console output."}
-            </pre>
+            <div className="cua-instance-log-view">
+              <LazyLog
+                ref={logViewerRef}
+                className="cua-instance-log-lines"
+                searchBarClassName="cua-instance-log-search"
+                text={logs || "No guest console output."}
+                enableLineNumbers
+                enableSearch
+                selectableLines
+                wrapLines
+                height="auto"
+                rowHeight={20}
+              />
+            </div>
           </section>
         )}
       </Container>

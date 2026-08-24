@@ -505,6 +505,14 @@ test.describe("Pool detail instances", () => {
     await expect(page.getByLabel("Guest console logs")).toContainText(
       "guest console ready",
     )
+    await expect(
+      page.getByRole("button", { name: "Scroll logs to top" }),
+    ).toBeEnabled()
+    await expect(
+      page.getByRole("button", { name: "Scroll logs to bottom" }),
+    ).toBeEnabled()
+    await page.getByRole("button", { name: "Scroll logs to bottom" }).click()
+    await page.getByRole("button", { name: "Scroll logs to top" }).click()
     await page.getByRole("button", { name: "Copy logs" }).click()
     await expect(page.getByRole("button", { name: "Copied" })).toBeVisible()
     await expect

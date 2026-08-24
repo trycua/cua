@@ -25,6 +25,7 @@
     "@cloudscape-design/collection-hooks": "^1.0.93",
     "@cloudscape-design/components": "^3.0.825",
     "@cloudscape-design/global-styles": "^1.0.36",
+    "@melloware/react-logviewer": "6.5.5",
     "@novnc/novnc": "^1.7.0",
     "@ubjs/core": "0.31.0-3",
     "ansi-to-html": "^0.7.2",

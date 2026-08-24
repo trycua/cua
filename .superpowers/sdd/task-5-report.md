@@ -121,3 +121,75 @@ removed before this report and commit. The optional root-package command
   references and S3 keys, while the client response never exposes the key.
 - Confirmed missing or whitespace-only buckets stop configuration/startup before
   router construction and AWS credential discovery.
+
+## Remaining Findings Follow-up (2026-08-24)
+
+### RED Evidence
+
+1. The GitHub OIDC regression test initially observed an authorization path
+   capable of reaching namespace RBAC when the requested namespace was absent
+   from `AllowedNamespaces`; the required behavior is an immediate denial with
+   zero RBAC probes.
+2. The checksum tests initially exposed that the object-store contract omitted
+   the claimed digest, `HeadObject` did not request or verify SHA-256 metadata,
+   and the AWS presigner hoisted `X-Amz-Checksum-Sha256` into the query instead
+   of returning it as a required signed upload header.
+3. The generator harness initially failed because the canonical generator
+   omitted compatibility manifests. After adding them, independently generated
+   browser bridges differed because callback modules were emitted in unstable
+   order.
+
+### GREEN Evidence
+
+- `go test ./handlers -run 'PresignImageUploads|S3ImageObjectStore' -count=1`
+  passed, including immediate GitHub OIDC denial without RBAC, normal-user RBAC
+  fallback, checksum-signed PUT headers, checksum-mode HEAD requests, and
+  poisoned size/checksum rejection.
+- `go test ./auth -run 'RouteAuthorizationCharacterization' -count=1`,
+  `go test ./config -run 'ImageUpload|RequiresImageUploadBucket' -count=1`, and
+  `go test . -run 'NewImageObjectStoreRejectsMissingBucket' -count=1` passed.
+- `cargo test --manifest-path libs/fleet/Cargo.toml -p cyclops-sdk --test image_upload_flow --test binding_generation`
+  passed: three tests, zero failures.
+- `./libs/fleet/scripts/generate-sdk-bindings.sh` completed, followed by
+  `./libs/fleet/scripts/generate-sdk-bindings.sh --check` reporting that all SDK
+  bindings are up to date.
+- Focused compatibility assertions confirmed generated-file manifests plus
+  `ImageUploadFileRequest`, `ImageUploadInstruction`, `ImageUploadRequest`,
+  `ImageUploadResponse`, `PresignedPut`, and the upload method in Go, Node
+  TypeScript, and browser TypeScript outputs.
+- `git diff --check` and Go formatting checks passed.
+
+### Generator Harness Note
+
+The full isolated multi-target generator harness was attempted before focused
+validation and failed during its second isolated Cargo build because the host
+filesystem was exhausted. The exact terminal failures were `No space left on
+device (os error 28)` while building `goblin` and a linker termination with
+`signal 7 [Bus error]`. After disk was restored, the canonical generator plus
+`--check` and focused compatibility assertions passed. Per the follow-up
+instruction, the duplicate disk-heavy isolated harness was not rerun.
+
+### Review Resolution
+
+- GitHub OIDC `AllowedNamespaces` is exhaustive and never falls through to
+  RBAC; regular users retain RBAC fallback and `key-*` principals retain their
+  authoritative namespace claim.
+- The validated SHA-256 digest is carried through every object-store operation.
+  S3 PUT signing requires the base64 checksum header, while HEAD enables
+  checksum mode and treats missing or mismatched checksum/size as an error so a
+  poisoned object is never considered reusable.
+- Go, Node TypeScript, and browser TypeScript are generated transactionally by
+  the canonical pinned toolchain, tracked by generated-file manifests, and
+  included in `--check`. Browser callback modules are normalized into stable
+  order before comparison.
+
+### Final Self-Review
+
+- Confirmed authorization failure occurs before object-store calls and denied
+  GitHub namespaces issue no RBAC request.
+- Confirmed S3 object keys remain backend-only and SDK records contain no AWS
+  credentials.
+- Confirmed compatibility READMEs point to the canonical generator rather than
+  manual snapshot commands.
+- Removed the temporary `libs/pkg` link, generator work directories, isolated
+  harness directories, and `libs/fleet/target` build artifacts before commit.

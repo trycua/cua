@@ -3,8 +3,11 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +16,10 @@ import (
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/config"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 const imageUploadDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -30,16 +37,17 @@ type fakeImageObjectStore struct {
 type imageObjectCall struct {
 	key     string
 	size    int64
+	digest  string
 	expires time.Duration
 }
 
-func (s *fakeImageObjectStore) Exists(_ context.Context, key string, size int64) (bool, error) {
-	s.existsCalls = append(s.existsCalls, imageObjectCall{key: key, size: size})
+func (s *fakeImageObjectStore) Exists(_ context.Context, key string, size int64, digest string) (bool, error) {
+	s.existsCalls = append(s.existsCalls, imageObjectCall{key: key, size: size, digest: digest})
 	return s.exists, s.existsErr
 }
 
-func (s *fakeImageObjectStore) PresignPut(_ context.Context, key string, size int64, expires time.Duration) (string, http.Header, error) {
-	s.presignCalls = append(s.presignCalls, imageObjectCall{key: key, size: size, expires: expires})
+func (s *fakeImageObjectStore) PresignPut(_ context.Context, key string, size int64, digest string, expires time.Duration) (string, http.Header, error) {
+	s.presignCalls = append(s.presignCalls, imageObjectCall{key: key, size: size, digest: digest, expires: expires})
 	return s.presignedURL, s.presignedHeads.Clone(), s.presignErr
 }
 
@@ -88,6 +96,12 @@ func TestPresignImageUploadsSignsMissingFilesWithStableOpaqueReferences(t *testi
 	if got, want := store.presignCalls[0].expires, 15*time.Minute; got != want {
 		t.Fatalf("presign expiry = %s, want %s", got, want)
 	}
+	if got, want := store.existsCalls[0].digest, imageUploadDigest; got != want {
+		t.Fatalf("Exists digest = %q, want %q", got, want)
+	}
+	if got, want := store.presignCalls[0].digest, imageUploadDigest; got != want {
+		t.Fatalf("PresignPut digest = %q, want %q", got, want)
+	}
 }
 
 func TestPresignImageUploadsOmitsUploadForExistingFiles(t *testing.T) {
@@ -121,6 +135,43 @@ func TestPresignImageUploadsRejectsUnauthorizedNamespaceBeforeStoreCalls(t *test
 		t.Fatalf("status = %d, want %d; body = %s", got, want, w.Body.String())
 	}
 	assertImageObjectStoreUnused(t, store)
+}
+
+func TestPresignImageUploadsDeniesGitHubNamespaceWithoutRBACProbe(t *testing.T) {
+	resetOwnershipCache()
+	fakeK8s := newFakeK8s(http.StatusOK, `{"items":[]}`)
+	defer fakeK8s.server.Close()
+	overrideK8sClient(fakeK8s.server.Client(), fakeK8s.server.URL, "fake-sa-token")
+	store := &fakeImageObjectStore{}
+	w := httptest.NewRecorder()
+	r := withUser(jsonRequest(t, validImageUploadRequest("worker-rootfs")), &auth.User{
+		ID: "github-subject", PrincipalType: auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"other"},
+	})
+
+	imageUploadHandlers(store).PresignImageUploads(w, r)
+
+	if got, want := w.Code, http.StatusForbidden; got != want {
+		t.Fatalf("status = %d, want %d; body = %s", got, want, w.Body.String())
+	}
+	if len(fakeK8s.requests) != 0 {
+		t.Fatalf("RBAC probes = %d, want 0", len(fakeK8s.requests))
+	}
+	assertImageObjectStoreUnused(t, store)
+}
+
+func TestPresignImageUploadsAllowsNormalUserThroughRBACFallback(t *testing.T) {
+	resetOwnershipCache()
+	fakeK8s := newFakeK8s(http.StatusOK, `{"items":[]}`)
+	defer fakeK8s.server.Close()
+	overrideK8sClient(fakeK8s.server.Client(), fakeK8s.server.URL, "fake-sa-token")
+	store := &fakeImageObjectStore{exists: true}
+
+	presignImageUploads(t, imageUploadHandlers(store), &auth.User{ID: "user-123"}, validImageUploadRequest("worker-rootfs"))
+
+	if got, want := len(fakeK8s.requests), 1; got != want {
+		t.Fatalf("RBAC probes = %d, want %d", got, want)
+	}
 }
 
 func TestPresignImageUploadsAllowsPerKeyPrincipalInClaimedNamespace(t *testing.T) {
@@ -257,6 +308,83 @@ func TestPresignImageUploadsRejectsInvalidUTF8BeforeStoreCalls(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body = %s", got, want, w.Body.String())
 	}
 	assertImageObjectStoreUnused(t, store)
+}
+
+func TestS3ImageObjectStorePresignRequiresClaimedSHA256(t *testing.T) {
+	store := testS3ImageObjectStore(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("presigning must not send an HTTP request")
+	}))
+
+	url, headers, err := store.PresignPut(context.Background(), "tenants/workers/images/test", 12, imageUploadDigest, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("PresignPut() error = %v", err)
+	}
+	if got, want := headers.Get("X-Amz-Checksum-Sha256"), imageUploadChecksum(t); got != want {
+		t.Fatalf("checksum header = %q, want %q; headers = %#v; url = %s", got, want, headers, url)
+	}
+}
+
+func TestS3ImageObjectStoreExistsRequiresExactSizeAndChecksum(t *testing.T) {
+	tests := []struct {
+		name       string
+		size       int64
+		checksum   string
+		wantExists bool
+		wantErr    bool
+	}{
+		{name: "matching object", size: 12, checksum: imageUploadChecksum(t), wantExists: true},
+		{name: "poisoned checksum", size: 12, checksum: base64.StdEncoding.EncodeToString(make([]byte, 32)), wantErr: true},
+		{name: "wrong size", size: 13, checksum: imageUploadChecksum(t), wantErr: true},
+		{name: "missing checksum", size: 12, wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var checksumMode string
+			store := testS3ImageObjectStore(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				checksumMode = r.Header.Get("X-Amz-Checksum-Mode")
+				w.Header().Set("Content-Length", fmt.Sprint(test.size))
+				if test.checksum != "" {
+					w.Header().Set("X-Amz-Checksum-Sha256", test.checksum)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			exists, err := store.Exists(context.Background(), "tenants/workers/images/test", 12, imageUploadDigest)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Exists() error = %v, wantErr %t", err, test.wantErr)
+			}
+			if exists != test.wantExists {
+				t.Fatalf("Exists() = %t, want %t", exists, test.wantExists)
+			}
+			if got, want := checksumMode, "ENABLED"; got != want {
+				t.Fatalf("checksum mode = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func testS3ImageObjectStore(t *testing.T, handler http.Handler) ImageObjectStore {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	cfg := aws.Config{
+		Region:       "us-east-1",
+		BaseEndpoint: aws.String(server.URL),
+		Credentials:  credentials.NewStaticCredentialsProvider("access", "secret", ""),
+		HTTPClient:   server.Client(),
+	}
+	client := s3.NewFromConfig(cfg, func(options *s3.Options) { options.UsePathStyle = true })
+	return NewS3ImageObjectStore(client, "image-uploads")
+}
+
+func imageUploadChecksum(t *testing.T) string {
+	t.Helper()
+	raw, err := hex.DecodeString(strings.TrimPrefix(imageUploadDigest, "sha256:"))
+	if err != nil {
+		t.Fatalf("decode digest: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 func imageUploadHandlers(store ImageObjectStore) Handlers {

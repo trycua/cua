@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	"cyclops-cs-backend/auth"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -25,8 +27,8 @@ import (
 var imageDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type ImageObjectStore interface {
-	Exists(ctx context.Context, key string, size int64) (bool, error)
-	PresignPut(ctx context.Context, key string, size int64, expires time.Duration) (string, http.Header, error)
+	Exists(ctx context.Context, key string, size int64, digest string) (bool, error)
+	PresignPut(ctx context.Context, key string, size int64, digest string, expires time.Duration) (string, http.Header, error)
 }
 
 type ImageUploadFileRequest struct {
@@ -91,6 +93,11 @@ func (h Handlers) PresignImageUploads(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, "namespace access denied")
 			return
 		}
+	} else if isGitHubPrincipal(user) {
+		if !namespaceAllowed(user, request.Namespace) {
+			writeErr(w, http.StatusForbidden, "namespace access denied")
+			return
+		}
 	} else if !namespaceAllowed(user, request.Namespace) {
 		allowed, err := h.userHasNamespaceRBAC(r.Context(), user.ID, request.Namespace)
 		if err != nil || !allowed {
@@ -106,14 +113,14 @@ func (h Handlers) PresignImageUploads(w http.ResponseWriter, r *http.Request) {
 	response := ImageUploadResponse{Files: make([]ImageUploadInstruction, 0, len(request.Files))}
 	for _, file := range request.Files {
 		key, reference := imageObjectNames(request.Namespace, file.Digest)
-		exists, err := h.ImageObjects.Exists(r.Context(), key, file.SizeBytes)
+		exists, err := h.ImageObjects.Exists(r.Context(), key, file.SizeBytes, file.Digest)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "image object lookup failed")
 			return
 		}
 		instruction := ImageUploadInstruction{Digest: file.Digest, SizeBytes: file.SizeBytes, Reference: reference}
 		if !exists {
-			url, headers, err := h.ImageObjects.PresignPut(r.Context(), key, file.SizeBytes, h.ImageUploads.URLLifetime)
+			url, headers, err := h.ImageObjects.PresignPut(r.Context(), key, file.SizeBytes, file.Digest, h.ImageUploads.URLLifetime)
 			if err != nil {
 				writeErr(w, http.StatusBadGateway, "image upload signing failed")
 				return
@@ -172,6 +179,14 @@ func imageObjectNames(namespace, digest string) (key, reference string) {
 		"uploads/" + tenantLabel + "/" + digestToken
 }
 
+func imageDigestChecksum(digest string) (string, error) {
+	raw, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
+	if err != nil || len(raw) != sha256.Size {
+		return "", fmt.Errorf("invalid sha256 digest")
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
 func signedHeaders(headers http.Header) map[string]string {
 	out := make(map[string]string, len(headers))
 	for name, values := range headers {
@@ -187,26 +202,69 @@ type s3ImageObjectStore struct {
 }
 
 func NewS3ImageObjectStore(client *s3.Client, bucket string) ImageObjectStore {
-	return &s3ImageObjectStore{client: client, presigner: s3.NewPresignClient(client), bucket: bucket}
+	presigner := s3.NewPresignClient(client, func(options *s3.PresignOptions) {
+		options.Presigner = checksumHeaderPresigner{signer: awsv4.NewSigner()}
+	})
+	return &s3ImageObjectStore{client: client, presigner: presigner, bucket: bucket}
 }
 
-func (s *s3ImageObjectStore) Exists(ctx context.Context, key string, size int64) (bool, error) {
-	object, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
-	if err == nil {
-		return aws.ToInt64(object.ContentLength) == size, nil
-	}
-	var notFound *s3types.NotFound
-	if errors.As(err, &notFound) {
-		return false, nil
-	}
-	return false, err
+type checksumHeaderPresigner struct {
+	signer *awsv4.Signer
 }
 
-func (s *s3ImageObjectStore) PresignPut(ctx context.Context, key string, size int64, expires time.Duration) (string, http.Header, error) {
+func (p checksumHeaderPresigner) PresignHTTP(
+	ctx context.Context,
+	credentials aws.Credentials,
+	request *http.Request,
+	payloadHash string,
+	service string,
+	region string,
+	signingTime time.Time,
+	options ...func(*awsv4.SignerOptions),
+) (string, http.Header, error) {
+	options = append(options, func(signerOptions *awsv4.SignerOptions) {
+		signerOptions.DisableHeaderHoisting = true
+		signerOptions.DisableURIPathEscaping = true
+	})
+	return p.signer.PresignHTTP(ctx, credentials, request, payloadHash, service, region, signingTime, options...)
+}
+
+func (s *s3ImageObjectStore) Exists(ctx context.Context, key string, size int64, digest string) (bool, error) {
+	checksum, err := imageDigestChecksum(digest)
+	if err != nil {
+		return false, err
+	}
+	object, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket:       aws.String(s.bucket),
+		Key:          aws.String(key),
+		ChecksumMode: s3types.ChecksumModeEnabled,
+	})
+	if err != nil {
+		var notFound *s3types.NotFound
+		if errors.As(err, &notFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if actual := aws.ToInt64(object.ContentLength); actual != size {
+		return false, fmt.Errorf("stored image size mismatch: got %d, want %d", actual, size)
+	}
+	if actual := aws.ToString(object.ChecksumSHA256); actual != checksum {
+		return false, fmt.Errorf("stored image checksum mismatch")
+	}
+	return true, nil
+}
+
+func (s *s3ImageObjectStore) PresignPut(ctx context.Context, key string, size int64, digest string, expires time.Duration) (string, http.Header, error) {
+	checksum, err := imageDigestChecksum(digest)
+	if err != nil {
+		return "", nil, err
+	}
 	request, err := s.presigner.PresignPutObject(ctx, &s3.PutObjectInput{
-		Bucket:        aws.String(s.bucket),
-		Key:           aws.String(key),
-		ContentLength: aws.Int64(size),
+		Bucket:         aws.String(s.bucket),
+		Key:            aws.String(key),
+		ContentLength:  aws.Int64(size),
+		ChecksumSHA256: aws.String(checksum),
 	}, s3.WithPresignExpires(expires))
 	if err != nil {
 		return "", nil, err

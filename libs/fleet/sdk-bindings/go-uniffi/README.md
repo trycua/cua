@@ -1,16 +1,19 @@
 # Cyclops Go UniFFI bindings
 
 Generated with `uniffi-bindgen-go v0.7.1+v0.31.0` from the Cyclops Rust cdylib.
-The checked-in snapshot includes the schema records and generated builder
-objects exposed by Rust metadata.
+The checked-in output includes the schema records and generated builder objects
+exposed by Rust metadata.
 
-From the Fleet workspace, regenerate with:
+Regenerate all canonical Fleet SDK bindings from the repository root with:
 
 ```sh
-cargo build --locked --release -p cyclops-sdk
-uniffi-bindgen-go target/release/libcyclops_sdk.so --library \
-  --out-dir sdk-bindings/go-uniffi
+./libs/fleet/scripts/generate-sdk-bindings.sh
+./libs/fleet/scripts/generate-sdk-bindings.sh --check
 ```
+
+The script requires `uniffi-bindgen-go` version
+`uniffi-bindgen 0.7.1+v0.31.0` and records the complete generated file set in
+`.cyclops-sdk-generated-files`.
 
 Build consumers with the Cyclops Rust cdylib available to cgo, for example:
 

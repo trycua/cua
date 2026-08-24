@@ -1,26 +1,20 @@
 # Cyclops TypeScript UniFFI bindings
 
 Generated with `uniffi-bindgen-react-native 0.31.0-3` for Node.js N-API. The
-checked-in Node.js and browser/WASM snapshots include the schema records and
+checked-in Node.js and browser/WASM outputs include the schema records and
 generated builder objects exposed by Rust metadata.
 
-From the Fleet workspace, regenerate Node.js bindings with:
+Regenerate and verify all canonical Fleet SDK bindings from the repository root
+with:
 
 ```sh
-cargo build --locked --release -p cyclops-sdk
-npx --yes --package uniffi-bindgen-react-native@0.31.0-3 ubrn \
-  generate napi bindings target/release/libcyclops_sdk.so --library \
-  --ts-dir sdk-bindings/ts-uniffi --lib-colocated
+./libs/fleet/scripts/generate-sdk-bindings.sh
+./libs/fleet/scripts/generate-sdk-bindings.sh --check
 ```
 
-Regenerate the checked-in browser bridge and TypeScript modules with:
-
-```sh
-npx --yes --package uniffi-bindgen-react-native@0.31.0-3 ubrn \
-  generate wasm bindings target/release/libcyclops_sdk.so --library \
-  --ts-dir sdk-bindings/ts-uniffi-browser/ts \
-  --cpp-dir sdk-bindings/ts-uniffi-browser/cpp
-```
+The canonical script invokes the pinned package for both Node.js and browser
+targets and records each complete generated file set in
+`.cyclops-sdk-generated-files`.
 
 Runtime requires `@ubjs/core`, `@ubjs/node`, and a colocated `libcyclops_sdk`
 cdylib. Browser packaging uses `ts-uniffi-browser/ubrn.config.yaml` and its WASM

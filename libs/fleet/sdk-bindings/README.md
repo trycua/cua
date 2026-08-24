@@ -10,23 +10,19 @@ four-language binding surface; separate UniFFI snapshots are described below.
 ### Separately generated targets
 
 `go-uniffi` and `ts-uniffi` (Node.js) are checked-in compatibility snapshots
-produced by `uniffi-bindgen-go` and `uniffi-bindgen-react-native`, not outputs
-of `generate-sdk-bindings.sh`. They retain direct record constructors and do
-not advertise builders.
+produced by the pinned `uniffi-bindgen-go` and `uniffi-bindgen-react-native`
+generators, not outputs of `generate-sdk-bindings.sh`. They expose the same
+records and generated builder objects as the Rust metadata.
 
-`ts-uniffi-browser` (Browser/WASM) regenerates from Rust metadata during its
-build, commits its TypeScript record modules, and verifies that generated
-surface with an executable WASM builder artifact contract. Browser/WASM is an
-advertised generated builder target alongside Python, Kotlin, Swift, and Ruby.
-
-Go and Node.js remain separate compatibility snapshots. Adding builders to
-their public contracts requires separately regenerating and validating each
-third-party generator, cross-component converter layer, packaging path,
-checked-in scope, and runtime API.
+`ts-uniffi-browser` (Browser/WASM) is generated from the same Rust metadata
+with `uniffi-bindgen-react-native`, commits its TypeScript and Rust bridge
+modules, and verifies the builder surface with an executable WASM artifact
+contract. The generator regression harness checks the shared schema contract
+across Go, Node.js, and browser snapshots.
 
 ## Source of truth and compatibility
 
-`cyclops-cs/sdk-schema` is the canonical schema source. The raw Kubernetes
+`libs/fleet/sdk-schema` is the canonical schema source. The raw Kubernetes
 CRD bundle at `clusters/base/osgym/crd.yaml` is derived from that schema with
 `generate-crds`; it is not hand-maintained and must not be post-processed.
 Short-term compatibility breaks in this evolving API are intentional. Update
@@ -43,7 +39,7 @@ Native bindings can call `CyclopsClient.connect_with_native_http_client(configur
 
 ## Prerequisites
 
-- Rust `1.97.0` with `rustfmt` and `clippy` (`cyclops-cs/rust-toolchain.toml`).
+- Rust `1.97.0` with `rustfmt` and `clippy` (`libs/fleet/rust-toolchain.toml`).
 - Python `3.11` for the Python contract fixture and source checker.
 - A supported Ruby `3.3` runtime for the Ruby fixture.
 - JDK `21` and Gradle `8.10.2` for Kotlin (or an equivalent checked-out
@@ -65,7 +61,7 @@ export REPO_ROOT
 Generate the raw kube-derived CRDs after changing the schema:
 
 ```sh
-cargo run --locked --manifest-path "$REPO_ROOT/cyclops-cs/Cargo.toml" \
+cargo run --locked --manifest-path "$REPO_ROOT/libs/fleet/Cargo.toml" \
   --package cyclops-sdk-schema --bin generate-crds -- \
   --output "$REPO_ROOT/clusters/base/osgym/crd.yaml"
 ```
@@ -73,7 +69,7 @@ cargo run --locked --manifest-path "$REPO_ROOT/cyclops-cs/Cargo.toml" \
 Verify the committed CRD bundle without rewriting it:
 
 ```sh
-cargo run --locked --manifest-path "$REPO_ROOT/cyclops-cs/Cargo.toml" \
+cargo run --locked --manifest-path "$REPO_ROOT/libs/fleet/Cargo.toml" \
   --package cyclops-sdk-schema --bin generate-crds -- --check \
   --output "$REPO_ROOT/clusters/base/osgym/crd.yaml"
 ```
@@ -82,9 +78,9 @@ Generate or check all four UniFFI language roots with the pinned workspace
 wrapper around UniFFI `0.31.0`:
 
 ```sh
-"$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh"
-"$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh" --check
-"$REPO_ROOT/cyclops-cs/scripts/test-generate-sdk-bindings.sh"
+"$REPO_ROOT/libs/fleet/scripts/generate-sdk-bindings.sh"
+"$REPO_ROOT/libs/fleet/scripts/generate-sdk-bindings.sh" --check
+"$REPO_ROOT/libs/fleet/scripts/test-generate-sdk-bindings.sh"
 ```
 
 The regression harness verifies transaction rollback, inventory pruning,
@@ -95,8 +91,8 @@ Check the hand-written contract fixtures, then run the checker self-test that
 proves comments alone do not satisfy source requirements:
 
 ```sh
-"$REPO_ROOT/cyclops-cs/scripts/check-sdk-binding-contract-sources.sh"
-"$REPO_ROOT/cyclops-cs/scripts/check-sdk-binding-contract-sources.sh" --self-test
+"$REPO_ROOT/libs/fleet/scripts/check-sdk-binding-contract-sources.sh"
+"$REPO_ROOT/libs/fleet/scripts/check-sdk-binding-contract-sources.sh" --self-test
 ```
 
 ## Build once and run bindings
@@ -106,39 +102,39 @@ and never copy it into generated source. To share one native build across
 commands, use this target directory:
 
 ```sh
-export CYCLOPS_SDK_NATIVE_TARGET_DIR="$REPO_ROOT/cyclops-cs/target/sdk-bindings-native"
-"$REPO_ROOT/cyclops-cs/scripts/build-sdk-bindings-native.sh"
+export CYCLOPS_SDK_NATIVE_TARGET_DIR="$REPO_ROOT/libs/fleet/target/sdk-bindings-native"
+"$REPO_ROOT/libs/fleet/scripts/build-sdk-bindings-native.sh"
 ```
 
 Run the Python contract and deterministic lifecycle example:
 
 ```sh
-"$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/python/tests/test_builders.py" -v
-"$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/python/tests/test_async_client.py" -v
-"$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/examples/python/app_controlled.py"
+"$REPO_ROOT/libs/fleet/scripts/run-python-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/python/tests/test_builders.py" -v
+"$REPO_ROOT/libs/fleet/scripts/run-python-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/python/tests/test_async_client.py" -v
+"$REPO_ROOT/libs/fleet/scripts/run-python-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/examples/python/app_controlled.py"
 ```
 
 Run the Kotlin contract and example after staging the Linux cdylib:
 
 ```sh
 export CYCLOPS_SDK_NATIVE_DIR="$(dirname "$CYCLOPS_SDK_NATIVE_TARGET_DIR/debug/libcyclops_sdk.so")"
-gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" builderContract
-gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" contract
-gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" example
+gradle -p "$REPO_ROOT/libs/fleet/sdk-bindings/kotlin" builderContract
+gradle -p "$REPO_ROOT/libs/fleet/sdk-bindings/kotlin" contract
+gradle -p "$REPO_ROOT/libs/fleet/sdk-bindings/kotlin" example
 ```
 
 Run the Ruby contract and example:
 
 ```sh
-"$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/ruby/tests/test_builders.rb"
-"$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/ruby/tests/test_async_client.rb"
-"$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/examples/ruby/app_controlled.rb"
+"$REPO_ROOT/libs/fleet/scripts/run-ruby-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/ruby/tests/test_builders.rb"
+"$REPO_ROOT/libs/fleet/scripts/run-ruby-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/ruby/tests/test_async_client.rb"
+"$REPO_ROOT/libs/fleet/scripts/run-ruby-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/examples/ruby/app_controlled.rb"
 ```
 
 On macOS, run the Swift contract and full example. The documented runner
@@ -147,12 +143,12 @@ compiles `CyclopsSdk.swift` and `CyclopsSdkSchema.swift` together into one
 an rpath to the host `libcyclops_sdk.dylib`.
 
 ```sh
-"$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/swift/tests/TestBuilders.swift"
-"$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/swift/tests/TestAsyncClient.swift"
-"$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
-  "$REPO_ROOT/cyclops-cs/sdk-bindings/examples/swift/AppControlled.swift"
+"$REPO_ROOT/libs/fleet/scripts/run-swift-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/swift/tests/TestBuilders.swift"
+"$REPO_ROOT/libs/fleet/scripts/run-swift-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/swift/tests/TestAsyncClient.swift"
+"$REPO_ROOT/libs/fleet/scripts/run-swift-sdk-binding.sh" \
+  "$REPO_ROOT/libs/fleet/sdk-bindings/examples/swift/AppControlled.swift"
 ```
 
 ## Typed lifecycle shape
@@ -293,10 +289,10 @@ The `live_app_controlled` examples use the generated typed SDK records against a
 Set these variables before running a live example: `CUA_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, `CYCLOPS_NAMESPACE`, `CUA_IMAGE`, and `CUA_IMAGE_PULL_SECRET`.
 
 ```sh
-cyclops-cs/scripts/run-python-sdk-binding.sh cyclops-cs/sdk-bindings/examples/python/live_app_controlled.py
-CYCLOPS_SDK_NATIVE_DIR="$CYCLOPS_SDK_NATIVE_TARGET_DIR/debug" gradle -p cyclops-cs/sdk-bindings/kotlin liveExample
-cyclops-cs/scripts/run-ruby-sdk-binding.sh cyclops-cs/sdk-bindings/examples/ruby/live_app_controlled.rb
-cyclops-cs/scripts/run-swift-sdk-binding.sh cyclops-cs/sdk-bindings/examples/swift/LiveAppControlled.swift
+libs/fleet/scripts/run-python-sdk-binding.sh libs/fleet/sdk-bindings/examples/python/live_app_controlled.py
+CYCLOPS_SDK_NATIVE_DIR="$CYCLOPS_SDK_NATIVE_TARGET_DIR/debug" gradle -p libs/fleet/sdk-bindings/kotlin liveExample
+libs/fleet/scripts/run-ruby-sdk-binding.sh libs/fleet/sdk-bindings/examples/ruby/live_app_controlled.rb
+libs/fleet/scripts/run-swift-sdk-binding.sh libs/fleet/sdk-bindings/examples/swift/LiveAppControlled.swift
 ```
 
 The pull-request workflow obtains `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, and `CUA_TOKEN_URL` from AWS Secrets Manager through GitHub OIDC. Forked pull requests are guarded from requesting those credentials, and every live job runs the language-independent fallback cleanup script under `if: always()`.

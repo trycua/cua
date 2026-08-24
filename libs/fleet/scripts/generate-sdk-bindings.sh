@@ -21,8 +21,7 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workspace="$workspace_dir/Cargo.toml"
 bindings_dir="$workspace_dir/sdk-bindings"
 languages="python kotlin swift ruby"

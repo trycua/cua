@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 generator="$workspace_dir/scripts/generate-sdk-bindings.sh"
 bindings_dir="$workspace_dir/sdk-bindings"
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-sdk-bindings-test.XXXXXX")"
@@ -346,15 +345,11 @@ swift_schema_source="$bindings_dir/swift/CyclopsSdkSchema.swift"
 ruby_sdk_source="$bindings_dir/ruby/cyclops_sdk/sdk.rb"
 ruby_schema_source="$bindings_dir/ruby/cyclops_sdk/schema.rb"
 node_sdk_source="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+node_schema_source="$bindings_dir/ts-uniffi/cyclops_sdk_schema.ts"
 browser_sdk_source="$bindings_dir/ts-uniffi-browser/ts/fleet_sdk.ts"
 browser_schema_source="$bindings_dir/ts-uniffi-browser/ts/cyclops_sdk_schema.ts"
 go_sdk_source="$bindings_dir/go-uniffi/fleet_sdk/fleet_sdk.go"
-
-for separate_binding in "$node_sdk_source" "$go_sdk_source"; do
-  if grep -Fq -- "VmTemplateBuilder" "$separate_binding" || grep -Fq -- "CreatePoolRequestBuilder" "$separate_binding"; then
-    fail "separately generated Go/Node binding unexpectedly contains authoritative builders: $separate_binding"
-  fi
-done
+go_schema_source="$bindings_dir/go-uniffi/cyclops_sdk_schema/cyclops_sdk_schema.go"
 
 for browser_builder in \
   VmTemplateBuilder \
@@ -407,6 +402,15 @@ grep -Fq -- "public var creationTimestamp: String?" "$swift_sdk_source" || fail 
 grep -Fq -- "attr_reader :namespace, :name, :labels, :creation_timestamp" "$ruby_sdk_source" || fail "Ruby bindings omit creation_timestamp"
 grep -Fq -- "creationTimestamp?: string" "$node_sdk_source" || fail "Node bindings omit creationTimestamp"
 grep -Fq -- "CreationTimestamp *string" "$go_sdk_source" || fail "Go bindings omit CreationTimestamp"
+
+for typescript_schema in "$node_schema_source" "$browser_schema_source"; do
+  grep -Fq -- "export type ImageRef =" "$typescript_schema" || fail "TypeScript bindings omit ImageRef: $typescript_schema"
+  grep -Fq -- "containerDiskImage?: string" "$typescript_schema" || fail "TypeScript bindings require VmTemplate.containerDiskImage: $typescript_schema"
+  grep -Fq -- "imageRef?: ImageRef" "$typescript_schema" || fail "TypeScript bindings omit VmTemplate.imageRef: $typescript_schema"
+done
+grep -Fq -- "type ImageRef struct" "$go_schema_source" || fail "Go bindings omit ImageRef"
+grep -Eq '^[[:space:]]*ContainerDiskImage[[:space:]]+\*string$' "$go_schema_source" || fail "Go bindings require VmTemplate.ContainerDiskImage"
+grep -Eq '^[[:space:]]*ImageRef[[:space:]]+\*ImageRef$' "$go_schema_source" || fail "Go bindings omit VmTemplate.ImageRef"
 
 for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
   grep -Fq -- "timeoutSecs?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.timeoutSecs: $typescript_binding"

@@ -263,6 +263,36 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_schema_fn_clone_imagerefbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_free_imagerefbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cyclops_sdk_schema_fn_clone_preservedjson": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -271,6 +301,101 @@ const DEFINITIONS = {
     "uniffi_cyclops_sdk_schema_fn_free_preservedjson": {
       args: [FfiType.Handle],
       ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_constructor_imagerefbuilder_new": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_build": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_name": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas": {
+      args: [FfiType.Handle, FfiType.UInt32],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
     "uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json": {
@@ -283,9 +408,219 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port": {
+      args: [FfiType.Handle, FfiType.UInt16],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores": {
+      args: [FfiType.Handle, FfiType.UInt32],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_ref": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization": {
+      args: [FfiType.Handle, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes": {
+      args: [FfiType.Handle, FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size": {
+      args: [FfiType.Handle, FfiType.UInt32],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size": {
+      args: [FfiType.Handle, FfiType.UInt32],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size": {
+      args: [FfiType.Handle, FfiType.UInt32],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
     "ffi_cyclops_sdk_schema_uniffi_contract_version": {
       args: [],
       ret: FfiType.UInt32,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_constructor_imagerefbuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_build": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_name": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref": {
+      args: [],
+      ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json": {
@@ -294,6 +629,161 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_ref": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -368,13 +858,111 @@ interface NativeModuleInterface {
     ffi_cyclops_sdk_schema_rust_future_cancel_void(handle: bigint): void;
     ffi_cyclops_sdk_schema_rust_future_complete_void(handle: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     ffi_cyclops_sdk_schema_rust_future_free_void(handle: bigint): void;
+    uniffi_cyclops_sdk_schema_fn_clone_imagerefbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_free_imagerefbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cyclops_sdk_schema_fn_clone_preservedjson(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_free_preservedjson(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cyclops_sdk_schema_fn_constructor_imagerefbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json(value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_ref(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(uniffiSelf: bigint, value: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
     ffi_cyclops_sdk_schema_uniffi_contract_version(): number;
+    uniffi_cyclops_sdk_schema_checksum_constructor_imagerefbuilder_new(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_name(): number;
+    uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template(): number;
+    uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(): number;
     uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json(): number;
     uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json(): number;
+    uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port(): number;
+    uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name(): number;
+    uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_ref(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations(): number;
+    uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
     // and `nativeModule().rustbuffer_free(...)`. The runtime's registered
     // module exposes them as method properties.

@@ -4,39 +4,9 @@
 /* eslint-disable */
 // @ts-nocheck
 import * as wasmBundle from "./wasm-bindgen/index.js";
-import {
-  type UniffiRustFutureContinuationCallback,
-  type UniffiForeignFutureDroppedCallback,
-  type UniffiForeignFutureDroppedCallbackStruct,
+import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct,
 } from "./cyclops_sdk_schema-ffi";
-import {
-  type FfiConverter,
-  type UniffiByteArray,
-  type UniffiGcObject,
-  type UniffiHandle,
-  type UniffiObjectFactory,
-  AbstractFfiConverterByteArray,
-  FfiConverterArray,
-  FfiConverterBool,
-  FfiConverterInt32,
-  FfiConverterMap,
-  FfiConverterObject,
-  FfiConverterOptional,
-  FfiConverterUInt16,
-  FfiConverterUInt32,
-  FfiConverterUInt8,
-  RustBuffer,
-  UniffiAbstractObject,
-  UniffiEnum,
-  UniffiError,
-  UniffiInternalError,
-  UniffiRustCaller,
-  destructorGuardSymbol,
-  pointerLiteralSymbol,
-  uniffiCreateFfiConverterString,
-  uniffiCreateRecord,
-  uniffiTypeNameSymbol,
-  variantOrdinalSymbol,
+import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterInt32, FfiConverterMap, FfiConverterObject, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
 // wasm1: wrap the wasm-bindgen namespace once so the codegen call sites can
 // uniformly reference `nativeModule().rustbuffer_alloc` / `.rustbuffer_free`.
@@ -47,9 +17,7 @@ const _nativeModule = Object.assign({}, wasmBundle, {
   rustbuffer_free: (_: Uint8Array): void => {},
 });
 const nativeModule = () => _nativeModule;
-const uniffiCaller = new UniffiRustCaller(
-  () => new wasmBundle.RustCallStatus(),
-);
+const uniffiCaller = new UniffiRustCaller(() => new wasmBundle.RustCallStatus());
 
 const uniffiIsDebug =
   // @ts-ignore -- The process global might not be defined
@@ -61,2744 +29,2617 @@ const uniffiIsDebug =
 // Public interface members begin here.
 
 const stringConverter = (() => {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  return {
-    stringToBytes: (s: string) => encoder.encode(s),
-    bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
-    stringByteLength: (s: string) => encoder.encode(s).byteLength,
-    writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
-      const view = new Uint8Array(
-        buf.arrayBuffer,
-        offset,
-        buf.arrayBuffer.byteLength - offset,
-      );
-      return encoder.encodeInto(s, view).written;
-    },
-    readStringFromBuffer: (buf: any, offset: number, length: number): string =>
-      decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
-  };
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    return {
+        stringToBytes: (s: string) => encoder.encode(s),
+        bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
+        stringByteLength: (s: string) => encoder.encode(s).byteLength,
+        writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
+            const view = new Uint8Array(
+                buf.arrayBuffer,
+                offset,
+                buf.arrayBuffer.byteLength - offset,
+            );
+            return encoder.encodeInto(s, view).written;
+        },
+        readStringFromBuffer: (buf: any, offset: number, length: number): string =>
+            decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
+    };
 })();
 const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
 
 export type ClaimLifecycle = {
-  shutdownTime?: string;
-  shutdownPolicy?: string;
-  autoRenew?: boolean;
-};
+    shutdownTime?: string,
+    shutdownPolicy?: string,
+    autoRenew?: boolean
+}
 
 /**
  * Generated factory for {@link ClaimLifecycle} record objects.
  */
 export const ClaimLifecycle = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<ClaimLifecycle, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<ClaimLifecycle>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClaimLifecycle, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClaimLifecycle>,
+    });
 })();
 
 const FfiConverterTypeClaimLifecycle = (() => {
-  type TypeName = ClaimLifecycle;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        shutdownTime: FfiConverterOptionalString.read(from),
-        shutdownPolicy: FfiConverterOptionalString.read(from),
-        autoRenew: FfiConverterOptionalBoolean.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterOptionalString.write(value.shutdownTime, into);
-      FfiConverterOptionalString.write(value.shutdownPolicy, into);
-      FfiConverterOptionalBoolean.write(value.autoRenew, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterOptionalString.allocationSize(value.shutdownTime) +
-        FfiConverterOptionalString.allocationSize(value.shutdownPolicy) +
-        FfiConverterOptionalBoolean.allocationSize(value.autoRenew)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = ClaimLifecycle;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                shutdownTime: FfiConverterOptionalString.read(from),
+                shutdownPolicy: FfiConverterOptionalString.read(from),
+                autoRenew: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.shutdownTime, into);
+            FfiConverterOptionalString.write(value.shutdownPolicy, into);
+            FfiConverterOptionalBoolean.write(value.autoRenew, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.shutdownTime) +
+             FfiConverterOptionalString.allocationSize(value.shutdownPolicy) +
+             FfiConverterOptionalBoolean.allocationSize(value.autoRenew);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type SandboxTemplateRef = {
-  name: string;
-};
+    name: string
+}
 
 /**
  * Generated factory for {@link SandboxTemplateRef} record objects.
  */
 export const SandboxTemplateRef = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<SandboxTemplateRef, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<SandboxTemplateRef>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SandboxTemplateRef, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SandboxTemplateRef>,
+    });
 })();
 
 const FfiConverterTypeSandboxTemplateRef = (() => {
-  type TypeName = SandboxTemplateRef;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        name: FfiConverterString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.name, into);
-    }
-    allocationSize(value: TypeName): number {
-      return FfiConverterString.allocationSize(value.name);
-    }
-  }
-  return new FFIConverter();
+    type TypeName = SandboxTemplateRef;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type ClaimSpec = {
-  sandboxTemplateRef: SandboxTemplateRef;
-  warmpool?: string;
-  bindDeadline?: number;
-  lifecycle?: ClaimLifecycle;
-};
+    sandboxTemplateRef: SandboxTemplateRef,
+    warmpool?: string,
+    bindDeadline?: number,
+    lifecycle?: ClaimLifecycle
+}
 
 /**
  * Generated factory for {@link ClaimSpec} record objects.
  */
 export const ClaimSpec = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<ClaimSpec, ReturnType<typeof defaults>>(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<ClaimSpec>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClaimSpec, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClaimSpec>,
+    });
 })();
 
 const FfiConverterTypeClaimSpec = (() => {
-  type TypeName = ClaimSpec;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
-        warmpool: FfiConverterOptionalString.read(from),
-        bindDeadline: FfiConverterOptionalUInt32.read(from),
-        lifecycle: FfiConverterOptionalTypeClaimLifecycle.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into);
-      FfiConverterOptionalString.write(value.warmpool, into);
-      FfiConverterOptionalUInt32.write(value.bindDeadline, into);
-      FfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterTypeSandboxTemplateRef.allocationSize(
-          value.sandboxTemplateRef,
-        ) +
-        FfiConverterOptionalString.allocationSize(value.warmpool) +
-        FfiConverterOptionalUInt32.allocationSize(value.bindDeadline) +
-        FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.lifecycle)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = ClaimSpec;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
+                warmpool: FfiConverterOptionalString.read(from),
+                bindDeadline: FfiConverterOptionalUInt32.read(from),
+                lifecycle: FfiConverterOptionalTypeClaimLifecycle.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into);
+            FfiConverterOptionalString.write(value.warmpool, into);
+            FfiConverterOptionalUInt32.write(value.bindDeadline, into);
+            FfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
+             FfiConverterOptionalString.allocationSize(value.warmpool) +
+             FfiConverterOptionalUInt32.allocationSize(value.bindDeadline) +
+             FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.lifecycle);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageRef = {
+    name: string
+}
+
+/**
+ * Generated factory for {@link ImageRef} record objects.
+ */
+export const ImageRef = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageRef, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageRef>,
+    });
+})();
+
+const FfiConverterTypeImageRef = (() => {
+    type TypeName = ImageRef;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OsGymSandboxClaimCondition = {
-  type?: string;
-  status?: string;
-  reason?: string;
-  message?: string;
-  lastTransitionTime?: string;
-};
+    type?: string,
+    status?: string,
+    reason?: string,
+    message?: string,
+    lastTransitionTime?: string
+}
 
 /**
  * Generated factory for {@link OsGymSandboxClaimCondition} record objects.
  */
 export const OsGymSandboxClaimCondition = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      OsGymSandboxClaimCondition,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () =>
-      Object.freeze(defaults()) as Partial<OsGymSandboxClaimCondition>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OsGymSandboxClaimCondition, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxClaimCondition>,
+    });
 })();
 
 const FfiConverterTypeOSGymSandboxClaimCondition = (() => {
-  type TypeName = OsGymSandboxClaimCondition;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        type: FfiConverterOptionalString.read(from),
-        status: FfiConverterOptionalString.read(from),
-        reason: FfiConverterOptionalString.read(from),
-        message: FfiConverterOptionalString.read(from),
-        lastTransitionTime: FfiConverterOptionalString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterOptionalString.write(value.type, into);
-      FfiConverterOptionalString.write(value.status, into);
-      FfiConverterOptionalString.write(value.reason, into);
-      FfiConverterOptionalString.write(value.message, into);
-      FfiConverterOptionalString.write(value.lastTransitionTime, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterOptionalString.allocationSize(value.type) +
-        FfiConverterOptionalString.allocationSize(value.status) +
-        FfiConverterOptionalString.allocationSize(value.reason) +
-        FfiConverterOptionalString.allocationSize(value.message) +
-        FfiConverterOptionalString.allocationSize(value.lastTransitionTime)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OsGymSandboxClaimCondition;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                type: FfiConverterOptionalString.read(from),
+                status: FfiConverterOptionalString.read(from),
+                reason: FfiConverterOptionalString.read(from),
+                message: FfiConverterOptionalString.read(from),
+                lastTransitionTime: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.type, into);
+            FfiConverterOptionalString.write(value.status, into);
+            FfiConverterOptionalString.write(value.reason, into);
+            FfiConverterOptionalString.write(value.message, into);
+            FfiConverterOptionalString.write(value.lastTransitionTime, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.type) +
+             FfiConverterOptionalString.allocationSize(value.status) +
+             FfiConverterOptionalString.allocationSize(value.reason) +
+             FfiConverterOptionalString.allocationSize(value.message) +
+             FfiConverterOptionalString.allocationSize(value.lastTransitionTime);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OsGymSandboxClaimSandbox = {
-  name?: string;
-  service?: string;
-};
+    name?: string,
+    service?: string
+}
 
 /**
  * Generated factory for {@link OsGymSandboxClaimSandbox} record objects.
  */
 export const OsGymSandboxClaimSandbox = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      OsGymSandboxClaimSandbox,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () =>
-      Object.freeze(defaults()) as Partial<OsGymSandboxClaimSandbox>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OsGymSandboxClaimSandbox, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxClaimSandbox>,
+    });
 })();
 
 const FfiConverterTypeOSGymSandboxClaimSandbox = (() => {
-  type TypeName = OsGymSandboxClaimSandbox;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        name: FfiConverterOptionalString.read(from),
-        service: FfiConverterOptionalString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterOptionalString.write(value.name, into);
-      FfiConverterOptionalString.write(value.service, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterOptionalString.allocationSize(value.name) +
-        FfiConverterOptionalString.allocationSize(value.service)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OsGymSandboxClaimSandbox;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterOptionalString.read(from),
+                service: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.name, into);
+            FfiConverterOptionalString.write(value.service, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.name) +
+             FfiConverterOptionalString.allocationSize(value.service);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OsGymSandboxClaimStatus = {
-  phase?: string;
-  conditions?: Array<OsGymSandboxClaimCondition>;
-  sandbox?: OsGymSandboxClaimSandbox;
-};
+    phase?: string,
+    conditions?: Array<OsGymSandboxClaimCondition>,
+    sandbox?: OsGymSandboxClaimSandbox
+}
 
 /**
  * Generated factory for {@link OsGymSandboxClaimStatus} record objects.
  */
 export const OsGymSandboxClaimStatus = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      OsGymSandboxClaimStatus,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () =>
-      Object.freeze(defaults()) as Partial<OsGymSandboxClaimStatus>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OsGymSandboxClaimStatus, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxClaimStatus>,
+    });
 })();
 
 const FfiConverterTypeOSGymSandboxClaimStatus = (() => {
-  type TypeName = OsGymSandboxClaimStatus;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        phase: FfiConverterOptionalString.read(from),
-        conditions:
-          FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.read(from),
-        sandbox: FfiConverterOptionalTypeOSGymSandboxClaimSandbox.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterOptionalString.write(value.phase, into);
-      FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.write(
-        value.conditions,
-        into,
-      );
-      FfiConverterOptionalTypeOSGymSandboxClaimSandbox.write(
-        value.sandbox,
-        into,
-      );
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterOptionalString.allocationSize(value.phase) +
-        FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.allocationSize(
-          value.conditions,
-        ) +
-        FfiConverterOptionalTypeOSGymSandboxClaimSandbox.allocationSize(
-          value.sandbox,
-        )
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OsGymSandboxClaimStatus;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                phase: FfiConverterOptionalString.read(from),
+                conditions: FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.read(from),
+                sandbox: FfiConverterOptionalTypeOSGymSandboxClaimSandbox.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.phase, into);
+            FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.write(value.conditions, into);
+            FfiConverterOptionalTypeOSGymSandboxClaimSandbox.write(value.sandbox, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.phase) +
+             FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition.allocationSize(value.conditions) +
+             FfiConverterOptionalTypeOSGymSandboxClaimSandbox.allocationSize(value.sandbox);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export enum RuntimeKind {
-  Kubevirt,
-  Macos,
-  Gvisor,
+    Kubevirt,
+    Macos,
+    Gvisor
 }
 
 const FfiConverterTypeRuntimeKind = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = RuntimeKind;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return RuntimeKind.Kubevirt;
-        case 2:
-          return RuntimeKind.Macos;
-        case 3:
-          return RuntimeKind.Gvisor;
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = RuntimeKind;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return RuntimeKind.Kubevirt;
+                case 2: return RuntimeKind.Macos;
+                case 3: return RuntimeKind.Gvisor;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case RuntimeKind.Kubevirt: return ordinalConverter.write(1, into);
+                case RuntimeKind.Macos: return ordinalConverter.write(2, into);
+                case RuntimeKind.Gvisor: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
     }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value) {
-        case RuntimeKind.Kubevirt:
-          return ordinalConverter.write(1, into);
-        case RuntimeKind.Macos:
-          return ordinalConverter.write(2, into);
-        case RuntimeKind.Gvisor:
-          return ordinalConverter.write(3, into);
-      }
-    }
-    allocationSize(value: TypeName): number {
-      return ordinalConverter.allocationSize(0);
-    }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
 
 export interface PreservedJsonLike {
-  toJson(): string;
+
+    toJson(): string;
 }
 /**
  * @deprecated Use `PreservedJsonLike` instead.
  */
 export type PreservedJsonInterface = PreservedJsonLike;
 
-export class PreservedJson
-  extends UniffiAbstractObject
-  implements PreservedJsonLike
-{
-  readonly [uniffiTypeNameSymbol] = "PreservedJson";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  // No primary constructor declared for this class.
-  private constructor(pointer: UniffiHandle) {
+
+export class PreservedJson extends UniffiAbstractObject implements PreservedJsonLike {
+
+    readonly [uniffiTypeNameSymbol] = "PreservedJson";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
     super();
     this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypePreservedJsonObjectFactory.bless(pointer);
-  }
-
-  static fromJson(value: string): PreservedJsonLike /*throws*/ {
-    return FfiConverterTypePreservedJson.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeJsonValueError.lift.bind(
-          FfiConverterTypeJsonValueError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json(
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  toJson(): string {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterString.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json(
-            uniffiTypePreservedJsonObjectFactory.clonePointer(this),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer = uniffiTypePreservedJsonObjectFactory.pointer(this);
-      uniffiTypePreservedJsonObjectFactory.freePointer(pointer);
-      uniffiTypePreservedJsonObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
-    }
-  }
-
-  static instanceOf(obj_: any): obj_ is PreservedJson {
-    return uniffiTypePreservedJsonObjectFactory.isConcreteType(obj_);
-  }
+    this[destructorGuardSymbol] = uniffiTypePreservedJsonObjectFactory.bless(pointer);
 }
 
-const uniffiTypePreservedJsonObjectFactory: UniffiObjectFactory<PreservedJsonLike> =
-  (() => {
+
+    static fromJson(value: string): PreservedJsonLike /*throws*/ {
+    return FfiConverterTypePreservedJson.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeJsonValueError.lift.bind(FfiConverterTypeJsonValueError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json(
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+
+    toJson(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json(
+                uniffiTypePreservedJsonObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypePreservedJsonObjectFactory.pointer(this);
+            uniffiTypePreservedJsonObjectFactory.freePointer(pointer);
+            uniffiTypePreservedJsonObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is PreservedJson {
+        return uniffiTypePreservedJsonObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypePreservedJsonObjectFactory: UniffiObjectFactory<PreservedJsonLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypePreservedJsonObjectFactory.freePointer(heldValue);
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypePreservedJsonObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): PreservedJsonLike {
+    create(pointer: UniffiHandle): PreservedJsonLike {
         const instance = Object.create(PreservedJson.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "PreservedJson";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: PreservedJsonLike): UniffiHandle {
+    pointer(obj_: PreservedJsonLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: PreservedJsonLike): UniffiHandle {
+    clonePointer(obj_: PreservedJsonLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_preservedjson(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_preservedjson(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_preservedjson(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_preservedjson(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is PreservedJsonLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "PreservedJson"
-        );
-      },
-    };
-  })();
-const FfiConverterTypePreservedJson = new FfiConverterObject(
-  uniffiTypePreservedJsonObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is PreservedJsonLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "PreservedJson";
+    },
+}})();
+const FfiConverterTypePreservedJson = new FfiConverterObject(uniffiTypePreservedJsonObjectFactory);
 
 export enum ImagePullPolicy {
-  Always,
-  IfNotPresent,
-  Never,
+    Always,
+    IfNotPresent,
+    Never
 }
 
 const FfiConverterTypeImagePullPolicy = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = ImagePullPolicy;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return ImagePullPolicy.Always;
-        case 2:
-          return ImagePullPolicy.IfNotPresent;
-        case 3:
-          return ImagePullPolicy.Never;
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ImagePullPolicy;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ImagePullPolicy.Always;
+                case 2: return ImagePullPolicy.IfNotPresent;
+                case 3: return ImagePullPolicy.Never;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ImagePullPolicy.Always: return ordinalConverter.write(1, into);
+                case ImagePullPolicy.IfNotPresent: return ordinalConverter.write(2, into);
+                case ImagePullPolicy.Never: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
     }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value) {
-        case ImagePullPolicy.Always:
-          return ordinalConverter.write(1, into);
-        case ImagePullPolicy.IfNotPresent:
-          return ordinalConverter.write(2, into);
-        case ImagePullPolicy.Never:
-          return ordinalConverter.write(3, into);
-      }
-    }
-    allocationSize(value: TypeName): number {
-      return ordinalConverter.allocationSize(0);
-    }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
 
 export enum Firmware {
-  Bios,
-  Efi,
+    Bios,
+    Efi
 }
 
 const FfiConverterTypeFirmware = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = Firmware;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return Firmware.Bios;
-        case 2:
-          return Firmware.Efi;
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = Firmware;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return Firmware.Bios;
+                case 2: return Firmware.Efi;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case Firmware.Bios: return ordinalConverter.write(1, into);
+                case Firmware.Efi: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
     }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value) {
-        case Firmware.Bios:
-          return ordinalConverter.write(1, into);
-        case Firmware.Efi:
-          return ordinalConverter.write(2, into);
-      }
-    }
-    allocationSize(value: TypeName): number {
-      return ordinalConverter.allocationSize(0);
-    }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
 
 export enum ServiceProtocol {
-  Tcp,
-  Udp,
+    Tcp,
+    Udp
 }
 
 const FfiConverterTypeServiceProtocol = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = ServiceProtocol;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return ServiceProtocol.Tcp;
-        case 2:
-          return ServiceProtocol.Udp;
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ServiceProtocol;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ServiceProtocol.Tcp;
+                case 2: return ServiceProtocol.Udp;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ServiceProtocol.Tcp: return ordinalConverter.write(1, into);
+                case ServiceProtocol.Udp: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
     }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value) {
-        case ServiceProtocol.Tcp:
-          return ordinalConverter.write(1, into);
-        case ServiceProtocol.Udp:
-          return ordinalConverter.write(2, into);
-      }
-    }
-    allocationSize(value: TypeName): number {
-      return ordinalConverter.allocationSize(0);
-    }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
 
 export type SandboxService = {
-  name: string;
-  targetPort: number;
-  protocol?: ServiceProtocol;
-};
+    name: string,
+    targetPort: number,
+    protocol?: ServiceProtocol
+}
 
 /**
  * Generated factory for {@link SandboxService} record objects.
  */
 export const SandboxService = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<SandboxService, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<SandboxService>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SandboxService, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SandboxService>,
+    });
 })();
 
 const FfiConverterTypeSandboxService = (() => {
-  type TypeName = SandboxService;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        name: FfiConverterString.read(from),
-        targetPort: FfiConverterUInt16.read(from),
-        protocol: FfiConverterOptionalTypeServiceProtocol.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.name, into);
-      FfiConverterUInt16.write(value.targetPort, into);
-      FfiConverterOptionalTypeServiceProtocol.write(value.protocol, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterUInt16.allocationSize(value.targetPort) +
-        FfiConverterOptionalTypeServiceProtocol.allocationSize(value.protocol)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = SandboxService;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from),
+                targetPort: FfiConverterUInt16.read(from),
+                protocol: FfiConverterOptionalTypeServiceProtocol.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+            FfiConverterUInt16.write(value.targetPort, into);
+            FfiConverterOptionalTypeServiceProtocol.write(value.protocol, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterUInt16.allocationSize(value.targetPort) +
+             FfiConverterOptionalTypeServiceProtocol.allocationSize(value.protocol);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OidcConfig = {
-  credentialsSecret: string;
-  tokenUrl: string;
-  awsRoleArn?: string;
-  awsRegion?: string;
-  refreshIntervalSeconds?: number;
-};
+    credentialsSecret: string,
+    tokenUrl: string,
+    awsRoleArn?: string,
+    awsRegion?: string,
+    refreshIntervalSeconds?: number
+}
 
 /**
  * Generated factory for {@link OidcConfig} record objects.
  */
 export const OidcConfig = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<OidcConfig, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<OidcConfig>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OidcConfig, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OidcConfig>,
+    });
 })();
 
 const FfiConverterTypeOidcConfig = (() => {
-  type TypeName = OidcConfig;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        credentialsSecret: FfiConverterString.read(from),
-        tokenUrl: FfiConverterString.read(from),
-        awsRoleArn: FfiConverterOptionalString.read(from),
-        awsRegion: FfiConverterOptionalString.read(from),
-        refreshIntervalSeconds: FfiConverterOptionalUInt32.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.credentialsSecret, into);
-      FfiConverterString.write(value.tokenUrl, into);
-      FfiConverterOptionalString.write(value.awsRoleArn, into);
-      FfiConverterOptionalString.write(value.awsRegion, into);
-      FfiConverterOptionalUInt32.write(value.refreshIntervalSeconds, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.credentialsSecret) +
-        FfiConverterString.allocationSize(value.tokenUrl) +
-        FfiConverterOptionalString.allocationSize(value.awsRoleArn) +
-        FfiConverterOptionalString.allocationSize(value.awsRegion) +
-        FfiConverterOptionalUInt32.allocationSize(value.refreshIntervalSeconds)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OidcConfig;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                credentialsSecret: FfiConverterString.read(from),
+                tokenUrl: FfiConverterString.read(from),
+                awsRoleArn: FfiConverterOptionalString.read(from),
+                awsRegion: FfiConverterOptionalString.read(from),
+                refreshIntervalSeconds: FfiConverterOptionalUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.credentialsSecret, into);
+            FfiConverterString.write(value.tokenUrl, into);
+            FfiConverterOptionalString.write(value.awsRoleArn, into);
+            FfiConverterOptionalString.write(value.awsRegion, into);
+            FfiConverterOptionalUInt32.write(value.refreshIntervalSeconds, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.credentialsSecret) +
+             FfiConverterString.allocationSize(value.tokenUrl) +
+             FfiConverterOptionalString.allocationSize(value.awsRoleArn) +
+             FfiConverterOptionalString.allocationSize(value.awsRegion) +
+             FfiConverterOptionalUInt32.allocationSize(value.refreshIntervalSeconds);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type VmTemplate = {
-  containerDiskImage: string;
-  command?: Array<string>;
-  runtime?: RuntimeKind;
-  runtimeClassName?: string;
-  nodeSelector?: Map<string, string>;
-  tolerations?: Array<PreservedJsonLike>;
-  imagePullPolicy?: ImagePullPolicy;
-  imagePullSecret?: string;
-  cpuCores?: number;
-  memory?: string;
-  firmware?: Firmware;
-  nestedVirtualization?: boolean;
-  probes?: PreservedJsonLike;
-  services?: Array<SandboxService>;
-  oidc?: OidcConfig;
-};
+    containerDiskImage?: string,
+    imageRef?: ImageRef,
+    command?: Array<string>,
+    runtime?: RuntimeKind,
+    runtimeClassName?: string,
+    nodeSelector?: Map<string, string>,
+    tolerations?: Array<PreservedJsonLike>,
+    imagePullPolicy?: ImagePullPolicy,
+    imagePullSecret?: string,
+    cpuCores?: number,
+    memory?: string,
+    firmware?: Firmware,
+    nestedVirtualization?: boolean,
+    probes?: PreservedJsonLike,
+    services?: Array<SandboxService>,
+    oidc?: OidcConfig
+}
 
 /**
  * Generated factory for {@link VmTemplate} record objects.
  */
 export const VmTemplate = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<VmTemplate, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<VmTemplate>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<VmTemplate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<VmTemplate>,
+    });
 })();
 
 const FfiConverterTypeVmTemplate = (() => {
-  type TypeName = VmTemplate;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        containerDiskImage: FfiConverterString.read(from),
-        command: FfiConverterOptionalSequenceString.read(from),
-        runtime: FfiConverterOptionalTypeRuntimeKind.read(from),
-        runtimeClassName: FfiConverterOptionalString.read(from),
-        nodeSelector: FfiConverterOptionalMapStringString.read(from),
-        tolerations: FfiConverterOptionalSequenceTypePreservedJson.read(from),
-        imagePullPolicy: FfiConverterOptionalTypeImagePullPolicy.read(from),
-        imagePullSecret: FfiConverterOptionalString.read(from),
-        cpuCores: FfiConverterOptionalUInt32.read(from),
-        memory: FfiConverterOptionalString.read(from),
-        firmware: FfiConverterOptionalTypeFirmware.read(from),
-        nestedVirtualization: FfiConverterOptionalBoolean.read(from),
-        probes: FfiConverterOptionalTypePreservedJson.read(from),
-        services: FfiConverterOptionalSequenceTypeSandboxService.read(from),
-        oidc: FfiConverterOptionalTypeOidcConfig.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.containerDiskImage, into);
-      FfiConverterOptionalSequenceString.write(value.command, into);
-      FfiConverterOptionalTypeRuntimeKind.write(value.runtime, into);
-      FfiConverterOptionalString.write(value.runtimeClassName, into);
-      FfiConverterOptionalMapStringString.write(value.nodeSelector, into);
-      FfiConverterOptionalSequenceTypePreservedJson.write(
-        value.tolerations,
-        into,
-      );
-      FfiConverterOptionalTypeImagePullPolicy.write(
-        value.imagePullPolicy,
-        into,
-      );
-      FfiConverterOptionalString.write(value.imagePullSecret, into);
-      FfiConverterOptionalUInt32.write(value.cpuCores, into);
-      FfiConverterOptionalString.write(value.memory, into);
-      FfiConverterOptionalTypeFirmware.write(value.firmware, into);
-      FfiConverterOptionalBoolean.write(value.nestedVirtualization, into);
-      FfiConverterOptionalTypePreservedJson.write(value.probes, into);
-      FfiConverterOptionalSequenceTypeSandboxService.write(
-        value.services,
-        into,
-      );
-      FfiConverterOptionalTypeOidcConfig.write(value.oidc, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.containerDiskImage) +
-        FfiConverterOptionalSequenceString.allocationSize(value.command) +
-        FfiConverterOptionalTypeRuntimeKind.allocationSize(value.runtime) +
-        FfiConverterOptionalString.allocationSize(value.runtimeClassName) +
-        FfiConverterOptionalMapStringString.allocationSize(value.nodeSelector) +
-        FfiConverterOptionalSequenceTypePreservedJson.allocationSize(
-          value.tolerations,
-        ) +
-        FfiConverterOptionalTypeImagePullPolicy.allocationSize(
-          value.imagePullPolicy,
-        ) +
-        FfiConverterOptionalString.allocationSize(value.imagePullSecret) +
-        FfiConverterOptionalUInt32.allocationSize(value.cpuCores) +
-        FfiConverterOptionalString.allocationSize(value.memory) +
-        FfiConverterOptionalTypeFirmware.allocationSize(value.firmware) +
-        FfiConverterOptionalBoolean.allocationSize(value.nestedVirtualization) +
-        FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
-        FfiConverterOptionalSequenceTypeSandboxService.allocationSize(
-          value.services,
-        ) +
-        FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = VmTemplate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                containerDiskImage: FfiConverterOptionalString.read(from),
+                imageRef: FfiConverterOptionalTypeImageRef.read(from),
+                command: FfiConverterOptionalSequenceString.read(from),
+                runtime: FfiConverterOptionalTypeRuntimeKind.read(from),
+                runtimeClassName: FfiConverterOptionalString.read(from),
+                nodeSelector: FfiConverterOptionalMapStringString.read(from),
+                tolerations: FfiConverterOptionalSequenceTypePreservedJson.read(from),
+                imagePullPolicy: FfiConverterOptionalTypeImagePullPolicy.read(from),
+                imagePullSecret: FfiConverterOptionalString.read(from),
+                cpuCores: FfiConverterOptionalUInt32.read(from),
+                memory: FfiConverterOptionalString.read(from),
+                firmware: FfiConverterOptionalTypeFirmware.read(from),
+                nestedVirtualization: FfiConverterOptionalBoolean.read(from),
+                probes: FfiConverterOptionalTypePreservedJson.read(from),
+                services: FfiConverterOptionalSequenceTypeSandboxService.read(from),
+                oidc: FfiConverterOptionalTypeOidcConfig.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.containerDiskImage, into);
+            FfiConverterOptionalTypeImageRef.write(value.imageRef, into);
+            FfiConverterOptionalSequenceString.write(value.command, into);
+            FfiConverterOptionalTypeRuntimeKind.write(value.runtime, into);
+            FfiConverterOptionalString.write(value.runtimeClassName, into);
+            FfiConverterOptionalMapStringString.write(value.nodeSelector, into);
+            FfiConverterOptionalSequenceTypePreservedJson.write(value.tolerations, into);
+            FfiConverterOptionalTypeImagePullPolicy.write(value.imagePullPolicy, into);
+            FfiConverterOptionalString.write(value.imagePullSecret, into);
+            FfiConverterOptionalUInt32.write(value.cpuCores, into);
+            FfiConverterOptionalString.write(value.memory, into);
+            FfiConverterOptionalTypeFirmware.write(value.firmware, into);
+            FfiConverterOptionalBoolean.write(value.nestedVirtualization, into);
+            FfiConverterOptionalTypePreservedJson.write(value.probes, into);
+            FfiConverterOptionalSequenceTypeSandboxService.write(value.services, into);
+            FfiConverterOptionalTypeOidcConfig.write(value.oidc, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.containerDiskImage) +
+             FfiConverterOptionalTypeImageRef.allocationSize(value.imageRef) +
+             FfiConverterOptionalSequenceString.allocationSize(value.command) +
+             FfiConverterOptionalTypeRuntimeKind.allocationSize(value.runtime) +
+             FfiConverterOptionalString.allocationSize(value.runtimeClassName) +
+             FfiConverterOptionalMapStringString.allocationSize(value.nodeSelector) +
+             FfiConverterOptionalSequenceTypePreservedJson.allocationSize(value.tolerations) +
+             FfiConverterOptionalTypeImagePullPolicy.allocationSize(value.imagePullPolicy) +
+             FfiConverterOptionalString.allocationSize(value.imagePullSecret) +
+             FfiConverterOptionalUInt32.allocationSize(value.cpuCores) +
+             FfiConverterOptionalString.allocationSize(value.memory) +
+             FfiConverterOptionalTypeFirmware.allocationSize(value.firmware) +
+             FfiConverterOptionalBoolean.allocationSize(value.nestedVirtualization) +
+             FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
+             FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.services) +
+             FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OsGymSandboxSpec = {
-  vmTemplate: VmTemplate;
-};
+    vmTemplate: VmTemplate
+}
 
 /**
  * Generated factory for {@link OsGymSandboxSpec} record objects.
  */
 export const OsGymSandboxSpec = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<OsGymSandboxSpec, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxSpec>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OsGymSandboxSpec, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxSpec>,
+    });
 })();
 
 const FfiConverterTypeOSGymSandboxSpec = (() => {
-  type TypeName = OsGymSandboxSpec;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        vmTemplate: FfiConverterTypeVmTemplate.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterTypeVmTemplate.write(value.vmTemplate, into);
-    }
-    allocationSize(value: TypeName): number {
-      return FfiConverterTypeVmTemplate.allocationSize(value.vmTemplate);
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OsGymSandboxSpec;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                vmTemplate: FfiConverterTypeVmTemplate.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeVmTemplate.write(value.vmTemplate, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeVmTemplate.allocationSize(value.vmTemplate);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OsGymSandboxStatus = {
-  phase?: string;
-  runtime?: string;
-  ready?: boolean;
-  vmName?: string;
-  service?: string;
-  message?: string;
-  resetIssuedAt?: string;
-  resetVmiUid?: string;
-};
+    phase?: string,
+    runtime?: string,
+    ready?: boolean,
+    vmName?: string,
+    service?: string,
+    message?: string,
+    resetIssuedAt?: string,
+    resetVmiUid?: string
+}
 
 /**
  * Generated factory for {@link OsGymSandboxStatus} record objects.
  */
 export const OsGymSandboxStatus = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<OsGymSandboxStatus, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxStatus>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OsGymSandboxStatus, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxStatus>,
+    });
 })();
 
 const FfiConverterTypeOSGymSandboxStatus = (() => {
-  type TypeName = OsGymSandboxStatus;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        phase: FfiConverterOptionalString.read(from),
-        runtime: FfiConverterOptionalString.read(from),
-        ready: FfiConverterOptionalBoolean.read(from),
-        vmName: FfiConverterOptionalString.read(from),
-        service: FfiConverterOptionalString.read(from),
-        message: FfiConverterOptionalString.read(from),
-        resetIssuedAt: FfiConverterOptionalString.read(from),
-        resetVmiUid: FfiConverterOptionalString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterOptionalString.write(value.phase, into);
-      FfiConverterOptionalString.write(value.runtime, into);
-      FfiConverterOptionalBoolean.write(value.ready, into);
-      FfiConverterOptionalString.write(value.vmName, into);
-      FfiConverterOptionalString.write(value.service, into);
-      FfiConverterOptionalString.write(value.message, into);
-      FfiConverterOptionalString.write(value.resetIssuedAt, into);
-      FfiConverterOptionalString.write(value.resetVmiUid, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterOptionalString.allocationSize(value.phase) +
-        FfiConverterOptionalString.allocationSize(value.runtime) +
-        FfiConverterOptionalBoolean.allocationSize(value.ready) +
-        FfiConverterOptionalString.allocationSize(value.vmName) +
-        FfiConverterOptionalString.allocationSize(value.service) +
-        FfiConverterOptionalString.allocationSize(value.message) +
-        FfiConverterOptionalString.allocationSize(value.resetIssuedAt) +
-        FfiConverterOptionalString.allocationSize(value.resetVmiUid)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OsGymSandboxStatus;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                phase: FfiConverterOptionalString.read(from),
+                runtime: FfiConverterOptionalString.read(from),
+                ready: FfiConverterOptionalBoolean.read(from),
+                vmName: FfiConverterOptionalString.read(from),
+                service: FfiConverterOptionalString.read(from),
+                message: FfiConverterOptionalString.read(from),
+                resetIssuedAt: FfiConverterOptionalString.read(from),
+                resetVmiUid: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.phase, into);
+            FfiConverterOptionalString.write(value.runtime, into);
+            FfiConverterOptionalBoolean.write(value.ready, into);
+            FfiConverterOptionalString.write(value.vmName, into);
+            FfiConverterOptionalString.write(value.service, into);
+            FfiConverterOptionalString.write(value.message, into);
+            FfiConverterOptionalString.write(value.resetIssuedAt, into);
+            FfiConverterOptionalString.write(value.resetVmiUid, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.phase) +
+             FfiConverterOptionalString.allocationSize(value.runtime) +
+             FfiConverterOptionalBoolean.allocationSize(value.ready) +
+             FfiConverterOptionalString.allocationSize(value.vmName) +
+             FfiConverterOptionalString.allocationSize(value.service) +
+             FfiConverterOptionalString.allocationSize(value.message) +
+             FfiConverterOptionalString.allocationSize(value.resetIssuedAt) +
+             FfiConverterOptionalString.allocationSize(value.resetVmiUid);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OsGymSandboxTemplateSpec = {
-  vmTemplate: VmTemplate;
-};
+    vmTemplate: VmTemplate
+}
 
 /**
  * Generated factory for {@link OsGymSandboxTemplateSpec} record objects.
  */
 export const OsGymSandboxTemplateSpec = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      OsGymSandboxTemplateSpec,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () =>
-      Object.freeze(defaults()) as Partial<OsGymSandboxTemplateSpec>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OsGymSandboxTemplateSpec, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxTemplateSpec>,
+    });
 })();
 
 const FfiConverterTypeOSGymSandboxTemplateSpec = (() => {
-  type TypeName = OsGymSandboxTemplateSpec;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        vmTemplate: FfiConverterTypeVmTemplate.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterTypeVmTemplate.write(value.vmTemplate, into);
-    }
-    allocationSize(value: TypeName): number {
-      return FfiConverterTypeVmTemplate.allocationSize(value.vmTemplate);
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OsGymSandboxTemplateSpec;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                vmTemplate: FfiConverterTypeVmTemplate.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeVmTemplate.write(value.vmTemplate, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeVmTemplate.allocationSize(value.vmTemplate);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type WarmPoolAutoscaling = {
-  minPoolSize?: number;
-  initialPoolSize?: number;
-  maxPoolSize?: number;
-};
+    minPoolSize?: number,
+    initialPoolSize?: number,
+    maxPoolSize?: number
+}
 
 /**
  * Generated factory for {@link WarmPoolAutoscaling} record objects.
  */
 export const WarmPoolAutoscaling = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<WarmPoolAutoscaling, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<WarmPoolAutoscaling>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<WarmPoolAutoscaling, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<WarmPoolAutoscaling>,
+    });
 })();
 
 const FfiConverterTypeWarmPoolAutoscaling = (() => {
-  type TypeName = WarmPoolAutoscaling;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        minPoolSize: FfiConverterOptionalUInt32.read(from),
-        initialPoolSize: FfiConverterOptionalUInt32.read(from),
-        maxPoolSize: FfiConverterOptionalUInt32.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterOptionalUInt32.write(value.minPoolSize, into);
-      FfiConverterOptionalUInt32.write(value.initialPoolSize, into);
-      FfiConverterOptionalUInt32.write(value.maxPoolSize, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterOptionalUInt32.allocationSize(value.minPoolSize) +
-        FfiConverterOptionalUInt32.allocationSize(value.initialPoolSize) +
-        FfiConverterOptionalUInt32.allocationSize(value.maxPoolSize)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = WarmPoolAutoscaling;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                minPoolSize: FfiConverterOptionalUInt32.read(from),
+                initialPoolSize: FfiConverterOptionalUInt32.read(from),
+                maxPoolSize: FfiConverterOptionalUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalUInt32.write(value.minPoolSize, into);
+            FfiConverterOptionalUInt32.write(value.initialPoolSize, into);
+            FfiConverterOptionalUInt32.write(value.maxPoolSize, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalUInt32.allocationSize(value.minPoolSize) +
+             FfiConverterOptionalUInt32.allocationSize(value.initialPoolSize) +
+             FfiConverterOptionalUInt32.allocationSize(value.maxPoolSize);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OsGymSandboxWarmPoolSpec = {
-  replicas: number;
-  sandboxTemplateRef: SandboxTemplateRef;
-  autoscaling?: WarmPoolAutoscaling;
-};
+    replicas: number,
+    sandboxTemplateRef: SandboxTemplateRef,
+    autoscaling?: WarmPoolAutoscaling
+}
 
 /**
  * Generated factory for {@link OsGymSandboxWarmPoolSpec} record objects.
  */
 export const OsGymSandboxWarmPoolSpec = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      OsGymSandboxWarmPoolSpec,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () =>
-      Object.freeze(defaults()) as Partial<OsGymSandboxWarmPoolSpec>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OsGymSandboxWarmPoolSpec, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxWarmPoolSpec>,
+    });
 })();
 
 const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
-  type TypeName = OsGymSandboxWarmPoolSpec;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        replicas: FfiConverterUInt32.read(from),
-        sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
-        autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterUInt32.write(value.replicas, into);
-      FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into);
-      FfiConverterOptionalTypeWarmPoolAutoscaling.write(
-        value.autoscaling,
-        into,
-      );
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterUInt32.allocationSize(value.replicas) +
-        FfiConverterTypeSandboxTemplateRef.allocationSize(
-          value.sandboxTemplateRef,
-        ) +
-        FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(
-          value.autoscaling,
-        )
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OsGymSandboxWarmPoolSpec;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                replicas: FfiConverterUInt32.read(from),
+                sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
+                autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.replicas, into);
+            FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into);
+            FfiConverterOptionalTypeWarmPoolAutoscaling.write(value.autoscaling, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt32.allocationSize(value.replicas) +
+             FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
+             FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.autoscaling);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type OsGymSandboxWarmPoolStatus = {
-  replicas?: number;
-  readyReplicas?: number;
-  selector?: string;
-};
+    replicas?: number,
+    readyReplicas?: number,
+    selector?: string
+}
 
 /**
  * Generated factory for {@link OsGymSandboxWarmPoolStatus} record objects.
  */
 export const OsGymSandboxWarmPoolStatus = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      OsGymSandboxWarmPoolStatus,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () =>
-      Object.freeze(defaults()) as Partial<OsGymSandboxWarmPoolStatus>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<OsGymSandboxWarmPoolStatus, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<OsGymSandboxWarmPoolStatus>,
+    });
 })();
 
 const FfiConverterTypeOSGymSandboxWarmPoolStatus = (() => {
-  type TypeName = OsGymSandboxWarmPoolStatus;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        replicas: FfiConverterOptionalUInt32.read(from),
-        readyReplicas: FfiConverterOptionalUInt32.read(from),
-        selector: FfiConverterOptionalString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterOptionalUInt32.write(value.replicas, into);
-      FfiConverterOptionalUInt32.write(value.readyReplicas, into);
-      FfiConverterOptionalString.write(value.selector, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterOptionalUInt32.allocationSize(value.replicas) +
-        FfiConverterOptionalUInt32.allocationSize(value.readyReplicas) +
-        FfiConverterOptionalString.allocationSize(value.selector)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = OsGymSandboxWarmPoolStatus;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                replicas: FfiConverterOptionalUInt32.read(from),
+                readyReplicas: FfiConverterOptionalUInt32.read(from),
+                selector: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalUInt32.write(value.replicas, into);
+            FfiConverterOptionalUInt32.write(value.readyReplicas, into);
+            FfiConverterOptionalString.write(value.selector, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalUInt32.allocationSize(value.replicas) +
+             FfiConverterOptionalUInt32.allocationSize(value.readyReplicas) +
+             FfiConverterOptionalString.allocationSize(value.selector);
+
+        }
+    };
+    return new FFIConverter();
 })();
+
 
 // Error type: JsonValueError
 export enum JsonValueError_Tags {
-  Invalid = "Invalid",
+    Invalid = "Invalid"
 }
 export const JsonValueError = (() => {
-  type Invalid__interface = {
-    tag: JsonValueError_Tags.Invalid;
-    inner: Readonly<{ reason: string }>;
-  };
-  class Invalid_ extends UniffiError implements Invalid__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "JsonValueError";
-    readonly tag = JsonValueError_Tags.Invalid;
-    readonly inner: Readonly<{ reason: string }>;
-    constructor(inner: { reason: string }) {
-      super("JsonValueError", "Invalid");
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { reason: string }): Invalid_ {
-      return new Invalid_(inner);
+    type Invalid__interface = {
+        tag: JsonValueError_Tags.Invalid;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Invalid_ extends UniffiError implements Invalid__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "JsonValueError";
+        readonly tag = JsonValueError_Tags.Invalid;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("JsonValueError", "Invalid");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Invalid_ {
+            return new Invalid_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Invalid_ {
+            return obj.tag === JsonValueError_Tags.Invalid;
+        }
+        static hasInner(obj: any): obj is Invalid_ {
+            return Invalid_.instanceOf(obj);
+        }
+
+        static getInner(obj: Invalid_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static instanceOf(obj: any): obj is Invalid_ {
-      return obj.tag === JsonValueError_Tags.Invalid;
-    }
-    static hasInner(obj: any): obj is Invalid_ {
-      return Invalid_.instanceOf(obj);
+    function instanceOf(obj: any): obj is JsonValueError {
+        return obj[uniffiTypeNameSymbol] === "JsonValueError";
     }
 
-    static getInner(obj: Invalid_): Readonly<{ reason: string }> {
-      return obj.inner;
-    }
-  }
+    return Object.freeze({
+        instanceOf,
+  Invalid: Invalid_
+    });
 
-  function instanceOf(obj: any): obj is JsonValueError {
-    return obj[uniffiTypeNameSymbol] === "JsonValueError";
-  }
-
-  return Object.freeze({
-    instanceOf,
-    Invalid: Invalid_,
-  });
 })();
-export type JsonValueError = InstanceType<(typeof JsonValueError)["Invalid"]>;
+export type JsonValueError = InstanceType<
+    typeof JsonValueError['Invalid']
+>;
 
 // FfiConverter for enum JsonValueError
 const FfiConverterTypeJsonValueError = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = JsonValueError;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return new JsonValueError.Invalid({
-            reason: FfiConverterString.read(from),
-          });
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value.tag) {
-        case JsonValueError_Tags.Invalid: {
-          ordinalConverter.write(1, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.reason, into);
-          return;
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = JsonValueError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new JsonValueError.Invalid({reason: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          // Throwing from here means that JsonValueError_Tags hasn't matched an ordinal.
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    allocationSize(value: TypeName): number {
-      switch (value.tag) {
-        case JsonValueError_Tags.Invalid: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(1);
-          size += FfiConverterString.allocationSize(inner.reason);
-          return size;
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case JsonValueError_Tags.Invalid: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that JsonValueError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case JsonValueError_Tags.Invalid: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
     }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
+
 
 // Error type: SchemaBuildError
 export enum SchemaBuildError_Tags {
-  MissingRequiredField = "MissingRequiredField",
+    MissingRequiredField = "MissingRequiredField",
+    Invalid = "Invalid"
 }
 export const SchemaBuildError = (() => {
-  type MissingRequiredField__interface = {
-    tag: SchemaBuildError_Tags.MissingRequiredField;
-    inner: Readonly<{ recordType: string; field: string }>;
-  };
-  class MissingRequiredField_
-    extends UniffiError
-    implements MissingRequiredField__interface
-  {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SchemaBuildError";
-    readonly tag = SchemaBuildError_Tags.MissingRequiredField;
-    readonly inner: Readonly<{ recordType: string; field: string }>;
-    constructor(inner: { recordType: string; field: string }) {
-      super("SchemaBuildError", "MissingRequiredField");
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: {
-      recordType: string;
-      field: string;
-    }): MissingRequiredField_ {
-      return new MissingRequiredField_(inner);
+    type MissingRequiredField__interface = {
+        tag: SchemaBuildError_Tags.MissingRequiredField;
+        inner:
+Readonly<{recordType: string; field: string}>
+    };
+    class MissingRequiredField_ extends UniffiError implements MissingRequiredField__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SchemaBuildError";
+        readonly tag = SchemaBuildError_Tags.MissingRequiredField;
+        readonly inner:
+Readonly<{recordType: string; field: string}>;
+        constructor(
+inner: {recordType: string; field: string }) {
+            super("SchemaBuildError", "MissingRequiredField");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {recordType: string; field: string }): MissingRequiredField_ {
+            return new MissingRequiredField_(inner);
+        }
+
+        static instanceOf(obj: any): obj is MissingRequiredField_ {
+            return obj.tag === SchemaBuildError_Tags.MissingRequiredField;
+        }
+        static hasInner(obj: any): obj is MissingRequiredField_ {
+            return MissingRequiredField_.instanceOf(obj);
+        }
+
+        static getInner(obj: MissingRequiredField_):
+Readonly<{recordType: string; field: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static instanceOf(obj: any): obj is MissingRequiredField_ {
-      return obj.tag === SchemaBuildError_Tags.MissingRequiredField;
-    }
-    static hasInner(obj: any): obj is MissingRequiredField_ {
-      return MissingRequiredField_.instanceOf(obj);
+    type Invalid__interface = {
+        tag: SchemaBuildError_Tags.Invalid;
+        inner:
+Readonly<{message: string}>
+    };
+    class Invalid_ extends UniffiError implements Invalid__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SchemaBuildError";
+        readonly tag = SchemaBuildError_Tags.Invalid;
+        readonly inner:
+Readonly<{message: string}>;
+        constructor(
+inner: {message: string }) {
+            super("SchemaBuildError", "Invalid");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {message: string }): Invalid_ {
+            return new Invalid_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Invalid_ {
+            return obj.tag === SchemaBuildError_Tags.Invalid;
+        }
+        static hasInner(obj: any): obj is Invalid_ {
+            return Invalid_.instanceOf(obj);
+        }
+
+        static getInner(obj: Invalid_):
+Readonly<{message: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static getInner(
-      obj: MissingRequiredField_,
-    ): Readonly<{ recordType: string; field: string }> {
-      return obj.inner;
+    function instanceOf(obj: any): obj is SchemaBuildError {
+        return obj[uniffiTypeNameSymbol] === "SchemaBuildError";
     }
-  }
 
-  function instanceOf(obj: any): obj is SchemaBuildError {
-    return obj[uniffiTypeNameSymbol] === "SchemaBuildError";
-  }
+    return Object.freeze({
+        instanceOf,
+  MissingRequiredField: MissingRequiredField_,
+  Invalid: Invalid_
+    });
 
-  return Object.freeze({
-    instanceOf,
-    MissingRequiredField: MissingRequiredField_,
-  });
 })();
 export type SchemaBuildError = InstanceType<
-  (typeof SchemaBuildError)["MissingRequiredField"]
+    typeof SchemaBuildError['MissingRequiredField' | 'Invalid']
 >;
 
 // FfiConverter for enum SchemaBuildError
 const FfiConverterTypeSchemaBuildError = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = SchemaBuildError;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return new SchemaBuildError.MissingRequiredField({
-            recordType: FfiConverterString.read(from),
-            field: FfiConverterString.read(from),
-          });
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value.tag) {
-        case SchemaBuildError_Tags.MissingRequiredField: {
-          ordinalConverter.write(1, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.recordType, into);
-          FfiConverterString.write(inner.field, into);
-          return;
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = SchemaBuildError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new SchemaBuildError.MissingRequiredField({recordType: FfiConverterString.read(from), field: FfiConverterString.read(from) });
+                case 2: return new SchemaBuildError.Invalid({message: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          // Throwing from here means that SchemaBuildError_Tags hasn't matched an ordinal.
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    allocationSize(value: TypeName): number {
-      switch (value.tag) {
-        case SchemaBuildError_Tags.MissingRequiredField: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(1);
-          size += FfiConverterString.allocationSize(inner.recordType);
-          size += FfiConverterString.allocationSize(inner.field);
-          return size;
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case SchemaBuildError_Tags.MissingRequiredField: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.recordType, into);
+                    FfiConverterString.write(inner.field, into);
+                    return;
+                }
+                case SchemaBuildError_Tags.Invalid: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.message, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that SchemaBuildError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case SchemaBuildError_Tags.MissingRequiredField: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.recordType);
+                    size += FfiConverterString.allocationSize(inner.field);
+                    return size;
+                }
+                case SchemaBuildError_Tags.Invalid: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterString.allocationSize(inner.message);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
     }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
 
+export interface ImageRefBuilderLike {
+
+    build() /*throws*/: ImageRef;
+    name(value: string): ImageRefBuilderLike;
+}
+/**
+ * @deprecated Use `ImageRefBuilderLike` instead.
+ */
+export type ImageRefBuilderInterface = ImageRefBuilderLike;
+
+
+export class ImageRefBuilder extends UniffiAbstractObject implements ImageRefBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "ImageRefBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_imagerefbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeImageRefBuilderObjectFactory.bless(pointer);
+    }
+
+
+
+
+    build(): ImageRef /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeImageRef.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(FfiConverterTypeSchemaBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_build(
+                uniffiTypeImageRefBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    name(value: string): ImageRefBuilderLike {
+    return FfiConverterTypeImageRefBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_name(
+                uniffiTypeImageRefBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeImageRefBuilderObjectFactory.pointer(this);
+            uniffiTypeImageRefBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeImageRefBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is ImageRefBuilder {
+        return uniffiTypeImageRefBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeImageRefBuilderObjectFactory: UniffiObjectFactory<ImageRefBuilderLike> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeImageRefBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): ImageRefBuilderLike {
+        const instance = Object.create(ImageRefBuilder.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "ImageRefBuilder";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: ImageRefBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: ImageRefBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_imagerefbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_imagerefbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is ImageRefBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "ImageRefBuilder";
+    },
+}})();
+const FfiConverterTypeImageRefBuilder = new FfiConverterObject(uniffiTypeImageRefBuilderObjectFactory);
+
 export interface OsGymSandboxTemplateSpecBuilderLike {
-  build() /*throws*/ : OsGymSandboxTemplateSpec;
-  vmTemplate(value: VmTemplate): OsGymSandboxTemplateSpecBuilderLike;
+
+    build() /*throws*/: OsGymSandboxTemplateSpec;
+    vmTemplate(value: VmTemplate): OsGymSandboxTemplateSpecBuilderLike;
 }
 /**
  * @deprecated Use `OsGymSandboxTemplateSpecBuilderLike` instead.
  */
-export type OsGymSandboxTemplateSpecBuilderInterface =
-  OsGymSandboxTemplateSpecBuilderLike;
+export type OsGymSandboxTemplateSpecBuilderInterface = OsGymSandboxTemplateSpecBuilderLike;
 
-export class OsGymSandboxTemplateSpecBuilder
-  extends UniffiAbstractObject
-  implements OsGymSandboxTemplateSpecBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "OsGymSandboxTemplateSpecBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+
+export class OsGymSandboxTemplateSpecBuilder extends UniffiAbstractObject implements OsGymSandboxTemplateSpecBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "OsGymSandboxTemplateSpecBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.bless(pointer);
-  }
-
-  build(): OsGymSandboxTemplateSpec /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeOSGymSandboxTemplateSpec.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(
-          FfiConverterTypeSchemaBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build(
-            uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  vmTemplate(value: VmTemplate): OsGymSandboxTemplateSpecBuilderLike {
-    return FfiConverterTypeOSGymSandboxTemplateSpecBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template(
-            uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterTypeVmTemplate.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.pointer(this);
-      uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.freePointer(
-        pointer,
-      );
-      uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is OsGymSandboxTemplateSpecBuilder {
-    return uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.isConcreteType(
-      obj_,
-    );
-  }
+
+
+
+    build(): OsGymSandboxTemplateSpec /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeOSGymSandboxTemplateSpec.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(FfiConverterTypeSchemaBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build(
+                uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    vmTemplate(value: VmTemplate): OsGymSandboxTemplateSpecBuilderLike {
+    return FfiConverterTypeOSGymSandboxTemplateSpecBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template(
+                uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeVmTemplate.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.pointer(this);
+            uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is OsGymSandboxTemplateSpecBuilder {
+        return uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory: UniffiObjectFactory<OsGymSandboxTemplateSpecBuilderLike> =
-  (() => {
+const uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory: UniffiObjectFactory<OsGymSandboxTemplateSpecBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): OsGymSandboxTemplateSpecBuilderLike {
-        const instance = Object.create(
-          OsGymSandboxTemplateSpecBuilder.prototype,
-        );
+    create(pointer: UniffiHandle): OsGymSandboxTemplateSpecBuilderLike {
+        const instance = Object.create(OsGymSandboxTemplateSpecBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "OsGymSandboxTemplateSpecBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: OsGymSandboxTemplateSpecBuilderLike): UniffiHandle {
+    pointer(obj_: OsGymSandboxTemplateSpecBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: OsGymSandboxTemplateSpecBuilderLike): UniffiHandle {
+    clonePointer(obj_: OsGymSandboxTemplateSpecBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is OsGymSandboxTemplateSpecBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "OsGymSandboxTemplateSpecBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeOSGymSandboxTemplateSpecBuilder = new FfiConverterObject(
-  uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is OsGymSandboxTemplateSpecBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "OsGymSandboxTemplateSpecBuilder";
+    },
+}})();
+const FfiConverterTypeOSGymSandboxTemplateSpecBuilder = new FfiConverterObject(uniffiTypeOsGymSandboxTemplateSpecBuilderObjectFactory);
 
 export interface OsGymSandboxWarmPoolSpecBuilderLike {
-  autoscaling(value: WarmPoolAutoscaling): OsGymSandboxWarmPoolSpecBuilderLike;
-  build() /*throws*/ : OsGymSandboxWarmPoolSpec;
-  replicas(value: number): OsGymSandboxWarmPoolSpecBuilderLike;
-  sandboxTemplateRef(
-    value: SandboxTemplateRef,
-  ): OsGymSandboxWarmPoolSpecBuilderLike;
+
+    autoscaling(value: WarmPoolAutoscaling): OsGymSandboxWarmPoolSpecBuilderLike;
+    build() /*throws*/: OsGymSandboxWarmPoolSpec;
+    replicas(value: number): OsGymSandboxWarmPoolSpecBuilderLike;
+    sandboxTemplateRef(value: SandboxTemplateRef): OsGymSandboxWarmPoolSpecBuilderLike;
 }
 /**
  * @deprecated Use `OsGymSandboxWarmPoolSpecBuilderLike` instead.
  */
-export type OsGymSandboxWarmPoolSpecBuilderInterface =
-  OsGymSandboxWarmPoolSpecBuilderLike;
+export type OsGymSandboxWarmPoolSpecBuilderInterface = OsGymSandboxWarmPoolSpecBuilderLike;
 
-export class OsGymSandboxWarmPoolSpecBuilder
-  extends UniffiAbstractObject
-  implements OsGymSandboxWarmPoolSpecBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "OsGymSandboxWarmPoolSpecBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+
+export class OsGymSandboxWarmPoolSpecBuilder extends UniffiAbstractObject implements OsGymSandboxWarmPoolSpecBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "OsGymSandboxWarmPoolSpecBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.bless(pointer);
-  }
-
-  autoscaling(value: WarmPoolAutoscaling): OsGymSandboxWarmPoolSpecBuilderLike {
-    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling(
-            uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterTypeWarmPoolAutoscaling.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  build(): OsGymSandboxWarmPoolSpec /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeOSGymSandboxWarmPoolSpec.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(
-          FfiConverterTypeSchemaBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(
-            uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  replicas(value: number): OsGymSandboxWarmPoolSpecBuilderLike {
-    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(
-            uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  sandboxTemplateRef(
-    value: SandboxTemplateRef,
-  ): OsGymSandboxWarmPoolSpecBuilderLike {
-    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
-            uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterTypeSandboxTemplateRef.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.pointer(this);
-      uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.freePointer(
-        pointer,
-      );
-      uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is OsGymSandboxWarmPoolSpecBuilder {
-    return uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.isConcreteType(
-      obj_,
-    );
-  }
+
+
+
+    autoscaling(value: WarmPoolAutoscaling): OsGymSandboxWarmPoolSpecBuilderLike {
+    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling(
+                uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeWarmPoolAutoscaling.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    build(): OsGymSandboxWarmPoolSpec /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpec.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(FfiConverterTypeSchemaBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(
+                uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    replicas(value: number): OsGymSandboxWarmPoolSpecBuilderLike {
+    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(
+                uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    sandboxTemplateRef(value: SandboxTemplateRef): OsGymSandboxWarmPoolSpecBuilderLike {
+    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+                uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeSandboxTemplateRef.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.pointer(this);
+            uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is OsGymSandboxWarmPoolSpecBuilder {
+        return uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory: UniffiObjectFactory<OsGymSandboxWarmPoolSpecBuilderLike> =
-  (() => {
+const uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory: UniffiObjectFactory<OsGymSandboxWarmPoolSpecBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): OsGymSandboxWarmPoolSpecBuilderLike {
-        const instance = Object.create(
-          OsGymSandboxWarmPoolSpecBuilder.prototype,
-        );
+    create(pointer: UniffiHandle): OsGymSandboxWarmPoolSpecBuilderLike {
+        const instance = Object.create(OsGymSandboxWarmPoolSpecBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "OsGymSandboxWarmPoolSpecBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: OsGymSandboxWarmPoolSpecBuilderLike): UniffiHandle {
+    pointer(obj_: OsGymSandboxWarmPoolSpecBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: OsGymSandboxWarmPoolSpecBuilderLike): UniffiHandle {
+    clonePointer(obj_: OsGymSandboxWarmPoolSpecBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is OsGymSandboxWarmPoolSpecBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "OsGymSandboxWarmPoolSpecBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder = new FfiConverterObject(
-  uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is OsGymSandboxWarmPoolSpecBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "OsGymSandboxWarmPoolSpecBuilder";
+    },
+}})();
+const FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder = new FfiConverterObject(uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory);
 
 export interface SandboxServiceBuilderLike {
-  build() /*throws*/ : SandboxService;
-  name(value: string): SandboxServiceBuilderLike;
-  protocol(value: ServiceProtocol): SandboxServiceBuilderLike;
-  targetPort(value: number): SandboxServiceBuilderLike;
+
+    build() /*throws*/: SandboxService;
+    name(value: string): SandboxServiceBuilderLike;
+    protocol(value: ServiceProtocol): SandboxServiceBuilderLike;
+    targetPort(value: number): SandboxServiceBuilderLike;
 }
 /**
  * @deprecated Use `SandboxServiceBuilderLike` instead.
  */
 export type SandboxServiceBuilderInterface = SandboxServiceBuilderLike;
 
-export class SandboxServiceBuilder
-  extends UniffiAbstractObject
-  implements SandboxServiceBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "SandboxServiceBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeSandboxServiceBuilderObjectFactory.bless(pointer);
-  }
 
-  build(): SandboxService /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeSandboxService.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(
-          FfiConverterTypeSchemaBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build(
-            uniffiTypeSandboxServiceBuilderObjectFactory.clonePointer(this),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
+export class SandboxServiceBuilder extends UniffiAbstractObject implements SandboxServiceBuilderLike {
 
-  name(value: string): SandboxServiceBuilderLike {
-    return FfiConverterTypeSandboxServiceBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name(
-            uniffiTypeSandboxServiceBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
+    readonly [uniffiTypeNameSymbol] = "SandboxServiceBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-  }
-
-  protocol(value: ServiceProtocol): SandboxServiceBuilderLike {
-    return FfiConverterTypeSandboxServiceBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol(
-            uniffiTypeSandboxServiceBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeServiceProtocol.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  targetPort(value: number): SandboxServiceBuilderLike {
-    return FfiConverterTypeSandboxServiceBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port(
-            uniffiTypeSandboxServiceBuilderObjectFactory.clonePointer(this),
-            FfiConverterUInt16.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeSandboxServiceBuilderObjectFactory.pointer(this);
-      uniffiTypeSandboxServiceBuilderObjectFactory.freePointer(pointer);
-      uniffiTypeSandboxServiceBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeSandboxServiceBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is SandboxServiceBuilder {
-    return uniffiTypeSandboxServiceBuilderObjectFactory.isConcreteType(obj_);
-  }
+
+
+
+    build(): SandboxService /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeSandboxService.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(FfiConverterTypeSchemaBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build(
+                uniffiTypeSandboxServiceBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    name(value: string): SandboxServiceBuilderLike {
+    return FfiConverterTypeSandboxServiceBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name(
+                uniffiTypeSandboxServiceBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    protocol(value: ServiceProtocol): SandboxServiceBuilderLike {
+    return FfiConverterTypeSandboxServiceBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol(
+                uniffiTypeSandboxServiceBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeServiceProtocol.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    targetPort(value: number): SandboxServiceBuilderLike {
+    return FfiConverterTypeSandboxServiceBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port(
+                uniffiTypeSandboxServiceBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt16.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeSandboxServiceBuilderObjectFactory.pointer(this);
+            uniffiTypeSandboxServiceBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeSandboxServiceBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is SandboxServiceBuilder {
+        return uniffiTypeSandboxServiceBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeSandboxServiceBuilderObjectFactory: UniffiObjectFactory<SandboxServiceBuilderLike> =
-  (() => {
+const uniffiTypeSandboxServiceBuilderObjectFactory: UniffiObjectFactory<SandboxServiceBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeSandboxServiceBuilderObjectFactory.freePointer(heldValue);
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeSandboxServiceBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): SandboxServiceBuilderLike {
+    create(pointer: UniffiHandle): SandboxServiceBuilderLike {
         const instance = Object.create(SandboxServiceBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "SandboxServiceBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: SandboxServiceBuilderLike): UniffiHandle {
+    pointer(obj_: SandboxServiceBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: SandboxServiceBuilderLike): UniffiHandle {
+    clonePointer(obj_: SandboxServiceBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is SandboxServiceBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "SandboxServiceBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeSandboxServiceBuilder = new FfiConverterObject(
-  uniffiTypeSandboxServiceBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is SandboxServiceBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "SandboxServiceBuilder";
+    },
+}})();
+const FfiConverterTypeSandboxServiceBuilder = new FfiConverterObject(uniffiTypeSandboxServiceBuilderObjectFactory);
 
 export interface SandboxTemplateRefBuilderLike {
-  build() /*throws*/ : SandboxTemplateRef;
-  name(value: string): SandboxTemplateRefBuilderLike;
+
+    build() /*throws*/: SandboxTemplateRef;
+    name(value: string): SandboxTemplateRefBuilderLike;
 }
 /**
  * @deprecated Use `SandboxTemplateRefBuilderLike` instead.
  */
 export type SandboxTemplateRefBuilderInterface = SandboxTemplateRefBuilderLike;
 
-export class SandboxTemplateRefBuilder
-  extends UniffiAbstractObject
-  implements SandboxTemplateRefBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "SandboxTemplateRefBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeSandboxTemplateRefBuilderObjectFactory.bless(pointer);
-  }
 
-  build(): SandboxTemplateRef /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeSandboxTemplateRef.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(
-          FfiConverterTypeSchemaBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build(
-            uniffiTypeSandboxTemplateRefBuilderObjectFactory.clonePointer(this),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
+export class SandboxTemplateRefBuilder extends UniffiAbstractObject implements SandboxTemplateRefBuilderLike {
 
-  name(value: string): SandboxTemplateRefBuilderLike {
-    return FfiConverterTypeSandboxTemplateRefBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(
-            uniffiTypeSandboxTemplateRefBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
+    readonly [uniffiTypeNameSymbol] = "SandboxTemplateRefBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeSandboxTemplateRefBuilderObjectFactory.pointer(this);
-      uniffiTypeSandboxTemplateRefBuilderObjectFactory.freePointer(pointer);
-      uniffiTypeSandboxTemplateRefBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeSandboxTemplateRefBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is SandboxTemplateRefBuilder {
-    return uniffiTypeSandboxTemplateRefBuilderObjectFactory.isConcreteType(
-      obj_,
-    );
-  }
+
+
+
+    build(): SandboxTemplateRef /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeSandboxTemplateRef.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(FfiConverterTypeSchemaBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build(
+                uniffiTypeSandboxTemplateRefBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    name(value: string): SandboxTemplateRefBuilderLike {
+    return FfiConverterTypeSandboxTemplateRefBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(
+                uniffiTypeSandboxTemplateRefBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeSandboxTemplateRefBuilderObjectFactory.pointer(this);
+            uniffiTypeSandboxTemplateRefBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeSandboxTemplateRefBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is SandboxTemplateRefBuilder {
+        return uniffiTypeSandboxTemplateRefBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeSandboxTemplateRefBuilderObjectFactory: UniffiObjectFactory<SandboxTemplateRefBuilderLike> =
-  (() => {
+const uniffiTypeSandboxTemplateRefBuilderObjectFactory: UniffiObjectFactory<SandboxTemplateRefBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeSandboxTemplateRefBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeSandboxTemplateRefBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): SandboxTemplateRefBuilderLike {
+    create(pointer: UniffiHandle): SandboxTemplateRefBuilderLike {
         const instance = Object.create(SandboxTemplateRefBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "SandboxTemplateRefBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: SandboxTemplateRefBuilderLike): UniffiHandle {
+    pointer(obj_: SandboxTemplateRefBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: SandboxTemplateRefBuilderLike): UniffiHandle {
+    clonePointer(obj_: SandboxTemplateRefBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is SandboxTemplateRefBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "SandboxTemplateRefBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeSandboxTemplateRefBuilder = new FfiConverterObject(
-  uniffiTypeSandboxTemplateRefBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is SandboxTemplateRefBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "SandboxTemplateRefBuilder";
+    },
+}})();
+const FfiConverterTypeSandboxTemplateRefBuilder = new FfiConverterObject(uniffiTypeSandboxTemplateRefBuilderObjectFactory);
 
 export interface VmTemplateBuilderLike {
-  build() /*throws*/ : VmTemplate;
-  command(value: Array<string>): VmTemplateBuilderLike;
-  containerDiskImage(value: string): VmTemplateBuilderLike;
-  cpuCores(value: number): VmTemplateBuilderLike;
-  firmware(value: Firmware): VmTemplateBuilderLike;
-  imagePullPolicy(value: ImagePullPolicy): VmTemplateBuilderLike;
-  imagePullSecret(value: string): VmTemplateBuilderLike;
-  memory(value: string): VmTemplateBuilderLike;
-  nestedVirtualization(value: boolean): VmTemplateBuilderLike;
-  nodeSelector(value: Map<string, string>): VmTemplateBuilderLike;
-  oidc(value: OidcConfig): VmTemplateBuilderLike;
-  probes(value: PreservedJsonLike): VmTemplateBuilderLike;
-  runtime(value: RuntimeKind): VmTemplateBuilderLike;
-  runtimeClassName(value: string): VmTemplateBuilderLike;
-  services(value: Array<SandboxService>): VmTemplateBuilderLike;
-  tolerations(value: Array<PreservedJsonLike>): VmTemplateBuilderLike;
+
+    build() /*throws*/: VmTemplate;
+    command(value: Array<string>): VmTemplateBuilderLike;
+    containerDiskImage(value: string): VmTemplateBuilderLike;
+    cpuCores(value: number): VmTemplateBuilderLike;
+    firmware(value: Firmware): VmTemplateBuilderLike;
+    imagePullPolicy(value: ImagePullPolicy): VmTemplateBuilderLike;
+    imagePullSecret(value: string): VmTemplateBuilderLike;
+    imageRef(value: ImageRef): VmTemplateBuilderLike;
+    memory(value: string): VmTemplateBuilderLike;
+    nestedVirtualization(value: boolean): VmTemplateBuilderLike;
+    nodeSelector(value: Map<string, string>): VmTemplateBuilderLike;
+    oidc(value: OidcConfig): VmTemplateBuilderLike;
+    probes(value: PreservedJsonLike): VmTemplateBuilderLike;
+    runtime(value: RuntimeKind): VmTemplateBuilderLike;
+    runtimeClassName(value: string): VmTemplateBuilderLike;
+    services(value: Array<SandboxService>): VmTemplateBuilderLike;
+    tolerations(value: Array<PreservedJsonLike>): VmTemplateBuilderLike;
 }
 /**
  * @deprecated Use `VmTemplateBuilderLike` instead.
  */
 export type VmTemplateBuilderInterface = VmTemplateBuilderLike;
 
-export class VmTemplateBuilder
-  extends UniffiAbstractObject
-  implements VmTemplateBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "VmTemplateBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeVmTemplateBuilderObjectFactory.bless(pointer);
-  }
 
-  build(): VmTemplate /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeVmTemplate.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(
-          FfiConverterTypeSchemaBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
+export class VmTemplateBuilder extends UniffiAbstractObject implements VmTemplateBuilderLike {
 
-  command(value: Array<string>): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterSequenceString.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
+    readonly [uniffiTypeNameSymbol] = "VmTemplateBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-  }
-
-  containerDiskImage(value: string): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  cpuCores(value: number): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  firmware(value: Firmware): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeFirmware.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  imagePullPolicy(value: ImagePullPolicy): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeImagePullPolicy.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  imagePullSecret(value: string): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  memory(value: string): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  nestedVirtualization(value: boolean): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterBool.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  nodeSelector(value: Map<string, string>): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterMapStringString.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  oidc(value: OidcConfig): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeOidcConfig.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  probes(value: PreservedJsonLike): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypePreservedJson.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  runtime(value: RuntimeKind): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeRuntimeKind.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  runtimeClassName(value: string): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  services(value: Array<SandboxService>): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterSequenceTypeSandboxService.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  tolerations(value: Array<PreservedJsonLike>): VmTemplateBuilderLike {
-    return FfiConverterTypeVmTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations(
-            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterSequenceTypePreservedJson.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer = uniffiTypeVmTemplateBuilderObjectFactory.pointer(this);
-      uniffiTypeVmTemplateBuilderObjectFactory.freePointer(pointer);
-      uniffiTypeVmTemplateBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeVmTemplateBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is VmTemplateBuilder {
-    return uniffiTypeVmTemplateBuilderObjectFactory.isConcreteType(obj_);
-  }
+
+
+
+    build(): VmTemplate /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeVmTemplate.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(FfiConverterTypeSchemaBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    command(value: Array<string>): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterSequenceString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    containerDiskImage(value: string): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    cpuCores(value: number): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    firmware(value: Firmware): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeFirmware.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    imagePullPolicy(value: ImagePullPolicy): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeImagePullPolicy.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    imagePullSecret(value: string): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    imageRef(value: ImageRef): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_ref(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeImageRef.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    memory(value: string): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    nestedVirtualization(value: boolean): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterBool.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    nodeSelector(value: Map<string, string>): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterMapStringString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    oidc(value: OidcConfig): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeOidcConfig.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    probes(value: PreservedJsonLike): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypePreservedJson.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    runtime(value: RuntimeKind): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeRuntimeKind.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    runtimeClassName(value: string): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    services(value: Array<SandboxService>): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterSequenceTypeSandboxService.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    tolerations(value: Array<PreservedJsonLike>): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterSequenceTypePreservedJson.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeVmTemplateBuilderObjectFactory.pointer(this);
+            uniffiTypeVmTemplateBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeVmTemplateBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is VmTemplateBuilder {
+        return uniffiTypeVmTemplateBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeVmTemplateBuilderObjectFactory: UniffiObjectFactory<VmTemplateBuilderLike> =
-  (() => {
+const uniffiTypeVmTemplateBuilderObjectFactory: UniffiObjectFactory<VmTemplateBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeVmTemplateBuilderObjectFactory.freePointer(heldValue);
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeVmTemplateBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): VmTemplateBuilderLike {
+    create(pointer: UniffiHandle): VmTemplateBuilderLike {
         const instance = Object.create(VmTemplateBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "VmTemplateBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: VmTemplateBuilderLike): UniffiHandle {
+    pointer(obj_: VmTemplateBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: VmTemplateBuilderLike): UniffiHandle {
+    clonePointer(obj_: VmTemplateBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is VmTemplateBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "VmTemplateBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeVmTemplateBuilder = new FfiConverterObject(
-  uniffiTypeVmTemplateBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is VmTemplateBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "VmTemplateBuilder";
+    },
+}})();
+const FfiConverterTypeVmTemplateBuilder = new FfiConverterObject(uniffiTypeVmTemplateBuilderObjectFactory);
 
 export interface WarmPoolAutoscalingBuilderLike {
-  build() /*throws*/ : WarmPoolAutoscaling;
-  initialPoolSize(value: number): WarmPoolAutoscalingBuilderLike;
-  maxPoolSize(value: number): WarmPoolAutoscalingBuilderLike;
-  minPoolSize(value: number): WarmPoolAutoscalingBuilderLike;
+
+    build() /*throws*/: WarmPoolAutoscaling;
+    initialPoolSize(value: number): WarmPoolAutoscalingBuilderLike;
+    maxPoolSize(value: number): WarmPoolAutoscalingBuilderLike;
+    minPoolSize(value: number): WarmPoolAutoscalingBuilderLike;
 }
 /**
  * @deprecated Use `WarmPoolAutoscalingBuilderLike` instead.
  */
-export type WarmPoolAutoscalingBuilderInterface =
-  WarmPoolAutoscalingBuilderLike;
+export type WarmPoolAutoscalingBuilderInterface = WarmPoolAutoscalingBuilderLike;
 
-export class WarmPoolAutoscalingBuilder
-  extends UniffiAbstractObject
-  implements WarmPoolAutoscalingBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "WarmPoolAutoscalingBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+
+export class WarmPoolAutoscalingBuilder extends UniffiAbstractObject implements WarmPoolAutoscalingBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "WarmPoolAutoscalingBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.bless(pointer);
-  }
-
-  build(): WarmPoolAutoscaling /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeWarmPoolAutoscaling.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(
-          FfiConverterTypeSchemaBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build(
-            uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  initialPoolSize(value: number): WarmPoolAutoscalingBuilderLike {
-    return FfiConverterTypeWarmPoolAutoscalingBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size(
-            uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  maxPoolSize(value: number): WarmPoolAutoscalingBuilderLike {
-    return FfiConverterTypeWarmPoolAutoscalingBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size(
-            uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  minPoolSize(value: number): WarmPoolAutoscalingBuilderLike {
-    return FfiConverterTypeWarmPoolAutoscalingBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size(
-            uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.pointer(this);
-      uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.freePointer(pointer);
-      uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is WarmPoolAutoscalingBuilder {
-    return uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.isConcreteType(
-      obj_,
-    );
-  }
+
+
+
+    build(): WarmPoolAutoscaling /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeWarmPoolAutoscaling.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSchemaBuildError.lift.bind(FfiConverterTypeSchemaBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build(
+                uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    initialPoolSize(value: number): WarmPoolAutoscalingBuilderLike {
+    return FfiConverterTypeWarmPoolAutoscalingBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size(
+                uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    maxPoolSize(value: number): WarmPoolAutoscalingBuilderLike {
+    return FfiConverterTypeWarmPoolAutoscalingBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size(
+                uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    minPoolSize(value: number): WarmPoolAutoscalingBuilderLike {
+    return FfiConverterTypeWarmPoolAutoscalingBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size(
+                uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.pointer(this);
+            uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is WarmPoolAutoscalingBuilder {
+        return uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeWarmPoolAutoscalingBuilderObjectFactory: UniffiObjectFactory<WarmPoolAutoscalingBuilderLike> =
-  (() => {
+const uniffiTypeWarmPoolAutoscalingBuilderObjectFactory: UniffiObjectFactory<WarmPoolAutoscalingBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeWarmPoolAutoscalingBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): WarmPoolAutoscalingBuilderLike {
+    create(pointer: UniffiHandle): WarmPoolAutoscalingBuilderLike {
         const instance = Object.create(WarmPoolAutoscalingBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "WarmPoolAutoscalingBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: WarmPoolAutoscalingBuilderLike): UniffiHandle {
+    pointer(obj_: WarmPoolAutoscalingBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: WarmPoolAutoscalingBuilderLike): UniffiHandle {
+    clonePointer(obj_: WarmPoolAutoscalingBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is WarmPoolAutoscalingBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "WarmPoolAutoscalingBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeWarmPoolAutoscalingBuilder = new FfiConverterObject(
-  uniffiTypeWarmPoolAutoscalingBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is WarmPoolAutoscalingBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "WarmPoolAutoscalingBuilder";
+    },
+}})();
+const FfiConverterTypeWarmPoolAutoscalingBuilder = new FfiConverterObject(uniffiTypeWarmPoolAutoscalingBuilderObjectFactory);
 
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
@@ -2810,95 +2651,65 @@ const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
 
 // FfiConverter for ClaimLifecycle | undefined
-const FfiConverterOptionalTypeClaimLifecycle = new FfiConverterOptional(
-  FfiConverterTypeClaimLifecycle,
-);
+const FfiConverterOptionalTypeClaimLifecycle = new FfiConverterOptional(FfiConverterTypeClaimLifecycle);
 
 // FfiConverter for Array<OsGymSandboxClaimCondition>
-const FfiConverterSequenceTypeOSGymSandboxClaimCondition =
-  new FfiConverterArray(FfiConverterTypeOSGymSandboxClaimCondition);
+const FfiConverterSequenceTypeOSGymSandboxClaimCondition = new FfiConverterArray(FfiConverterTypeOSGymSandboxClaimCondition);
 
 // FfiConverter for Array<OsGymSandboxClaimCondition> | undefined
-const FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition =
-  new FfiConverterOptional(FfiConverterSequenceTypeOSGymSandboxClaimCondition);
+const FfiConverterOptionalSequenceTypeOSGymSandboxClaimCondition = new FfiConverterOptional(FfiConverterSequenceTypeOSGymSandboxClaimCondition);
 
 // FfiConverter for OsGymSandboxClaimSandbox | undefined
-const FfiConverterOptionalTypeOSGymSandboxClaimSandbox =
-  new FfiConverterOptional(FfiConverterTypeOSGymSandboxClaimSandbox);
+const FfiConverterOptionalTypeOSGymSandboxClaimSandbox = new FfiConverterOptional(FfiConverterTypeOSGymSandboxClaimSandbox);
+
+// FfiConverter for ImageRef | undefined
+const FfiConverterOptionalTypeImageRef = new FfiConverterOptional(FfiConverterTypeImageRef);
 
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
 // FfiConverter for Array<string> | undefined
-const FfiConverterOptionalSequenceString = new FfiConverterOptional(
-  FfiConverterSequenceString,
-);
+const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverterSequenceString);
 
 // FfiConverter for RuntimeKind | undefined
-const FfiConverterOptionalTypeRuntimeKind = new FfiConverterOptional(
-  FfiConverterTypeRuntimeKind,
-);
+const FfiConverterOptionalTypeRuntimeKind = new FfiConverterOptional(FfiConverterTypeRuntimeKind);
 
 // FfiConverter for Map<string, string>
-const FfiConverterMapStringString = new FfiConverterMap(
-  FfiConverterString,
-  FfiConverterString,
-);
+const FfiConverterMapStringString = new FfiConverterMap(FfiConverterString, FfiConverterString);
 
 // FfiConverter for Map<string, string> | undefined
-const FfiConverterOptionalMapStringString = new FfiConverterOptional(
-  FfiConverterMapStringString,
-);
+const FfiConverterOptionalMapStringString = new FfiConverterOptional(FfiConverterMapStringString);
 
 // FfiConverter for Array<PreservedJsonLike>
-const FfiConverterSequenceTypePreservedJson = new FfiConverterArray(
-  FfiConverterTypePreservedJson,
-);
+const FfiConverterSequenceTypePreservedJson = new FfiConverterArray(FfiConverterTypePreservedJson);
 
 // FfiConverter for Array<PreservedJsonLike> | undefined
-const FfiConverterOptionalSequenceTypePreservedJson = new FfiConverterOptional(
-  FfiConverterSequenceTypePreservedJson,
-);
+const FfiConverterOptionalSequenceTypePreservedJson = new FfiConverterOptional(FfiConverterSequenceTypePreservedJson);
 
 // FfiConverter for ImagePullPolicy | undefined
-const FfiConverterOptionalTypeImagePullPolicy = new FfiConverterOptional(
-  FfiConverterTypeImagePullPolicy,
-);
+const FfiConverterOptionalTypeImagePullPolicy = new FfiConverterOptional(FfiConverterTypeImagePullPolicy);
 
 // FfiConverter for Firmware | undefined
-const FfiConverterOptionalTypeFirmware = new FfiConverterOptional(
-  FfiConverterTypeFirmware,
-);
+const FfiConverterOptionalTypeFirmware = new FfiConverterOptional(FfiConverterTypeFirmware);
 
 // FfiConverter for PreservedJsonLike | undefined
-const FfiConverterOptionalTypePreservedJson = new FfiConverterOptional(
-  FfiConverterTypePreservedJson,
-);
+const FfiConverterOptionalTypePreservedJson = new FfiConverterOptional(FfiConverterTypePreservedJson);
 
 // FfiConverter for ServiceProtocol | undefined
-const FfiConverterOptionalTypeServiceProtocol = new FfiConverterOptional(
-  FfiConverterTypeServiceProtocol,
-);
+const FfiConverterOptionalTypeServiceProtocol = new FfiConverterOptional(FfiConverterTypeServiceProtocol);
 
 // FfiConverter for Array<SandboxService>
-const FfiConverterSequenceTypeSandboxService = new FfiConverterArray(
-  FfiConverterTypeSandboxService,
-);
+const FfiConverterSequenceTypeSandboxService = new FfiConverterArray(FfiConverterTypeSandboxService);
 
 // FfiConverter for Array<SandboxService> | undefined
-const FfiConverterOptionalSequenceTypeSandboxService = new FfiConverterOptional(
-  FfiConverterSequenceTypeSandboxService,
-);
+const FfiConverterOptionalSequenceTypeSandboxService = new FfiConverterOptional(FfiConverterSequenceTypeSandboxService);
 
 // FfiConverter for OidcConfig | undefined
-const FfiConverterOptionalTypeOidcConfig = new FfiConverterOptional(
-  FfiConverterTypeOidcConfig,
-);
+const FfiConverterOptionalTypeOidcConfig = new FfiConverterOptional(FfiConverterTypeOidcConfig);
 
 // FfiConverter for WarmPoolAutoscaling | undefined
-const FfiConverterOptionalTypeWarmPoolAutoscaling = new FfiConverterOptional(
-  FfiConverterTypeWarmPoolAutoscaling,
-);
+const FfiConverterOptionalTypeWarmPoolAutoscaling = new FfiConverterOptional(FfiConverterTypeWarmPoolAutoscaling);
+
 
 /**
  * This should be called before anything else.
@@ -2911,338 +2722,147 @@ const FfiConverterOptionalTypeWarmPoolAutoscaling = new FfiConverterOptional(
  * It also initializes the machinery to enable Rust to talk back to Javascript.
  */
 function uniffiEnsureInitialized() {
-  // Get the bindings contract version from our ComponentInterface
-  const bindingsContractVersion = 30;
-  // Get the scaffolding contract version by calling the into the dylib
-  const scaffoldingContractVersion =
-    nativeModule().ubrn_ffi_cyclops_sdk_schema_uniffi_contract_version();
-  if (bindingsContractVersion !== scaffoldingContractVersion) {
-    throw new UniffiInternalError.ContractVersionMismatch(
-      scaffoldingContractVersion,
-      bindingsContractVersion,
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new() !==
-    22071
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build() !==
-    53928
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template() !==
-    6610
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new() !==
-    26063
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling() !==
-    44912
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() !==
-    5682
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() !==
-    50438
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() !==
-    7198
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() !==
-    24064
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() !==
-    8252
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new() !==
-    21082
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build() !==
-    62919
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name() !==
-    62417
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol() !==
-    10309
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port() !==
-    61462
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new() !==
-    4748
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build() !==
-    46569
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name() !==
-    1803
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new() !==
-    27302
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() !==
-    17867
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() !==
-    20371
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image() !==
-    49021
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() !==
-    25645
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() !==
-    33926
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy() !==
-    41828
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret() !==
-    40154
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory() !==
-    55615
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization() !==
-    23834
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector() !==
-    45280
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc() !==
-    27280
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() !==
-    40623
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() !==
-    63375
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name() !==
-    25466
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services() !==
-    14113
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations() !==
-    1632
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new() !==
-    25769
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build() !==
-    17132
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size() !==
-    56913
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size() !==
-    18359
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size() !==
-    46153
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size",
-    );
-  }
-}
+    // Get the bindings contract version from our ComponentInterface
+    const bindingsContractVersion = 30;
+    // Get the scaffolding contract version by calling the into the dylib
+    const scaffoldingContractVersion = nativeModule().ubrn_ffi_cyclops_sdk_schema_uniffi_contract_version();
+    if (bindingsContractVersion !== scaffoldingContractVersion) {
+        throw new UniffiInternalError.ContractVersionMismatch(scaffoldingContractVersion, bindingsContractVersion);
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_imagerefbuilder_new() !== 48335) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_imagerefbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_build() !== 42434) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_name() !== 43667) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_name");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new() !== 22071) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build() !== 53928) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template() !== 6610) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new() !== 26063) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling() !== 44912) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() !== 5682) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() !== 50438) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() !== 7198) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() !== 24064) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() !== 8252) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new() !== 21082) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build() !== 62919) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name() !== 62417) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol() !== 10309) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port() !== 61462) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new() !== 4748) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build() !== 46569) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name() !== 1803) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new() !== 27302) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() !== 17867) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() !== 20371) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image() !== 49021) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() !== 25645) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() !== 33926) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy() !== 41828) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret() !== 40154) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_ref() !== 11892) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_ref");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory() !== 55615) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization() !== 23834) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector() !== 45280) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc() !== 27280) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() !== 40623) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() !== 63375) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name() !== 25466) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services() !== 14113) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations() !== 1632) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new() !== 25769) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build() !== 17132) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size() !== 56913) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size() !== 18359) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size() !== 46153) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size");
+    }
+
+    }
 
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
@@ -3251,6 +2871,8 @@ export default Object.freeze({
     FfiConverterTypeClaimSpec,
     FfiConverterTypeFirmware,
     FfiConverterTypeImagePullPolicy,
+    FfiConverterTypeImageRef,
+    FfiConverterTypeImageRefBuilder,
     FfiConverterTypeJsonValueError,
     FfiConverterTypeOSGymSandboxClaimCondition,
     FfiConverterTypeOSGymSandboxClaimSandbox,
@@ -3275,5 +2897,5 @@ export default Object.freeze({
     FfiConverterTypeVmTemplateBuilder,
     FfiConverterTypeWarmPoolAutoscaling,
     FfiConverterTypeWarmPoolAutoscalingBuilder,
-  },
+  }
 });

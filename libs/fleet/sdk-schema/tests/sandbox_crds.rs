@@ -3,7 +3,7 @@ use kube::CustomResourceExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-const AUTHORITATIVE_CRDS: &str = include_str!("../../../clusters/base/osgym/crd.yaml");
+const AUTHORITATIVE_CRDS: &str = include_str!("../../../../clusters/base/osgym/crd.yaml");
 
 fn authoritative_crd(name: &str) -> Value {
     serde_yaml::Deserializer::from_str(AUTHORITATIVE_CRDS)

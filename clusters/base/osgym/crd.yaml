@@ -1,0 +1,635 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: osgymsandboxes.osgym.cua.ai
+spec:
+  group: osgym.cua.ai
+  names:
+    categories: []
+    kind: OSGymSandbox
+    plural: osgymsandboxes
+    shortNames:
+    - osbx
+    singular: osgymsandbox
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .status.vmName
+      name: VM
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            properties:
+              vmTemplate:
+                properties:
+                  command:
+                    description: Pod runtimes (macos/gvisor) only. Entrypoint command for the sandbox container (overrides the image default).
+                    items:
+                      type: string
+                    type: array
+                  containerDiskImage:
+                    description: KubeVirt containerDisk OCI image (runtime=kubevirt) or the sandbox pod image ref (runtime=macos/gvisor).
+                    nullable: true
+                    type: string
+                  cpuCores:
+                    default: 4
+                    minimum: 1.0
+                    type: integer
+                  firmware:
+                    default: bios
+                    description: VM firmware. Use "efi" for GPT/UEFI-only guest images (e.g. the dockur-built Windows desktop-workspace); "bios" is KubeVirt's default and what the Linux workspace images boot with.
+                    enum:
+                    - bios
+                    - efi
+                    type: string
+                  imagePullPolicy:
+                    description: Pod runtimes (macos/gvisor) only. Image pull policy (default IfNotPresent).
+                    enum:
+                    - Always
+                    - IfNotPresent
+                    - Never
+                    type: string
+                  imagePullSecret:
+                    type: string
+                  imageRef:
+                    description: KubeVirt Image resource name.
+                    nullable: true
+                    properties:
+                      name:
+                        maxLength: 63
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  memory:
+                    default: 4Gi
+                    type: string
+                  nestedVirtualization:
+                    default: false
+                    description: Enable nested KVM by setting domain.cpu.model to host-passthrough
+                    type: boolean
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: 'Pod runtimes (macos/gvisor) only. nodeSelector for the sandbox pod (defaults: cua.ai/macos=true for macos, cua.ai/gvisor=enabled for gvisor).'
+                    type: object
+                  oidc:
+                    description: Optional Keycloak workload-OIDC token injection. When set, the pool-operator renders a cloud-init disk that drops the tenant-scoped Keycloak client credentials into the guest and runs an in-guest systemd refresher that mints + rotates an OIDC access token at /var/run/cua/oidc/token. Lets the workload federate into AWS (sts:AssumeRoleWithWebIdentity) and other OIDC-trust providers, scoped to the tenant that owns the pool. See docs/decisions/2026-06-25-osgym-pool-workload-oidc.md.
+                    properties:
+                      awsRegion:
+                        default: us-west-2
+                        description: AWS region for in-guest AWS SDK calls.
+                        type: string
+                      awsRoleArn:
+                        description: Optional. When set, the guest is configured (env + ~/.aws/config) so the AWS SDK assumes this role via the injected web-identity token with no extra setup.
+                        type: string
+                      credentialsSecret:
+                        description: Name of a Secret in the pool namespace holding the tenant's Keycloak client credentials under keys client_id and client_secret.
+                        type: string
+                      refreshIntervalSeconds:
+                        default: 1800
+                        description: How often the in-guest refresher re-mints the token (half the 1h token TTL by default).
+                        minimum: 60.0
+                        type: integer
+                      tokenUrl:
+                        description: Keycloak token endpoint for the workloads realm, e.g. https://auth.cua.ai/realms/workloads/protocol/openid-connect/token
+                        type: string
+                    required:
+                    - credentialsSecret
+                    - tokenUrl
+                    type: object
+                  probes:
+                    description: Optional KubeVirt readinessProbe/livenessProbe for the VMI, gating ready on the guest actually serving.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  runtime:
+                    default: kubevirt
+                    description: Pool backend runtime. "kubevirt" (default) reconciles each sandbox into a KubeVirt VM. "macos" reconciles it into a macOS sandbox (an agent-sandbox Sandbox on a macOS node); "gvisor" into a gVisor (runsc) pod on the gVisor K3s workers (also an agent-sandbox Sandbox). For the pod runtimes containerDiskImage is the pod image ref and firmware/cpuCores/memory are advisory.
+                    enum:
+                    - kubevirt
+                    - macos
+                    - gvisor
+                    type: string
+                  runtimeClassName:
+                    description: 'Pod runtimes (macos/gvisor) only. RuntimeClass for the sandbox pod (defaults: "cua-macos-native" for macos, "gvisor" for gvisor). Ignored for kubevirt.'
+                    type: string
+                  services:
+                    description: Extra K8s Services created per-sandbox.
+                    items:
+                      properties:
+                        name:
+                          description: Service name suffix (sandbox name is prepended).
+                          type: string
+                        protocol:
+                          default: TCP
+                          enum:
+                          - TCP
+                          - UDP
+                          type: string
+                        targetPort:
+                          description: Port on the VM pod to forward to.
+                          maximum: 65535.0
+                          minimum: 1.0
+                          type: integer
+                      required:
+                      - name
+                      - targetPort
+                      type: object
+                    type: array
+                  tolerations:
+                    description: Pod runtimes (macos/gvisor) only. Tolerations for the sandbox pod so it schedules onto tainted nodes (macos defaults tolerate the cua.ai/macos taint; the gVisor workers are untainted, so gvisor defaults to none).
+                    items:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: array
+                type: object
+            required:
+            - vmTemplate
+            type: object
+          status:
+            nullable: true
+            properties:
+              message:
+                description: |
+                  Human-readable detail, set when the OSGymSandbox is
+                  stuck (e.g. spec.vmTemplate.containerDiskImage missing).
+                type: string
+              phase:
+                description: Pending | Ready | Terminating.
+                type: string
+              ready:
+                description: Mirrored from the KubeVirt VM status.ready.
+                type: boolean
+              resetIssuedAt:
+                description: |
+                  When the in-place restart (return-to-pool) was
+                  issued. Used only by the reset-timeout backstop in
+                  sandbox_mirror_vm_status — if the Sandbox is still
+                  not Ready RESET_TIMEOUT_SECS after this, the operator
+                  gives up the restart and deletes the OSGymSandbox CR
+                  (its finalizer tears down VM+Service, reconcile_pool
+                  respawns). Cleared on the Resetting->Ready transition.
+                format: date-time
+                type: string
+              resetVmiUid:
+                description: |
+                  metadata.uid of the VirtualMachineInstance present
+                  when the in-place restart was issued. The mirror
+                  gates the Resetting->Ready transition on observing a
+                  VMI with a *different* uid — i.e. KubeVirt actually
+                  recreated the VMI rather than the old one lingering.
+                  Cleared on the Resetting->Ready transition.
+                type: string
+              runtime:
+                description: Backend that provisioned this sandbox ("macos" for a native macOS Sandbox, "gvisor" for a gVisor pod, unset/kubevirt otherwise). Set by the operator.
+                type: string
+              service:
+                description: In-cluster DNS of the VM's Service.
+                type: string
+              vmName:
+                description: Name of the owned KubeVirt VirtualMachine.
+                type: string
+            type: object
+        required:
+        - spec
+        title: OSGymSandbox
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: osgymsandboxtemplates.osgym.cua.ai
+spec:
+  group: osgym.cua.ai
+  names:
+    categories: []
+    kind: OSGymSandboxTemplate
+    plural: osgymsandboxtemplates
+    shortNames:
+    - osbt
+    singular: osgymsandboxtemplate
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.vmTemplate.containerDiskImage
+      name: Image
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            properties:
+              vmTemplate:
+                properties:
+                  command:
+                    description: Pod runtimes (macos/gvisor) only. Entrypoint command for the sandbox container (overrides the image default).
+                    items:
+                      type: string
+                    type: array
+                  containerDiskImage:
+                    description: KubeVirt containerDisk OCI image (runtime=kubevirt) or the sandbox pod image ref (runtime=macos/gvisor).
+                    nullable: true
+                    type: string
+                  cpuCores:
+                    default: 4
+                    minimum: 1.0
+                    type: integer
+                  firmware:
+                    default: bios
+                    description: VM firmware. Use "efi" for GPT/UEFI-only guest images (e.g. the dockur-built Windows desktop-workspace); "bios" is KubeVirt's default and what the Linux workspace images boot with.
+                    enum:
+                    - bios
+                    - efi
+                    type: string
+                  imagePullPolicy:
+                    description: Pod runtimes (macos/gvisor) only. Image pull policy (default IfNotPresent).
+                    enum:
+                    - Always
+                    - IfNotPresent
+                    - Never
+                    type: string
+                  imagePullSecret:
+                    type: string
+                  imageRef:
+                    description: KubeVirt Image resource name.
+                    nullable: true
+                    properties:
+                      name:
+                        maxLength: 63
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  memory:
+                    default: 4Gi
+                    type: string
+                  nestedVirtualization:
+                    default: false
+                    description: Enable nested KVM by setting domain.cpu.model to host-passthrough
+                    type: boolean
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: 'Pod runtimes (macos/gvisor) only. nodeSelector for the sandbox pod (defaults: cua.ai/macos=true for macos, cua.ai/gvisor=enabled for gvisor).'
+                    type: object
+                  oidc:
+                    description: Optional Keycloak workload-OIDC token injection. When set, the pool-operator renders a cloud-init disk that drops the tenant-scoped Keycloak client credentials into the guest and runs an in-guest systemd refresher that mints + rotates an OIDC access token at /var/run/cua/oidc/token. Lets the workload federate into AWS (sts:AssumeRoleWithWebIdentity) and other OIDC-trust providers, scoped to the tenant that owns the pool. See docs/decisions/2026-06-25-osgym-pool-workload-oidc.md.
+                    properties:
+                      awsRegion:
+                        default: us-west-2
+                        description: AWS region for in-guest AWS SDK calls.
+                        type: string
+                      awsRoleArn:
+                        description: Optional. When set, the guest is configured (env + ~/.aws/config) so the AWS SDK assumes this role via the injected web-identity token with no extra setup.
+                        type: string
+                      credentialsSecret:
+                        description: Name of a Secret in the pool namespace holding the tenant's Keycloak client credentials under keys client_id and client_secret.
+                        type: string
+                      refreshIntervalSeconds:
+                        default: 1800
+                        description: How often the in-guest refresher re-mints the token (half the 1h token TTL by default).
+                        minimum: 60.0
+                        type: integer
+                      tokenUrl:
+                        description: Keycloak token endpoint for the workloads realm, e.g. https://auth.cua.ai/realms/workloads/protocol/openid-connect/token
+                        type: string
+                    required:
+                    - credentialsSecret
+                    - tokenUrl
+                    type: object
+                  probes:
+                    description: Optional KubeVirt readinessProbe/livenessProbe for the VMI, gating ready on the guest actually serving.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  runtime:
+                    default: kubevirt
+                    description: Pool backend runtime. "kubevirt" (default) reconciles each sandbox into a KubeVirt VM. "macos" reconciles it into a macOS sandbox (an agent-sandbox Sandbox on a macOS node); "gvisor" into a gVisor (runsc) pod on the gVisor K3s workers (also an agent-sandbox Sandbox). For the pod runtimes containerDiskImage is the pod image ref and firmware/cpuCores/memory are advisory.
+                    enum:
+                    - kubevirt
+                    - macos
+                    - gvisor
+                    type: string
+                  runtimeClassName:
+                    description: 'Pod runtimes (macos/gvisor) only. RuntimeClass for the sandbox pod (defaults: "cua-macos-native" for macos, "gvisor" for gvisor). Ignored for kubevirt.'
+                    type: string
+                  services:
+                    description: Extra K8s Services created per-sandbox.
+                    items:
+                      properties:
+                        name:
+                          description: Service name suffix (sandbox name is prepended).
+                          type: string
+                        protocol:
+                          default: TCP
+                          enum:
+                          - TCP
+                          - UDP
+                          type: string
+                        targetPort:
+                          description: Port on the VM pod to forward to.
+                          maximum: 65535.0
+                          minimum: 1.0
+                          type: integer
+                      required:
+                      - name
+                      - targetPort
+                      type: object
+                    type: array
+                  tolerations:
+                    description: Pod runtimes (macos/gvisor) only. Tolerations for the sandbox pod so it schedules onto tainted nodes (macos defaults tolerate the cua.ai/macos taint; the gVisor workers are untainted, so gvisor defaults to none).
+                    items:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: array
+                type: object
+            required:
+            - vmTemplate
+            type: object
+        required:
+        - spec
+        title: OSGymSandboxTemplate
+        type: object
+    served: true
+    storage: true
+    subresources: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: osgymsandboxwarmpools.osgym.cua.ai
+spec:
+  group: osgym.cua.ai
+  names:
+    categories: []
+    kind: OSGymSandboxWarmPool
+    plural: osgymsandboxwarmpools
+    shortNames:
+    - oswp
+    singular: osgymsandboxwarmpool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            properties:
+              autoscaling:
+                description: |
+                  OPTIONAL autoscaling extension. When present, the
+                  pool-operator manages a KEDA ScaledObject that drives
+                  spec.replicas (via the /scale subresource) from the
+                  pool's claim demand — the count of live
+                  OSGymSandboxClaims (Pending + Bound), published as
+                  osgym_pool_claim_demand. A Pending claim is unmet
+                  demand so the pool grows; deleting claims shrinks it
+                  (drain-safe). Absent = a plain warm pool whose
+                  spec.replicas is set statically, with no autoscaling.
+                  See docs/decisions/2026-06-15-pool-claim-autoscaling.md.
+                nullable: true
+                properties:
+                  initialPoolSize:
+                    default: 0
+                    description: |
+                      One-time warm head-start: the pool-operator seeds
+                      spec.replicas to this when the pool is created so
+                      the first claims bind without a cold start. KEDA
+                      then owns spec.replicas; the value decays toward
+                      the live claim demand (floored at minPoolSize)
+                      once KEDA begins polling.
+                    minimum: 0.0
+                    type: integer
+                  maxPoolSize:
+                    default: 50
+                    description: ScaledObject maxReplicaCount — hard ceiling.
+                    minimum: 1.0
+                    type: integer
+                  minPoolSize:
+                    default: 0
+                    description: |
+                      ScaledObject minReplicaCount — the durable warm
+                      floor kept while the extension is enabled. 0 lets
+                      the pool scale to zero when there are no claims.
+                    minimum: 0.0
+                    type: integer
+                type: object
+              replicas:
+                description: Desired number of pre-warmed OSGymSandboxes.
+                minimum: 0.0
+                type: integer
+              sandboxTemplateRef:
+                properties:
+                  name:
+                    description: Name of the OSGymSandboxTemplate to use.
+                    type: string
+                required:
+                - name
+                type: object
+            required:
+            - replicas
+            - sandboxTemplateRef
+            type: object
+          status:
+            nullable: true
+            properties:
+              readyReplicas:
+                type: integer
+              replicas:
+                type: integer
+              selector:
+                description: Label selector for the pool's OSGymSandboxes.
+                type: string
+            type: object
+        required:
+        - spec
+        title: OSGymSandboxWarmPool
+        type: object
+    served: true
+    storage: true
+    subresources:
+      scale:
+        labelSelectorPath: .status.selector
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.replicas
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: osgymsandboxclaims.osgym.cua.ai
+spec:
+  group: osgym.cua.ai
+  names:
+    categories: []
+    kind: OSGymSandboxClaim
+    plural: osgymsandboxclaims
+    shortNames:
+    - osbc
+    singular: osgymsandboxclaim
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.sandboxTemplateRef.name
+      name: Template
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.sandbox.name
+      name: Sandbox
+      type: string
+    - jsonPath: .spec.lifecycle.shutdownTime
+      name: ShutdownTime
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            properties:
+              bindDeadline:
+                description: |
+                  Seconds the claim stays Pending waiting for a Sandbox to
+                  bind before it is marked Failed (default 900, set by the
+                  operator's OSGYM_CLAIM_BIND_DEADLINE). A Pending claim is
+                  the autoscaler's demand signal, so the claim is kept
+                  Pending across a cold VM boot + KEDA scale-up rather than
+                  failing fast. Override it for pools with different cold-start
+                  requirements.
+                minimum: 0.0
+                type: integer
+              lifecycle:
+                properties:
+                  autoRenew:
+                    default: false
+                    description: |
+                      When true, the lane auto-renew timer in
+                      pool-operator extends shutdownTime forward on
+                      every renew tick. Set on lane-backed claims
+                      (managed by /api/runs/{name}/lanes) so a lane's
+                      VM is not reaped while the customer is between
+                      /step calls; left false for batch claims, which
+                      renew through /step as before. The orchestrator
+                      never touches this -- only the cyclops-cs runs
+                      manager sets it on lane create.
+                    type: boolean
+                  shutdownPolicy:
+                    default: Retain
+                    description: |
+                      Retain (default) — on claim deletion the bound
+                      OSGymSandbox is RETURNED to the warm pool and
+                      restarted in place (VMI deleted -> KubeVirt
+                      recreates it from spec.running:true with a fresh
+                      containerDisk overlay = clean desktop). Delete —
+                      the escape hatch: destroy the OSGymSandbox CR
+                      (its finalizer tears down VM+Service,
+                      reconcile_pool respawns). The orchestrator never
+                      sets this field, so it picks up the new Retain
+                      default.
+                    type: string
+                  shutdownTime:
+                    description: |
+                      Absolute UTC expiry. The claim reaper deletes the
+                      claim (GC-cascading the bound OSGymSandbox) once
+                      now > shutdownTime. /step PATCHes this forward.
+                    format: date-time
+                    type: string
+                type: object
+              sandboxTemplateRef:
+                properties:
+                  name:
+                    description: |
+                      OSGymSandboxTemplate the warm pool's OSGymSandboxes
+                      use.
+                    type: string
+                required:
+                - name
+                type: object
+              warmpool:
+                default: default
+                description: |
+                  "none" | "default" | <name> — which OSGymSandboxWarmPool
+                  to adopt an OSGymSandbox from.
+                type: string
+            required:
+            - sandboxTemplateRef
+            type: object
+          status:
+            nullable: true
+            properties:
+              conditions:
+                description: Standard metav1.Condition list.
+                items:
+                  properties:
+                    lastTransitionTime:
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  type: object
+                type: array
+              phase:
+                description: |
+                  Pending | Bound | Failed — a derived field written by
+                  the claim controller alongside conditions, kept for
+                  pool.py byte-compatibility.
+                type: string
+              sandbox:
+                properties:
+                  name:
+                    description: Adopted OSGymSandbox name (== vmName).
+                    type: string
+                  service:
+                    description: |
+                      In-cluster DNS of the bound OSGymSandbox's Service.
+                    type: string
+                type: object
+            type: object
+        required:
+        - spec
+        title: OSGymSandboxClaim
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

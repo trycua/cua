@@ -1,7 +1,7 @@
 use cyclops_sdk_schema::generate::{render_crds, semantic_yaml_documents};
 use serde_json::json;
 
-const AUTHORITATIVE_CRDS: &str = include_str!("../../../clusters/base/osgym/crd.yaml");
+const AUTHORITATIVE_CRDS: &str = include_str!("../../../../clusters/base/osgym/crd.yaml");
 
 #[test]
 fn generated_bundle_matches_checked_in_contract() {

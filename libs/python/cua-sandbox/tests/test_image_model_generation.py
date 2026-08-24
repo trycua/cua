@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from cua_sandbox.generated.image_models import ImageFileReference, ImageResource
+from pydantic import ValidationError
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PACKAGE_ROOT / "scripts/generate_image_models.py"

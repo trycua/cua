@@ -4,9 +4,8 @@ import hashlib
 import json
 
 import pytest
-from pydantic import ValidationError
-
 from cua_sandbox import Image, ImageFileReference
+from pydantic import ValidationError
 
 
 def _reference(character: str = "a", *, size_bytes: int = 12) -> ImageFileReference:

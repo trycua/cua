@@ -97,67 +97,141 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: cargo build --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
-      - name: Protect hosted Windows browser installations from the runner token
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-          $directoryRights = [System.Security.AccessControl.FileSystemRights]::CreateFiles `
-            -bor [System.Security.AccessControl.FileSystemRights]::CreateDirectories `
-            -bor [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles `
-            -bor [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes `
-            -bor [System.Security.AccessControl.FileSystemRights]::WriteAttributes `
-            -bor [System.Security.AccessControl.FileSystemRights]::Delete `
-            -bor [System.Security.AccessControl.FileSystemRights]::ChangePermissions `
-            -bor [System.Security.AccessControl.FileSystemRights]::TakeOwnership
-          $fileRights = [System.Security.AccessControl.FileSystemRights]::WriteData `
-            -bor [System.Security.AccessControl.FileSystemRights]::AppendData `
-            -bor [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes `
-            -bor [System.Security.AccessControl.FileSystemRights]::WriteAttributes `
-            -bor [System.Security.AccessControl.FileSystemRights]::Delete `
-            -bor [System.Security.AccessControl.FileSystemRights]::ChangePermissions `
-            -bor [System.Security.AccessControl.FileSystemRights]::TakeOwnership
-          $candidates = @(
-            (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'),
-            (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
-            (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
-            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe')
-          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
-          if ($candidates.Count -eq 0) {
-            throw 'Hosted Windows image did not provide Chrome or Edge'
-          }
-          $paths = [System.Collections.Generic.HashSet[string]]::new(
-            [System.StringComparer]::OrdinalIgnoreCase
-          )
-          foreach ($candidate in $candidates) {
-            $path = [System.IO.Path]::GetFullPath($candidate)
-            while ($path -and $paths.Add($path)) {
-              if ($path -ieq $env:ProgramFiles -or $path -ieq ${env:ProgramFiles(x86)}) {
-                break
-              }
-              $path = [System.IO.Path]::GetDirectoryName($path)
-            }
-          }
-          foreach ($path in $paths) {
-            $isDirectory = Test-Path -LiteralPath $path -PathType Container
-            $rights = if ($isDirectory) { $directoryRights } else { $fileRights }
-            $acl = Get-Acl -LiteralPath $path
-            $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-              $identity,
-              $rights,
-              [System.Security.AccessControl.InheritanceFlags]::None,
-              [System.Security.AccessControl.PropagationFlags]::None,
-              [System.Security.AccessControl.AccessControlType]::Deny
-            )
-            $acl.AddAccessRule($rule)
-            Set-Acl -LiteralPath $path -AclObject $acl
-          }
       - name: Run standalone browsers on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:CUA_E2E_ARTIFACT_DIR = Join-Path $PWD "artifacts\cua-driver\standalone-browser"
-          scripts\ci\windows\run-rust-standalone-browser-e2e.ps1 -NoBuild
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.ComponentModel;
+          using System.Runtime.InteropServices;
+          using System.Text;
+
+          public static class RestrictedProcess {
+              const uint TOKEN_ALL_ACCESS = 0x000F01FF;
+              const uint DISABLE_MAX_PRIVILEGE = 0x1;
+              const uint LUA_TOKEN = 0x4;
+              const uint CREATE_UNICODE_ENVIRONMENT = 0x400;
+              const uint INFINITE = 0xFFFFFFFF;
+
+              [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+              struct STARTUPINFO {
+                  public int cb;
+                  public string lpReserved;
+                  public string lpDesktop;
+                  public string lpTitle;
+                  public int dwX;
+                  public int dwY;
+                  public int dwXSize;
+                  public int dwYSize;
+                  public int dwXCountChars;
+                  public int dwYCountChars;
+                  public int dwFillAttribute;
+                  public int dwFlags;
+                  public short wShowWindow;
+                  public short cbReserved2;
+                  public IntPtr lpReserved2;
+                  public IntPtr hStdInput;
+                  public IntPtr hStdOutput;
+                  public IntPtr hStdError;
+              }
+
+              [StructLayout(LayoutKind.Sequential)]
+              struct PROCESS_INFORMATION {
+                  public IntPtr hProcess;
+                  public IntPtr hThread;
+                  public uint dwProcessId;
+                  public uint dwThreadId;
+              }
+
+              [DllImport("kernel32.dll")]
+              static extern IntPtr GetCurrentProcess();
+
+              [DllImport("advapi32.dll", SetLastError = true)]
+              static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+
+              [DllImport("advapi32.dll", SetLastError = true)]
+              static extern bool CreateRestrictedToken(
+                  IntPtr existingToken,
+                  uint flags,
+                  uint disableSidCount,
+                  IntPtr sidsToDisable,
+                  uint deletePrivilegeCount,
+                  IntPtr privilegesToDelete,
+                  uint restrictedSidCount,
+                  IntPtr sidsToRestrict,
+                  out IntPtr restrictedToken);
+
+              [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+              static extern bool CreateProcessWithTokenW(
+                  IntPtr token,
+                  uint logonFlags,
+                  string applicationName,
+                  StringBuilder commandLine,
+                  uint creationFlags,
+                  IntPtr environment,
+                  string currentDirectory,
+                  ref STARTUPINFO startupInfo,
+                  out PROCESS_INFORMATION processInformation);
+
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+
+              [DllImport("kernel32.dll")]
+              static extern bool CloseHandle(IntPtr handle);
+
+              static void Check(bool success) {
+                  if (!success) throw new Win32Exception(Marshal.GetLastWin32Error());
+              }
+
+              public static int Run(string application, string commandLine, string currentDirectory) {
+                  IntPtr processToken = IntPtr.Zero;
+                  IntPtr restrictedToken = IntPtr.Zero;
+                  PROCESS_INFORMATION process = new PROCESS_INFORMATION();
+                  try {
+                      Check(OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, out processToken));
+                      Check(CreateRestrictedToken(
+                          processToken,
+                          DISABLE_MAX_PRIVILEGE | LUA_TOKEN,
+                          0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero,
+                          out restrictedToken));
+                      STARTUPINFO startup = new STARTUPINFO {
+                          cb = Marshal.SizeOf<STARTUPINFO>(),
+                          lpDesktop = "winsta0\\default"
+                      };
+                      Check(CreateProcessWithTokenW(
+                          restrictedToken,
+                          0,
+                          application,
+                          new StringBuilder(commandLine),
+                          CREATE_UNICODE_ENVIRONMENT,
+                          IntPtr.Zero,
+                          currentDirectory,
+                          ref startup,
+                          out process));
+                      WaitForSingleObject(process.hProcess, INFINITE);
+                      Check(GetExitCodeProcess(process.hProcess, out uint exitCode));
+                      return unchecked((int)exitCode);
+                  } finally {
+                      if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
+                      if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
+                      if (restrictedToken != IntPtr.Zero) CloseHandle(restrictedToken);
+                      if (processToken != IntPtr.Zero) CloseHandle(processToken);
+                  }
+              }
+          }
+          '@
+          $pwsh = (Get-Process -Id $PID).Path
+          $runner = Join-Path $PWD 'scripts\ci\windows\run-rust-standalone-browser-e2e.ps1'
+          $commandLine = '"{0}" -NoLogo -NoProfile -NonInteractive -File "{1}" -NoBuild' -f $pwsh, $runner
+          $exitCode = [RestrictedProcess]::Run($pwsh, $commandLine, $PWD.Path)
+          if ($exitCode -ne 0) {
+            throw "Restricted standalone-browser runner exited with code $exitCode"
+          }
       - name: Run standalone browsers on Linux X11
         if: runner.os == 'Linux'
         shell: bash

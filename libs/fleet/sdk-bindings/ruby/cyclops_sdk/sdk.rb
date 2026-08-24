@@ -718,6 +718,27 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Sequence<T> type for TypePreservedJson.
+
+  def self.check_lower_SequenceTypePreservedJson(v)
+    v.each do |item|
+      (PreservedJson.uniffi_check_lower item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypePreservedJson(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypePreservedJson(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypePreservedJson
+    consumeWithStream do |stream|
+      return stream.readSequenceTypePreservedJson
+    end
+  end
+
   # The Sequence<T> type for TypeClaim.
 
   def self.check_lower_SequenceTypeClaim(v)
@@ -1458,6 +1479,22 @@ class RustBufferStream
     items
   end
 
+  # The Sequence<T> type for TypePreservedJson.
+
+  def readSequenceTypePreservedJson
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypePreservedJson
+    end
+
+    items
+  end
+
   # The Sequence<T> type for TypeClaim.
 
   def readSequenceTypeClaim
@@ -1965,6 +2002,16 @@ class RustBufferBuilder
 
     items.each do |item|
       self.write_String(item)
+    end
+  end
+
+  # The Sequence<T> type for TypePreservedJson.
+
+  def write_SequenceTypePreservedJson(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypePreservedJson(item)
     end
   end
 
@@ -2562,6 +2609,18 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image,
+    [:uint64, RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -2867,6 +2926,18 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace,
@@ -3757,6 +3828,57 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim),RustCallStatus.new),
     )
     return result.consumeIntoTypeSandbox
+  end
+  def create_image(namespace, manifest)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        manifest = manifest
+        (PreservedJson.uniffi_check_lower manifest)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),(PreservedJson.uniffi_lower manifest),RustCallStatus.new),
+    )
+    return PreservedJson.uniffi_allocate(result)
+  end
+  def delete_image(namespace, name)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        name = FleetSdk::uniffi_utf8(name)
+
+      FleetSdk.uniffi_rust_future_void(
+
+        SdkError,
+
+        UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+      )
+  end
+
+  def get_image(namespace, name)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        name = FleetSdk::uniffi_utf8(name)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+    )
+    return PreservedJson.uniffi_allocate(result)
+  end
+  def list_images(namespace)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustCallStatus.new),
+
+    )
+    return result.consumeIntoSequenceTypePreservedJson
   end
   def create_namespace(name)
         name = FleetSdk::uniffi_utf8(name)

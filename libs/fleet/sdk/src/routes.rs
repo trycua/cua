@@ -53,6 +53,23 @@ pub fn template_item(base: &Url, namespace: &str, name: &str) -> Result<Url, Sdk
     )
 }
 
+pub fn image_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    route(
+        base,
+        format!("api/k8s/apis/images.cua.ai/v1alpha1/namespaces/{namespace}/images"),
+    )
+}
+
+pub fn image_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    validate_dns_label_for("name", name)?;
+    route(
+        base,
+        format!("api/k8s/apis/images.cua.ai/v1alpha1/namespaces/{namespace}/images/{name}"),
+    )
+}
+
 pub fn namespace_collection(base: &Url) -> Result<Url, SdkError> {
     route(base, NAMESPACE_COLLECTION.into())
 }
@@ -255,8 +272,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        claim_collection, claim_item, namespace_collection, namespace_item, pool_collection,
-        pool_item, template_collection, template_item,
+        claim_collection, claim_item, image_collection, image_item, namespace_collection,
+        namespace_item, pool_collection, pool_item, template_collection, template_item,
     };
     use url::Url;
 
@@ -301,6 +318,16 @@ mod tests {
                 .unwrap()
                 .as_str(),
             "https://cyclops.example:8443/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxtemplates/example-template"
+        );
+        assert_eq!(
+            image_collection(&base, "example-pool").unwrap().as_str(),
+            "https://cyclops.example:8443/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/example-pool/images"
+        );
+        assert_eq!(
+            image_item(&base, "example-pool", "example-image")
+                .unwrap()
+                .as_str(),
+            "https://cyclops.example:8443/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/example-pool/images/example-image"
         );
     }
 

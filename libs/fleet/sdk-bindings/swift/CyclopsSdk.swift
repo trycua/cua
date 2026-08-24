@@ -1394,6 +1394,14 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func waitClaim(claim: Claim) async throws  -> Sandbox
 
+    func createImage(namespace: String, manifest: PreservedJson) async throws  -> PreservedJson
+
+    func deleteImage(namespace: String, name: String) async throws
+
+    func getImage(namespace: String, name: String) async throws  -> PreservedJson
+
+    func listImages(namespace: String) async throws  -> [PreservedJson]
+
     func createNamespace(name: String) async throws  -> Namespace
 
     func deleteNamespace(name: String) async throws
@@ -1658,6 +1666,74 @@ open func waitClaim(claim: Claim)async throws  -> Sandbox  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSandbox_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func createImage(namespace: String, manifest: PreservedJson)async throws  -> PreservedJson  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace),FfiConverterTypePreservedJson_lower(manifest)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypePreservedJson_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func deleteImage(namespace: String, name: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_void,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_void,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func getImage(namespace: String, name: String)async throws  -> PreservedJson  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypePreservedJson_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func listImages(namespace: String)async throws  -> [PreservedJson]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypePreservedJson.lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -4592,6 +4668,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypePreservedJson: FfiConverterRustBuffer {
+    typealias SwiftType = [PreservedJson]
+
+    public static func write(_ value: [PreservedJson], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePreservedJson.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PreservedJson] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PreservedJson]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePreservedJson.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClaim: FfiConverterRustBuffer {
     typealias SwiftType = [Claim]
 
@@ -4934,6 +5035,18 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() != 51053) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() != 24680) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() != 56969) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() != 31215) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() != 38049) {

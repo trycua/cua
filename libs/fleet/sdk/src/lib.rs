@@ -1,6 +1,7 @@
 mod claims;
 mod client;
 mod error;
+mod images;
 mod namespaces;
 mod pools;
 mod routes;
@@ -11,6 +12,7 @@ mod types;
 mod user_keys;
 
 pub use client::CyclopsClient;
+pub use cyclops_sdk_schema::PreservedJson;
 pub use error::{
     AccessTokenProviderError, HttpError, MAX_STATUS_BODY_BYTES, SdkBuildError, SdkError,
     bounded_body,

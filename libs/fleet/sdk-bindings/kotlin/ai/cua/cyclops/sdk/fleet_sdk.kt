@@ -36,10 +36,12 @@ import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.FfiConverterTypePreservedJson
 import ai.cua.cyclops.sdk.schema.OsGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.OsGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.OsGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.OsGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.PreservedJson
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
@@ -53,6 +55,7 @@ import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferPreservedJson
 
 // This is a helper for safely working with byte buffers returned from the Rust code.
 // A rust-owned buffer is represented by its capacity, its current length, and a
@@ -714,6 +717,14 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace(
@@ -900,6 +911,14 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(`ptr`: Long,
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,`shutdownTime`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`manifest`: Long,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(`ptr`: Long,`namespace`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(`ptr`: Long,`name`: RustBuffer.ByValue,
 ): Long
@@ -1202,6 +1221,18 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() != 51053.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() != 24680.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() != 56969.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() != 31215.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() != 38049.toShort()) {
@@ -3533,6 +3564,14 @@ public interface CyclopsClientInterface {
 
     suspend fun `waitClaim`(`claim`: Claim): Sandbox
 
+    suspend fun `createImage`(`namespace`: kotlin.String, `manifest`: PreservedJson): PreservedJson
+
+    suspend fun `deleteImage`(`namespace`: kotlin.String, `name`: kotlin.String)
+
+    suspend fun `getImage`(`namespace`: kotlin.String, `name`: kotlin.String): PreservedJson
+
+    suspend fun `listImages`(`namespace`: kotlin.String): List<PreservedJson>
+
     suspend fun `createNamespace`(`name`: kotlin.String): Namespace
 
     suspend fun `deleteNamespace`(`name`: kotlin.String)
@@ -3802,6 +3841,91 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSandbox.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createImage`(`namespace`: kotlin.String, `manifest`: PreservedJson) : PreservedJson {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterTypePreservedJson.lower(`manifest`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypePreservedJson.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteImage`(`namespace`: kotlin.String, `name`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `getImage`(`namespace`: kotlin.String, `name`: kotlin.String) : PreservedJson {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypePreservedJson.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listImages`(`namespace`: kotlin.String) : List<PreservedJson> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypePreservedJson.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -7515,6 +7639,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypePreservedJson: FfiConverterRustBuffer<List<PreservedJson>> {
+    override fun read(buf: ByteBuffer): List<PreservedJson> {
+        val len = buf.getInt()
+        return List<PreservedJson>(len) {
+            FfiConverterTypePreservedJson.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<PreservedJson>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypePreservedJson.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<PreservedJson>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypePreservedJson.write(it, buf)
         }
     }
 }

@@ -1,10 +1,10 @@
 ---
 rfc: 2942
-title: 'Cua Driver: Secret-reference typing'
+title: 'Cua Driver: Target-bound credential delivery'
 authors:
   - '@f-trycua'
 created: 2026-08-06
-last_updated: 2026-08-06
+last_updated: 2026-08-24
 status: review
 discussion: https://github.com/trycua/cua/issues/2942
 rfc_pr: https://github.com/trycua/cua/pull/2943
@@ -13,15 +13,17 @@ supersedes:
 superseded_by:
 ---
 
-# RFC 2942: Cua Driver: Secret-reference typing
+# RFC 2942: Cua Driver: Target-bound credential delivery
 
 ## Summary
 
-Cua Driver will add a provider-neutral `type_secret` operation to its canonical
-typed SDK. Agent-visible calls provide an opaque, pre-authorized binding and an
-exact delivery target. Trusted host code maps that binding to a private
-password-manager or secret-store locator and constrains the applications,
-origins, fields, lifetime, and number of uses for which it is valid.
+Cua Driver will add provider-neutral, target-first credential discovery and
+target-bound delivery to its canonical typed SDK. The agent first presents the
+exact destination to `find_credentials(target)`. Cua Driver matches only
+host-registered bindings and returns safe descriptors with fresh, opaque,
+short-lived handles already bound to that destination. The agent may then call
+`type_secret(handle, field, target)`; it never supplies a provider locator or
+secret value.
 
 The runtime resolves the secret locally, delivers it directly to a freshly
 verified semantic target, and disposes of the value without placing plaintext
@@ -32,20 +34,27 @@ serialize it inside the private CDP connection. The destination application
 receives the value by design; neither the agent nor an intermediate generic
 text channel does.
 
-The first provider integration will target 1Password. The public contract will
-remain provider-neutral so other password managers, OS keychains, and managed
-secret stores can implement the same lifecycle and privacy requirements.
+The first provider integration will target a dedicated 1Password automation
+service account and least-privilege automation vault. Its externally issued,
+variable-length bootstrap token is enrolled through a trusted host-only setup
+path and stored in a separate OS credential-store namespace. The public
+contract remains provider-neutral so other password managers, OS keychains,
+managed secret stores, and provider-owned fill mechanisms can implement the
+same lifecycle and privacy requirements.
 
-The first user-visible slice is deliberately narrower than the eventual
-contract: it supports a fake provider, browser password fields, and a directly
-supervised runtime only. Persistent authenticated browser profiles remain the
-default steady state. Native delivery and agent-facing CLI, MCP, shared-daemon,
-and service exposure are deferred until each topology has a trusted binding
+The first implementation slices remain internal and non-invocable: recording
+hardening, secure browser semantics, a fake provider, the broker, target-bound
+handles, and browser delivery are certified before the public manifest changes.
+Because current SDK parity requires every manifest tool to be exported by the
+generated SDKs, the public flip adds the contract, ABI, UniFFI, generated
+Python and TypeScript SDKs, and MCP together. Native delivery, shared-daemon,
+and service exposure remain deferred until each topology has a trusted binding
 registration path and equivalent privacy evidence.
 
-`type_secret` is a release capability, not a vault-reading capability. It does
-not search a vault, reveal a value, return a value, or let an agent select a raw
-provider locator. It cannot automatically unlock a personal vault or bypass
+Credential delivery is a release capability, not a vault-reading capability.
+Version one never searches a provider vault dynamically: discovery matches
+only bindings already registered by trusted host code. It does not reveal or
+return a value, expose provider metadata, unlock a personal vault, or bypass
 provider-required user presence.
 
 ## Motivation
@@ -81,8 +90,10 @@ lifecycle.
   overlays, telemetry, and ordinary logs.
 - Define one provider-neutral typed SDK contract rather than one public tool
   per provider, while exposing it only through certified topologies.
-- Let trusted host code register opaque bindings with private provider
-  locators, exact target constraints, expiry, and use limits.
+- Make discovery target-first and return only safe descriptors with fresh,
+  target-bound handles for trusted host-registered bindings.
+- Let trusted host code register private provider locators, safe descriptors,
+  exact target constraints, expiry, field policy, and use limits.
 - Resolve and deliver a secret only to a freshly verified semantic browser
   target in the first release, with native accessibility delivery deferred.
 - Make 1Password the first provider without exposing raw `op://` references,
@@ -96,6 +107,10 @@ lifecycle.
   advertised as supported.
 - Keep form submission and other consequential actions separate from secret
   delivery.
+- Keep provider bootstrap credentials in a dedicated OS credential-store
+  namespace with enrollment, rotation, revocation, and health reporting.
+- Detect possible same-page delivery misdirection, consume the use, destroy the
+  lease, and never retry.
 
 ## Non-goals
 
@@ -106,6 +121,7 @@ lifecycle.
   or another user-presence requirement.
 - Expose vault search, item enumeration, raw provider URIs, or secret values to
   the model.
+- Dynamically search a provider vault from agent input in version one.
 - Deliver secrets to terminals, shells, clipboards, browser address bars,
   arbitrary content-editable controls, or pixel-only targets in the first
   release.
@@ -123,8 +139,8 @@ lifecycle.
 ## Terminology
 
 **Secret provider**
-: A trusted runtime adapter that resolves a private locator through a password
-manager, OS keychain, or managed secret store.
+: A trusted runtime adapter that can return an ephemeral lease, fill through a
+provider-managed route, or require provider-owned user presence.
 
 **Provider locator**
 : A provider-specific pointer such as a 1Password secret reference. It may
@@ -132,18 +148,28 @@ reveal vault, item, or field metadata and is therefore private trusted-host
 configuration, not an agent-visible tool argument.
 
 **Secret binding**
-: An immutable trusted mapping from an opaque public binding identifier to a
-private provider locator plus allowed targets, lifetime, use limits, and
-authorization metadata.
+: An immutable trusted mapping from safe discovery metadata to private provider
+and field locators plus allowed targets, lifetime, use limits, and authorization
+metadata. Bindings are never enumerated directly by an agent.
 
-**Binding identifier**
-: An opaque label available to an agent for selecting one pre-authorized
-capability. It is not a bearer credential and cannot be used outside its
-runtime, session, generation, or target scope.
+**Credential handle**
+: A fresh opaque capability minted only after a binding matches a verified
+target. It is bound to the runtime generation, lifecycle session, binding
+definition digest, provider and field, browser endpoint generation, tab,
+frame/document, origin, semantic-v2 element ref, expiry, and use count.
+
+**Secret broker**
+: The internal owner of matching, handle minting, atomic reservations, release
+planning, cancellation, and revocation. It is separate from provider adapters.
 
 **Secret lease**
 : A single-use, non-cloneable, zeroizing in-memory value returned by a provider
 for one authorized delivery attempt.
+
+**Bootstrap secret store**
+: A separate OS credential-store interface for externally issued,
+variable-length provider bootstrap tokens. It does not reuse or widen Computer
+History's generated fixed-size encryption-key interface or namespace.
 
 **Delivery target**
 : In the first release, a semantic browser password element bound to a live
@@ -248,13 +274,13 @@ same security boundary.
 | Provider subprocess adapter                      | No                      | Yes, at delivery edge         | Yes with service identity | Cua semantic target           | Optional provider-packaging fallback |
 | Provider-owned target-bound fill API             | No                      | No                            | Provider-dependent        | Provider and Cua proof        | Strongest future route               |
 
-### Route A: Placeholder-backed `type_secret`
+### Route A: Host-backed fake provider
 
-A trusted host registers an opaque binding whose value is already present in
-protected host memory. The model sees only the binding, and the runtime injects
-the value at execution. This is the fastest way to prove the public contract,
-target binding, redaction, recording, and cross-platform behavior with a
-deterministic fake provider.
+A trusted host registers a binding whose synthetic value is already present in
+protected host memory. Discovery exposes only a safe descriptor and fresh
+target-bound handle, and the runtime injects the value at execution. This is
+the fastest way to prove the public contract, handle binding, redaction,
+recording, and cross-platform behavior with a deterministic fake provider.
 
 It does not solve provider acquisition or isolate the secret from the host
 process. It should be the first implementation slice and test seam, not the
@@ -262,11 +288,10 @@ final 1Password architecture.
 
 ### Route B: In-runtime provider trait
 
-Trusted host code supplies a `SecretProvider` implementation through runtime
-construction options. The runtime resolves a binding into a single-use lease
-and delivers it directly. The interface is provider-neutral; the first slice
-uses a deterministic fake provider, and a later 1Password adapter implements
-the same trait.
+Trusted host code supplies a `CredentialProvider` implementation through
+runtime construction options. The broker asks it for a release plan. The
+interface is provider-neutral; the first slice uses a deterministic fake
+provider, and a later 1Password adapter implements the same trait.
 
 The resolved value necessarily crosses the runtime's delivery edge. This route
 therefore keeps the secret outside the agent and public tool contract, not
@@ -276,7 +301,7 @@ arbitrary process access.
 
 ### Route C: Provider subprocess adapter
 
-A `SecretProvider` implementation may launch a private, non-reattachable child
+A `CredentialProvider` implementation may launch a private, non-reattachable child
 through an inherited authenticated channel. The child owns the provider SDK or
 CLI session, raw locator, and bootstrap credential. The runtime sends only an
 authorized resolution request and receives a single-use lease immediately
@@ -320,98 +345,158 @@ the browser profile as a bearer credential.
 
 1. Keep persistent authenticated profiles as the default steady state and
    retain provider extension/Universal Autofill for interactive recovery.
-2. Add secure browser-field semantics and explicit fail-closed recording policy.
-3. Add the provider-neutral contract, trusted in-runtime `SecretProvider`
-   trait, immutable bindings, and fake provider without publishing the tool.
-4. Add a distinct R3 `secret_release` authorization adapter.
-5. Enable an off-by-default browser-only fake-provider slice in a directly
-   supervised runtime and prove target, retention, and failure behavior.
-6. Run a throwaway 1Password packaging spike comparing a supervised official
-   CLI adapter with an optional helper using an official SDK.
-7. Implement the winning adapter behind the same provider trait; use a
-   subprocess only when the spike proves a material benefit.
-8. Consider shared-daemon, service, MCP, CLI, and native exposure only after
-   each topology has trusted registration and equivalent acceptance evidence.
-9. Adopt Route D when a provider exposes a documented target-bound fill API.
+2. Make recording and visible action labels fail closed before introducing any
+   secret-capable operation.
+3. Add semantic-v2 secure browser-field semantics.
+4. Add internal `SecretBroker`, `CredentialProvider`,
+   `BootstrapSecretStore`, immutable bindings, and a fake provider without
+   publishing either operation.
+5. Add a distinct R3 `secret_release` authorization adapter.
+6. Add target-first discovery, fresh target-bound handles, and the dedicated
+   browser delivery path, then prove target, retention, and race behavior.
+7. Add OS credential-store enrollment, rotation, revocation, and health for a
+   dedicated automation service account.
+8. Run a throwaway 1Password packaging spike and implement the selected adapter
+   behind the provider interface.
+9. Certify host-owned startup configuration for MCP and make one all-surfaces
+   public flip across the manifest, ABI, UniFFI, generated SDKs, and MCP.
+10. Consider native, shared-daemon, and service exposure only after each
+    topology has trusted registration and equivalent acceptance evidence.
+11. Adopt Route D when a provider exposes a documented target-bound fill API.
 
 ## Proposal
 
-### 1. Add one canonical `type_secret` operation
+### 1. Add canonical discovery and delivery operations
 
-`type_secret` is a canonical typed SDK operation. The first slice remains a
-Rust-only experimental capability in a directly supervised runtime; it is not
-projected into generated language bindings, MCP, CLI, HTTP, or shared service
-adapters until those topologies are certified. Its conceptual public input is:
+After internal certification, the canonical typed SDK publishes two
+provider-neutral operations:
 
 ```text
-type_secret {
-  session,
-  binding,
+find_credentials {
+  session?,
   target
-}
+} -> safe descriptors with fresh target-bound handles
+
+type_secret {
+  session?,
+  handle,
+  field,
+  target
+} -> ActionResult
 ```
 
-The public input contains no plaintext, provider selection, provider token,
-provider locator, vault name, item name, field name, command, environment
-variable, or value-derived metadata.
+`find_credentials` matches only bindings already registered by trusted host
+code. Version one does not forward a search string to a provider, enumerate a
+vault, or dynamically discover provider items. Each returned descriptor may
+contain only a host-authored safe label, supported public field kinds, fixed
+provider class when policy permits it, and a fresh opaque handle. It never
+contains a provider locator, vault name, item name, provider field name, or
+secret-derived metadata.
 
-The canonical Rust contract will use closed types equivalent to:
+The eventual canonical contract uses closed types equivalent to:
 
 ```rust
+pub struct FindCredentialsInput {
+    pub session: Option<String>,
+    pub target: BrowserSecretTarget,
+}
+
+pub struct CredentialDescriptor {
+    pub handle: CredentialHandle,
+    pub label: Option<SafeCredentialLabel>,
+    pub fields: Vec<CredentialField>,
+    pub provider_class: Option<CredentialProviderClass>,
+}
+
 pub struct TypeSecretInput {
     pub session: Option<String>,
-    pub binding: SecretBindingId,
+    pub handle: CredentialHandle,
+    pub field: CredentialField,
     pub target: BrowserSecretTarget,
 }
 ```
 
-The exact browser target fields remain a review decision, but they must carry
-enough identity to reprove the destination immediately before delivery. A
-caller-chosen session label or element ref alone is never authority. A future
-native target is a contract extension, not part of version one.
+The handle is minted only after the target passes discovery-time eligibility
+and a binding matches it. It binds at least the runtime generation, lifecycle
+session, binding definition digest, provider and field, browser process and
+endpoint generation, tab, frame/document identity, origin, semantic-v2 element
+ref, expiry, and remaining use count. Replaying it against another target,
+field, session, process, document, origin, ref, or runtime fails before provider
+release.
 
-`type_secret` is defined once at the canonical SDK/tool boundary. Only adapters
-that advertise the certified capability may register it, and no adapter may
-resolve providers or deliver input independently.
+The first implementation keeps these operations outside the public tool
+manifest and generated contracts. Test-only and internal entry points exercise
+the same broker and delivery path. Once certified, both operations are defined
+once at the canonical SDK/tool boundary and projected into the ABI, UniFFI,
+generated Python and TypeScript SDKs, and MCP in the same change. No adapter may
+match bindings, resolve providers, or deliver input independently.
 
-### 2. Register providers and bindings through trusted host configuration
+### 2. Separate broker, provider, and bootstrap-token ownership
 
-Trusted host code supplies a provider registry through Rust-only
-`DriverHostOptions` before admitting agent work. It registers immutable
-bindings through the same SDK-only constructor surface, conceptually equivalent
-to:
+The trusted runtime uses three separate internal interfaces:
 
 ```rust
-pub trait SecretProvider: Send + Sync {
-    fn class(&self) -> SecretProviderClass;
+pub trait CredentialProvider: Send + Sync {
+    fn class(&self) -> CredentialProviderClass;
 
-    fn resolve<'a>(
+    fn release<'a>(
         &'a self,
-        locator: &'a ProviderSecretLocator,
-        context: &'a SecretResolutionContext,
-    ) -> SecretProviderFuture<'a>;
+        request: &'a ProviderReleaseRequest,
+    ) -> ProviderFuture<'a, Result<ReleasePlan, CredentialProviderError>>;
+
+    fn cancel<'a>(
+        &'a self,
+        release: ProviderReleaseId,
+    ) -> ProviderFuture<'a, Result<(), CredentialProviderError>>;
+
+    fn health<'a>(&'a self) -> ProviderFuture<'a, ProviderHealth>;
 }
 
-pub type SecretProviderFuture<'a> = Pin<Box<dyn Future<
-    Output = Result<SecretLease, SecretProviderError>,
-> + Send + 'a>>;
+pub enum ReleasePlan {
+    RuntimeDelivers(SecretLease),
+    ProviderFills(ProviderFillSession),
+    NeedsUserPresence(UserPresenceHandle),
+}
+
+pub trait BootstrapSecretStore: Send + Sync {
+    fn enroll(&self, namespace: BootstrapNamespace, value: BootstrapSecret)
+        -> Result<BootstrapVersion, BootstrapStoreError>;
+    fn load(&self, namespace: &BootstrapNamespace)
+        -> Result<BootstrapSecretLease, BootstrapStoreError>;
+    fn rotate(&self, namespace: &BootstrapNamespace, value: BootstrapSecret)
+        -> Result<BootstrapVersion, BootstrapStoreError>;
+    fn revoke(&self, namespace: &BootstrapNamespace)
+        -> Result<(), BootstrapStoreError>;
+    fn health(&self, namespace: &BootstrapNamespace) -> BootstrapStoreHealth;
+}
 ```
 
-The trait is the architecture boundary. An implementation may call an SDK,
-supervise an official CLI, or use a private child adapter without changing the
-binding, authorization, delivery, or observability contracts.
+`SecretBroker` is a concrete internal owner rather than a provider trait. It
+matches bindings, mints handles, atomically reserves uses, asks a provider for a
+release plan, coordinates cancellation, and revokes handles and reservations.
+A provider owns acquisition, provider-managed fill, user-presence handoff,
+cancellation, and provider health. `BootstrapSecretStore` owns only the
+provider's externally issued bootstrap token.
 
-Bindings are also trusted constructor configuration in version one:
+Computer History's `KeyProvider` remains unchanged. It models generated,
+fixed-size encryption keys and has different lifecycle and namespace
+assumptions. Reusing it for provider tokens would couple unrelated records,
+retention, and failure modes.
+
+### 3. Register providers and bindings through trusted host configuration
+
+Trusted host code supplies providers, the broker, bootstrap-store namespaces,
+and immutable bindings through a host-owned startup surface before admitting
+agent work. A binding is conceptually equivalent to:
 
 ```rust
-pub struct SecretBindingSpec {
-    pub id: SecretBindingId,
-    pub provider: SecretProviderId,
-    pub private_locator: ProviderSecretLocator,
+pub struct CredentialBindingSpec {
+    pub provider: CredentialProviderId,
+    pub private_fields: Vec<PrivateCredentialFieldLocator>,
+    pub safe_label: Option<SafeCredentialLabel>,
     pub allowed_targets: Vec<SecretTargetConstraint>,
     pub expires_at: Option<Timestamp>,
-    pub max_resolutions: Option<u32>,
-    pub max_deliveries: Option<u32>,
+    pub max_releases: Option<u32>,
     pub authorization: SecretReleaseAuthorization,
 }
 ```
@@ -421,15 +506,14 @@ bindings, MCP, CLI, HTTP, or an already-running shared service. Underscore
 arguments, public session IDs, environment metadata on an already-running
 process, and agent-provided manifests cannot create or replace a binding.
 
-A binding belongs to one runtime generation and one effective session
-authorization context. It is revoked on session teardown, runtime restart,
-provider replacement, managed-policy change, explicit revoke, or expiry.
+A binding belongs to one runtime generation and effective session authorization
+context. Its definition has a canonical digest used in every minted handle. It
+is revoked on session teardown, runtime restart, provider replacement,
+bootstrap-token rotation or revocation, managed-policy change, explicit revoke,
+or expiry. Adapters never serialize binding definitions or private locators
+into an agent-visible schema or result.
 
-Binding identifiers are opaque labels, not global locators or bearer tokens.
-The runtime rejects duplicate IDs with conflicting definitions. Adapters never
-serialize provider locators into an agent-visible schema or result.
-
-### 3. Treat secret release as an R3 capability
+### 4. Treat secret release as an R3 capability
 
 Secret release can disclose an account credential to a destination and is more
 sensitive than ordinary keyboard input. It uses a distinct canonical
@@ -437,10 +521,10 @@ sensitive than ordinary keyboard input. It uses a distinct canonical
 `bound_secret_release_to_verified_target`.
 
 - **Standard:** denied in version one. A later protected grant flow must bind
-  provider, secret binding, and exact target scope before Standard can enable
+  provider, binding definition, handle, and exact target scope before Standard can enable
   the capability.
 - **Bounded/autonomous:** requires an immutable trusted session manifest that
-  names the binding and exact target scope.
+  admits the binding definition and exact target scope.
 - **Unrestricted:** suppresses Cua approval prompts only when the trusted
   runtime ceiling admits secret release and the binding already exists. It
   cannot create or widen a binding.
@@ -454,17 +538,20 @@ inheriting the broad `desktop_input` grant. Ordinary permission to type text is
 not permission to release a secret.
 
 The authorization scope binds at least the runtime and session generation,
-binding ID and definition digest, provider ID and class, browser fingerprint,
-tab or target identity, origin, element ref and secure-field state, permission
-mode, and relevant policy hashes. Hard target, binding, provider, OS,
+handle digest and binding definition digest, provider ID and class, browser
+fingerprint and endpoint generation, tab, frame/document identity, origin,
+semantic-v2 element ref and secure-field state, permission mode, and relevant
+policy hashes. Hard target, binding, provider, OS,
 user-presence, and managed-policy checks remain mandatory even in unrestricted
 mode. Form submission remains a separate authorized action.
 
-### 4. Resolve into a single-use in-memory lease
+### 5. Reserve release and execute one provider plan
 
-After authorization and initial target validation, the runtime asks the
-configured provider to resolve the binding's private locator. The provider
-returns a `SecretLease` with these properties:
+After authorization and initial target validation, `SecretBroker` atomically
+reserves the handle and release use, then asks the configured provider for one
+`ReleasePlan`.
+
+`RuntimeDelivers` returns a `SecretLease` with these properties:
 
 - UTF-8 text only in the first version;
 - a conservative maximum size fixed by the contract;
@@ -475,7 +562,14 @@ returns a `SecretLease` with these properties:
 - never cached by Cua Driver; and
 - unavailable to debug formatting and error conversion.
 
-The provider adapter may keep its own authenticated connection or cache only
+`ProviderFills` returns an opaque provider session that remains bound to the
+same target and authorization context and reports only fixed completion state.
+`NeedsUserPresence` returns a fixed state plus an opaque handoff identifier; it
+never supplies instructions containing provider metadata or accepts model text
+as authentication. Version one may support only `RuntimeDelivers`, but the
+provider contract must not force every future adapter through plaintext leases.
+
+The provider may keep its own authenticated connection or cache only
 non-secret availability state. Cua Driver does not cache resolved values.
 
 Zeroization is a defense-in-depth lifecycle property, not a proof that copies
@@ -484,13 +578,13 @@ libraries, JSON construction, CDP WebSocket buffers, browser internals, FFI, or
 platform input APIs. Acceptance therefore focuses on bounded lifetime and the
 absence of the secret from public or retained artifacts.
 
-Resolution and delivery counts are reserved atomically so concurrent calls
-cannot exceed a binding limit. A successful provider resolution consumes one
-resolution allowance even when later delivery fails. This conservative rule
-prevents retry races for rotating or one-time values. Automatic retry after any
-delivered prefix is prohibited.
+Release and delivery counts are reserved atomically so concurrent calls cannot
+exceed a binding limit. Once provider release begins, the handle use is consumed
+even when later delivery fails. This conservative rule prevents retry races for
+rotating or one-time values. Automatic retry after provider release or any
+possible delivery is prohibited.
 
-### 5. Bind delivery to an exact semantic target
+### 6. Bind version-one delivery to an exact semantic-v2 target
 
 The runtime validates the target before provider resolution and reproves it
 immediately before delivery.
@@ -499,17 +593,17 @@ For a browser target, the proof includes:
 
 - authenticated browser binding and runtime generation;
 - browser process and endpoint generation;
-- tab or target identity;
-- exact element ref and compatible element role;
+- tab, frame, and document identity;
+- exact semantic-v2 element ref;
 - current origin matching the binding constraint;
-- masked input behavior; and
+- a live DOM `HTMLInputElement` whose current `type` is exactly `password`; and
 - no redirect, popup, frame, or navigation transition that invalidates scope.
 
 Initial support excludes terminal controls, shells, clipboard targets, browser
-address bars, arbitrary editable controls, unmasked fields, and pixel-only
-coordinates. A platform or compositor without a trustworthy route returns a
-stable structured refusal; it does not downgrade to generic keyboard or
-clipboard input.
+address bars, legacy refs, CSS-masked custom controls, ARIA-only password
+claims, content-editable controls, unmasked fields, and pixel-only coordinates.
+A platform or browser without a trustworthy route returns a stable structured
+refusal; it does not downgrade to generic keyboard or clipboard input.
 
 Native desktop targets are deferred. A future route must bind live process,
 window, runtime generation, accessibility element, secure-text role, and focus
@@ -517,11 +611,12 @@ or background-delivery guarantees. It must not read the accessibility value
 for verification; if no non-secret mutation oracle exists, it reports an
 unverifiable effect.
 
-The runtime holds the appropriate target/process input coordinator from final
-revalidation through delivery. If identity changes after resolution but before
-delivery, the lease is destroyed and the call fails closed.
+The runtime holds the appropriate browser/process input coordinator from final
+revalidation through delivery. If identity changes after provider release but
+before delivery, the plan is cancelled when supported, the lease is destroyed,
+the use remains consumed, and the call fails closed.
 
-### 6. Deliver without plaintext readback
+### 7. Deliver without plaintext readback and report misdirection honestly
 
 The approved browser adapter consumes the lease directly. It does not route the
 value through:
@@ -540,23 +635,35 @@ Browser CDP delivery necessarily constructs a bounded private JSON payload in
 runtime memory. That is an unavoidable delivery-edge copy, not a public tool
 transport, and it must never be logged, recorded, replayed, or returned.
 
+The initial browser route uses the browser's focus-directed text insertion
+primitive. Target validation, coordinator ownership, and immediate focus checks
+minimize races, but they cannot make same-page focus changes impossible while
+the browser processes the insertion. The contract therefore does not claim
+perfect exact-node delivery after the final preflight.
+
 The destination necessarily receives the value. Browser page script may read
 a value entered into its page, and a native application may process its secure
 field. Origin and application constraints reduce misdirection; they do not
 make an approved destination unable to observe its own input.
 
-Verification uses non-secret evidence only: a secure-field mutation event,
-masked control state, or another platform signal that confirms a change
-without reading or comparing plaintext. The result reuses existing
-`ActionResult` and `ActionEffect` states: `Confirmed`, `Partial`,
-`Unverifiable`, `SuspectedNoop`, or `Refused`. A route that can acknowledge
-delivery but cannot confirm mutation reports `Unverifiable`. It must not reveal
-length or masked-character count as a proxy for the secret.
+Immediately before insertion, trusted browser instrumentation attaches a
+boolean-only observer to the exact live node. Confirmation requires trusted
+`beforeinput` and `input` events on that node plus stable focus, document,
+origin, process, endpoint, and element identity through the post-check. The
+observer never reads `value`, event data, selection contents, secret length,
+masked-character count, or replaced-character count.
+
+If the browser acknowledges insertion but the exact-node event and identity
+oracle does not hold, the runtime returns `secret_delivery_misdirected`,
+consumes the handle use, destroys the lease, and never retries. This may mean a
+different same-origin element received all or part of the value; the destination
+page can observe its own input by design. A route lacking the trusted event
+oracle returns `secret_delivery_unverified` and is not advertised as supported.
 
 Form submission remains a separate `press_key`, `click`, or browser action
 with its own authorization and verification.
 
-### 7. Define fixed, secret-free results and refusals
+### 8. Define fixed, secret-free results and refusals
 
 The result reuses the existing action-result contract and adds no
 secret-derived fields. It may report:
@@ -575,6 +682,9 @@ secret_binding_not_found
 secret_binding_expired
 secret_binding_revoked
 secret_binding_scope_denied
+secret_handle_expired
+secret_handle_consumed
+secret_handle_target_mismatch
 secret_provider_unavailable
 secret_provider_locked
 secret_user_presence_required
@@ -584,6 +694,7 @@ secret_target_stale
 secret_target_mismatch
 secret_target_unsupported
 secret_delivery_incomplete
+secret_delivery_misdirected
 secret_delivery_unverified
 ```
 
@@ -591,7 +702,7 @@ Error messages are fixed prose selected by code. Provider stdout, stderr,
 exception text, item metadata, value length, and destination readback never
 enter the public error.
 
-### 8. Make recordings intentionally non-secret and non-replayable
+### 9. Make recordings intentionally non-secret and non-replayable
 
 The tool registry requires an explicit recording policy for every operation;
 an unclassified tool fails closed rather than inheriting pass-through
@@ -603,8 +714,9 @@ recording. The `type_secret` recording arm stores only:
 - sanitized target identity; and
 - a session-scoped digest when local audit correlation is enabled.
 
-They omit the raw binding ID, provider locator, provider metadata, value,
-length, masked character count, and provider diagnostics.
+They omit the raw handle, binding definition, provider locator, provider
+metadata, value, length, masked character count, replaced character count, and
+provider diagnostics.
 
 A recording marks the operation non-replayable. Playback fails before provider
 resolution. A later explicit rebind workflow would require a fresh trusted
@@ -613,28 +725,28 @@ binding in a new authorization context and is outside this proposal.
 The visible action label is fixed text such as `Fill saved secret`. It never
 contains the binding, item, field, target label, or value.
 
-### 9. Add 1Password through a provider adapter
+### 10. Add 1Password through a dedicated service-account boundary
 
-The first real adapter supports a synthetic, dedicated automation vault and
-the least-privilege authentication modes offered by 1Password. It follows the
-fake-provider browser slice rather than landing with the initial contract.
+The first real adapter uses a dedicated automation service account and a
+dedicated least-privilege automation vault populated only with synthetic test
+records during certification. It follows the fake-provider browser slice rather
+than landing with the initial contract.
 
 Two modes require separate certification:
 
 1. **Service-account mode** for unattended workflows. The 1Password service
-   account is restricted to the required vaults. Its bootstrap credential is
-   trusted host configuration and never an agent argument.
+   account is restricted to the required automation vault. Its variable-length
+   bootstrap token is enrolled through a trusted host-only setup path and
+   stored in the platform `BootstrapSecretStore` namespace. There is no
+   environment-variable or `~/.cua-driver/config.json` fallback.
 2. **Desktop-app mode** for interactive workflows. The adapter integrates with
    the signed 1Password application/CLI path and preserves account-password,
    device-unlock, biometric, Apple Watch, or system-authentication prompts.
 
-The official 1Password SDKs currently cover Go, JavaScript, and Python, are
-version 0, and do not provide a Rust SDK. The first real-provider spike
-therefore compares a supervised official CLI service-account adapter with an
-optional small Go helper using the official SDK. It measures packaging,
-executable identity, bootstrap-token handling, bounded output, cancellation,
-stderr containment, subprocess cleanup, and secret lifetime. No production
-adapter is selected before that evidence exists.
+The first real-provider spike compares supported packaging routes and measures
+executable or library identity, bootstrap-token handling, bounded output,
+cancellation, stderr containment, subprocess cleanup, and secret lifetime. No
+production adapter is selected before that evidence exists.
 
 The CLI route is rejected if the executable cannot be pinned or verified,
 output cannot be bounded, stderr can leak provider data, cancellation cannot
@@ -645,9 +757,12 @@ subprocess is abandoned if it costs materially more than an in-process adapter
 without meaningfully containing bootstrap authority.
 
 Raw `op://` references remain inside trusted binding configuration. The agent
-sees only its opaque binding ID.
+sees only safe descriptors and fresh target-bound handles. Enrollment,
+rotation, revocation, locked/unavailable/corrupt health, and destroy-then-recheck
+behavior receive focused platform tests. Bootstrap records and service names
+remain strictly separate from Computer History records and namespaces.
 
-### 10. Keep provider and runtime boundaries explicit
+### 11. Keep provider and runtime boundaries explicit
 
 `type_secret` keeps secrets out of the agent's reach, not out of the machine.
 It protects against agents limited to Cua Driver's published contract. It does
@@ -674,42 +789,59 @@ sequenceDiagram
     participant Host as Trusted host
     participant Agent as Agent adapter
     participant Driver as Cua Driver runtime
-    participant Provider as Secret provider
+    participant Broker as Secret broker
+    participant Store as Bootstrap secret store
+    participant Provider as Credential provider
     participant Target as Verified target
 
-    Host->>Driver: Register provider and immutable binding
-    Agent->>Driver: type_secret(binding, exact target)
-    Driver->>Driver: Authorize binding and validate target
-    Driver->>Provider: Resolve private locator
-    Provider-->>Driver: Single-use secret lease
-    Driver->>Driver: Reprove target identity and scope
+    Host->>Store: Enroll provider bootstrap token
+    Host->>Broker: Register provider and immutable bindings
+    Agent->>Driver: find_credentials(exact target)
+    Driver->>Broker: Match verified target
+    Broker-->>Agent: Safe descriptors + fresh bound handles
+    Agent->>Driver: type_secret(handle, field, exact target)
+    Driver->>Driver: Authorize handle and revalidate target
+    Driver->>Broker: Reserve handle and request release plan
+    Broker->>Provider: Release private field locator
+    Provider->>Store: Load bootstrap token lease when required
+    Provider-->>Broker: ReleasePlan
+    Broker-->>Driver: Single-use plan
+    Driver->>Driver: Reprove target identity and install boolean event oracle
     Driver->>Target: Deliver lease through semantic route
+    Driver->>Driver: Check exact-node events and stable identity
     Driver->>Driver: Destroy lease and record fixed outcome
     Driver-->>Agent: Secret-free structured result
 ```
 
 The host-to-runtime registration channel is trusted. The agent-to-runtime
 channel never carries provider configuration or plaintext. The
-provider-to-runtime edge and bounded browser-delivery buffer carry plaintext
-inside the trusted runtime boundary. The runtime-to-target edge is the only
-intended external release.
+provider-to-runtime edge and bounded browser-delivery buffer may carry
+plaintext inside the trusted runtime boundary for `RuntimeDelivers`. A
+provider-managed fill plan may avoid that copy. The runtime-to-target edge is
+the only intended external release.
 
 ## Lifecycle and concurrency
 
-1. Trusted host constructs the runtime authorization ceiling and provider
-   registry.
-2. Trusted host admits an immutable session context and its secret bindings.
-3. Agent calls `type_secret` using a published binding ID and exact target.
-4. Runtime authorizes, validates, reserves use, resolves, reproves, and
-   delivers.
-5. Runtime destroys the lease before returning.
-6. Session end, revoke, provider replacement, policy change, or runtime restart
-   invalidates the binding and cancels pending resolutions.
+1. Trusted host constructs the runtime authorization ceiling, broker,
+   providers, bootstrap-store namespaces, and immutable bindings.
+2. Trusted host admits an immutable session context.
+3. Agent calls `find_credentials` with an exact target.
+4. Runtime validates the target; broker matches registered bindings and mints
+   short-lived handles bound to the current target and generations.
+5. Agent calls `type_secret` with one handle, field, and the same exact target.
+6. Runtime authorizes, validates, reserves use, requests one provider release
+   plan, reproves, installs the event oracle, and delivers.
+7. Runtime destroys the lease or closes the provider fill session before
+   returning.
+8. Session end, revoke, provider replacement, bootstrap rotation, policy
+   change, navigation, browser endpoint replacement, or runtime restart
+   invalidates matching handles and cancels pending releases.
 
 Only one secret delivery may be active for the same target at a time. Binding
-use counters are atomic across adapters and runtime registries. Cancellation
-before delivery reports no effect. Cancellation after a delivered prefix
-reports partial effect, consumes the use, destroys the lease, and never retries.
+and handle counters are atomic inside the broker. Cancellation before provider
+release reports no effect. Cancellation after provider release or possible
+delivery consumes the use, destroys the lease, reports a fixed outcome, and
+never retries.
 
 Provider resolution has an explicit deadline shorter than the binding's
 lifetime. A user-presence prompt may extend only through a trusted provider
@@ -776,21 +908,25 @@ fallback, not the unattended `type_secret` acceptance path.
 ## Compatibility and migration
 
 The change is additive. Existing `type_text` behavior and signatures remain
-available. Documentation recommends `type_secret` when a trusted binding
-exists, but the runtime never silently rewrites `type_text`, scrapes a password
-manager, or falls back from a failed `type_secret` call to plaintext input.
+available. Documentation recommends target-first discovery and `type_secret`
+when trusted bindings exist, but the runtime never silently rewrites
+`type_text`, scrapes a password manager, or falls back from a failed
+`type_secret` call to plaintext input.
 
-The provider registry and operation ship behind an experimental capability.
-Disabling the capability is the rollback path. Rollback removes provider-backed
-delivery; it does not weaken target or authorization checks and does not reveal
-the binding locator to enable a fallback.
+The broker and operations remain behind an internal capability until the public
+flip. Disabling the capability is the rollback path. Rollback removes
+provider-backed discovery and delivery; it does not weaken target or
+authorization checks and does not reveal a binding locator to enable a
+fallback.
 
-The first slice exposes the capability only through the Rust SDK in a directly
-supervised runtime. Other generated SDKs and MCP, CLI, HTTP, worker, daemon, or
-service adapters advertise the capability only after they pass
-topology-specific registration, authorization, retention, and target tests.
-Until then they return a structured unsupported refusal and do not publish an
-invocable tool.
+The first slices expose no public capability. Internal and test-only entry
+points certify broker, provider, store, authorization, target, delivery, and
+retention behavior without changing the public tool manifest. Once the
+directly supervised and host-configured MCP paths pass, the manifest, contract
+types, ABI, UniFFI, generated Python and TypeScript SDKs, and MCP are updated
+together. CLI, HTTP, worker, daemon, service, and native routes advertise only
+after their topology-specific registration, authorization, retention, and
+target tests pass.
 
 Provider implementations may be added behind the same internal trait without
 changing the public operation when they satisfy the same lifecycle and privacy
@@ -850,18 +986,21 @@ claim of process-wide non-serialization.
 
 ### Telemetry and local audit
 
-Telemetry may record only fixed provider classes, fixed delivery-route
-classes, fixed outcome codes, and coarse timing buckets. It must not record raw
-binding IDs or target labels.
+Telemetry may record only fixed provider classes, fixed delivery-route classes,
+fixed outcome codes, and coarse timing buckets. It must not record raw handles,
+binding identifiers, or target labels.
 
 An explicitly enabled local audit log may correlate calls using a keyed,
 session-scoped digest that changes across sessions and cannot be reversed into
-the binding ID. It records authorization decision, fixed effect, fixed route,
-and timestamps. It omits provider diagnostics and all secret-derived data.
+the handle or binding definition. It records authorization decision, fixed
+effect, fixed route, and timestamps. It omits provider diagnostics and all
+secret-derived data.
 
 ### Hard invariants
 
 - Agent-visible calls cannot register, replace, enumerate, or widen bindings.
+- Discovery cannot search a provider vault or mint a handle before target
+  eligibility and binding matching succeed.
 - A generic text-input grant does not authorize secret release.
 - A secret-release grant cannot outlive its session or runtime generation.
 - Unrestricted mode cannot bypass binding, target, provider, managed-policy,
@@ -872,34 +1011,54 @@ and timestamps. It omits provider diagnostics and all secret-derived data.
   bar targets fail before provider resolution where possible and always before
   delivery.
 - Secret plaintext is never returned or read back for verification.
+- Verification never exposes secret length, masked-character count, replaced
+  character count, or event data.
+- A possible same-page misdirection consumes the handle, destroys the lease,
+  returns `secret_delivery_misdirected`, and is never retried.
 - No automatic retry follows provider resolution or any possible partial
   delivery.
 - Disabling the feature cannot fall back to `type_text`.
+- Provider bootstrap credentials never fall back to environment variables or
+  the ordinary Cua Driver config file.
+- Bootstrap credential-store namespaces and records remain separate from
+  Computer History.
 
 ## Implementation plan
 
-### Slice A: Contract types, not invocable
+### Slice A: Fail-closed recording and visible labels
 
-- Add canonical browser input, result, provider, binding, lease, and refusal
-  types.
-- Keep registration out of the tool registry and every generated adapter.
-- Compile contract fixtures without exposing an invocable operation.
+- Replace permissive recording defaults with an explicit policy for every
+  registered operation.
+- Remove caller text from visible input labels and overlays.
+- Add fixed, secret-free, non-replayable action metadata and canary scans.
 
-Exit: the provider-neutral shape is reviewable without creating a release path.
+Exit: unclassified tools fail registration or recording tests, visible labels
+contain no typed text, and no retained artifact contains a canary.
 
-### Slice B: Trusted provider and binding foundation
+### Slice B: Secure semantic-v2 browser fields
 
-- Add an object-safe `SecretProvider` trait supplied through Rust-only
-  `DriverHostOptions`.
-- Add immutable constructor-time bindings scoped to runtime and session
-  generations.
-- Implement a deterministic fake provider and single-use, non-cloneable,
-  non-debuggable leases with bounded size and lifetime.
+- Project password state separately from a generic textbox.
+- Accept only a live DOM `input[type=password]` reached through a semantic-v2
+  ref in a bound standalone Chrome or Edge target.
+- Refuse legacy refs, custom masked widgets, ARIA-only claims,
+  content-editable, unmasked, address-bar, terminal, and pixel targets.
 
-Exit: provider, binding, expiry, revocation, cancellation, and concurrency tests
-pass without reaching platform input.
+Exit: secure target eligibility has focused fixtures and cannot fall back to a
+generic text route.
 
-### Slice C: R3 authorization
+### Slice C: Internal broker, provider, binding, and lease foundation
+
+- Add internal `SecretBroker`, object-safe `CredentialProvider`,
+  `ReleasePlan`, binding, reservation, handle, fake provider, and zeroizing
+  lease types.
+- Keep both operations out of the public manifest, ABI, generated adapters,
+  MCP, CLI, HTTP, worker, daemon, and service routes.
+- Scope bindings and handles to runtime and lifecycle generations.
+
+Exit: matching, handle expiry, revocation, cancellation, provider-plan, and
+concurrency tests pass without reaching platform input.
+
+### Slice D: R3 authorization
 
 - Add the distinct `secret_release` adapter and exact resource scope.
 - Deny Standard in version one, require a trusted manifest in Bounded, and keep
@@ -908,61 +1067,80 @@ pass without reaching platform input.
 
 Exit: every mode and policy ceiling has stable allow or refusal evidence.
 
-### Slice D: Fail-closed privacy policy
+### Slice E: Target-first discovery and fresh handles
 
-- Require an explicit recording policy for each registered operation.
-- Add fixed action labels, results, telemetry, errors, panic handling, and a
-  non-replayable `type_secret` recording arm.
-- Scan retained artifacts with randomized synthetic canaries.
+- Match only trusted host-registered bindings after validating the exact
+  target.
+- Return safe descriptors with fresh handles bound to the full browser,
+  document, origin, semantic-ref, binding-digest, field, expiry, and use scope.
+- Prove that vault search, raw binding enumeration, handle substitution, and
+  cross-target replay are impossible through the public shape.
 
-Exit: unclassified tools fail registration or recording tests, and no retained
-artifact contains a canary.
+Exit: deterministic discovery and adversarial replay tests pass without
+provider release.
 
-### Slice E: Secure browser semantics
+### Slice F: Dedicated browser delivery and boolean event oracle
 
-- Project password/secure state separately from a generic `textbox`.
-- Add exact browser target input and origin, field, ref, and generation checks.
-- Hold authenticated browser and target identity through final revalidation and
-  delivery.
-- Support only masked password controls in certified standalone Chrome/Edge
-  paths.
+- Add the direct broker-to-browser route without generic `type_text`, shell,
+  environment, or clipboard mediation.
+- Install trusted boolean-only `beforeinput` and `input` observers on the exact
+  node and reprove identity after focus-directed insertion.
+- Report `secret_delivery_misdirected`, consume the handle, destroy the lease,
+  and never retry when the exact-node oracle fails.
 
-Exit: redirect, popup, frame, navigation, target-generation, and focus races
-fail closed before delivery.
+Exit: the intended synthetic password field changes, no other field changes in
+the non-adversarial case, and stale, redirect, frame, navigation, focus, and
+same-page misdirection cases return fixed outcomes with no readback.
 
-### Slice F: Browser-only fake-provider capability
+### Slice G: Bootstrap secret stores
 
-- Register the operation off by default only for a directly supervised runtime.
-- Deliver through the dedicated browser route without generic text handling or
-  plaintext readback.
-- Reuse existing action effects and publish typed capability discovery.
+- Add platform `BootstrapSecretStore` implementations with a dedicated service
+  and namespace on Windows, Linux, and later macOS.
+- Reuse Computer History's validation, no-sync, read-after-write,
+  destroy-then-recheck, zeroization, and typed health lessons without reusing
+  its `KeyProvider`, records, or namespace.
+- Add trusted enrollment, rotation, revocation, cancellation, and health; add
+  no environment or config-file fallback.
 
-Exit: the intended synthetic password field changes, no other field changes,
-and all authorization and retention tests pass at the candidate SHA.
+Exit: variable-length synthetic token lifecycle tests pass on every advertised
+platform and remain strictly separate from Computer History.
 
-### Slice G: Throwaway 1Password packaging spike
+### Slice H: Dedicated 1Password provider
 
-- Compare a supervised official CLI service-account adapter with an optional Go
-  helper using the official SDK.
-- Measure executable identity, bootstrap-token handling, locator isolation,
-  bounded output, cancellation, stderr containment, reaping, packaging, and
-  secret lifetime against a synthetic vault.
-- Publish no provider capability from the spike.
+- Run the packaging spike against a synthetic dedicated automation vault and
+  select the supported adapter route.
+- Implement service-account release, cancellation, fixed health, bootstrap
+  rotation, and revocation behind `CredentialProvider`.
+- Preserve provider-owned user presence for interactive desktop mode.
 
-Exit: an evidence memo selects one adapter or records that neither route meets
-the release criteria.
+Exit: the synthetic-vault matrix passes without provider metadata, bootstrap
+tokens, or canaries entering public or retained surfaces.
 
-### Slice H: First real provider and later topologies
+### Slice I: MCP startup configuration and all-surfaces public flip
 
-- Implement the selected adapter behind the existing `SecretProvider` trait.
-- Certify service-account mode; keep desktop-app mode interactive and preserve
-  provider-required user presence.
-- Add generated bindings, MCP, CLI, daemon, service, and native routes only in
-  later slices with topology-specific trusted registration and acceptance
-  evidence.
+- Certify a host-owned startup path that installs immutable bindings and store
+  namespaces before stdio MCP begins accepting requests.
+- Add `find_credentials` and `type_secret` contract types, manifest entries,
+  ABI, UniFFI methods, generated Python and TypeScript SDKs, and MCP together.
+- Satisfy the existing manifest-to-exported-SDK parity test; do not add a new
+  exposure framework for this feature.
 
-Exit: at least one real provider and browser matrix pass before the feature is
-advertised outside an experimental directly supervised runtime.
+Exit: every public surface has equivalent schemas, authorization, fixed
+outcomes, and negative secret-retention evidence.
+
+### Slice J: Fleet certification and later topologies
+
+- Run exact-candidate-SHA Linux and Windows standalone-browser rows through the
+  Cua Cloud Fleet SDK, including interactive-session preflight and deterministic
+  claim/pool cleanup.
+- Run the full supported cross-platform matrix before declaring general
+  availability.
+- Keep CLI, HTTP, worker, shared-daemon, service, native secure-field, OTP, and
+  provider-managed fill routes independently gated.
+
+Exit: only rows with exact-SHA behavior and cleanup evidence are advertised;
+unsupported rows return a structured refusal and never fall back to
+`type_text`.
 
 ## Test and acceptance plan
 
@@ -970,18 +1148,22 @@ The RFC is completed only when the following evidence passes.
 
 ### Contract and authorization
 
-- The directly supervised Rust runtime exposes the canonical browser input,
-  existing action result, and stable refusal codes.
+- Internal entry points exercise the canonical discovery, browser input,
+  existing action result, and stable refusal codes before public exposure.
 - Every uncertified adapter omits the invocable capability or returns a typed
-  unsupported result without accepting a binding.
+  unsupported result without accepting a handle.
 - No agent-visible schema contains provider configuration or plaintext fields.
-- Duplicate, substituted, expired, revoked, cross-session, and
-  cross-generation bindings fail before provider resolution.
+- Dynamic provider-vault search and raw binding enumeration are absent.
+- Duplicate, substituted, expired, consumed, revoked, cross-target,
+  cross-document, cross-session, cross-endpoint, and cross-generation handles
+  fail before provider release.
 - Standard denial, Bounded manifest enforcement, and Unrestricted hard-check
   behavior match the R3 rules above.
 - Managed and user policy denials remain effective in unrestricted mode.
 - Generic input grants cannot authorize secret release.
 - Runtime and session teardown invalidate pending leases and bindings.
+- Manifest tools and exported Rust, Python, TypeScript, ABI, UniFFI, and MCP
+  methods remain parity-checked at the public flip.
 
 ### Canary and retention tests
 
@@ -1008,10 +1190,14 @@ harnesses must never publish the canary in CI summaries or artifacts.
 - Fake-provider success, missing provider, permission denial, malformed output,
   oversized value, invalid UTF-8, timeout, cancellation, and provider death
   produce fixed secret-free outcomes before the first real adapter lands.
+- Lease, provider-fill, and user-presence release plans have distinct lifecycle
+  and cancellation tests even if version one advertises only lease delivery.
 - The provider spike covers wrong executable or SDK identity, locked provider,
   required user presence, missing item, stderr noise, cancellation, and child
   cleanup.
 - Service-account access is confined to the synthetic vault used by the test.
+- Bootstrap enrollment, rotation, revocation, locked/unavailable/corrupt health,
+  and destroy-then-recheck behavior pass without environment or config fallback.
 - Desktop integration preserves provider-required authentication.
 - Resolution values are not cached and leases are destroyed on every path.
 - Provider processes are bounded, cancelled, and reaped without orphaning.
@@ -1020,7 +1206,8 @@ harnesses must never publish the canary in CI summaries or artifacts.
 
 - Stale refs, wrong origin, redirects, popups, nested frames, navigation during
   resolution, process replacement, runtime restart, focus swap, window swap,
-  wrong role, unmasked field, terminal, shell, clipboard, address bar,
+  wrong role, legacy ref, CSS-masked custom control, ARIA-only claim,
+  content-editable, unmasked field, terminal, shell, clipboard, address bar,
   arbitrary editable, and pixel-only targets fail closed.
 - An allowed target cannot be substituted between provider resolution and
   delivery.
@@ -1028,6 +1215,10 @@ harnesses must never publish the canary in CI summaries or artifacts.
   retried.
 - The intended field changes and no other field or application changes.
 - No plaintext readback occurs.
+- Verification records only boolean exact-node trusted-event evidence and stable
+  identity; it never records event data, length, masks, replacements, or value.
+- Same-page focus misdirection returns `secret_delivery_misdirected`, consumes
+  the handle, destroys the lease, and is never retried.
 - Focus, z-order, cursor, and input isolation claims have independent external
   oracles.
 
@@ -1035,6 +1226,11 @@ harnesses must never publish the canary in CI summaries or artifacts.
 
 - Standalone Chrome and Edge browser rows run on each environment advertised by
   the first capability.
+- Linux and Windows Fleet SDK preflights prove an interactive desktop, usable
+  browser attachment, source-built exact-SHA driver, and deterministic ephemeral
+  claim and pool cleanup before those rows are used as release evidence.
+- Windows records the actual session and input desktop and rejects Session 0;
+  Linux records X11 or Wayland display and compositor limitations explicitly.
 - Native secure-field rows are deferred and cannot be inferred from browser
   evidence.
 - Every row uses a source-built driver at the exact candidate SHA and a
@@ -1049,12 +1245,13 @@ harnesses must never publish the canary in CI summaries or artifacts.
 - No plaintext or secret-derived metadata appears in any scanned surface.
 - Canonical authorization and target validation cover every transport.
 - The fake-provider browser matrix passes before the experimental capability is
-  enabled, and at least one 1Password mode passes before a real-provider
-  capability is advertised.
+  published, and the dedicated-vault service-account mode passes before a
+  real-provider capability is advertised.
 - Shared-daemon, service, generated adapter, and native support are advertised
   only after their own trusted-registration and target matrices pass.
-- Capability discovery distinguishes provider availability, user-presence
-  requirements, and target-route support.
+- Discovery distinguishes safe host-registered matches; capability and health
+  reporting distinguish provider availability, bootstrap-store state,
+  user-presence requirements, and target-route support.
 - Documentation states same-user limitations, destination trust, provider
   policy, and safe rollback without suggesting a plaintext fallback.
 - The whole feature is stopped if repeated retention scans find secret material
@@ -1062,15 +1259,16 @@ harnesses must never publish the canary in CI summaries or artifacts.
 
 ## Unresolved questions
 
-- Should the public name remain `type_secret`, or should browser and native
-  semantic delivery use narrower public names above one internal operation?
-- What exact browser target shape provides stable identity without duplicating
-  existing action schemas?
+- Should the delivery name remain `type_secret`, or should the public pair use
+  `find_credentials` and `fill_credential` while retaining one internal broker
+  operation?
+- Which host-authored safe descriptor fields are useful enough to expose
+  without leaking provider or account metadata?
 - What authenticated manifest design could later let a daemon or service host
   register bindings without making registration agent-visible?
 - What protected grant design could safely enable Standard mode?
-- Does the 1Password spike select the supervised CLI adapter or justify the
-  additional Go helper?
+- Which supported 1Password packaging route best satisfies executable/library
+  identity, cancellation, token containment, and cross-platform distribution?
 - Can a provider-owned target-bound fill API avoid materializing plaintext in
   Cua Driver while preserving the same evidence contract?
 - Which fixed provider metadata is useful enough to permit in local audit and
@@ -1093,13 +1291,26 @@ harnesses must never publish the canary in CI summaries or artifacts.
 
 ## Decision record
 
-Pending review. The current review draft recommends persistent profiles first;
-a browser-only, fake-provider MVP; an in-runtime provider trait supplied by
-trusted host options; an optional provider subprocess only when justified by
-the packaging spike; and a distinct R3 `secret_release` permission with
-Standard denied, Bounded manifest-gated, and Unrestricted still subject to hard
-binding, target, provider, OS, user-presence, and managed-policy checks.
+Pending maintainer disposition. The architecture review resolves the initial
+direction as follows:
 
-Review should resolve the public name and exact browser target shape, the
-future protected grant and service-manifest designs, and the supervised CLI
-versus optional Go-helper choice after the 1Password spike.
+- discovery is target-first and matches only trusted host-registered bindings;
+- agents receive safe descriptors with fresh target-bound handles, not binding
+  identifiers or provider locators;
+- broker, provider, bootstrap-token store, and Computer History key storage are
+  separate boundaries;
+- providers return a release plan that can represent runtime delivery,
+  provider-managed fill, or required user presence;
+- version-one browser targets are semantic-v2 live `input[type=password]`
+  elements only;
+- focus-directed browser insertion is not described as race-proof, and a
+  failed exact-node boolean event oracle reports misdirection without retry;
+- the first real provider uses a dedicated service account, automation vault,
+  host-only bootstrap enrollment, and separate OS credential-store namespace;
+  and
+- the public contract, ABI, UniFFI, generated SDKs, and MCP land together only
+  after internal certification.
+
+Remaining product decisions are the public operation names, safe descriptor
+fields, later protected grants and service manifests, and the provider
+packaging result after the spike.

@@ -2020,6 +2020,7 @@ impl BrowserEngine {
                 label: c.label,
                 actions: Vec::new(),
                 visibility: None,
+                secure_field: None,
                 semantic: false,
                 frame,
             });
@@ -2074,6 +2075,7 @@ impl BrowserEngine {
                                 label: c.label,
                                 actions: Vec::new(),
                                 visibility: None,
+                                secure_field: None,
                                 semantic: false,
                                 frame: FrameRef {
                                     kind: FrameKind::Oopif,

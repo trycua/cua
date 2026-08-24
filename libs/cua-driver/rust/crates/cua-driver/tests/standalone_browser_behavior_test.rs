@@ -179,7 +179,11 @@ fn standalone_semantic_fixture_html() -> String {
         .replace(
             "</body>",
             &format!(
-                r#"<section aria-label="Retained archive" style="margin-top:2000px">{offscreen}</section></body>"#
+                r#"<section aria-label="Secure field fixtures">
+  <input id="standalone-password" aria-label="standalone-password" type="password" value="CUA_STANDALONE_SECURE_CANARY_K4P8">
+  <input id="standalone-password-hint" aria-label="standalone-password-hint" type="text" value="visible hint">
+</section>
+<section aria-label="Retained archive" style="margin-top:2000px">{offscreen}</section></body>"#
             ),
         )
 }
@@ -1738,6 +1742,57 @@ fn run_semantic_state(spec: &BrowserSpec) {
                     })),
                 "hidden retained action leaked into semantic refs: {}",
                 snapshot.raw
+            );
+
+            let password_snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                    "snapshot_format": "semantic_v2",
+                    "query": "standalone-password",
+                }),
+            );
+            assert_eq!(
+                password_snapshot.structured()["status"],
+                "ok",
+                "{}",
+                password_snapshot.raw
+            );
+            let password_refs = password_snapshot.structured()["refs"]
+                .as_array()
+                .expect("semantic password refs");
+            let password = password_refs
+                .iter()
+                .find(|entry| entry["name"] == "standalone-password")
+                .unwrap_or_else(|| panic!("password ref missing: {}", password_snapshot.raw));
+            assert_eq!(
+                password["secure_field"], "password",
+                "{}",
+                password_snapshot.raw
+            );
+            assert!(
+                password.get("value").is_none(),
+                "secure field exposed value metadata: {}",
+                password_snapshot.raw
+            );
+            let aria_only = password_refs
+                .iter()
+                .find(|entry| entry["name"] == "standalone-password-hint")
+                .unwrap_or_else(|| panic!("ARIA-only ref missing: {}", password_snapshot.raw));
+            assert!(
+                aria_only.get("secure_field").is_none(),
+                "ARIA-only password naming became secret-eligible: {}",
+                password_snapshot.raw
+            );
+            assert!(
+                !password_snapshot
+                    .raw
+                    .to_string()
+                    .contains("CUA_STANDALONE_SECURE_CANARY_K4P8"),
+                "password canary leaked through semantic output: {}",
+                password_snapshot.raw
             );
 
             let increment_ref = semantic_ref_by_name(&snapshot, "Increment", "click");

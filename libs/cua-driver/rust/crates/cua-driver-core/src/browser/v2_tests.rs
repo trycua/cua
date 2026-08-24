@@ -241,6 +241,25 @@ fn large_semantic_document() -> Value {
             "backendNodeId": 2_011,
             "attributes": ["aria-label", "Reply"],
         }),
+        json!({
+            "nodeType": 1,
+            "nodeName": "INPUT",
+            "backendNodeId": 2_012,
+            "attributes": [
+                "aria-label", "Account password",
+                "type", "PaSsWoRd",
+                "value", "CUA_SECURE_FIELD_CANARY_7Y2Q"
+            ],
+        }),
+        json!({
+            "nodeType": 1,
+            "nodeName": "INPUT",
+            "backendNodeId": 2_013,
+            "attributes": [
+                "aria-label", "Password hint",
+                "type", "text"
+            ],
+        }),
     ]);
     for id in 0..305_i64 {
         children.push(json!({
@@ -299,6 +318,8 @@ fn large_semantic_ax_tree(frame_id: &str) -> Value {
         "body".to_owned(),
         "editor".to_owned(),
         "reply".to_owned(),
+        "account-password".to_owned(),
+        "password-hint".to_owned(),
     ];
     child_ids.extend((0..305).map(|id| format!("archive-{id}")));
     let mut nodes = vec![
@@ -350,6 +371,34 @@ fn large_semantic_ax_tree(frame_id: &str) -> Value {
             "name": {"value": "Reply"},
             "properties": [
                 {"name": "disabled", "value": {"value": false}},
+                {"name": "focusable", "value": {"value": true}}
+            ],
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "account-password",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2012,
+            "role": {"value": "textbox"},
+            "name": {"value": "Account password"},
+            "value": {"value": "CUA_SECURE_FIELD_CANARY_7Y2Q"},
+            "properties": [
+                {"name": "editable", "value": {"value": "plaintext"}},
+                {"name": "focusable", "value": {"value": true}}
+            ],
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "password-hint",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2013,
+            "role": {"value": "textbox"},
+            "name": {"value": "Password hint"},
+            "value": {"value": "visible hint"},
+            "properties": [
+                {"name": "editable", "value": {"value": "plaintext"}},
                 {"name": "focusable", "value": {"value": true}}
             ],
             "childIds": []
@@ -508,13 +557,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             ]})),
             "DOMSnapshot.captureSnapshot" if is_tab => {
                 if st.semantic_large_page {
-                    let mut backends = vec![999, 2000, 2003, 2010, 2011];
+                    let mut backends = vec![999, 2000, 2003, 2010, 2011, 2012, 2013];
                     let mut bounds = vec![
                         [0.0, 0.0, 800.0, 600.0],
                         [20.0, 20.0, 500.0, 40.0],
                         [20.0, 80.0, 600.0, 80.0],
                         [20.0, 180.0, 600.0, 120.0],
                         [20.0, 320.0, 100.0, 36.0],
+                        [160.0, 320.0, 200.0, 36.0],
+                        [380.0, 320.0, 200.0, 36.0],
                     ];
                     for id in 0..305_i64 {
                         backends.push(3_000 + id);
@@ -1483,6 +1534,39 @@ async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
         "CSS-hidden retained controls leaked into refs: {snap}"
     );
     assert_eq!(snap["snapshot"]["omitted"]["css_hidden"], 320);
+}
+
+#[tokio::test]
+async fn semantic_snapshot_marks_only_exact_password_inputs_and_omits_readback() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "password"})).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    let refs = snap["refs"].as_array().expect("semantic refs");
+    let password = refs
+        .iter()
+        .find(|entry| entry["name"] == "Account password")
+        .unwrap_or_else(|| panic!("password ref missing: {snap}"));
+    assert_eq!(password["secure_field"], "password", "{snap}");
+    assert!(
+        password.get("value").is_none(),
+        "secure field exposed a value projection: {snap}"
+    );
+
+    let aria_only = refs
+        .iter()
+        .find(|entry| entry["name"] == "Password hint")
+        .unwrap_or_else(|| panic!("ARIA-only control missing: {snap}"));
+    assert!(
+        aria_only.get("secure_field").is_none(),
+        "ARIA-only password naming became secret-eligible: {snap}"
+    );
+    assert_eq!(aria_only["value"], "visible hint", "{snap}");
+    assert!(
+        !snap.to_string().contains("CUA_SECURE_FIELD_CANARY_7Y2Q"),
+        "password value leaked through semantic output: {snap}"
+    );
 }
 
 #[tokio::test]

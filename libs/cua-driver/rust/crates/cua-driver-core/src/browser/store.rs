@@ -65,6 +65,25 @@ pub enum BrowserVisibility {
     Unknown,
 }
 
+/// Browser fields that are eligible for brokered secret delivery.
+///
+/// This classification is minted only by semantic-v2 from exact live DOM
+/// evidence. It is intentionally closed so callers cannot turn a generic
+/// editable ref into a secret sink by naming or styling it like one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecureFieldKind {
+    Password,
+}
+
+impl SecureFieldKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Password => "password",
+        }
+    }
+}
+
 impl BrowserVisibility {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -159,6 +178,10 @@ pub struct RefEntry {
     pub actions: Vec<BrowserActionKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visibility: Option<BrowserVisibility>,
+    /// Positive semantic-v2 DOM classification for guarded secret delivery.
+    /// Legacy refs and ordinary editable fields always store `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secure_field: Option<SecureFieldKind>,
     /// Semantic refs enforce their declared action set. Legacy DOM refs keep
     /// their existing permissive behavior during the versioned migration.
     #[serde(skip_serializing)]
@@ -508,6 +531,7 @@ mod tests {
                     label: Some("Submit".into()),
                     actions: Vec::new(),
                     visibility: None,
+                    secure_field: None,
                     semantic: false,
                     frame: FrameRef {
                         kind: FrameKind::Main,

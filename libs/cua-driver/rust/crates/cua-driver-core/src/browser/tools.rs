@@ -194,7 +194,7 @@ pub(crate) async fn browser_protected_resource_scope(
 }
 
 fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
-    json!({
+    let mut value = json!({
         "ref": listed.external,
         "role": listed.node.role,
         "name": listed.node.name,
@@ -203,7 +203,15 @@ fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
         "actions": listed.node.actions.iter().map(|action| action.as_str()).collect::<Vec<_>>(),
         "frame": listed.node.frame.kind.as_str(),
         "visibility": listed.node.visibility.as_str(),
-    })
+    });
+    if let Some(secure_field) = listed.node.secure_field {
+        value
+            .as_object_mut()
+            .expect("semantic ref object")
+            .remove("value");
+        value["secure_field"] = json!(secure_field.as_str());
+    }
+    value
 }
 
 fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot) -> ToolResult {

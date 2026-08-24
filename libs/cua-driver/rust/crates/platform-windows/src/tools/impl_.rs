@@ -5496,6 +5496,132 @@ pub struct SetValueTool {
 
 static SET_VALUE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+struct SetValueComInit {
+    needs_uninit: bool,
+}
+
+impl SetValueComInit {
+    fn new() -> Self {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+        let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        Self {
+            needs_uninit: result.is_ok(),
+        }
+    }
+}
+
+impl Drop for SetValueComInit {
+    fn drop(&mut self) {
+        if self.needs_uninit {
+            unsafe { windows::Win32::System::Com::CoUninitialize() };
+        }
+    }
+}
+
+/// Select a named item when `set_value` targets a selection control.
+///
+/// Several Windows providers expose both `ValuePattern` and selection
+/// semantics on combo/list controls. `ValuePattern::SetValue` can update the
+/// accessibility value without running the application's selection handler.
+/// Selecting the matching item uses the same UIA path as clicking that item,
+/// so the application receives its normal committed-selection event.
+unsafe fn select_named_value(
+    element: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+    hwnd: u64,
+    pid: u32,
+    value: &str,
+) -> anyhow::Result<Option<&'static str>> {
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
+        TreeScope_Descendants, TreeScope_Subtree, UIA_ComboBoxControlTypeId,
+        UIA_ExpandCollapsePatternId, UIA_ListControlTypeId, UIA_NamePropertyId,
+        UIA_SelectionPatternId,
+    };
+
+    fn select_item(item: &IUIAutomationElement, hwnd: u64) -> anyhow::Result<Option<&'static str>> {
+        use windows::core::Interface;
+        use windows::Win32::UI::Accessibility::{
+            IUIAutomationSelectionItemPattern, UIA_SelectionItemPatternId,
+        };
+
+        let Ok(pattern) = (unsafe { item.GetCurrentPattern(UIA_SelectionItemPatternId) }) else {
+            return Ok(None);
+        };
+        let Ok(selection) = pattern.cast::<IUIAutomationSelectionItemPattern>() else {
+            return Ok(None);
+        };
+        crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
+            selection.Select()
+        })?;
+        Ok(Some("SelectionItemPattern"))
+    }
+
+    // Keep this guard before locally-created COM interfaces so they drop first.
+    let _com = SetValueComInit::new();
+    let control_type = element.CurrentControlType().ok();
+    let current_name = element
+        .CurrentName()
+        .ok()
+        .map(|name| name.to_string())
+        .unwrap_or_default();
+    if current_name.eq_ignore_ascii_case(value) {
+        if let Some(path) = select_item(element, hwnd)? {
+            return Ok(Some(path));
+        }
+    }
+
+    let is_combo = control_type == Some(UIA_ComboBoxControlTypeId);
+    let is_list = control_type == Some(UIA_ListControlTypeId);
+    let is_selection_container = element.GetCurrentPattern(UIA_SelectionPatternId).is_ok();
+    if !is_combo && !is_list && !is_selection_container {
+        return Ok(None);
+    }
+
+    if is_combo {
+        if let Ok(pattern) = element.GetCurrentPattern(UIA_ExpandCollapsePatternId) {
+            if let Ok(expand) = pattern.cast::<IUIAutomationExpandCollapsePattern>() {
+                crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
+                    expand.Expand()
+                })?;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+
+    let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+    let name_condition = automation
+        .CreatePropertyCondition(UIA_NamePropertyId, &windows::core::BSTR::from(value).into())?;
+
+    let select_match = |root: &IUIAutomationElement,
+                        scope: windows::Win32::UI::Accessibility::TreeScope|
+     -> anyhow::Result<Option<&'static str>> {
+        let matches = root.FindAll(scope, &name_condition)?;
+        let count = matches.Length()?;
+        for index in 0..count {
+            let candidate = matches.GetElement(index)?;
+            if candidate.CurrentProcessId().ok() != Some(pid as i32) {
+                continue;
+            }
+            if let Some(path) = select_item(&candidate, hwnd)? {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    };
+
+    if let Some(path) = select_match(element, TreeScope_Descendants)? {
+        return Ok(Some(path));
+    }
+
+    // Popup lists may live in a separate owned HWND rather than underneath the
+    // combo in the UIA tree. Limit the desktop fallback by exact name, pid, and
+    // SelectionItemPattern so unrelated controls cannot be selected.
+    let desktop = automation.GetRootElement()?;
+    select_match(&desktop, TreeScope_Subtree)
+}
+
 #[async_trait]
 impl Tool for SetValueTool {
     fn def(&self) -> &ToolDef {
@@ -5503,15 +5629,13 @@ impl Tool for SetValueTool {
             name: "set_value".into(),
             // Description ported from Swift `SetValueTool.swift` with the
             // Windows transport (UIA ValuePattern instead of AXValue).
-            // Swift's AXPopUpButton special-case has a UIA analogue
-            // (SelectionPattern) that's not yet wired up here; documented.
             description: "Set a value on a UIA element via the ValuePattern interface.\n\n\
                 Two semantic modes (matching Swift's split):\n\
                 - **Standard input** (text fields, sliders, combo box edit): writes the value \
                   directly through UIA `IUIAutomationValuePattern::SetValue`. This is the \
                   canonical Windows write path, equivalent to Swift's `AXValue` write.\n\
-                - **ComboBox / select dropdown**: ValuePattern.SetValue picks the option \
-                  whose text matches `value` on most native ComboBox controls.\n\n\
+                - **ComboBox / list selection**: selects the matching item through \
+                  `SelectionItemPattern`, the same committed-selection path used by a click.\n\n\
                 For free-form text entry that the target accepts via keystrokes only, prefer \
                 `type_text` — UIA ValuePattern writes are ignored by some web inputs (same \
                 caveat as Swift's `AXValue`-vs-WebKit).".into(),
@@ -5626,6 +5750,20 @@ impl Tool for SetValueTool {
             };
             let elem: IUIAutomationElement =
                 unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+            // Selection controls must commit through their item pattern before
+            // trying ValuePattern. Some providers accept SetValue and echo the
+            // new text while skipping the application's selection event.
+            match unsafe { select_named_value(&elem, hwnd, pid, &value) } {
+                Ok(Some(path)) => {
+                    std::mem::forget(elem);
+                    return Ok(path.to_string());
+                }
+                Ok(None) => {}
+                Err(error) => tracing::debug!(
+                    target: "set_value",
+                    "selection commit for [{idx}] failed: {error}; trying ValuePattern"
+                ),
+            }
             // Try ValuePattern first (text inputs, editable combos, etc).
             // The SetValue is shielded by the EnableWindow bypass: a
             // Chromium/Electron (or XAML) SetValue handler self-foregrounds via
@@ -5676,6 +5814,9 @@ impl Tool for SetValueTool {
         })
         .await;
         match result {
+            Ok(Ok(pattern_name)) if pattern_name == "SelectionItemPattern" => ToolResult::text(
+                format!("✅ Selected requested value on [{idx}] (UIA SelectionItemPattern)."),
+            ),
             Ok(Ok(pattern_name)) => {
                 ToolResult::text(format!("✅ Set AXValue on [{idx}] (UIA {pattern_name})."))
             }

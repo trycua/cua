@@ -211,6 +211,34 @@ pub(crate) fn foreground_matches_target_or_owned_window(
     })
 }
 
+/// Verify that Windows kept a live owned dialog's snapshotted same-process
+/// owner in the foreground when activation of the dialog itself was refused.
+///
+/// Owned dialogs remain above their owner in z-order, so pointer hit-testing
+/// still reaches the exact visible dialog. This is intentionally narrower than
+/// accepting any same-process sibling.
+pub(crate) fn foreground_matches_target_owner(target: ForegroundTarget, actual: u64) -> bool {
+    let target_pid = window_owner_pid(target.hwnd);
+    let actual_pid = window_owner_pid(actual);
+    target_owner_foreground_allowed(
+        target.owner == Some(actual),
+        target_pid == Some(target.pid),
+        actual_pid.is_some(),
+        unsafe { IsWindowVisible(HWND(actual as *mut _)) }.as_bool(),
+        actual_pid == Some(target.pid),
+    )
+}
+
+fn target_owner_foreground_allowed(
+    actual_is_prior_owner: bool,
+    target_identity_live: bool,
+    actual_live: bool,
+    actual_visible: bool,
+    same_pid: bool,
+) -> bool {
+    actual_is_prior_owner && target_identity_live && actual_live && actual_visible && same_pid
+}
+
 fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
     let native = HWND(hwnd as *mut _);
     let pid = window_owner_pid(hwnd)?;
@@ -339,7 +367,7 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
 mod exact_window_tests {
     use super::{
         exact_window_from_probe, owner_chain_reaches_target, post_action_foreground_allowed,
-        PostActionForegroundRelation, WindowInfo,
+        target_owner_foreground_allowed, PostActionForegroundRelation, WindowInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -450,6 +478,28 @@ mod exact_window_tests {
         stale.actual_visible = false;
         assert!(!post_action_foreground_allowed(stale));
         assert!(!owner_chain_reaches_target(10, 30, |_| Some(30)));
+    }
+
+    #[test]
+    fn live_owned_dialog_may_use_only_its_snapshotted_owner_for_pointer_activation() {
+        assert!(target_owner_foreground_allowed(
+            true, true, true, true, true
+        ));
+        assert!(!target_owner_foreground_allowed(
+            false, true, true, true, true
+        ));
+        assert!(!target_owner_foreground_allowed(
+            true, false, true, true, true
+        ));
+        assert!(!target_owner_foreground_allowed(
+            true, true, false, true, true
+        ));
+        assert!(!target_owner_foreground_allowed(
+            true, true, true, false, true
+        ));
+        assert!(!target_owner_foreground_allowed(
+            true, true, true, true, false
+        ));
     }
 }
 

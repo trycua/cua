@@ -576,15 +576,6 @@ fn send_click_synthesized_mods_impl(
         // Capture whether the target was ALREADY always-on-top so we don't strip
         // that state on restore — only demote below if WE promoted it.
         let was_topmost = (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        if activate && !crate::input::force_foreground_assisted(target).0 {
-            let actual = GetForegroundWindow();
-            bail!(
-                "foreground_unavailable: Windows did not activate exact target HWND {:?} \
-                 (actual foreground HWND {:?}); no mouse input was sent",
-                target.0,
-                actual.0
-            );
-        }
         let foreground_target = if activate {
             match crate::win32::capture_foreground_target(target.0 as usize as u64) {
                 Some(target) => Some(target),
@@ -597,6 +588,21 @@ fn send_click_synthesized_mods_impl(
         } else {
             None
         };
+        if activate && !crate::input::force_foreground_assisted(target).0 {
+            let actual = GetForegroundWindow();
+            if !crate::win32::foreground_matches_target_owner(
+                foreground_target.expect("foreground target captured before activation"),
+                actual.0 as usize as u64,
+            ) {
+                bail!(
+                    "foreground_unavailable: Windows did not activate exact target HWND {:?} \
+                     or retain its verified same-process owner (actual foreground HWND {:?}); \
+                     no mouse input was sent",
+                    target.0,
+                    actual.0
+                );
+            }
+        }
         let noactivate = (!activate).then(|| crate::input::NoActivateGuard::arm(target));
         if !activate {
             let _ = SetWindowPos(
@@ -696,8 +702,12 @@ fn send_click_synthesized_mods_impl(
         }
         if activate {
             let actual = GetForegroundWindow();
+            let captured = foreground_target.expect("foreground target captured before input");
             if !crate::win32::foreground_matches_target_or_owned_window(
-                foreground_target.expect("foreground target captured before input"),
+                captured,
+                actual.0 as usize as u64,
+            ) && !crate::win32::foreground_matches_target_owner(
+                captured,
                 actual.0 as usize as u64,
             ) {
                 bail!(

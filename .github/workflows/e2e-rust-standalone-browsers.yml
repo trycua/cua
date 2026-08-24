@@ -97,6 +97,61 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: cargo build --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
+      - name: Protect hosted Windows browser installations from the runner token
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+          $directoryRights = [System.Security.AccessControl.FileSystemRights]::CreateFiles `
+            -bor [System.Security.AccessControl.FileSystemRights]::CreateDirectories `
+            -bor [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles `
+            -bor [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes `
+            -bor [System.Security.AccessControl.FileSystemRights]::WriteAttributes `
+            -bor [System.Security.AccessControl.FileSystemRights]::Delete `
+            -bor [System.Security.AccessControl.FileSystemRights]::ChangePermissions `
+            -bor [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+          $fileRights = [System.Security.AccessControl.FileSystemRights]::WriteData `
+            -bor [System.Security.AccessControl.FileSystemRights]::AppendData `
+            -bor [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes `
+            -bor [System.Security.AccessControl.FileSystemRights]::WriteAttributes `
+            -bor [System.Security.AccessControl.FileSystemRights]::Delete `
+            -bor [System.Security.AccessControl.FileSystemRights]::ChangePermissions `
+            -bor [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+          $candidates = @(
+            (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
+            (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe')
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+          if ($candidates.Count -eq 0) {
+            throw 'Hosted Windows image did not provide Chrome or Edge'
+          }
+          $paths = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::OrdinalIgnoreCase
+          )
+          foreach ($candidate in $candidates) {
+            $path = [System.IO.Path]::GetFullPath($candidate)
+            while ($path -and $paths.Add($path)) {
+              if ($path -ieq $env:ProgramFiles -or $path -ieq ${env:ProgramFiles(x86)}) {
+                break
+              }
+              $path = [System.IO.Path]::GetDirectoryName($path)
+            }
+          }
+          foreach ($path in $paths) {
+            $isDirectory = Test-Path -LiteralPath $path -PathType Container
+            $rights = if ($isDirectory) { $directoryRights } else { $fileRights }
+            $acl = Get-Acl -LiteralPath $path
+            $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+              $identity,
+              $rights,
+              [System.Security.AccessControl.InheritanceFlags]::None,
+              [System.Security.AccessControl.PropagationFlags]::None,
+              [System.Security.AccessControl.AccessControlType]::Deny
+            )
+            $acl.AddAccessRule($rule)
+            Set-Acl -LiteralPath $path -AclObject $acl
+          }
       - name: Run standalone browsers on Windows
         if: runner.os == 'Windows'
         shell: pwsh

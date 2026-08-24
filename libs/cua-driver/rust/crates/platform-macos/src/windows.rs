@@ -88,14 +88,31 @@ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
 /// Enumerate windows on every CGWindow layer, including the accessory layers
 /// (`layer != 0`) that [`all_windows`] hides.
 ///
-/// Only used to answer "does this CGWindowID exist, and who owns it?" — the
-/// question `list_windows` must NOT answer, because surfacing tooltips,
+/// Used to answer "does this CGWindowID exist, and who owns it?" — the question
+/// `list_windows` must not answer *by default*, because surfacing tooltips,
 /// popovers, the Dock and every NSMenu window would swamp callers. Keeping the
-/// layer filter on enumeration and off identity lookup is what lets
+/// layer filter on by default and off identity lookup is what lets
 /// `get_window_state` tell "no such window" apart from "exists, but is not a
 /// layer-0 window" (issue #2237).
+///
+/// A caller that already knows which process it means can opt in through
+/// `list_windows`' `include_all_layers`, which is the only way to reach an app
+/// whose entire UI lives on an accessory layer — a floating panel, a HUD, a
+/// SwiftUI onboarding window. For those, the layer-0 list is empty and the app
+/// looks closed.
 fn all_windows_any_layer() -> Vec<WindowInfo> {
-    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::AnyLayer).windows
+    all_windows_any_layer_with_space_snapshot().windows
+}
+
+pub(crate) fn all_windows_any_layer_with_space_snapshot() -> WindowEnumeration {
+    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::AnyLayer)
+}
+
+pub(crate) fn visible_windows_any_layer_with_space_snapshot() -> WindowEnumeration {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+    )
 }
 
 /// Which CGWindow layers an enumeration admits.

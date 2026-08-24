@@ -12,7 +12,11 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "list_windows".into(),
-        description: "List all layer-0 top-level windows currently known to WindowServer. \
+        description: "List top-level windows currently known to WindowServer. Without `pid` the \
+            result is layer-0 only, because tooltips, popovers, menus and the Dock would swamp a \
+            whole-desktop listing; with `pid` every layer of that process is reported, so an app \
+            whose UI is an accessory window (floating panel, HUD, SwiftUI onboarding) is reachable \
+            instead of looking closed. \
             Includes off-screen windows (minimized, on another Space, hidden-launched). \
             Use this to find a window_id before calling get_window_state.\n\n\
             Per-record fields: window_id, pid, app_name, title, bounds \
@@ -29,7 +33,10 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "pid": {
                     "type": "integer",
-                    "description": "Optional pid filter. When set, only this pid's windows are returned."
+                    "description": "Optional pid filter. When set, only this pid's windows are \
+returned, and every CGWindow layer is admitted -- a caller that already named the process is not \
+at risk of being swamped. Space attribution (space_ids, on_current_space, current_space_id) is not \
+resolved for that enumeration and comes back null."
                 },
                 "on_screen_only": {
                     "type": "boolean",
@@ -56,10 +63,17 @@ impl Tool for ListWindowsTool {
         let pid_filter: Option<i32> = args.opt_i64("pid").map(|v| v as i32);
         let on_screen_only = args.bool_or("on_screen_only", false);
 
-        let enumeration = if on_screen_only {
-            crate::windows::visible_windows_with_space_snapshot()
-        } else {
-            crate::windows::all_windows_with_space_snapshot()
+        // Con pid, todas las capas. Es la semantica que el issue #1451 pidio y
+        // el PR #1452 dejo en el backend Swift; la reescritura a Rust la
+        // perdio, y con ella la unica via de alcanzar una app cuya UI entera
+        // vive en una capa accesoria. El motivo del filtro -- no inundar al
+        // llamante con tooltips, popovers, menus y el Dock -- solo aplica al
+        // listado del escritorio entero, que sigue igual.
+        let enumeration = match (on_screen_only, pid_filter.is_some()) {
+            (true, false) => crate::windows::visible_windows_with_space_snapshot(),
+            (false, false) => crate::windows::all_windows_with_space_snapshot(),
+            (true, true) => crate::windows::visible_windows_any_layer_with_space_snapshot(),
+            (false, true) => crate::windows::all_windows_any_layer_with_space_snapshot(),
         };
         let current_space_id = enumeration.current_space_id;
         let mut windows = enumeration.windows;
@@ -103,6 +117,24 @@ pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sin pid el listado sigue siendo de capa 0: nadie que pregunte por el
+    /// escritorio entero debe recibir el Dock, un tooltip ni cada NSMenu
+    /// abierto. Con pid, el llamante ya nombro el proceso y no hay tal riesgo.
+    #[test]
+    fn pid_filter_documents_that_it_admits_every_layer() {
+        let described = def().input_schema["properties"]["pid"]["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            described.contains("every CGWindow layer"),
+            "el contrato de capas tiene que estar en el esquema, no solo en el codigo: {described}"
+        );
+        assert!(
+            def().description.contains("layer-0 only"),
+            "y el listado sin pid debe seguir anunciandose como capa 0"
+        );
+    }
 
     #[test]
     fn window_record_includes_observed_z_index() {

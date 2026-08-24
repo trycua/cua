@@ -4,13 +4,15 @@ on:
   pull_request:
     paths:
       - "libs/cua-driver/rust/**"
-      - "scripts/ci/linux/run-valgrind-e2e.sh"
+      - "scripts/ci/linux/run-valgrind-e2e.py"
+      - "scripts/ci/linux/test_run_valgrind_e2e.py"
       - ".github/workflows/ci-cua-driver-valgrind.yml"
   push:
     branches: [main]
     paths:
       - "libs/cua-driver/rust/**"
-      - "scripts/ci/linux/run-valgrind-e2e.sh"
+      - "scripts/ci/linux/run-valgrind-e2e.py"
+      - "scripts/ci/linux/test_run_valgrind_e2e.py"
       - ".github/workflows/ci-cua-driver-valgrind.yml"
   workflow_dispatch:
 
@@ -25,13 +27,16 @@ jobs:
   memcheck:
     name: Driver server E2E Memcheck
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+      - name: Test Valgrind runner shutdown
+        run: python3 -m unittest -v scripts/ci/linux/test_run_valgrind_e2e.py
       - name: Install Linux build and Memcheck dependencies
         run: |
           if [[ -f /etc/apt/apt-mirrors.txt ]]; then
@@ -50,7 +55,7 @@ jobs:
           CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
           CUA_DRIVER_RS_UPDATE_CHECK: "false"
           CUA_VALGRIND_ARTIFACT_DIR: ${{ runner.temp }}/cua-driver-valgrind
-        run: dbus-run-session -- xvfb-run -a scripts/ci/linux/run-valgrind-e2e.sh libs/cua-driver/rust/target/debug/cua-driver
+        run: dbus-run-session -- xvfb-run -a uv run --script scripts/ci/linux/run-valgrind-e2e.py libs/cua-driver/rust/target/debug/cua-driver
       - name: Upload Memcheck diagnostics
         if: failure()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4

@@ -2888,7 +2888,8 @@ impl Tool for ClickTool {
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
-                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema(),
+                    "retain_foreground":{"type":"boolean","default":false,"description":"With foreground delivery, leave the verified target foreground after the click instead of restoring the prior window. Use only for an explicitly authorized multi-step focus session."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -3052,6 +3053,7 @@ impl Tool for ClickTool {
         // a modifier passed to a background click is necessarily ignored there.
         let modifiers: Vec<String> = args.str_array("modifier");
         let delivery = DeliveryMode::from_args(&args);
+        let retain_foreground = args.bool_or("retain_foreground", false);
         if !modifiers.is_empty() && delivery != DeliveryMode::Foreground {
             return ToolResult::error(
                 "click modifiers require delivery_mode:\"foreground\" on Windows; UIA and \
@@ -3203,7 +3205,9 @@ impl Tool for ClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                if !retain_foreground {
+                    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                }
                 let half = if want_expand { "dropdown" } else { "press" };
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
@@ -3350,7 +3354,9 @@ impl Tool for ClickTool {
                     )
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                if !retain_foreground {
+                    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                }
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Performed SendInput click on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
@@ -3663,7 +3669,9 @@ impl Tool for ClickTool {
                     )
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                if !retain_foreground {
+                    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                }
                 return match send_result {
                     Ok(Ok(())) => {
                         let click_word = match count {
@@ -10100,6 +10108,29 @@ mod click_button_schema_tests {
         for need in ["left", "right", "middle"] {
             assert!(enum_vals.contains(&need), "missing {need} in button.enum");
         }
+    }
+
+    #[test]
+    fn retain_foreground_is_an_opt_in_boolean() {
+        let tool = ClickTool {
+            state: super::ToolState::new(),
+        };
+        let properties = tool
+            .def()
+            .input_schema
+            .get("properties")
+            .expect("properties");
+        let retain = properties
+            .get("retain_foreground")
+            .expect("retain_foreground field present");
+        assert_eq!(
+            retain.get("type").and_then(|value| value.as_str()),
+            Some("boolean")
+        );
+        assert_eq!(
+            retain.get("default").and_then(|value| value.as_bool()),
+            Some(false)
+        );
     }
 }
 

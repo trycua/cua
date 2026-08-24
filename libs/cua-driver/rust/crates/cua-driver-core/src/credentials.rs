@@ -27,6 +27,8 @@ use crate::session::{
 pub const MAX_SECRET_BYTES: usize = 4 * 1024;
 pub const MAX_BOOTSTRAP_SECRET_BYTES: usize = 64 * 1024;
 pub const DEFAULT_CREDENTIAL_HANDLE_TTL: Duration = Duration::from_secs(60);
+const BOOTSTRAP_RECORD_MAGIC: &[u8; 4] = b"CBS1";
+const BOOTSTRAP_RECORD_HEADER_BYTES: usize = BOOTSTRAP_RECORD_MAGIC.len() + 8;
 const MAX_ACTIVE_HANDLES: usize = 4_096;
 const MAX_ACTIVE_HANDLES_PER_SESSION: usize = 256;
 const MAX_HANDLE_TOMBSTONES: usize = 4_096;
@@ -800,13 +802,15 @@ pub struct BootstrapSecretLease {
 }
 
 impl BootstrapSecretLease {
-    #[allow(dead_code)]
-    pub(crate) fn expose(&self) -> &[u8] {
+    /// Trusted provider adapters may inspect the lease only while resolving one
+    /// authorized release. The lease is never serializable or agent-visible.
+    #[doc(hidden)]
+    pub fn expose_to_provider(&self) -> &[u8] {
         self.value.as_slice()
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct BootstrapNamespace(Arc<str>);
 
 impl BootstrapNamespace {
@@ -818,6 +822,12 @@ impl BootstrapNamespace {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl fmt::Debug for BootstrapNamespace {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("BootstrapNamespace([private])")
     }
 }
 
@@ -839,6 +849,8 @@ pub enum BootstrapStoreError {
     InvalidNamespace,
     #[error("invalid bootstrap secret")]
     InvalidValue,
+    #[error("bootstrap secret is already enrolled")]
+    AlreadyEnrolled,
     #[error("bootstrap secret is missing")]
     Missing,
     #[error("bootstrap secret store is locked")]
@@ -847,6 +859,54 @@ pub enum BootstrapStoreError {
     Unavailable,
     #[error("bootstrap secret record is corrupt")]
     Corrupt,
+}
+
+/// Encode one platform credential-store record without exposing the bootstrap
+/// value through a serializable public type. Platform adapters own persistence;
+/// this helper keeps their record format and validation identical.
+#[doc(hidden)]
+pub fn encode_bootstrap_store_record(
+    version: BootstrapVersion,
+    value: BootstrapSecret,
+) -> Result<Zeroizing<Vec<u8>>, BootstrapStoreError> {
+    if version.0 == 0 {
+        return Err(BootstrapStoreError::Corrupt);
+    }
+    let mut record = Zeroizing::new(Vec::with_capacity(
+        BOOTSTRAP_RECORD_HEADER_BYTES + value.value.len(),
+    ));
+    record.extend_from_slice(BOOTSTRAP_RECORD_MAGIC);
+    record.extend_from_slice(&version.0.to_be_bytes());
+    record.extend_from_slice(value.value.as_slice());
+    Ok(record)
+}
+
+/// Decode a platform credential-store record into a zeroizing lease.
+#[doc(hidden)]
+pub fn decode_bootstrap_store_record(
+    record: Vec<u8>,
+) -> Result<(BootstrapVersion, BootstrapSecretLease), BootstrapStoreError> {
+    let record = Zeroizing::new(record);
+    if record.len() <= BOOTSTRAP_RECORD_HEADER_BYTES
+        || record.len() > BOOTSTRAP_RECORD_HEADER_BYTES + MAX_BOOTSTRAP_SECRET_BYTES
+        || &record[..BOOTSTRAP_RECORD_MAGIC.len()] != BOOTSTRAP_RECORD_MAGIC
+    {
+        return Err(BootstrapStoreError::Corrupt);
+    }
+    let version = u64::from_be_bytes(
+        record[BOOTSTRAP_RECORD_MAGIC.len()..BOOTSTRAP_RECORD_HEADER_BYTES]
+            .try_into()
+            .map_err(|_| BootstrapStoreError::Corrupt)?,
+    );
+    if version == 0 {
+        return Err(BootstrapStoreError::Corrupt);
+    }
+    Ok((
+        BootstrapVersion(version),
+        BootstrapSecretLease {
+            value: Zeroizing::new(record[BOOTSTRAP_RECORD_HEADER_BYTES..].to_vec()),
+        },
+    ))
 }
 
 pub trait BootstrapSecretStore: Send + Sync {
@@ -867,6 +927,13 @@ pub trait BootstrapSecretStore: Send + Sync {
     fn revoke(&self, namespace: &BootstrapNamespace) -> Result<(), BootstrapStoreError>;
     fn health(&self, namespace: &BootstrapNamespace) -> BootstrapStoreHealth;
 }
+
+mod service_account_provider;
+
+pub use service_account_provider::{
+    DedicatedServiceAccountBootstrap, DedicatedServiceAccountProvider,
+    ServiceAccountReleaseCancellation, ServiceAccountVaultClient,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum CredentialConfigurationError {
@@ -3432,10 +3499,85 @@ allow:
         );
         let bootstrap = BootstrapSecret::from_bytes(b"synthetic-bootstrap".to_vec()).unwrap();
         let lease = bootstrap.into_lease();
-        assert_eq!(lease.expose(), b"synthetic-bootstrap");
+        assert_eq!(lease.expose_to_provider(), b"synthetic-bootstrap");
         assert_eq!(
             BootstrapSecret::from_bytes(vec![0; MAX_BOOTSTRAP_SECRET_BYTES + 1]).err(),
             Some(BootstrapStoreError::InvalidValue)
         );
+    }
+
+    #[test]
+    fn bootstrap_store_records_round_trip_variable_length_values() {
+        for value in [
+            b"x".to_vec(),
+            b"synthetic-bootstrap-value".to_vec(),
+            vec![0x5a; MAX_BOOTSTRAP_SECRET_BYTES],
+        ] {
+            let encoded = encode_bootstrap_store_record(
+                BootstrapVersion(7),
+                BootstrapSecret::from_bytes(value.clone()).unwrap(),
+            )
+            .unwrap();
+            let (version, decoded) = decode_bootstrap_store_record(encoded.to_vec()).unwrap();
+            assert_eq!(version, BootstrapVersion(7));
+            assert_eq!(decoded.expose_to_provider(), value.as_slice());
+        }
+    }
+
+    #[test]
+    fn bootstrap_store_records_reject_zero_version_and_bad_magic() {
+        assert_eq!(
+            encode_bootstrap_store_record(
+                BootstrapVersion(0),
+                BootstrapSecret::from_bytes(b"synthetic-bootstrap".to_vec()).unwrap(),
+            )
+            .err(),
+            Some(BootstrapStoreError::Corrupt)
+        );
+
+        let mut zero_version = Vec::from(BOOTSTRAP_RECORD_MAGIC.as_slice());
+        zero_version.extend_from_slice(&0_u64.to_be_bytes());
+        zero_version.push(b'x');
+        assert_eq!(
+            decode_bootstrap_store_record(zero_version).err(),
+            Some(BootstrapStoreError::Corrupt)
+        );
+
+        let mut bad_magic = b"BAD!".to_vec();
+        bad_magic.extend_from_slice(&1_u64.to_be_bytes());
+        bad_magic.push(b'x');
+        assert_eq!(
+            decode_bootstrap_store_record(bad_magic).err(),
+            Some(BootstrapStoreError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn bootstrap_store_records_reject_truncation_and_oversize() {
+        for length in 0..=BOOTSTRAP_RECORD_HEADER_BYTES {
+            assert_eq!(
+                decode_bootstrap_store_record(vec![0; length]).err(),
+                Some(BootstrapStoreError::Corrupt)
+            );
+        }
+
+        let mut oversized = Vec::from(BOOTSTRAP_RECORD_MAGIC.as_slice());
+        oversized.extend_from_slice(&1_u64.to_be_bytes());
+        oversized.resize(
+            BOOTSTRAP_RECORD_HEADER_BYTES + MAX_BOOTSTRAP_SECRET_BYTES + 1,
+            b'x',
+        );
+        assert_eq!(
+            decode_bootstrap_store_record(oversized).err(),
+            Some(BootstrapStoreError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn bootstrap_namespace_debug_output_is_redacted() {
+        let namespace = BootstrapNamespace::new("private-provider-namespace").unwrap();
+        let debug = format!("{namespace:?}");
+        assert_eq!(debug, "BootstrapNamespace([private])");
+        assert!(!debug.contains(namespace.as_str()));
     }
 }

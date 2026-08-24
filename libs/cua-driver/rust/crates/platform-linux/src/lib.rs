@@ -33,6 +33,9 @@ pub mod proc_fs;
 pub mod history;
 
 #[cfg(target_os = "linux")]
+pub mod bootstrap_credentials;
+
+#[cfg(target_os = "linux")]
 pub mod browser_platform;
 
 #[cfg(target_os = "linux")]

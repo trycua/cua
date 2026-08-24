@@ -50,6 +50,9 @@ pub mod win32;
 pub mod history;
 
 #[cfg(target_os = "windows")]
+pub mod bootstrap_credentials;
+
+#[cfg(target_os = "windows")]
 pub mod browser_platform;
 
 #[cfg(target_os = "windows")]

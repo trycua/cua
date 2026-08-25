@@ -108,13 +108,16 @@ mod tests {
         let mode = display
             .display_mode()
             .expect("main display should expose its current mode");
-        assert!(mode.width() > 0, "display mode should have a point width");
+        let point_width = mode.width();
+        let pixel_width = mode.pixel_width();
+        assert!(point_width > 0, "display mode should have a point width");
+        assert!(pixel_width > 0, "display mode should have a pixel width");
         assert!(
-            mode.pixel_width() > 0,
-            "display mode should have a pixel width"
+            pixel_width > point_width,
+            "native Retina validation requires more backing pixels than points; got {pixel_width}px for {point_width}pt"
         );
 
-        let expected = ((mode.pixel_width() as f64 / mode.width() as f64) * 2.0).round() / 2.0;
+        let expected = ((pixel_width as f64 / point_width as f64) * 2.0).round() / 2.0;
         let actual = get_backing_scale(display.id);
 
         assert_eq!(

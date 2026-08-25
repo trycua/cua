@@ -14,7 +14,7 @@ The target-root observer adapts `injaneity/pi-computer-use` commit `022a280a3770
 
 The persistent AXObserver ring is intentionally not copied. That commit established that sheet creation emits no reliable AX notification, so events improve latency for some roots but do not improve correctness. Cua Driver's bounded signature poll preserves the useful early-exit behavior without adding observer lifecycle state.
 
-Cua Driver adds its existing focus-suppression lease, typed action record, and WindowServer ownership verification at the macOS platform boundary. This keeps AppKit Open/Save panels hosted by a separate service process addressable without treating unrelated desktop changes as action results. `AXSheets` and `AXChildren` are merged because recent macOS versions do not expose sheets consistently through one attribute.
+Cua Driver adds its existing focus-suppression lease, typed action record, and WindowServer ownership verification at the macOS platform boundary. AX discovery finishes before ownership is sampled; unresolved appeared roots retry only ownership, so a foreign panel cannot be discarded because WindowServer lagged the accessibility tree. An incomplete owner set can return known candidates but never an exact target. `AXSheets` and `AXChildren` are merged because recent macOS versions do not expose sheets consistently through one attribute.
 
 ## Flow
 

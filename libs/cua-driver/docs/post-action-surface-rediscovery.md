@@ -1,0 +1,176 @@
+# Post-action surface rediscovery
+
+This document records the implementation boundary for issue #2238. The draft
+keeps Cua Driver's typed action-result contract while replacing its global
+window-count heuristic with target-scoped root observation and shared candidate
+validation.
+
+## Existing Cua Driver flow
+
+Cua Driver already protects foreground focus and detects visible native windows,
+but the topology survives only in diagnostic text.
+
+```mermaid
+flowchart LR
+    action["macOS action tool"] --> before["snapshot global layer-0 window ids"]
+    before --> actuator["run native actuator under focus guard"]
+    actuator --> after["poll global layer-0 window ids"]
+    after --> prose["append diagnostic prose"]
+    prose --> adapter["project action result without topology"]
+    adapter --> stale["caller remains bound to the prior window"]
+```
+
+## What pull request #2746 contributes
+
+Pull request #2746 adds a closed `window_change` record and explicit `rebind`
+escalation. Those are useful public semantics and remain part of this draft.
+Its detector, however, still treats every new desktop window as action-related,
+selects an exact target from list length alone, and promotes any topology change
+to confirmed action effect.
+
+```mermaid
+flowchart LR
+    action["macOS action tool"] --> global["diff all visible desktop windows"]
+    global --> json["write legacy JSON"]
+    json --> parse["parse into shared action record"]
+    parse --> confirm["promote effect to confirmed"]
+    confirm --> count{"new window count"}
+    count -->|"one"| exact["emit exact rebind"]
+    count -->|"many"| ambiguous["emit ambiguous rebind"]
+```
+
+This draft preserves from #2746:
+
+- the portable `window_change` record;
+- explicit, non-activating `rebind` advice;
+- exact target metadata when one replacement surface is validated;
+- generated Rust, Python, TypeScript, and manifest parity; and
+- rebind-before-pixel, page, foreground, or desktop recovery guidance.
+
+It does not preserve the global-window causality inference, effect promotion, or
+branch-local JSON mutation.
+
+## What is adapted from pi-computer-use
+
+The target-root observer follows the architecture proven in
+`injaneity/pi-computer-use` commit
+`022a280a377065c95736cc15f684bf1fad46479e`:
+
+- capture accessibility roots for the target process before and after an action;
+- treat the accessibility snapshot diff as authoritative;
+- use accessibility notifications, focus state, and cheap native-window polling
+  only to end the bounded wait early;
+- report appeared, closed, and focused roots with modality facts; and
+- refresh target resolution before selecting a visible modal surface.
+
+The design is adapted rather than copied verbatim. Cua Driver keeps its Rust
+platform boundary, focus-suppression leases, action execution record, closed
+contract vocabulary, and explicit harness-owned escalation policy.
+
+```mermaid
+flowchart LR
+    before["snapshot target accessibility roots"] --> action["perform action"]
+    action --> signal["event or native-window signal wakes observer"]
+    signal --> after["snapshot target accessibility roots again"]
+    after --> delta["derive appeared closed and focused roots"]
+    delta --> resolver["refresh and validate a visible modal root"]
+```
+
+## Combined architecture
+
+Detection answers what changed. Resolution answers which surface is safe to
+bind. Action accounting answers what the actuator proved. None substitutes for
+another.
+
+```mermaid
+flowchart LR
+    coordinator["shared action coordinator"] --> observer["platform root observer begins"]
+    observer --> actuator["native actuator runs"]
+    actuator --> outcome["typed actuator outcome"]
+    actuator --> finish["platform root observer finishes"]
+    finish --> delta["typed target-root delta"]
+    outcome --> record["action execution record"]
+    delta --> record
+    delta --> resolver["shared candidate resolver"]
+    resolver --> choice{"one validated blocking root"}
+    choice -->|"yes"| rebind["emit exact logical rebind"]
+    choice -->|"no"| correlate["emit candidates for list_windows correlation"]
+    record --> public["closed action result preserves original effect"]
+    rebind --> public
+    correlate --> public
+```
+
+### Platform observer
+
+Each platform adapter owns native root discovery. It returns typed facts and
+never chooses policy. macOS uses target-process accessibility roots as the final
+source of truth, with CGWindow and AX notifications as bounded early-wake
+signals. Windows uses the equivalent UIA and HWND ownership facts. Linux must
+return the same semantics where AT-SPI and the compositor expose them, or an
+explicit unsupported limitation.
+
+Cross-application handoffs are reported separately from target-owned roots.
+They never become exact targets from temporal proximity alone.
+
+### Shared action coordinator
+
+The coordinator starts observation immediately before dispatch and finishes it
+immediately after dispatch. It attaches the typed delta directly to the action
+execution record, including partial and failed delivery. Platform tools must not
+serialize private topology to JSON and ask the legacy adapter to parse it back.
+
+### Shared resolver
+
+An exact rebind requires exactly one eligible candidate after validation. The
+candidate must be a target-owned blocking modal, a newly focused target-owned
+root, or a separately verified cross-application handoff. Otherwise the result
+retains candidates and asks the harness to correlate them with `list_windows`.
+
+Logical rebinding never activates, raises, captures, or sends input to the new
+surface. The caller refreshes window-scoped state and restarts with background
+delivery.
+
+## Contract invariants
+
+- `window_change` is independent from `effect`; topology cannot promote an
+  unverifiable, partial, suspected-noop, or refused action to confirmed.
+- `window_change` evidence means only that topology was observed.
+- an exact escalation target must also appear in the accompanying topology.
+- unrelated desktop windows cannot become target-owned candidates.
+- an empty or unchanged delta cannot produce rebind advice.
+- partial and failed delivery retain observed topology internally; successful
+  public action results expose it through the closed contract.
+- platform adapters report limitations explicitly instead of substituting a
+  global desktop heuristic.
+
+## Recovery ladder
+
+```mermaid
+flowchart LR
+    result["action result contains window change"] --> exact{"exact validated target"}
+    exact -->|"yes"| refresh["refresh target window without activation"]
+    exact -->|"no"| list["correlate candidates with list_windows"]
+    list --> found{"blocking surface identified"}
+    found -->|"yes"| refresh
+    found -->|"no"| desktop["request one privacy-sensitive desktop frame"]
+    desktop --> correlate["correlate and return to window scope"]
+    correlate --> refresh
+    refresh --> background["resume background semantic actions"]
+```
+
+The request-scoped desktop frame remains a separate final perception rung. It
+must not silently widen persistent capture scope.
+
+## Validation plan
+
+Before the pull request is made ready:
+
+1. contract tests must reject inconsistent rebind targets and effect promotion;
+2. shared resolver tests must cover one modal, several candidates, unrelated
+   windows, cross-app handoff, partial delivery, and malformed producer data;
+3. macOS observer tests must cover AX-only sheets and delayed root appearance;
+4. the TextEdit Open-panel harness case must consume structured topology,
+   rebind without activation, and prove the user's foreground app is unchanged;
+5. Windows and Linux receive focused contract coverage plus either native
+   behavior evidence or an explicit limitation; and
+6. the complete canonical macOS harness runs once on the stable candidate SHA.

@@ -450,25 +450,6 @@ pub struct ActionEvidence {
     pub kind: ActionEvidenceKind,
 }
 
-/// A newly discovered native interaction surface after an action.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ActionWindowTarget {
-    pub pid: i64,
-    pub window_id: u64,
-    pub app_name: String,
-    pub title: String,
-}
-
-/// Read-only post-action topology change used to rediscover a blocking modal,
-/// popup, or new top-level window without activating it.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ActionWindowChange {
-    pub new_windows: Vec<ActionWindowTarget>,
-    pub foreground_changed: bool,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionEscalationTarget {
@@ -476,7 +457,6 @@ pub enum ActionEscalationTarget {
     Foreground,
     Page,
     Session,
-    Rebind,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
@@ -487,7 +467,6 @@ pub enum ActionEscalationReason {
     EffectUnconfirmed,
     SuspectedNoop,
     PermissionRequired,
-    SurfaceChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -495,8 +474,6 @@ pub enum ActionEscalationReason {
 pub struct ActionEscalation {
     pub target: ActionEscalationTarget,
     pub reason: ActionEscalationReason,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window: Option<ActionWindowTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -508,8 +485,6 @@ pub struct ActionResult {
     pub delivery: Option<ActionDelivery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Vec<ActionEvidence>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window_change: Option<ActionWindowChange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalation: Option<ActionEscalation>,
 }
@@ -650,7 +625,6 @@ mod tests {
             evidence: Some(vec![ActionEvidence {
                 kind: ActionEvidenceKind::ValueReadback,
             }]),
-            window_change: None,
             escalation: None,
         }
     }
@@ -664,14 +638,7 @@ mod tests {
         let properties = schema["properties"].as_object().expect("properties");
         assert_eq!(
             properties.keys().map(String::as_str).collect::<Vec<_>>(),
-            [
-                "delivery",
-                "effect",
-                "escalation",
-                "evidence",
-                "route",
-                "window_change",
-            ]
+            ["delivery", "effect", "escalation", "evidence", "route"]
         );
         assert_eq!(
             properties["effect"]["enum"],
@@ -727,7 +694,7 @@ mod tests {
         assert_eq!(escalation["required"], json!(["target", "reason"]));
         assert_eq!(
             escalation["properties"]["target"]["enum"],
-            json!(["pixel", "foreground", "page", "session", "rebind"])
+            json!(["pixel", "foreground", "page", "session"])
         );
         assert_eq!(
             escalation["properties"]["reason"]["enum"],
@@ -736,22 +703,8 @@ mod tests {
                 "delivery_failed",
                 "effect_unconfirmed",
                 "suspected_noop",
-                "permission_required",
-                "surface_changed"
+                "permission_required"
             ])
-        );
-
-        let window_change = object_variant(&properties["window_change"]);
-        assert_eq!(window_change["additionalProperties"], false);
-        assert_eq!(
-            window_change["required"],
-            json!(["new_windows", "foreground_changed"])
-        );
-        let window = &window_change["properties"]["new_windows"]["items"];
-        assert_eq!(window["additionalProperties"], false);
-        assert_eq!(
-            window["required"],
-            json!(["pid", "window_id", "app_name", "title"])
         );
     }
 

@@ -10,9 +10,11 @@ This implementation resolves the structured-rebind rung. It does not add the iss
 
 The implementation retains Cua Driver's native action routes, focus-suppression leases, shared action record, closed result contract, and harness-owned escalation policy. From [#2746](https://github.com/trycua/cua/pull/2746), it retains typed `window_change` metadata, explicit `rebind` advice, and generated Rust, Python, TypeScript, and manifest bindings.
 
-The target-root observer adapts `injaneity/pi-computer-use` commit `022a280a377065c95736cc15f684bf1fad46479e`: snapshot the target accessibility domain before dispatch, run the actuator, poll the same domain for a bounded period, and use appeared roots plus modal or focused state to resolve the next interaction surface.
+The target-root observer adapts `injaneity/pi-computer-use` commit `022a280a377065c95736cc15f684bf1fad46479e`: snapshot the target accessibility domain before dispatch, use a cheap target-window signature only to end the bounded wait early, then treat one accessibility snapshot diff as authoritative. If the early signal beats the accessibility tree, bounded catch-up retries let it settle. Appeared roots plus modal or focused state resolve the next interaction surface.
 
-Cua Driver adds WindowServer ownership verification at its macOS platform boundary. This keeps AppKit Open/Save panels hosted by a separate service process addressable without treating unrelated desktop changes as action results.
+The persistent AXObserver ring is intentionally not copied. That commit established that sheet creation emits no reliable AX notification, so events improve latency for some roots but do not improve correctness. Cua Driver's bounded signature poll preserves the useful early-exit behavior without adding observer lifecycle state.
+
+Cua Driver adds its existing focus-suppression lease, typed action record, and WindowServer ownership verification at the macOS platform boundary. This keeps AppKit Open/Save panels hosted by a separate service process addressable without treating unrelated desktop changes as action results. `AXSheets` and `AXChildren` are merged because recent macOS versions do not expose sheets consistently through one attribute.
 
 ## Flow
 

@@ -193,21 +193,12 @@ pub enum EvidenceKind {
     OperatorObservation,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ActionSurfaceKind {
-    Window,
-    Dialog,
-    Sheet,
-    Popover,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActionSurfaceTarget {
     pub pid: i64,
     pub window_id: u64,
     pub app_name: String,
     pub title: String,
-    pub kind: ActionSurfaceKind,
     pub modal: bool,
 }
 
@@ -224,12 +215,6 @@ pub struct ActionSurfaceDelta {
     pub new_windows: Vec<ActionSurfaceTarget>,
     pub foreground_changed: bool,
     pub rebind: Option<ActionSurfaceTarget>,
-}
-
-impl ActionSurfaceDelta {
-    pub fn changed(&self) -> bool {
-        self.foreground_changed || !self.new_windows.is_empty()
-    }
 }
 
 /// Apply the same fail-closed exact-target rule to every platform observer.
@@ -257,7 +242,7 @@ pub fn resolve_surface_delta(
         .iter()
         .map(|candidate| candidate.target.clone())
         .collect();
-    if new_windows.is_empty() && !foreground_changed {
+    if new_windows.is_empty() {
         return None;
     }
     let eligible: Vec<ActionSurfaceTarget> = unique
@@ -386,9 +371,6 @@ impl ActionExecutionRecord {
     /// Attach observer facts without changing the actuator's effect or
     /// overwriting its internal escalation account.
     pub fn observe_surface_delta(&mut self, delta: ActionSurfaceDelta) {
-        if !delta.changed() {
-            return;
-        }
         self.surface_delta = Some(delta);
     }
 
@@ -477,14 +459,10 @@ impl ActionExecutionRecord {
             escalation: projection
                 .surface_delta
                 .as_ref()
-                .and_then(|delta| {
-                    delta
-                        .changed()
-                        .then(|| cua_driver_contract::ActionEscalation {
-                            target: cua_driver_contract::ActionEscalationTarget::Rebind,
-                            reason: cua_driver_contract::ActionEscalationReason::SurfaceChanged,
-                            window: delta.rebind.as_ref().map(public_surface_target),
-                        })
+                .map(|delta| cua_driver_contract::ActionEscalation {
+                    target: cua_driver_contract::ActionEscalationTarget::Rebind,
+                    reason: cua_driver_contract::ActionEscalationReason::SurfaceChanged,
+                    window: delta.rebind.as_ref().map(public_surface_target),
                 })
                 .or_else(|| {
                     projection.escalation.map(|escalation| {
@@ -674,13 +652,6 @@ fn public_surface_target(target: &ActionSurfaceTarget) -> cua_driver_contract::A
         window_id: target.window_id,
         app_name: target.app_name.clone(),
         title: target.title.clone(),
-        kind: match target.kind {
-            ActionSurfaceKind::Window => cua_driver_contract::ActionSurfaceKind::Window,
-            ActionSurfaceKind::Dialog => cua_driver_contract::ActionSurfaceKind::Dialog,
-            ActionSurfaceKind::Sheet => cua_driver_contract::ActionSurfaceKind::Sheet,
-            ActionSurfaceKind::Popover => cua_driver_contract::ActionSurfaceKind::Popover,
-        },
-        modal: target.modal,
     }
 }
 
@@ -1365,11 +1336,9 @@ mod tests {
             window_id: 7,
             app_name: "Editor".into(),
             title: "Open".into(),
-            kind: ActionSurfaceKind::Sheet,
             modal: true,
         };
         let parent = ActionSurfaceTarget {
-            kind: ActionSurfaceKind::Window,
             modal: false,
             ..target.clone()
         };
@@ -1381,7 +1350,7 @@ mod tests {
                         focused: false,
                     },
                     ActionSurfaceCandidate {
-                        target,
+                        target: target.clone(),
                         focused: false,
                     },
                 ],
@@ -1410,6 +1379,27 @@ mod tests {
                 .window_change
                 .and_then(|change| change.new_windows.into_iter().next())
         );
+
+        let second = ActionSurfaceTarget {
+            window_id: 8,
+            ..target.clone()
+        };
+        assert!(resolve_surface_delta(
+            vec![
+                ActionSurfaceCandidate {
+                    target,
+                    focused: false,
+                },
+                ActionSurfaceCandidate {
+                    target: second,
+                    focused: true,
+                },
+            ],
+            false,
+        )
+        .expect("ambiguous surface delta")
+        .rebind
+        .is_none());
     }
 
     #[test]

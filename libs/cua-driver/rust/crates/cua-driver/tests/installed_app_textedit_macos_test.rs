@@ -244,7 +244,6 @@ fn background_open_panel_returns_a_typed_rebind() {
             panel_pid, pid,
             "AppKit panel service ownership was not resolved"
         );
-        assert!(candidate["modal"].as_bool().unwrap_or(false));
         assert_eq!(opened.structured()["escalation"]["target"], "rebind");
         assert_eq!(
             opened.structured()["escalation"]["window"],

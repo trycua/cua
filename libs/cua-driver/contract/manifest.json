@@ -193,18 +193,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -219,9 +207,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -283,18 +269,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -309,9 +283,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },
@@ -695,18 +667,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -721,9 +681,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -785,18 +743,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -811,9 +757,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },
@@ -1792,18 +1736,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -1818,9 +1750,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -1882,18 +1812,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -1908,9 +1826,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },
@@ -2062,18 +1978,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -2088,9 +1992,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -2152,18 +2054,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -2178,9 +2068,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },
@@ -2513,18 +2401,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -2539,9 +2415,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -2603,18 +2477,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -2629,9 +2491,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },
@@ -2829,18 +2689,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -2855,9 +2703,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -2919,18 +2765,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -2945,9 +2779,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },
@@ -3165,18 +2997,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -3191,9 +3011,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -3255,18 +3073,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -3281,9 +3087,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },
@@ -3748,18 +3552,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -3774,9 +3566,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -3838,18 +3628,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -3864,9 +3642,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },
@@ -4200,18 +3976,6 @@
                   "app_name": {
                     "type": "string"
                   },
-                  "kind": {
-                    "enum": [
-                      "window",
-                      "dialog",
-                      "sheet",
-                      "popover"
-                    ],
-                    "type": "string"
-                  },
-                  "modal": {
-                    "type": "boolean"
-                  },
                   "pid": {
                     "format": "int64",
                     "type": "integer"
@@ -4226,9 +3990,7 @@
                   "pid",
                   "window_id",
                   "app_name",
-                  "title",
-                  "kind",
-                  "modal"
+                  "title"
                 ],
                 "type": [
                   "object",
@@ -4290,18 +4052,6 @@
                     "app_name": {
                       "type": "string"
                     },
-                    "kind": {
-                      "enum": [
-                        "window",
-                        "dialog",
-                        "sheet",
-                        "popover"
-                      ],
-                      "type": "string"
-                    },
-                    "modal": {
-                      "type": "boolean"
-                    },
                     "pid": {
                       "format": "int64",
                       "type": "integer"
@@ -4316,9 +4066,7 @@
                     "pid",
                     "window_id",
                     "app_name",
-                    "title",
-                    "kind",
-                    "modal"
+                    "title"
                   ],
                   "type": "object"
                 },

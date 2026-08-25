@@ -454,15 +454,6 @@ pub struct ActionEvidence {
     pub kind: ActionEvidenceKind,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionSurfaceKind {
-    Window,
-    Dialog,
-    Sheet,
-    Popover,
-}
-
 /// A target-owned native interaction root discovered after an action.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -471,8 +462,6 @@ pub struct ActionWindowTarget {
     pub window_id: u64,
     pub app_name: String,
     pub title: String,
-    pub kind: ActionSurfaceKind,
-    pub modal: bool,
 }
 
 /// Read-only topology observed for the action's target process.
@@ -794,11 +783,7 @@ mod tests {
         assert_eq!(target["additionalProperties"], false);
         assert_eq!(
             target["required"],
-            json!(["pid", "window_id", "app_name", "title", "kind", "modal"])
-        );
-        assert_eq!(
-            target["properties"]["kind"]["enum"],
-            json!(["window", "dialog", "sheet", "popover"])
+            json!(["pid", "window_id", "app_name", "title"])
         );
     }
 
@@ -911,8 +896,6 @@ mod tests {
             window_id: 7,
             app_name: "Editor".into(),
             title: "Open".into(),
-            kind: ActionSurfaceKind::Sheet,
-            modal: true,
         };
         let mut result = confirmed_result();
         result.evidence = None;

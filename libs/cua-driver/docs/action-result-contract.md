@@ -33,7 +33,7 @@ Every successful action returns a closed `structuredContent` object:
 | `route` | `accessibility`, `synthetic_events`, `global_input`, `dom`, `trusted_input` |
 | `delivery.mode` | `background`, `foreground`, `not_applicable`, `unknown` |
 | `evidence[].kind` | `value_readback` |
-| `window_change.new_windows[]` | target-scoped, owner-verified `pid`, `window_id`, application, title, surface kind, and modality |
+| `window_change.new_windows[]` | target-scoped, owner-verified `pid`, `window_id`, application, and title |
 | `escalation.target` | `pixel`, `foreground`, `page`, `session`, `rebind` |
 | `escalation.reason` | `route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, `permission_required`, `surface_changed` |
 

@@ -98,6 +98,9 @@ lifecycle.
   target in the first release, with native accessibility delivery deferred.
 - Make 1Password the first provider without exposing raw `op://` references,
   vault names, item names, or field names to the agent-facing tool.
+- Treat NVIDIA OpenShell as the standard outer runtime for unattended agents:
+  OpenShell restricts the agent process, filesystem, network, and MCP route,
+  while Cua Driver independently authorizes the live GUI target and release.
 - Preserve canonical authorization and permission-mode ceilings in the
   directly supervised runtime first, then require equivalent evidence before
   enabling private-worker, service, MCP, CLI, or shared-daemon topologies.
@@ -358,8 +361,10 @@ the browser profile as a bearer credential.
    dedicated automation service account.
 8. Run a throwaway 1Password packaging spike and implement the selected adapter
    behind the provider interface.
-9. Certify host-owned startup configuration for MCP and make one all-surfaces
-   public flip across the manifest, ABI, UniFFI, generated SDKs, and MCP.
+9. Certify the OpenShell-standard authenticated Streamable HTTP MCP bridge and
+   the directly supervised stdio compatibility path, then make one
+   all-surfaces public flip across the manifest, ABI, UniFFI, generated SDKs,
+   and MCP.
 10. Consider native, shared-daemon, and service exposure only after each
     topology has trusted registration and equivalent acceptance evidence.
 11. Adopt Route D when a provider exposes a documented target-bound fill API.
@@ -922,11 +927,14 @@ fallback.
 The first slices expose no public capability. Internal and test-only entry
 points certify broker, provider, store, authorization, target, delivery, and
 retention behavior without changing the public tool manifest. Once the
-directly supervised and host-configured MCP paths pass, the manifest, contract
-types, ABI, UniFFI, generated Python and TypeScript SDKs, and MCP are updated
-together. CLI, HTTP, worker, daemon, service, and native routes advertise only
-after their topology-specific registration, authorization, retention, and
-target tests pass.
+directly supervised path and OpenShell-standard authenticated MCP bridge pass,
+the manifest, contract types, ABI, UniFFI, generated Python and TypeScript
+SDKs, and MCP are updated together. Local stdio remains a compatibility path
+only when a trusted host directly supervises both endpoints and installs
+immutable configuration before accepting requests. It is not a substitute for
+OpenShell's proxied policy boundary. CLI, HTTP, worker, daemon, service, and
+native routes advertise only after their topology-specific registration,
+authorization, retention, and target tests pass.
 
 Provider implementations may be added behind the same internal trait without
 changing the public operation when they satisfy the same lifecycle and privacy
@@ -1118,8 +1126,13 @@ tokens, or canaries entering public or retained surfaces.
 
 ### Slice I: MCP startup configuration and all-surfaces public flip
 
-- Certify a host-owned startup path that installs immutable bindings and store
-  namespaces before stdio MCP begins accepting requests.
+- Certify an authenticated Streamable HTTP MCP bridge from the OpenShell
+  sandbox to the trusted Cua runtime. OpenShell policy allows only
+  `find_credentials` and `type_secret`; Cua still checks every argument,
+  immutable authorization context, binding, and live target.
+- Keep stdio only as a directly supervised compatibility path that installs
+  immutable bindings and store namespaces before it begins accepting requests.
+  Do not place provider authority inside the sandbox to make stdio convenient.
 - Add `find_credentials` and `type_secret` contract types, manifest entries,
   ABI, UniFFI methods, generated Python and TypeScript SDKs, and MCP together.
 - Satisfy the existing manifest-to-exported-SDK parity test; do not add a new
@@ -1282,6 +1295,7 @@ harnesses must never publish the canary in CI summaries or artifacts.
 
 ## References
 
+- [Diagram-first architecture, permission-model fit, and OpenShell integration](../libs/cua-driver/docs/target-bound-credential-delivery-architecture.md)
 - [RFC 2549: Cua Driver SDK-owned runtime and optional services](2549-cua-driver-sdk-owned-runtime.md)
 - [Cua Driver permission modes, protected consent, and bounded autonomy](https://github.com/trycua/cua/issues/2381)
 - [1Password: Load secrets into scripts](https://developer.1password.com/docs/cli/secrets-scripts)

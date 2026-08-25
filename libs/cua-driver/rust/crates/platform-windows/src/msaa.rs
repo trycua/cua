@@ -170,60 +170,45 @@ unsafe fn walk(
     let has_content = name.is_some();
 
     if is_actionable || has_content {
-        // Retain the IAccessible pointer for the cache. Mirror what the UIA
-        // walker does: clone, get raw, forget the local — the cache's Drop
-        // releases via IUnknown.
-        let retained: IAccessible = acc.clone();
-        let ptr = retained.as_raw() as usize;
-        std::mem::forget(retained);
-
-        let (center_x, center_y) = rect
-            .map(|(l, t, r, b)| ((l + r) / 2, (t + b) / 2))
-            .unwrap_or((0, 0));
-
-        let node = if is_actionable {
+        let element_index = if is_actionable {
             let idx = *counter;
             *counter += 1;
-            UiaNode {
-                element_index: Some(idx),
-                control_type: control_type.clone(),
-                name: name.clone(),
-                value: None,
-                automation_id: None,
-                help_text: None,
-                actions: actions.clone(),
-                enabled: None,
-                selected: None,
-                element_ptr: ptr,
-                center_x,
-                center_y,
-                rect,
-                msaa_role: role_int,
-                depth,
-                parent_element_index: parent_index,
-                in_web_content: false,
-            }
+            Some(idx)
         } else {
-            UiaNode {
-                element_index: None,
-                control_type: control_type.clone(),
-                name: name.clone(),
-                value: None,
-                automation_id: None,
-                help_text: None,
-                actions: Vec::new(),
-                enabled: None,
-                selected: None,
-                element_ptr: ptr,
-                center_x: 0,
-                center_y: 0,
-                rect,
-                msaa_role: role_int,
-                depth,
-                parent_element_index: parent_index,
-                in_web_content: false,
-            }
+            None
         };
+        let (element_ptr, center_x, center_y) = if element_index.is_some() {
+            // The cache adopts this reference when the walk becomes a snapshot.
+            let retained: IAccessible = acc.clone();
+            let ptr = retained.as_raw() as usize;
+            std::mem::forget(retained);
+            let (center_x, center_y) = rect
+                .map(|(l, t, r, b)| ((l + r) / 2, (t + b) / 2))
+                .unwrap_or((0, 0));
+            (ptr, center_x, center_y)
+        } else {
+            (0, 0, 0)
+        };
+        let node = UiaNode {
+            element_index,
+            control_type: control_type.clone(),
+            name: name.clone(),
+            value: None,
+            automation_id: None,
+            help_text: None,
+            actions: actions.clone(),
+            enabled: None,
+            selected: None,
+            element_ptr,
+            center_x,
+            center_y,
+            rect,
+            msaa_role: role_int,
+            depth,
+            parent_element_index: parent_index,
+            in_web_content: false,
+        };
+        debug_assert_eq!(node.element_ptr != 0, node.element_index.is_some());
         // Track this node as the parent_index for its descendants only when
         // it received an element_index (mirrors what the markdown shows:
         // only indexed rows are addressable).

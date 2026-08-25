@@ -1456,6 +1456,11 @@ impl Tool for GetWindowStateTool {
                                        screenshot in this response (an element px action)."
                         });
                     }
+                    if observation_only {
+                        // No cache adopts these actionable COM references, so
+                        // release them after building the observation payload.
+                        unsafe { crate::uia::release_walk_nodes(tr.nodes) };
+                    }
                 }
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {

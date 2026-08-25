@@ -111,12 +111,28 @@ mod pid_window_target_tests {
 #[cfg(test)]
 mod background_input_regression_tests;
 
+fn observed_action<T: Tool + 'static>(tool: T) -> Box<dyn Tool> {
+    Box::new(crate::post_action_observer::ObservedActionTool::new(
+        Box::new(tool),
+    ))
+}
+
 fn pid_window_guarded<T: Tool + 'static>(
     tool: T,
     candidates: &WindowTargetCandidates,
 ) -> Box<dyn Tool> {
     Box::new(PidOnlyWindowTargetGuard::new(
         Box::new(tool),
+        candidates.clone(),
+    ))
+}
+
+fn observed_pid_window_action<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(PidOnlyWindowTargetGuard::new(
+        observed_action(tool),
         candidates.clone(),
     ))
 }
@@ -278,42 +294,6 @@ pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationL
     BackgroundMutationLease {
         pid,
         _guard: crate::background_mutation::acquire(pid).await,
-    }
-}
-
-/// Finish the post-action observation window. Embedded interactive clients
-/// that already observe the target continuously may opt out through the
-/// private registry argument to avoid adding a one-second acknowledgement
-/// delay to every input event. Regular MCP callers retain the full observer.
-pub(crate) async fn finish_window_observation(
-    snapshot: crate::window_change_detector::Snapshot,
-    args: &serde_json::Value,
-) -> crate::window_change_detector::Changes {
-    if args
-        .get("_skip_window_change_detection")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-    {
-        drop(snapshot);
-        crate::window_change_detector::Changes::no_change()
-    } else {
-        snapshot.detect_async().await
-    }
-}
-
-#[cfg(test)]
-mod interactive_observation_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn embedded_interactive_input_can_finish_without_polling() {
-        let snapshot = crate::window_change_detector::WindowChangeDetector::snapshot(None);
-        let changes = finish_window_observation(
-            snapshot,
-            &serde_json::json!({"_skip_window_change_detection": true}),
-        )
-        .await;
-        assert!(!changes.needs_restore());
     }
 }
 
@@ -907,40 +887,40 @@ pub fn register_all(
         &pid_window_candidates,
     ));
     registry.register(Box::new(set_window_frame::SetWindowFrameTool));
-    registry.register(Box::new(invoke_menu::InvokeMenuTool));
-    registry.register(pid_window_guarded(
+    registry.register(observed_action(invoke_menu::InvokeMenuTool));
+    registry.register(observed_pid_window_action(
         click::ClickTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(observed_pid_window_action(
         double_click::DoubleClickTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(observed_pid_window_action(
         right_click::RightClickTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(observed_pid_window_action(
         drag::DragTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(observed_pid_window_action(
         type_text::TypeTextTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(observed_pid_window_action(
         press_key::PressKeyTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(observed_pid_window_action(
         hotkey::HotkeyTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(observed_pid_window_action(
         set_value::SetValueTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(observed_pid_window_action(
         scroll::ScrollTool::new(state.clone()),
         &pid_window_candidates,
     ));

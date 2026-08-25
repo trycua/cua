@@ -133,3 +133,149 @@ fn background_type_on_native_cocoa_is_ax_verified() {
         Observation::delivered(passed, Default::default())
     });
 }
+
+/// A background shortcut that opens TextEdit's AppKit file panel reports one
+/// owner-verified rebind target while preserving the actuator's effect and the
+/// user's foreground application.
+#[test]
+#[ignore]
+fn background_open_panel_returns_a_typed_rebind() {
+    use cua_driver_testkit::e2e::{
+        execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Observation, OracleKind,
+        Scope, Targeting,
+    };
+    use cua_driver_testkit::observer::TargetWindow;
+    use cua_driver_testkit::sentinel::run_with_background_oracles;
+    use cua_driver_testkit::{Driver, McpDriver};
+
+    let cell_id = "macos-textedit-open-panel-background-rebind";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "textedit",
+        "appkit",
+        "hotkey",
+        Targeting::Ax,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::MacosCgEventPid,
+        vec![
+            OracleKind::AxState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let launch = driver.call(
+            "launch_app",
+            serde_json::json!({ "bundle_id": "com.apple.TextEdit" }),
+        );
+        assert!(
+            !launch.is_error(),
+            "could not launch TextEdit: {}",
+            launch.text()
+        );
+        let pid = launch.structured()["pid"].as_i64().expect("TextEdit pid");
+        let window_id = launch.structured()["windows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|window| window["window_id"].as_u64())
+            .find(|window_id| {
+                let state = driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid,
+                        "window_id": window_id,
+                        "include_screenshot": false
+                    }),
+                );
+                state.structured()["elements"]
+                    .as_array()
+                    .is_some_and(|elements| {
+                        elements
+                            .iter()
+                            .any(|element| element["role"] == "AXTextArea")
+                    })
+            })
+            .expect("TextEdit document window");
+
+        let (opened, mut passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: pid as u32,
+                native_id: window_id,
+            },
+            |driver| {
+                driver.call(
+                    "hotkey",
+                    serde_json::json!({
+                        "pid": pid,
+                        "window_id": window_id,
+                        "keys": ["cmd", "o"],
+                        "delivery_mode": "background"
+                    }),
+                )
+            },
+        )
+        .unwrap_or_else(|error| panic!("background Open-panel contract failed: {error}"));
+        assert!(!opened.is_error(), "hotkey errored: {}", opened.text());
+        assert_eq!(
+            opened.action_effect(),
+            Some("unverifiable"),
+            "topology must not promote the hotkey effect: {}",
+            opened.text()
+        );
+
+        let change = &opened.structured()["window_change"];
+        let candidates = change["new_windows"]
+            .as_array()
+            .expect("typed window_change candidates");
+        assert_eq!(candidates.len(), 1, "expected one Open-panel root");
+        let candidate = &candidates[0];
+        let panel_pid = candidate["pid"].as_i64().expect("panel owner pid");
+        let panel_window_id = candidate["window_id"].as_u64().expect("panel window id");
+        assert_ne!(
+            panel_pid, pid,
+            "AppKit panel service ownership was not resolved"
+        );
+        assert!(candidate["modal"].as_bool().unwrap_or(false));
+        assert_eq!(opened.structured()["escalation"]["target"], "rebind");
+        assert_eq!(
+            opened.structured()["escalation"]["window"],
+            *candidate,
+            "exact rebind must be one observed owner-verified candidate"
+        );
+
+        let panel = driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": panel_pid,
+                "window_id": panel_window_id,
+                "include_screenshot": false
+            }),
+        );
+        assert!(
+            !panel.is_error(),
+            "rebound panel was not addressable: {}",
+            panel.text()
+        );
+        passed.push(OracleKind::AxState);
+
+        let _ = driver.call(
+            "press_key",
+            serde_json::json!({
+                "pid": panel_pid,
+                "window_id": panel_window_id,
+                "key": "escape",
+                "delivery_mode": "background"
+            }),
+        );
+        Observation::delivered(passed, Default::default())
+    });
+}

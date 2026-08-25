@@ -19,7 +19,6 @@ use crate::ax::bindings::{
     copy_bool_attr, copy_string_attr, focused_element_of_pid, AXUIElementRef,
 };
 use crate::focus_guard;
-use crate::window_change_detector::WindowChangeDetector;
 
 use super::ToolState;
 
@@ -403,16 +402,7 @@ impl Tool for PressKeyTool {
             }
         };
 
-        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-        // Single-key presses can fire autocomplete (Return on a search
-        // box opens a results popover) or trigger menu shortcuts that
-        // open windows. Wrapping mirrors the hotkey path.
-        //
-        // The AX focus_element() pre-write also runs inside the closure
-        // so any reflex activations it triggers are caught by both the
-        // wildcard snapshot suppressor and the targeted FocusGuard lease.
         let prior_front = apps::frontmost_pid();
-        let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -471,8 +461,6 @@ impl Tool for PressKeyTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
-
         let delivery_outcome = match result {
             Ok(result) => map_delivery_outcome(result),
             Err(error) => {
@@ -494,12 +482,9 @@ impl Tool for PressKeyTool {
                     "verified": confirmed,
                     "effect": if confirmed { "confirmed" } else { "unverifiable" },
                 });
-                ToolResult::text(format!(
-                    "✅ Pressed {display_key} on pid {pid}{label}.{}",
-                    changes.result_suffix()
-                ))
-                .with_structured(structured)
-                .with_action_record(action_record(confirmed, fg))
+                ToolResult::text(format!("✅ Pressed {display_key} on pid {pid}{label}."))
+                    .with_structured(structured)
+                    .with_action_record(action_record(confirmed, fg))
             }
             PressKeyDeliveryOutcome::Failed(error) => delivery_failed(error),
         }

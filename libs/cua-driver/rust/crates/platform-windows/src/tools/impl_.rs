@@ -1599,6 +1599,7 @@ impl Tool for GetWindowStateTool {
                     is_error: None,
                     structured_content: Some(structured),
                     action_record: None,
+                    surface_delta: None,
                 }
             }
             Err(e) => ToolResult::error(format!("Error: {e}")),
@@ -7563,6 +7564,7 @@ impl Tool for GetDesktopStateTool {
             is_error: None,
             structured_content: Some(structured),
             action_record: None,
+            surface_delta: None,
         }
     }
 }
@@ -8515,6 +8517,7 @@ impl Tool for ZoomTool {
                         "mime_type": "image/jpeg"
                     })),
                     action_record: None,
+                    surface_delta: None,
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Zoom failed: {e}")),

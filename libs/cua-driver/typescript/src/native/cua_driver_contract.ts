@@ -197,41 +197,6 @@ const stringConverter = (() => {
 })();
 const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
 
-export enum ActionSurfaceKind {
-    Window,
-    Dialog,
-    Sheet,
-    Popover
-}
-
-const FfiConverterTypeActionSurfaceKind = (() => {
-    const ordinalConverter = FfiConverterInt32;
-    type TypeName = ActionSurfaceKind;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            switch (ordinalConverter.read(from)) {
-                case 1: return ActionSurfaceKind.Window;
-                case 2: return ActionSurfaceKind.Dialog;
-                case 3: return ActionSurfaceKind.Sheet;
-                case 4: return ActionSurfaceKind.Popover;
-                default: throw new UniffiInternalError.UnexpectedEnumCase();
-            }
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            switch (value) {
-                case ActionSurfaceKind.Window: return ordinalConverter.write(1, into);
-                case ActionSurfaceKind.Dialog: return ordinalConverter.write(2, into);
-                case ActionSurfaceKind.Sheet: return ordinalConverter.write(3, into);
-                case ActionSurfaceKind.Popover: return ordinalConverter.write(4, into);
-            }
-        }
-        allocationSize(value: TypeName): number {
-            return ordinalConverter.allocationSize(0);
-        }
-    }
-    return new FFIConverter();
-})();
-
 /**
  * A target-owned native interaction root discovered after an action.
  */
@@ -239,9 +204,7 @@ export type ActionWindowTarget = {
     pid: bigint,
     windowId: bigint,
     appName: string,
-    title: string,
-    kind: ActionSurfaceKind,
-    modal: boolean
+    title: string
 }
 
 /**
@@ -268,9 +231,7 @@ const FfiConverterTypeActionWindowTarget = (() => {
                 pid: FfiConverterInt64.read(from),
                 windowId: FfiConverterUInt64.read(from),
                 appName: FfiConverterString.read(from),
-                title: FfiConverterString.read(from),
-                kind: FfiConverterTypeActionSurfaceKind.read(from),
-                modal: FfiConverterBool.read(from)
+                title: FfiConverterString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -278,16 +239,12 @@ const FfiConverterTypeActionWindowTarget = (() => {
             FfiConverterUInt64.write(value.windowId, into);
             FfiConverterString.write(value.appName, into);
             FfiConverterString.write(value.title, into);
-            FfiConverterTypeActionSurfaceKind.write(value.kind, into);
-            FfiConverterBool.write(value.modal, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterInt64.allocationSize(value.pid) +
              FfiConverterUInt64.allocationSize(value.windowId) +
              FfiConverterString.allocationSize(value.appName) +
-             FfiConverterString.allocationSize(value.title) +
-             FfiConverterTypeActionSurfaceKind.allocationSize(value.kind) +
-             FfiConverterBool.allocationSize(value.modal);
+             FfiConverterString.allocationSize(value.title);
 
         }
     };
@@ -4020,7 +3977,6 @@ export default Object.freeze({
     FfiConverterTypeActionEvidenceKind,
     FfiConverterTypeActionResult,
     FfiConverterTypeActionRoute,
-    FfiConverterTypeActionSurfaceKind,
     FfiConverterTypeActionTarget,
     FfiConverterTypeActionWindowChange,
     FfiConverterTypeActionWindowTarget,

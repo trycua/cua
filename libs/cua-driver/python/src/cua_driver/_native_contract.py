@@ -1078,101 +1078,22 @@ class _UniffiFfiConverterString:
             builder.write(value.encode("utf-8"))
             return builder.finalize()
 
-
-
-
-
-
-class ActionSurfaceKind(enum.Enum):
-
-    WINDOW = 0
-
-    DIALOG = 1
-
-    SHEET = 2
-
-    POPOVER = 3
-
-
-
-class _UniffiFfiConverterTypeActionSurfaceKind(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        variant = buf.read_i32()
-        if variant == 1:
-            return ActionSurfaceKind.WINDOW
-        if variant == 2:
-            return ActionSurfaceKind.DIALOG
-        if variant == 3:
-            return ActionSurfaceKind.SHEET
-        if variant == 4:
-            return ActionSurfaceKind.POPOVER
-        raise InternalError("Raw enum value doesn't match any cases")
-
-    @staticmethod
-    def check_lower(value):
-        if value == ActionSurfaceKind.WINDOW:
-            return
-        if value == ActionSurfaceKind.DIALOG:
-            return
-        if value == ActionSurfaceKind.SHEET:
-            return
-        if value == ActionSurfaceKind.POPOVER:
-            return
-        raise ValueError(value)
-
-    @staticmethod
-    def write(value, buf):
-        if value == ActionSurfaceKind.WINDOW:
-            buf.write_i32(1)
-        if value == ActionSurfaceKind.DIALOG:
-            buf.write_i32(2)
-        if value == ActionSurfaceKind.SHEET:
-            buf.write_i32(3)
-        if value == ActionSurfaceKind.POPOVER:
-            buf.write_i32(4)
-
-
-
-class _UniffiFfiConverterBoolean:
-    @classmethod
-    def check_lower(cls, value):
-        return not not value
-
-    @classmethod
-    def lower(cls, value):
-        return 1 if value else 0
-
-    @staticmethod
-    def lift(value):
-        return value != 0
-
-    @classmethod
-    def read(cls, buf):
-        return cls.lift(buf.read_u8())
-
-    @classmethod
-    def write(cls, value, buf):
-        buf.write_u8(value)
-
 @dataclass
 class ActionWindowTarget:
     """
     A target-owned native interaction root discovered after an action.
 """
-    def __init__(self, *, pid:int, window_id:int, app_name:str, title:str, kind:ActionSurfaceKind, modal:bool):
+    def __init__(self, *, pid:int, window_id:int, app_name:str, title:str):
         self.pid = pid
         self.window_id = window_id
         self.app_name = app_name
         self.title = title
-        self.kind = kind
-        self.modal = modal
 
 
 
 
     def __str__(self):
-        return "ActionWindowTarget(pid={}, window_id={}, app_name={}, title={}, kind={}, modal={})".format(self.pid, self.window_id, self.app_name, self.title, self.kind, self.modal)
+        return "ActionWindowTarget(pid={}, window_id={}, app_name={}, title={})".format(self.pid, self.window_id, self.app_name, self.title)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -1181,10 +1102,6 @@ class ActionWindowTarget:
         if self.app_name != other.app_name:
             return False
         if self.title != other.title:
-            return False
-        if self.kind != other.kind:
-            return False
-        if self.modal != other.modal:
             return False
         return True
 
@@ -1196,8 +1113,6 @@ class _UniffiFfiConverterTypeActionWindowTarget(_UniffiConverterRustBuffer):
             window_id=_UniffiFfiConverterUInt64.read(buf),
             app_name=_UniffiFfiConverterString.read(buf),
             title=_UniffiFfiConverterString.read(buf),
-            kind=_UniffiFfiConverterTypeActionSurfaceKind.read(buf),
-            modal=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -1206,8 +1121,6 @@ class _UniffiFfiConverterTypeActionWindowTarget(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.check_lower(value.window_id)
         _UniffiFfiConverterString.check_lower(value.app_name)
         _UniffiFfiConverterString.check_lower(value.title)
-        _UniffiFfiConverterTypeActionSurfaceKind.check_lower(value.kind)
-        _UniffiFfiConverterBoolean.check_lower(value.modal)
 
     @staticmethod
     def write(value, buf):
@@ -1215,8 +1128,6 @@ class _UniffiFfiConverterTypeActionWindowTarget(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.window_id, buf)
         _UniffiFfiConverterString.write(value.app_name, buf)
         _UniffiFfiConverterString.write(value.title, buf)
-        _UniffiFfiConverterTypeActionSurfaceKind.write(value.kind, buf)
-        _UniffiFfiConverterBoolean.write(value.modal, buf)
 
 class _UniffiFfiConverterOptionalTypeActionWindowTarget(_UniffiConverterRustBuffer):
     @classmethod
@@ -1578,6 +1489,27 @@ class _UniffiFfiConverterSequenceTypeActionWindowTarget(_UniffiConverterRustBuff
         return [
             _UniffiFfiConverterTypeActionWindowTarget.read(buf) for i in range(count)
         ]
+
+class _UniffiFfiConverterBoolean:
+    @classmethod
+    def check_lower(cls, value):
+        return not not value
+
+    @classmethod
+    def lower(cls, value):
+        return 1 if value else 0
+
+    @staticmethod
+    def lift(value):
+        return value != 0
+
+    @classmethod
+    def read(cls, buf):
+        return cls.lift(buf.read_u8())
+
+    @classmethod
+    def write(cls, value, buf):
+        buf.write_u8(value)
 
 @dataclass
 class ActionWindowChange:
@@ -5556,7 +5488,6 @@ __all__ = [
     "ActionDeliveryMode",
     "ActionEscalationTarget",
     "ActionEscalationReason",
-    "ActionSurfaceKind",
     "ActionEvidenceKind",
     "ActionEffect",
     "ActionRoute",

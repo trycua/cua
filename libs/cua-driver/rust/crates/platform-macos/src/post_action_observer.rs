@@ -11,8 +11,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_core::action_record::{
-    resolve_surface_delta, ActionSurfaceCandidate, ActionSurfaceDelta, ActionSurfaceKind,
-    ActionSurfaceTarget,
+    resolve_surface_delta, ActionSurfaceCandidate, ActionSurfaceDelta, ActionSurfaceTarget,
 };
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::tool::{ProtectedResourceOwnership, Tool, ToolDef};
@@ -224,15 +223,6 @@ unsafe fn insert_root(
         || role == "AXDialog"
         || subrole.to_ascii_lowercase().contains("dialog")
         || subrole.to_ascii_lowercase().contains("modal");
-    let kind = if role == "AXSheet" {
-        ActionSurfaceKind::Sheet
-    } else if role == "AXDialog" || subrole.to_ascii_lowercase().contains("dialog") {
-        ActionSurfaceKind::Dialog
-    } else if role == "AXPopover" || subrole.to_ascii_lowercase().contains("popover") {
-        ActionSurfaceKind::Popover
-    } else {
-        ActionSurfaceKind::Window
-    };
     let key = RootKey {
         window_id: own_window_id,
         parent_window_id,
@@ -246,7 +236,6 @@ unsafe fn insert_root(
                 window_id: u64::from(window_id),
                 app_name: owner_app_name,
                 title,
-                kind,
                 modal,
             }
         })
@@ -280,83 +269,8 @@ fn surface_owner(
 mod tests {
     use super::*;
 
-    fn root(window_id: u64, modal: bool, focused: bool) -> Root {
-        let target = ActionSurfaceTarget {
-            pid: 42,
-            window_id,
-            app_name: "Editor".into(),
-            title: "Dialog".into(),
-            kind: ActionSurfaceKind::Dialog,
-            modal,
-        };
-        Root {
-            target: Some(target),
-            focused,
-        }
-    }
-
     #[test]
-    fn exact_rebind_requires_one_validated_candidate() {
-        let modal = root(7, true, false);
-        let delta = resolve_surface_delta(
-            vec![ActionSurfaceCandidate {
-                target: modal.target.clone().expect("target"),
-                focused: modal.focused,
-            }],
-            false,
-        )
-        .expect("delta");
-        assert_eq!(
-            delta.rebind.as_ref().map(|target| target.window_id),
-            Some(7)
-        );
-
-        let focused = root(8, false, true);
-        let delta = resolve_surface_delta(
-            vec![modal, focused]
-                .into_iter()
-                .map(|root| ActionSurfaceCandidate {
-                    target: root.target.expect("target"),
-                    focused: root.focused,
-                })
-                .collect(),
-            false,
-        )
-        .expect("delta");
-        assert!(delta.rebind.is_none());
-    }
-
-    #[test]
-    fn verified_panel_service_owner_becomes_the_rebind_pid() {
-        let windows = vec![crate::windows::WindowInfo {
-            window_id: 7,
-            pid: 99,
-            app_name: "Open and Save Panel Service".into(),
-            title: "Open".into(),
-            bounds: crate::windows::WindowBounds {
-                x: 0.0,
-                y: 0.0,
-                width: 640.0,
-                height: 480.0,
-            },
-            layer: 0,
-            z_index: 1,
-            is_on_screen: true,
-            current_space_id: None,
-            on_current_space: None,
-            space_ids: None,
-        }];
-        assert_eq!(
-            surface_owner(&windows, 42, 7, "TextEdit"),
-            Some((99, "Open and Save Panel Service".into()))
-        );
-        assert_eq!(surface_owner(&[], 42, 7, "TextEdit"), None);
-    }
-
-    #[test]
-    fn unrelated_foreground_change_has_no_exact_target() {
-        let delta = resolve_surface_delta(Vec::new(), true).expect("delta");
-        assert!(delta.new_windows.is_empty());
-        assert!(delta.rebind.is_none());
+    fn unrelated_foreground_change_is_not_a_surface_delta() {
+        assert_eq!(resolve_surface_delta(Vec::new(), true), None);
     }
 }

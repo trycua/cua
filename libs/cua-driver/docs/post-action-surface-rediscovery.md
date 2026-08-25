@@ -1,123 +1,49 @@
 # Post-action surface rediscovery
 
-This document records the implementation boundary for issue
-[#2238](https://github.com/trycua/cua/issues/2238). The change
-keeps Cua Driver's typed action-result contract while replacing its global
-window-count heuristic with target-scoped root observation and shared candidate
-validation.
+Issue [#2238](https://github.com/trycua/cua/issues/2238) describes a stale-target failure: an action opens a sheet, dialog, popover, or Open/Save panel, but the caller remains bound to the blocked parent window. Cua Driver's old macOS detector compared all desktop windows and appended changes to diagnostic prose. It could neither prove causality nor return a stable rebind address.
 
-![post-action rediscovery architecture before and after this change](diagrams/post-action-surface-rediscovery/architecture-comparison.png)
+This implementation resolves the structured-rebind rung. It does not add the issue's later privacy-sensitive desktop-frame fallback or inert-resnapshot backstop.
 
-## Existing Cua Driver flow
+![Post-action rediscovery architecture before and after this change](diagrams/post-action-surface-rediscovery/architecture-comparison.png)
 
-Cua Driver already protects foreground focus and detects visible native windows,
-but the topology survives only in diagnostic text.
+## Sources
 
-## What pull request [#2746](https://github.com/trycua/cua/pull/2746) contributes
+The implementation retains Cua Driver's native action routes, focus-suppression leases, shared action record, closed result contract, and harness-owned escalation policy. From [#2746](https://github.com/trycua/cua/pull/2746), it retains typed `window_change` metadata, explicit `rebind` advice, and generated Rust, Python, TypeScript, and manifest bindings.
 
-Pull request [#2746](https://github.com/trycua/cua/pull/2746) adds a closed `window_change` record and explicit `rebind`
-escalation. Those are useful public semantics and remain in this implementation.
-Its detector, however, still treats every new desktop window as action-related,
-selects an exact target from list length alone, and promotes any topology change
-to confirmed action effect.
+The target-root observer adapts `injaneity/pi-computer-use` commit `022a280a377065c95736cc15f684bf1fad46479e`: snapshot the target accessibility domain before dispatch, run the actuator, poll the same domain for a bounded period, and use appeared roots plus modal or focused state to resolve the next interaction surface.
 
-This implementation preserves from
-[#2746](https://github.com/trycua/cua/pull/2746):
+Cua Driver adds WindowServer ownership verification at its macOS platform boundary. This keeps AppKit Open/Save panels hosted by a separate service process addressable without treating unrelated desktop changes as action results.
 
-- the portable `window_change` record;
-- explicit, non-activating `rebind` advice;
-- exact target metadata when one replacement surface is validated;
-- generated Rust, Python, TypeScript, and manifest parity; and
-- rebind-before-pixel, page, foreground, or desktop recovery guidance.
+## Flow
 
-It does not preserve the global-window causality inference, effect promotion, or
-branch-local JSON mutation.
+```text
+macOS action decorator
+  → target accessibility snapshot
+  → native actuator
+  → target accessibility diff
+  → WindowServer ownership proof
+  → shared candidate resolver
+  → typed action record
+  → closed action result
+```
 
-## What is adapted from pi-computer-use
+The observer reports facts; the shared resolver chooses policy; the action record accounts for actuator effect. A surface change cannot promote `effect` to `confirmed` because confirmation still requires value readback.
 
-The target-root observer adapts the architecture proven in
-`injaneity/pi-computer-use` commit
-`022a280a377065c95736cc15f684bf1fad46479e`:
+An exact rebind requires one owner-verified candidate that is modal or focused. Otherwise the result retains candidates without inventing a target, and the caller can correlate them with one fresh `list_windows` call. Rebinding itself never activates, raises, captures, or sends input to the new surface.
 
-- capture accessibility roots for the target process before and after an action;
-- treat the accessibility snapshot diff as authoritative;
-- use accessibility notifications, focus state, and cheap native-window polling
-  only to end the bounded wait early;
-- report appeared, closed, and focused roots with modality facts; and
-- refresh target resolution before selecting a visible modal surface.
+Windows and Linux currently omit topology instead of substituting an unscoped desktop heuristic.
 
-The design is adapted rather than copied verbatim. Cua Driver keeps its Rust
-platform boundary, focus-suppression leases, action execution record, closed
-contract vocabulary, and explicit harness-owned escalation policy.
+## Removed path
 
-## Combined architecture
-
-Detection answers what changed. Resolution answers which surface is safe to
-bind. Action accounting answers what the actuator proved. None substitutes for
-another.
-
-### Platform observer
-
-Each platform adapter owns native root discovery and never chooses rebind
-policy. macOS diffs target-process accessibility windows and their sheet,
-dialog, and popover children, then verifies each mapped CGWindow owner. This
-keeps AppKit's out-of-process Open/Save panel service addressable without
-scanning unrelated desktop changes. Windows and Linux currently omit topology instead
-of substituting an unscoped desktop heuristic; equivalent UIA or AT-SPI
-observers can later feed the same core resolver.
-
-A cross-application handoff becomes exact only when it appears in the target's
-AX roots and WindowServer independently verifies the mapped owner. Temporal
-proximity alone never creates a candidate.
-
-### Shared action coordinator
-
-One macOS action decorator starts observation immediately before dispatch and
-finishes it afterward. The core dispatch seam attaches its typed delta to the
-action execution record, including partial and failed delivery. Platform tools
-do not serialize topology to JSON or ask the legacy adapter to parse it back.
-
-### Shared resolver
-
-An exact rebind requires exactly one eligible candidate after validation. The
-candidate must be a target-owned blocking modal, a newly focused target-owned
-root, or a separately verified cross-application handoff. Otherwise the result
-retains candidates and asks the harness to correlate them with `list_windows`.
-
-Logical rebinding never activates, raises, captures, or sends input to the new
-surface. The caller refreshes window-scoped state and restarts with background
-delivery.
+The implementation removes the global `WindowChangeDetector`, per-tool diagnostic suffix mutations, the dead observation-skip hook, topology transport through legacy JSON, and `window_change` as duplicate effect evidence. One macOS action decorator now owns observation for every affected action tool.
 
 ## Contract invariants
 
-- `window_change` is independent from `effect`; topology cannot promote an
-  unverifiable, partial, suspected-noop, or refused action to confirmed.
-- an exact escalation target must also appear in the accompanying topology.
-- unrelated desktop windows cannot become target-owned candidates.
-- an empty or unchanged delta cannot produce rebind advice.
-- partial and failed delivery retain observed topology internally; successful
-  public action results expose it through the closed contract.
-- platform adapters report limitations explicitly instead of substituting a
-  global desktop heuristic.
+- `window_change` is independent from actuator effect.
+- an exact escalation target also appears in `window_change.new_windows`.
+- unrelated foreground or desktop changes do not create a surface delta.
+- ambiguous candidates never produce an exact target.
+- partial and failed delivery retain observed topology internally.
+- logical rebinding does not change foreground focus or z-order.
 
-## Recovery ladder
-
-Use an exact validated target when present. Otherwise correlate the candidates
-with `list_windows`; use one request-scoped, privacy-sensitive desktop frame
-only when structured correlation fails. After recovery, refresh window-scoped
-state and resume background semantic actions. The fallback must not silently
-widen persistent capture scope.
-
-## Validation plan
-
-Before the pull request is made ready:
-
-1. contract tests must reject inconsistent rebind targets and effect promotion;
-2. shared resolver tests must cover one modal, several candidates, unrelated
-   windows, cross-app handoff, partial delivery, and malformed producer data;
-3. macOS observer tests must cover AX-only sheets and delayed root appearance;
-4. the TextEdit Open-panel harness case must consume structured topology,
-   rebind without activation, and prove the user's foreground app is unchanged;
-5. Windows and Linux receive focused contract coverage plus either native
-   behavior evidence or an explicit limitation; and
-6. the complete canonical macOS harness runs once on the stable candidate SHA.
+The canonical TextEdit Open-panel case exercises the foreign panel-service owner, exact rebound addressability, unchanged foreground and z-order, stable cursor position, and input isolation. The complete macOS Lume matrix remains the readiness gate for the final candidate SHA.

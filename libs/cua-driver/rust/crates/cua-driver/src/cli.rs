@@ -652,7 +652,7 @@ pub fn parse_command() -> Command {
         );
         println!("                              macOS only today; Win/Linux print a notice.");
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
-        println!("                                          origin). Defaults to 320x200 in the top-right");
+        println!("                                          origin). Defaults to 640x420 in the top-right");
         println!("                                          corner of the main display.");
         std::process::exit(0);
     }

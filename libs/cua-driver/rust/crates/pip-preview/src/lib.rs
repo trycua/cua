@@ -14,6 +14,12 @@ use std::sync::OnceLock;
 
 use std::collections::HashMap;
 
+mod desktop_layout;
+
+pub use desktop_layout::{
+    layout_desktop, png_dimensions, DesktopLayout, LayoutRect, TargetLayout, TargetSize,
+};
+
 /// Canonical `~/.cua-driver/config.json` path matching what the per-platform
 /// `set_config` tools write to. Resolves `$HOME` first (Unix/macOS) and falls
 /// back to `%USERPROFILE%` (Windows, where `HOME` is usually unset). Returns
@@ -106,8 +112,8 @@ pub struct PipGeometry {
 impl Default for PipGeometry {
     fn default() -> Self {
         Self {
-            width: 320,
-            height: 200,
+            width: 640,
+            height: 420,
             x: None,
             y: None,
         }

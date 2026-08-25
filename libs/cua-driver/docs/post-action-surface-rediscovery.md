@@ -6,7 +6,7 @@ keeps Cua Driver's typed action-result contract while replacing its global
 window-count heuristic with target-scoped root observation and shared candidate
 validation.
 
-![architecture comparison](diagrams/post-action-surface-rediscovery/architecture-comparison.svg)
+![post-action rediscovery architecture before and after this change](diagrams/post-action-surface-rediscovery/architecture-comparison.png)
 
 ## Existing Cua Driver flow
 

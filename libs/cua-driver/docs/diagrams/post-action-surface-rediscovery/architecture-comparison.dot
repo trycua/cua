@@ -1,10 +1,10 @@
 digraph rediscovery {
-  graph [rankdir=TB, bgcolor="transparent", pad="0.2", nodesep="0.25", ranksep="0.35", compound=true];
+  graph [rankdir=TB, bgcolor="#ffffff", fontcolor="#1f2328", pad="0.2", nodesep="0.25", ranksep="0.35", compound=true];
   node [shape=box, style="rounded,filled", fillcolor="#f6f8fa", color="#57606a", fontcolor="#1f2328", fontname="Arial", fontsize=11, margin="0.12,0.08"];
   edge [color="#57606a", fontcolor="#1f2328", fontname="Arial", fontsize=9, arrowsize=0.65];
 
   subgraph cluster_current {
-    label="current Cua"; color="#8c959f"; style="dashed";
+    label="before this PR"; fontcolor="#1f2328"; color="#8c959f"; style="dashed";
     current_before [label="global window ids"];
     current_action [label="native action"];
     current_prose [label="diagnostic prose only"];
@@ -12,7 +12,7 @@ digraph rediscovery {
   }
 
   subgraph cluster_2746 {
-    label="#2746"; color="#8c959f"; style="dashed";
+    label="#2746"; fontcolor="#1f2328"; color="#8c959f"; style="dashed";
     pr_global [label="global window diff"];
     pr_json [label="legacy JSON adapter"];
     pr_effect [label="effect promotion and count-based rebind"];
@@ -20,7 +20,7 @@ digraph rediscovery {
   }
 
   subgraph cluster_picu {
-    label="pi-computer-use"; color="#8c959f"; style="dashed";
+    label="pi-computer-use"; fontcolor="#1f2328"; color="#8c959f"; style="dashed";
     pi_before [label="target AX roots"];
     pi_action [label="native action"];
     pi_after [label="authoritative root diff"];
@@ -29,7 +29,7 @@ digraph rediscovery {
   }
 
   subgraph cluster_combined {
-    label="combined design"; color="#8c959f"; style="dashed";
+    label="this PR"; fontcolor="#1f2328"; color="#8c959f"; style="dashed";
     best_observer [label="typed target-root observer"];
     best_action [label="typed actuator outcome"];
     best_record [label="shared action record"];

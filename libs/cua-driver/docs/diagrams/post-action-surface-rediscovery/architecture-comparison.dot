@@ -1,0 +1,43 @@
+digraph rediscovery {
+  graph [rankdir=TB, bgcolor="transparent", pad="0.2", nodesep="0.25", ranksep="0.35", compound=true];
+  node [shape=box, style="rounded,filled", fillcolor="#f6f8fa", color="#57606a", fontcolor="#1f2328", fontname="Arial", fontsize=11, margin="0.12,0.08"];
+  edge [color="#57606a", fontcolor="#1f2328", fontname="Arial", fontsize=9, arrowsize=0.65];
+
+  subgraph cluster_current {
+    label="current Cua"; color="#8c959f"; style="dashed";
+    current_before [label="global window ids"];
+    current_action [label="native action"];
+    current_prose [label="diagnostic prose only"];
+    current_before -> current_action -> current_prose;
+  }
+
+  subgraph cluster_2746 {
+    label="#2746"; color="#8c959f"; style="dashed";
+    pr_global [label="global window diff"];
+    pr_json [label="legacy JSON adapter"];
+    pr_effect [label="effect promotion and count-based rebind"];
+    pr_global -> pr_json -> pr_effect;
+  }
+
+  subgraph cluster_picu {
+    label="pi-computer-use"; color="#8c959f"; style="dashed";
+    pi_before [label="target AX roots"];
+    pi_action [label="native action"];
+    pi_after [label="authoritative root diff"];
+    pi_resolve [label="refresh modal ownership"];
+    pi_before -> pi_action -> pi_after -> pi_resolve;
+  }
+
+  subgraph cluster_combined {
+    label="combined design"; color="#8c959f"; style="dashed";
+    best_observer [label="typed target-root observer"];
+    best_action [label="typed actuator outcome"];
+    best_record [label="shared action record"];
+    best_resolver [label="shared candidate validation"];
+    best_public [label="closed result preserves effect"];
+    best_observer -> best_record;
+    best_action -> best_record;
+    best_observer -> best_resolver -> best_public;
+    best_record -> best_public;
+  }
+}

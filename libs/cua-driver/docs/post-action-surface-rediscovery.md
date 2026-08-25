@@ -5,12 +5,12 @@ keeps Cua Driver's typed action-result contract while replacing its global
 window-count heuristic with target-scoped root observation and shared candidate
 validation.
 
+![architecture comparison](diagrams/post-action-surface-rediscovery/architecture-comparison.svg)
+
 ## Existing Cua Driver flow
 
 Cua Driver already protects foreground focus and detects visible native windows,
 but the topology survives only in diagnostic text.
-
-![current cua architecture](diagrams/post-action-surface-rediscovery/current-cua.svg)
 
 ## What pull request #2746 contributes
 
@@ -19,8 +19,6 @@ escalation. Those are useful public semantics and remain part of this draft.
 Its detector, however, still treats every new desktop window as action-related,
 selects an exact target from list length alone, and promotes any topology change
 to confirmed action effect.
-
-![pr 2746 architecture](diagrams/post-action-surface-rediscovery/pr-2746.svg)
 
 This draft preserves from #2746:
 
@@ -50,15 +48,11 @@ The design is adapted rather than copied verbatim. Cua Driver keeps its Rust
 platform boundary, focus-suppression leases, action execution record, closed
 contract vocabulary, and explicit harness-owned escalation policy.
 
-![pi computer use architecture](diagrams/post-action-surface-rediscovery/pi-computer-use.svg)
-
 ## Combined architecture
 
 Detection answers what changed. Resolution answers which surface is safe to
 bind. Action accounting answers what the actuator proved. None substitutes for
 another.
-
-![combined architecture](diagrams/post-action-surface-rediscovery/combined.svg)
 
 ### Platform observer
 
@@ -105,10 +99,11 @@ delivery.
 
 ## Recovery ladder
 
-![recovery ladder architecture](diagrams/post-action-surface-rediscovery/recovery-ladder.svg)
-
-The request-scoped desktop frame remains a separate final perception rung. It
-must not silently widen persistent capture scope.
+Use an exact validated target when present. Otherwise correlate the candidates
+with `list_windows`; use one request-scoped, privacy-sensitive desktop frame
+only when structured correlation fails. After recovery, refresh window-scoped
+state and resume background semantic actions. The fallback must not silently
+widen persistent capture scope.
 
 ## Validation plan
 

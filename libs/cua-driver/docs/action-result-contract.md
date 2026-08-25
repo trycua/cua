@@ -32,9 +32,10 @@ Every successful action returns a closed `structuredContent` object:
 | `effect` | `confirmed`, `partial`, `unverifiable`, `suspected_noop`, `refused` |
 | `route` | `accessibility`, `synthetic_events`, `global_input`, `dom`, `trusted_input` |
 | `delivery.mode` | `background`, `foreground`, `not_applicable`, `unknown` |
-| `evidence[].kind` | `value_readback`, `window_change` |
-| `escalation.target` | `pixel`, `foreground`, `page`, `session` |
-| `escalation.reason` | `route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, `permission_required` |
+| `evidence[].kind` | `value_readback` |
+| `window_change.new_windows[]` | target-scoped, owner-verified `pid`, `window_id`, application, title, surface kind, and modality |
+| `escalation.target` | `pixel`, `foreground`, `page`, `session`, `rebind` |
+| `escalation.reason` | `route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, `permission_required`, `surface_changed` |
 
 The action-result tools are:
 
@@ -53,7 +54,7 @@ scope, targets, platform transport names, diagnostic pointers, or the old
 
 The invariants are:
 
-- `confirmed` has publishable readback or window-change evidence;
+- `confirmed` has publishable value readback; topology alone cannot confirm an action;
 - `partial` has `delivery.delivered_count`;
 - `refused` has neither delivery nor evidence.
 
@@ -74,8 +75,15 @@ resolution semantics; the guard does not replace or reinterpret them.
 
 An action that reached an actuator but lacks a trusted readback is
 `unverifiable`, not `confirmed`. Screenshot change, native API acceptance,
-event receipt, and operator observation may remain useful internal diagnostics,
-but they do not independently justify `confirmed`.
+event receipt, window topology, and operator observation may remain useful
+facts, but they do not independently justify `confirmed`.
+
+On macOS, one action decorator snapshots accessibility roots for the target PID
+before and after dispatch. It reports new windows, dialogs, sheets, and popovers
+without activating them. An exact `rebind` target is present only when one new
+owner-verified root is modal or focused; ambiguous changes require
+`list_windows`. Windows and Linux currently emit no topology record rather than
+substituting a global desktop heuristic.
 
 ## Verification remains separate
 
@@ -125,6 +133,7 @@ An optional escalation is advice, not an automatic retry:
 | `foreground` | explicitly select foreground delivery when session policy permits |
 | `page` | bind the native window to a supported browser page route |
 | `session` | prepare or explicitly widen the session only when policy permits |
+| `rebind` | refresh the validated window target without activation; use `list_windows` when no exact target is present |
 
 SDK integrators, OpenClaw, Hermes, and other agent hosts can implement different
 policies above this same narrow fact contract without duplicating platform

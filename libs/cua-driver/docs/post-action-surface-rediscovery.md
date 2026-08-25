@@ -1,6 +1,7 @@
 # Post-action surface rediscovery
 
-This document records the implementation boundary for issue #2238. The draft
+This document records the implementation boundary for issue
+[#2238](https://github.com/trycua/cua/issues/2238). The change
 keeps Cua Driver's typed action-result contract while replacing its global
 window-count heuristic with target-scoped root observation and shared candidate
 validation.
@@ -12,15 +13,16 @@ validation.
 Cua Driver already protects foreground focus and detects visible native windows,
 but the topology survives only in diagnostic text.
 
-## What pull request #2746 contributes
+## What pull request [#2746](https://github.com/trycua/cua/pull/2746) contributes
 
-Pull request #2746 adds a closed `window_change` record and explicit `rebind`
-escalation. Those are useful public semantics and remain part of this draft.
+Pull request [#2746](https://github.com/trycua/cua/pull/2746) adds a closed `window_change` record and explicit `rebind`
+escalation. Those are useful public semantics and remain in this implementation.
 Its detector, however, still treats every new desktop window as action-related,
 selects an exact target from list length alone, and promotes any topology change
 to confirmed action effect.
 
-This draft preserves from #2746:
+This implementation preserves from
+[#2746](https://github.com/trycua/cua/pull/2746):
 
 - the portable `window_change` record;
 - explicit, non-activating `rebind` advice;
@@ -33,7 +35,7 @@ branch-local JSON mutation.
 
 ## What is adapted from pi-computer-use
 
-The target-root observer follows the architecture proven in
+The target-root observer adapts the architecture proven in
 `injaneity/pi-computer-use` commit
 `022a280a377065c95736cc15f684bf1fad46479e`:
 
@@ -56,22 +58,24 @@ another.
 
 ### Platform observer
 
-Each platform adapter owns native root discovery. It returns typed facts and
-never chooses policy. macOS uses target-process accessibility roots as the final
-source of truth, with CGWindow and AX notifications as bounded early-wake
-signals. Windows uses the equivalent UIA and HWND ownership facts. Linux must
-return the same semantics where AT-SPI and the compositor expose them, or an
-explicit unsupported limitation.
+Each platform adapter owns native root discovery and never chooses rebind
+policy. macOS diffs target-process accessibility windows and their sheet,
+dialog, and popover children, then verifies each mapped CGWindow owner. This
+keeps AppKit's out-of-process Open/Save panel service addressable without
+scanning unrelated desktop changes. Windows and Linux currently omit topology instead
+of substituting an unscoped desktop heuristic; equivalent UIA or AT-SPI
+observers can later feed the same core resolver.
 
-Cross-application handoffs are reported separately from target-owned roots.
-They never become exact targets from temporal proximity alone.
+A cross-application handoff becomes exact only when it appears in the target's
+AX roots and WindowServer independently verifies the mapped owner. Temporal
+proximity alone never creates a candidate.
 
 ### Shared action coordinator
 
-The coordinator starts observation immediately before dispatch and finishes it
-immediately after dispatch. It attaches the typed delta directly to the action
-execution record, including partial and failed delivery. Platform tools must not
-serialize private topology to JSON and ask the legacy adapter to parse it back.
+One macOS action decorator starts observation immediately before dispatch and
+finishes it afterward. The core dispatch seam attaches its typed delta to the
+action execution record, including partial and failed delivery. Platform tools
+do not serialize topology to JSON or ask the legacy adapter to parse it back.
 
 ### Shared resolver
 
@@ -88,7 +92,6 @@ delivery.
 
 - `window_change` is independent from `effect`; topology cannot promote an
   unverifiable, partial, suspected-noop, or refused action to confirmed.
-- `window_change` evidence means only that topology was observed.
 - an exact escalation target must also appear in the accompanying topology.
 - unrelated desktop windows cannot become target-owned candidates.
 - an empty or unchanged delta cannot produce rebind advice.

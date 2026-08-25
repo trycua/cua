@@ -101,7 +101,8 @@ export enum ActionEscalationTarget {
     Pixel,
     Foreground,
     Page,
-    Session
+    Session,
+    Rebind
 }
 
 const FfiConverterTypeActionEscalationTarget = (() => {
@@ -114,6 +115,7 @@ const FfiConverterTypeActionEscalationTarget = (() => {
                 case 2: return ActionEscalationTarget.Foreground;
                 case 3: return ActionEscalationTarget.Page;
                 case 4: return ActionEscalationTarget.Session;
+                case 5: return ActionEscalationTarget.Rebind;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -123,6 +125,7 @@ const FfiConverterTypeActionEscalationTarget = (() => {
                 case ActionEscalationTarget.Foreground: return ordinalConverter.write(2, into);
                 case ActionEscalationTarget.Page: return ordinalConverter.write(3, into);
                 case ActionEscalationTarget.Session: return ordinalConverter.write(4, into);
+                case ActionEscalationTarget.Rebind: return ordinalConverter.write(5, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -137,7 +140,8 @@ export enum ActionEscalationReason {
     DeliveryFailed,
     EffectUnconfirmed,
     SuspectedNoop,
-    PermissionRequired
+    PermissionRequired,
+    SurfaceChanged
 }
 
 const FfiConverterTypeActionEscalationReason = (() => {
@@ -151,6 +155,7 @@ const FfiConverterTypeActionEscalationReason = (() => {
                 case 3: return ActionEscalationReason.EffectUnconfirmed;
                 case 4: return ActionEscalationReason.SuspectedNoop;
                 case 5: return ActionEscalationReason.PermissionRequired;
+                case 6: return ActionEscalationReason.SurfaceChanged;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -161,6 +166,7 @@ const FfiConverterTypeActionEscalationReason = (() => {
                 case ActionEscalationReason.EffectUnconfirmed: return ordinalConverter.write(3, into);
                 case ActionEscalationReason.SuspectedNoop: return ordinalConverter.write(4, into);
                 case ActionEscalationReason.PermissionRequired: return ordinalConverter.write(5, into);
+                case ActionEscalationReason.SurfaceChanged: return ordinalConverter.write(6, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -170,9 +176,128 @@ const FfiConverterTypeActionEscalationReason = (() => {
     return new FFIConverter();
 })();
 
+const stringConverter = (() => {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    return {
+        stringToBytes: (s: string) => encoder.encode(s),
+        bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
+        stringByteLength: (s: string) => encoder.encode(s).byteLength,
+        writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
+            const view = new Uint8Array(
+                buf.arrayBuffer,
+                offset,
+                buf.arrayBuffer.byteLength - offset,
+            );
+            return encoder.encodeInto(s, view).written;
+        },
+        readStringFromBuffer: (buf: any, offset: number, length: number): string =>
+            decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
+    };
+})();
+const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
+
+export enum ActionSurfaceKind {
+    Window,
+    Dialog,
+    Sheet,
+    Popover
+}
+
+const FfiConverterTypeActionSurfaceKind = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionSurfaceKind;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionSurfaceKind.Window;
+                case 2: return ActionSurfaceKind.Dialog;
+                case 3: return ActionSurfaceKind.Sheet;
+                case 4: return ActionSurfaceKind.Popover;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionSurfaceKind.Window: return ordinalConverter.write(1, into);
+                case ActionSurfaceKind.Dialog: return ordinalConverter.write(2, into);
+                case ActionSurfaceKind.Sheet: return ordinalConverter.write(3, into);
+                case ActionSurfaceKind.Popover: return ordinalConverter.write(4, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * A target-owned native interaction root discovered after an action.
+ */
+export type ActionWindowTarget = {
+    pid: bigint,
+    windowId: bigint,
+    appName: string,
+    title: string,
+    kind: ActionSurfaceKind,
+    modal: boolean
+}
+
+/**
+ * Generated factory for {@link ActionWindowTarget} record objects.
+ */
+export const ActionWindowTarget = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionWindowTarget, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionWindowTarget>,
+    });
+})();
+
+const FfiConverterTypeActionWindowTarget = (() => {
+    type TypeName = ActionWindowTarget;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pid: FfiConverterInt64.read(from),
+                windowId: FfiConverterUInt64.read(from),
+                appName: FfiConverterString.read(from),
+                title: FfiConverterString.read(from),
+                kind: FfiConverterTypeActionSurfaceKind.read(from),
+                modal: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterInt64.write(value.pid, into);
+            FfiConverterUInt64.write(value.windowId, into);
+            FfiConverterString.write(value.appName, into);
+            FfiConverterString.write(value.title, into);
+            FfiConverterTypeActionSurfaceKind.write(value.kind, into);
+            FfiConverterBool.write(value.modal, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterInt64.allocationSize(value.pid) +
+             FfiConverterUInt64.allocationSize(value.windowId) +
+             FfiConverterString.allocationSize(value.appName) +
+             FfiConverterString.allocationSize(value.title) +
+             FfiConverterTypeActionSurfaceKind.allocationSize(value.kind) +
+             FfiConverterBool.allocationSize(value.modal);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type ActionEscalation = {
     target: ActionEscalationTarget,
-    reason: ActionEscalationReason
+    reason: ActionEscalationReason,
+    window?: ActionWindowTarget
 }
 
 /**
@@ -197,16 +322,19 @@ const FfiConverterTypeActionEscalation = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 target: FfiConverterTypeActionEscalationTarget.read(from),
-                reason: FfiConverterTypeActionEscalationReason.read(from)
+                reason: FfiConverterTypeActionEscalationReason.read(from),
+                window: FfiConverterOptionalTypeActionWindowTarget.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterTypeActionEscalationTarget.write(value.target, into);
             FfiConverterTypeActionEscalationReason.write(value.reason, into);
+            FfiConverterOptionalTypeActionWindowTarget.write(value.window, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeActionEscalationTarget.allocationSize(value.target) +
-             FfiConverterTypeActionEscalationReason.allocationSize(value.reason);
+             FfiConverterTypeActionEscalationReason.allocationSize(value.reason) +
+             FfiConverterOptionalTypeActionWindowTarget.allocationSize(value.window);
 
         }
     };
@@ -214,8 +342,7 @@ const FfiConverterTypeActionEscalation = (() => {
 })();
 
 export enum ActionEvidenceKind {
-    ValueReadback,
-    WindowChange
+    ValueReadback
 }
 
 const FfiConverterTypeActionEvidenceKind = (() => {
@@ -225,14 +352,12 @@ const FfiConverterTypeActionEvidenceKind = (() => {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
                 case 1: return ActionEvidenceKind.ValueReadback;
-                case 2: return ActionEvidenceKind.WindowChange;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
         write(value: TypeName, into: RustBuffer): void {
             switch (value) {
                 case ActionEvidenceKind.ValueReadback: return ordinalConverter.write(1, into);
-                case ActionEvidenceKind.WindowChange: return ordinalConverter.write(2, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -360,11 +485,58 @@ const FfiConverterTypeActionRoute = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Read-only topology observed for the action's target process.
+ */
+export type ActionWindowChange = {
+    newWindows: Array<ActionWindowTarget>,
+    foregroundChanged: boolean
+}
+
+/**
+ * Generated factory for {@link ActionWindowChange} record objects.
+ */
+export const ActionWindowChange = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionWindowChange, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionWindowChange>,
+    });
+})();
+
+const FfiConverterTypeActionWindowChange = (() => {
+    type TypeName = ActionWindowChange;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                newWindows: FfiConverterSequenceTypeActionWindowTarget.read(from),
+                foregroundChanged: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterSequenceTypeActionWindowTarget.write(value.newWindows, into);
+            FfiConverterBool.write(value.foregroundChanged, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterSequenceTypeActionWindowTarget.allocationSize(value.newWindows) +
+             FfiConverterBool.allocationSize(value.foregroundChanged);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type ActionResult = {
     effect: ActionEffect,
     route: ActionRoute,
     delivery?: ActionDelivery,
     evidence?: Array<ActionEvidence>,
+    windowChange?: ActionWindowChange,
     escalation?: ActionEscalation
 }
 
@@ -393,6 +565,7 @@ const FfiConverterTypeActionResult = (() => {
                 route: FfiConverterTypeActionRoute.read(from),
                 delivery: FfiConverterOptionalTypeActionDelivery.read(from),
                 evidence: FfiConverterOptionalSequenceTypeActionEvidence.read(from),
+                windowChange: FfiConverterOptionalTypeActionWindowChange.read(from),
                 escalation: FfiConverterOptionalTypeActionEscalation.read(from)
             };
         }
@@ -401,6 +574,7 @@ const FfiConverterTypeActionResult = (() => {
             FfiConverterTypeActionRoute.write(value.route, into);
             FfiConverterOptionalTypeActionDelivery.write(value.delivery, into);
             FfiConverterOptionalSequenceTypeActionEvidence.write(value.evidence, into);
+            FfiConverterOptionalTypeActionWindowChange.write(value.windowChange, into);
             FfiConverterOptionalTypeActionEscalation.write(value.escalation, into);
         }
         allocationSize(value: TypeName): number {
@@ -408,6 +582,7 @@ const FfiConverterTypeActionResult = (() => {
              FfiConverterTypeActionRoute.allocationSize(value.route) +
              FfiConverterOptionalTypeActionDelivery.allocationSize(value.delivery) +
              FfiConverterOptionalSequenceTypeActionEvidence.allocationSize(value.evidence) +
+             FfiConverterOptionalTypeActionWindowChange.allocationSize(value.windowChange) +
              FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation);
 
         }
@@ -469,27 +644,6 @@ const FfiConverterTypeBoundsExpectation = (() => {
     };
     return new FFIConverter();
 })();
-
-const stringConverter = (() => {
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    return {
-        stringToBytes: (s: string) => encoder.encode(s),
-        bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
-        stringByteLength: (s: string) => encoder.encode(s).byteLength,
-        writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
-            const view = new Uint8Array(
-                buf.arrayBuffer,
-                offset,
-                buf.arrayBuffer.byteLength - offset,
-            );
-            return encoder.encodeInto(s, view).written;
-        },
-        readStringFromBuffer: (buf: any, offset: number, length: number): string =>
-            decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
-    };
-})();
-const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
 
 
 // Enum: ActionTarget
@@ -3747,6 +3901,9 @@ const FfiConverterTypePlatform = (() => {
 // FfiConverter for number | undefined
 const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
 
+// FfiConverter for ActionWindowTarget | undefined
+const FfiConverterOptionalTypeActionWindowTarget = new FfiConverterOptional(FfiConverterTypeActionWindowTarget);
+
 // FfiConverter for ActionDelivery | undefined
 const FfiConverterOptionalTypeActionDelivery = new FfiConverterOptional(FfiConverterTypeActionDelivery);
 
@@ -3755,6 +3912,12 @@ const FfiConverterSequenceTypeActionEvidence = new FfiConverterArray(FfiConverte
 
 // FfiConverter for Array<ActionEvidence> | undefined
 const FfiConverterOptionalSequenceTypeActionEvidence = new FfiConverterOptional(FfiConverterSequenceTypeActionEvidence);
+
+// FfiConverter for Array<ActionWindowTarget>
+const FfiConverterSequenceTypeActionWindowTarget = new FfiConverterArray(FfiConverterTypeActionWindowTarget);
+
+// FfiConverter for ActionWindowChange | undefined
+const FfiConverterOptionalTypeActionWindowChange = new FfiConverterOptional(FfiConverterTypeActionWindowChange);
 
 // FfiConverter for ActionEscalation | undefined
 const FfiConverterOptionalTypeActionEscalation = new FfiConverterOptional(FfiConverterTypeActionEscalation);
@@ -3857,7 +4020,10 @@ export default Object.freeze({
     FfiConverterTypeActionEvidenceKind,
     FfiConverterTypeActionResult,
     FfiConverterTypeActionRoute,
+    FfiConverterTypeActionSurfaceKind,
     FfiConverterTypeActionTarget,
+    FfiConverterTypeActionWindowChange,
+    FfiConverterTypeActionWindowTarget,
     FfiConverterTypeBoundsExpectation,
     FfiConverterTypeCaptureScope,
     FfiConverterTypeClickButton,

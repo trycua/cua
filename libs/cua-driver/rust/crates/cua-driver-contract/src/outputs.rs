@@ -441,7 +441,6 @@ pub struct ActionDelivery {
 #[serde(rename_all = "snake_case")]
 pub enum ActionEvidenceKind {
     ValueReadback,
-    WindowChange,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -452,11 +451,41 @@ pub struct ActionEvidence {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
+pub enum ActionSurfaceKind {
+    Window,
+    Dialog,
+    Sheet,
+    Popover,
+}
+
+/// A target-owned native interaction root discovered after an action.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionWindowTarget {
+    pub pid: i64,
+    pub window_id: u64,
+    pub app_name: String,
+    pub title: String,
+    pub kind: ActionSurfaceKind,
+    pub modal: bool,
+}
+
+/// Read-only topology observed for the action's target process.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionWindowChange {
+    pub new_windows: Vec<ActionWindowTarget>,
+    pub foreground_changed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
 pub enum ActionEscalationTarget {
     Pixel,
     Foreground,
     Page,
     Session,
+    Rebind,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
@@ -467,6 +496,7 @@ pub enum ActionEscalationReason {
     EffectUnconfirmed,
     SuspectedNoop,
     PermissionRequired,
+    SurfaceChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -474,6 +504,8 @@ pub enum ActionEscalationReason {
 pub struct ActionEscalation {
     pub target: ActionEscalationTarget,
     pub reason: ActionEscalationReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<ActionWindowTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -486,6 +518,8 @@ pub struct ActionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Vec<ActionEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_change: Option<ActionWindowChange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalation: Option<ActionEscalation>,
 }
 
@@ -495,6 +529,8 @@ pub enum ActionResultValidationError {
     PartialRequiresDeliveredCount,
     RefusedCannotHaveDelivery,
     RefusedCannotHaveEvidence,
+    RebindRequiresWindowChange,
+    RebindWindowMustBeCandidate,
 }
 
 impl std::fmt::Display for ActionResultValidationError {
@@ -504,6 +540,8 @@ impl std::fmt::Display for ActionResultValidationError {
             Self::PartialRequiresDeliveredCount => "partial effect requires delivered_count",
             Self::RefusedCannotHaveDelivery => "refused effect cannot include delivery",
             Self::RefusedCannotHaveEvidence => "refused effect cannot include evidence",
+            Self::RebindRequiresWindowChange => "rebind escalation requires a window change",
+            Self::RebindWindowMustBeCandidate => "rebind window must be an observed candidate",
         })
     }
 }
@@ -514,10 +552,11 @@ impl ActionResult {
     pub fn validate_invariants(&self) -> Result<(), ActionResultValidationError> {
         match self.effect {
             ActionEffect::Confirmed
-                if self
-                    .evidence
-                    .as_ref()
-                    .is_none_or(|evidence| evidence.is_empty()) =>
+                if self.evidence.as_ref().is_none_or(|evidence| {
+                    !evidence
+                        .iter()
+                        .any(|item| item.kind == ActionEvidenceKind::ValueReadback)
+                }) =>
             {
                 Err(ActionResultValidationError::ConfirmedRequiresEvidence)
             }
@@ -535,6 +574,29 @@ impl ActionResult {
             }
             ActionEffect::Refused if self.evidence.is_some() => {
                 Err(ActionResultValidationError::RefusedCannotHaveEvidence)
+            }
+            _ if self
+                .escalation
+                .as_ref()
+                .is_some_and(|escalation| escalation.target == ActionEscalationTarget::Rebind)
+                && self.window_change.is_none() =>
+            {
+                Err(ActionResultValidationError::RebindRequiresWindowChange)
+            }
+            _ if self
+                .escalation
+                .as_ref()
+                .and_then(|escalation| escalation.window.as_ref())
+                .is_some_and(|window| {
+                    self.window_change.as_ref().is_none_or(|change| {
+                        !change
+                            .new_windows
+                            .iter()
+                            .any(|candidate| candidate == window)
+                    })
+                }) =>
+            {
+                Err(ActionResultValidationError::RebindWindowMustBeCandidate)
             }
             _ => Ok(()),
         }
@@ -625,6 +687,7 @@ mod tests {
             evidence: Some(vec![ActionEvidence {
                 kind: ActionEvidenceKind::ValueReadback,
             }]),
+            window_change: None,
             escalation: None,
         }
     }
@@ -638,7 +701,14 @@ mod tests {
         let properties = schema["properties"].as_object().expect("properties");
         assert_eq!(
             properties.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "escalation", "evidence", "route"]
+            [
+                "delivery",
+                "effect",
+                "escalation",
+                "evidence",
+                "route",
+                "window_change"
+            ]
         );
         assert_eq!(
             properties["effect"]["enum"],
@@ -686,7 +756,7 @@ mod tests {
         assert_eq!(evidence["required"], json!(["kind"]));
         assert_eq!(
             evidence["properties"]["kind"]["enum"],
-            json!(["value_readback", "window_change"])
+            json!(["value_readback"])
         );
 
         let escalation = object_variant(&properties["escalation"]);
@@ -694,7 +764,7 @@ mod tests {
         assert_eq!(escalation["required"], json!(["target", "reason"]));
         assert_eq!(
             escalation["properties"]["target"]["enum"],
-            json!(["pixel", "foreground", "page", "session"])
+            json!(["pixel", "foreground", "page", "session", "rebind"])
         );
         assert_eq!(
             escalation["properties"]["reason"]["enum"],
@@ -703,8 +773,27 @@ mod tests {
                 "delivery_failed",
                 "effect_unconfirmed",
                 "suspected_noop",
-                "permission_required"
+                "permission_required",
+                "surface_changed"
             ])
+        );
+        assert!(escalation["properties"].get("window").is_some());
+
+        let window_change = object_variant(&properties["window_change"]);
+        assert_eq!(window_change["additionalProperties"], false);
+        assert_eq!(
+            window_change["required"],
+            json!(["new_windows", "foreground_changed"])
+        );
+        let target = &window_change["properties"]["new_windows"]["items"];
+        assert_eq!(target["additionalProperties"], false);
+        assert_eq!(
+            target["required"],
+            json!(["pid", "window_id", "app_name", "title", "kind", "modal"])
+        );
+        assert_eq!(
+            target["properties"]["kind"]["enum"],
+            json!(["window", "dialog", "sheet", "popover"])
         );
     }
 
@@ -800,7 +889,7 @@ mod tests {
         );
         result.delivery = None;
         result.evidence = Some(vec![ActionEvidence {
-            kind: ActionEvidenceKind::WindowChange,
+            kind: ActionEvidenceKind::ValueReadback,
         }]);
         assert_eq!(
             result.validate_invariants(),
@@ -808,5 +897,41 @@ mod tests {
         );
         result.evidence = None;
         assert_eq!(result.validate_invariants(), Ok(()));
+    }
+
+    #[test]
+    fn topology_cannot_confirm_effect_or_invent_an_exact_rebind() {
+        let target = ActionWindowTarget {
+            pid: 42,
+            window_id: 7,
+            app_name: "Editor".into(),
+            title: "Open".into(),
+            kind: ActionSurfaceKind::Sheet,
+            modal: true,
+        };
+        let mut result = confirmed_result();
+        result.evidence = None;
+        result.window_change = Some(ActionWindowChange {
+            new_windows: vec![target.clone()],
+            foreground_changed: false,
+        });
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::ConfirmedRequiresEvidence)
+        );
+
+        result.effect = ActionEffect::Unverifiable;
+        result.escalation = Some(ActionEscalation {
+            target: ActionEscalationTarget::Rebind,
+            reason: ActionEscalationReason::SurfaceChanged,
+            window: Some(ActionWindowTarget {
+                window_id: 8,
+                ..target
+            }),
+        });
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::RebindWindowMustBeCandidate)
+        );
     }
 }

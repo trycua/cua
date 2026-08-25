@@ -899,6 +899,8 @@ class ActionEscalationTarget(enum.Enum):
 
     SESSION = 3
 
+    REBIND = 4
+
 
 
 class _UniffiFfiConverterTypeActionEscalationTarget(_UniffiConverterRustBuffer):
@@ -913,6 +915,8 @@ class _UniffiFfiConverterTypeActionEscalationTarget(_UniffiConverterRustBuffer):
             return ActionEscalationTarget.PAGE
         if variant == 4:
             return ActionEscalationTarget.SESSION
+        if variant == 5:
+            return ActionEscalationTarget.REBIND
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
@@ -924,6 +928,8 @@ class _UniffiFfiConverterTypeActionEscalationTarget(_UniffiConverterRustBuffer):
         if value == ActionEscalationTarget.PAGE:
             return
         if value == ActionEscalationTarget.SESSION:
+            return
+        if value == ActionEscalationTarget.REBIND:
             return
         raise ValueError(value)
 
@@ -937,6 +943,8 @@ class _UniffiFfiConverterTypeActionEscalationTarget(_UniffiConverterRustBuffer):
             buf.write_i32(3)
         if value == ActionEscalationTarget.SESSION:
             buf.write_i32(4)
+        if value == ActionEscalationTarget.REBIND:
+            buf.write_i32(5)
 
 
 
@@ -957,6 +965,8 @@ class ActionEscalationReason(enum.Enum):
 
     PERMISSION_REQUIRED = 4
 
+    SURFACE_CHANGED = 5
+
 
 
 class _UniffiFfiConverterTypeActionEscalationReason(_UniffiConverterRustBuffer):
@@ -973,6 +983,8 @@ class _UniffiFfiConverterTypeActionEscalationReason(_UniffiConverterRustBuffer):
             return ActionEscalationReason.SUSPECTED_NOOP
         if variant == 5:
             return ActionEscalationReason.PERMISSION_REQUIRED
+        if variant == 6:
+            return ActionEscalationReason.SURFACE_CHANGED
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
@@ -986,6 +998,8 @@ class _UniffiFfiConverterTypeActionEscalationReason(_UniffiConverterRustBuffer):
         if value == ActionEscalationReason.SUSPECTED_NOOP:
             return
         if value == ActionEscalationReason.PERMISSION_REQUIRED:
+            return
+        if value == ActionEscalationReason.SURFACE_CHANGED:
             return
         raise ValueError(value)
 
@@ -1001,24 +1015,252 @@ class _UniffiFfiConverterTypeActionEscalationReason(_UniffiConverterRustBuffer):
             buf.write_i32(4)
         if value == ActionEscalationReason.PERMISSION_REQUIRED:
             buf.write_i32(5)
+        if value == ActionEscalationReason.SURFACE_CHANGED:
+            buf.write_i32(6)
 
 
+
+class _UniffiFfiConverterInt64(_UniffiConverterPrimitiveInt):
+    CLASS_NAME = "i64"
+    VALUE_MIN = -2**63
+    VALUE_MAX = 2**63
+
+    @staticmethod
+    def read(buf):
+        return buf.read_i64()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_i64(value)
+
+class _UniffiFfiConverterUInt64(_UniffiConverterPrimitiveInt):
+    CLASS_NAME = "u64"
+    VALUE_MIN = 0
+    VALUE_MAX = 2**64
+
+    @staticmethod
+    def read(buf):
+        return buf.read_u64()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_u64(value)
+
+class _UniffiFfiConverterString:
+    @staticmethod
+    def check_lower(value):
+        if not isinstance(value, str):
+            raise TypeError("argument must be str, not {}".format(type(value).__name__))
+        return value
+
+    @staticmethod
+    def read(buf):
+        size = buf.read_i32()
+        if size < 0:
+            raise InternalError("Unexpected negative string length")
+        utf8_bytes = buf.read(size)
+        return utf8_bytes.decode("utf-8")
+
+    @staticmethod
+    def write(value, buf):
+        utf8_bytes = value.encode("utf-8")
+        buf.write_i32(len(utf8_bytes))
+        buf.write(utf8_bytes)
+
+    @staticmethod
+    def lift(buf):
+        with buf.consume_with_stream() as stream:
+            return stream.read(stream.remaining()).decode("utf-8")
+
+    @staticmethod
+    def lower(value):
+        with _UniffiRustBuffer.alloc_with_builder() as builder:
+            builder.write(value.encode("utf-8"))
+            return builder.finalize()
+
+
+
+
+
+
+class ActionSurfaceKind(enum.Enum):
+
+    WINDOW = 0
+
+    DIALOG = 1
+
+    SHEET = 2
+
+    POPOVER = 3
+
+
+
+class _UniffiFfiConverterTypeActionSurfaceKind(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ActionSurfaceKind.WINDOW
+        if variant == 2:
+            return ActionSurfaceKind.DIALOG
+        if variant == 3:
+            return ActionSurfaceKind.SHEET
+        if variant == 4:
+            return ActionSurfaceKind.POPOVER
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == ActionSurfaceKind.WINDOW:
+            return
+        if value == ActionSurfaceKind.DIALOG:
+            return
+        if value == ActionSurfaceKind.SHEET:
+            return
+        if value == ActionSurfaceKind.POPOVER:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == ActionSurfaceKind.WINDOW:
+            buf.write_i32(1)
+        if value == ActionSurfaceKind.DIALOG:
+            buf.write_i32(2)
+        if value == ActionSurfaceKind.SHEET:
+            buf.write_i32(3)
+        if value == ActionSurfaceKind.POPOVER:
+            buf.write_i32(4)
+
+
+
+class _UniffiFfiConverterBoolean:
+    @classmethod
+    def check_lower(cls, value):
+        return not not value
+
+    @classmethod
+    def lower(cls, value):
+        return 1 if value else 0
+
+    @staticmethod
+    def lift(value):
+        return value != 0
+
+    @classmethod
+    def read(cls, buf):
+        return cls.lift(buf.read_u8())
+
+    @classmethod
+    def write(cls, value, buf):
+        buf.write_u8(value)
 
 @dataclass
-class ActionEscalation:
-    def __init__(self, *, target:ActionEscalationTarget, reason:ActionEscalationReason):
-        self.target = target
-        self.reason = reason
+class ActionWindowTarget:
+    """
+    A target-owned native interaction root discovered after an action.
+"""
+    def __init__(self, *, pid:int, window_id:int, app_name:str, title:str, kind:ActionSurfaceKind, modal:bool):
+        self.pid = pid
+        self.window_id = window_id
+        self.app_name = app_name
+        self.title = title
+        self.kind = kind
+        self.modal = modal
 
 
 
 
     def __str__(self):
-        return "ActionEscalation(target={}, reason={})".format(self.target, self.reason)
+        return "ActionWindowTarget(pid={}, window_id={}, app_name={}, title={}, kind={}, modal={})".format(self.pid, self.window_id, self.app_name, self.title, self.kind, self.modal)
+    def __eq__(self, other):
+        if self.pid != other.pid:
+            return False
+        if self.window_id != other.window_id:
+            return False
+        if self.app_name != other.app_name:
+            return False
+        if self.title != other.title:
+            return False
+        if self.kind != other.kind:
+            return False
+        if self.modal != other.modal:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeActionWindowTarget(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ActionWindowTarget(
+            pid=_UniffiFfiConverterInt64.read(buf),
+            window_id=_UniffiFfiConverterUInt64.read(buf),
+            app_name=_UniffiFfiConverterString.read(buf),
+            title=_UniffiFfiConverterString.read(buf),
+            kind=_UniffiFfiConverterTypeActionSurfaceKind.read(buf),
+            modal=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterInt64.check_lower(value.pid)
+        _UniffiFfiConverterUInt64.check_lower(value.window_id)
+        _UniffiFfiConverterString.check_lower(value.app_name)
+        _UniffiFfiConverterString.check_lower(value.title)
+        _UniffiFfiConverterTypeActionSurfaceKind.check_lower(value.kind)
+        _UniffiFfiConverterBoolean.check_lower(value.modal)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterInt64.write(value.pid, buf)
+        _UniffiFfiConverterUInt64.write(value.window_id, buf)
+        _UniffiFfiConverterString.write(value.app_name, buf)
+        _UniffiFfiConverterString.write(value.title, buf)
+        _UniffiFfiConverterTypeActionSurfaceKind.write(value.kind, buf)
+        _UniffiFfiConverterBoolean.write(value.modal, buf)
+
+class _UniffiFfiConverterOptionalTypeActionWindowTarget(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeActionWindowTarget.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeActionWindowTarget.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeActionWindowTarget.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class ActionEscalation:
+    def __init__(self, *, target:ActionEscalationTarget, reason:ActionEscalationReason, window:typing.Optional[ActionWindowTarget]):
+        self.target = target
+        self.reason = reason
+        self.window = window
+
+
+
+
+    def __str__(self):
+        return "ActionEscalation(target={}, reason={}, window={})".format(self.target, self.reason, self.window)
     def __eq__(self, other):
         if self.target != other.target:
             return False
         if self.reason != other.reason:
+            return False
+        if self.window != other.window:
             return False
         return True
 
@@ -1028,17 +1270,20 @@ class _UniffiFfiConverterTypeActionEscalation(_UniffiConverterRustBuffer):
         return ActionEscalation(
             target=_UniffiFfiConverterTypeActionEscalationTarget.read(buf),
             reason=_UniffiFfiConverterTypeActionEscalationReason.read(buf),
+            window=_UniffiFfiConverterOptionalTypeActionWindowTarget.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterTypeActionEscalationTarget.check_lower(value.target)
         _UniffiFfiConverterTypeActionEscalationReason.check_lower(value.reason)
+        _UniffiFfiConverterOptionalTypeActionWindowTarget.check_lower(value.window)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterTypeActionEscalationTarget.write(value.target, buf)
         _UniffiFfiConverterTypeActionEscalationReason.write(value.reason, buf)
+        _UniffiFfiConverterOptionalTypeActionWindowTarget.write(value.window, buf)
 
 
 
@@ -1049,8 +1294,6 @@ class ActionEvidenceKind(enum.Enum):
 
     VALUE_READBACK = 0
 
-    WINDOW_CHANGE = 1
-
 
 
 class _UniffiFfiConverterTypeActionEvidenceKind(_UniffiConverterRustBuffer):
@@ -1059,15 +1302,11 @@ class _UniffiFfiConverterTypeActionEvidenceKind(_UniffiConverterRustBuffer):
         variant = buf.read_i32()
         if variant == 1:
             return ActionEvidenceKind.VALUE_READBACK
-        if variant == 2:
-            return ActionEvidenceKind.WINDOW_CHANGE
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
     def check_lower(value):
         if value == ActionEvidenceKind.VALUE_READBACK:
-            return
-        if value == ActionEvidenceKind.WINDOW_CHANGE:
             return
         raise ValueError(value)
 
@@ -1075,8 +1314,6 @@ class _UniffiFfiConverterTypeActionEvidenceKind(_UniffiConverterRustBuffer):
     def write(value, buf):
         if value == ActionEvidenceKind.VALUE_READBACK:
             buf.write_i32(1)
-        if value == ActionEvidenceKind.WINDOW_CHANGE:
-            buf.write_i32(2)
 
 
 
@@ -1319,6 +1556,93 @@ class _UniffiFfiConverterOptionalSequenceTypeActionEvidence(_UniffiConverterRust
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterSequenceTypeActionWindowTarget(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeActionWindowTarget.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeActionWindowTarget.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeActionWindowTarget.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class ActionWindowChange:
+    """
+    Read-only topology observed for the action's target process.
+"""
+    def __init__(self, *, new_windows:typing.List[ActionWindowTarget], foreground_changed:bool):
+        self.new_windows = new_windows
+        self.foreground_changed = foreground_changed
+
+
+
+
+    def __str__(self):
+        return "ActionWindowChange(new_windows={}, foreground_changed={})".format(self.new_windows, self.foreground_changed)
+    def __eq__(self, other):
+        if self.new_windows != other.new_windows:
+            return False
+        if self.foreground_changed != other.foreground_changed:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeActionWindowChange(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ActionWindowChange(
+            new_windows=_UniffiFfiConverterSequenceTypeActionWindowTarget.read(buf),
+            foreground_changed=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterSequenceTypeActionWindowTarget.check_lower(value.new_windows)
+        _UniffiFfiConverterBoolean.check_lower(value.foreground_changed)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterSequenceTypeActionWindowTarget.write(value.new_windows, buf)
+        _UniffiFfiConverterBoolean.write(value.foreground_changed, buf)
+
+class _UniffiFfiConverterOptionalTypeActionWindowChange(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeActionWindowChange.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeActionWindowChange.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeActionWindowChange.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 class _UniffiFfiConverterOptionalTypeActionEscalation(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -1346,18 +1670,19 @@ class _UniffiFfiConverterOptionalTypeActionEscalation(_UniffiConverterRustBuffer
 
 @dataclass
 class ActionResult:
-    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation]):
+    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], window_change:typing.Optional[ActionWindowChange], escalation:typing.Optional[ActionEscalation]):
         self.effect = effect
         self.route = route
         self.delivery = delivery
         self.evidence = evidence
+        self.window_change = window_change
         self.escalation = escalation
 
 
 
 
     def __str__(self):
-        return "ActionResult(effect={}, route={}, delivery={}, evidence={}, escalation={})".format(self.effect, self.route, self.delivery, self.evidence, self.escalation)
+        return "ActionResult(effect={}, route={}, delivery={}, evidence={}, window_change={}, escalation={})".format(self.effect, self.route, self.delivery, self.evidence, self.window_change, self.escalation)
     def __eq__(self, other):
         if self.effect != other.effect:
             return False
@@ -1366,6 +1691,8 @@ class ActionResult:
         if self.delivery != other.delivery:
             return False
         if self.evidence != other.evidence:
+            return False
+        if self.window_change != other.window_change:
             return False
         if self.escalation != other.escalation:
             return False
@@ -1379,6 +1706,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
             route=_UniffiFfiConverterTypeActionRoute.read(buf),
             delivery=_UniffiFfiConverterOptionalTypeActionDelivery.read(buf),
             evidence=_UniffiFfiConverterOptionalSequenceTypeActionEvidence.read(buf),
+            window_change=_UniffiFfiConverterOptionalTypeActionWindowChange.read(buf),
             escalation=_UniffiFfiConverterOptionalTypeActionEscalation.read(buf),
         )
 
@@ -1388,6 +1716,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeActionRoute.check_lower(value.route)
         _UniffiFfiConverterOptionalTypeActionDelivery.check_lower(value.delivery)
         _UniffiFfiConverterOptionalSequenceTypeActionEvidence.check_lower(value.evidence)
+        _UniffiFfiConverterOptionalTypeActionWindowChange.check_lower(value.window_change)
         _UniffiFfiConverterOptionalTypeActionEscalation.check_lower(value.escalation)
 
     @staticmethod
@@ -1396,6 +1725,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeActionRoute.write(value.route, buf)
         _UniffiFfiConverterOptionalTypeActionDelivery.write(value.delivery, buf)
         _UniffiFfiConverterOptionalSequenceTypeActionEvidence.write(value.evidence, buf)
+        _UniffiFfiConverterOptionalTypeActionWindowChange.write(value.window_change, buf)
         _UniffiFfiConverterOptionalTypeActionEscalation.write(value.escalation, buf)
 
 class _UniffiFfiConverterFloat64(_UniffiConverterPrimitiveFloat):
@@ -1485,51 +1815,6 @@ class _UniffiFfiConverterTypeBoundsExpectation(_UniffiConverterRustBuffer):
         _UniffiFfiConverterFloat64.write(value.width, buf)
         _UniffiFfiConverterFloat64.write(value.height, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.tolerance_px, buf)
-
-class _UniffiFfiConverterUInt64(_UniffiConverterPrimitiveInt):
-    CLASS_NAME = "u64"
-    VALUE_MIN = 0
-    VALUE_MAX = 2**64
-
-    @staticmethod
-    def read(buf):
-        return buf.read_u64()
-
-    @staticmethod
-    def write(value, buf):
-        buf.write_u64(value)
-
-class _UniffiFfiConverterString:
-    @staticmethod
-    def check_lower(value):
-        if not isinstance(value, str):
-            raise TypeError("argument must be str, not {}".format(type(value).__name__))
-        return value
-
-    @staticmethod
-    def read(buf):
-        size = buf.read_i32()
-        if size < 0:
-            raise InternalError("Unexpected negative string length")
-        utf8_bytes = buf.read(size)
-        return utf8_bytes.decode("utf-8")
-
-    @staticmethod
-    def write(value, buf):
-        utf8_bytes = value.encode("utf-8")
-        buf.write_i32(len(utf8_bytes))
-        buf.write(utf8_bytes)
-
-    @staticmethod
-    def lift(buf):
-        with buf.consume_with_stream() as stream:
-            return stream.read(stream.remaining()).decode("utf-8")
-
-    @staticmethod
-    def lower(value):
-        with _UniffiRustBuffer.alloc_with_builder() as builder:
-            builder.write(value.encode("utf-8"))
-            return builder.finalize()
 
 
 
@@ -1907,27 +2192,6 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalTypeClickButton.write(value.button, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.count, buf)
-
-class _UniffiFfiConverterBoolean:
-    @classmethod
-    def check_lower(cls, value):
-        return not not value
-
-    @classmethod
-    def lower(cls, value):
-        return 1 if value else 0
-
-    @staticmethod
-    def lift(value):
-        return value != 0
-
-    @classmethod
-    def read(cls, buf):
-        return cls.lift(buf.read_u8())
-
-    @classmethod
-    def write(cls, value, buf):
-        buf.write_u8(value)
 
 @dataclass
 class ClipboardReadInput:
@@ -5060,19 +5324,6 @@ class _UniffiFfiConverterTypeTypeTextInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeDesktopScope.write(value.scope, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
 
-class _UniffiFfiConverterInt64(_UniffiConverterPrimitiveInt):
-    CLASS_NAME = "i64"
-    VALUE_MIN = -2**63
-    VALUE_MAX = 2**63
-
-    @staticmethod
-    def read(buf):
-        return buf.read_i64()
-
-    @staticmethod
-    def write(value, buf):
-        buf.write_i64(value)
-
 class _UniffiFfiConverterSequenceTypeStatePredicate(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -5305,6 +5556,7 @@ __all__ = [
     "ActionDeliveryMode",
     "ActionEscalationTarget",
     "ActionEscalationReason",
+    "ActionSurfaceKind",
     "ActionEvidenceKind",
     "ActionEffect",
     "ActionRoute",
@@ -5325,8 +5577,10 @@ __all__ = [
     "EffectiveScope",
     "Platform",
     "ActionDelivery",
+    "ActionWindowTarget",
     "ActionEscalation",
     "ActionEvidence",
+    "ActionWindowChange",
     "ActionResult",
     "BoundsExpectation",
     "ClickInput",

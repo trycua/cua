@@ -294,6 +294,9 @@ pub struct ToolResult {
     /// the MCP result envelope or its legacy structured payload.
     #[serde(skip)]
     pub action_record: Option<crate::action_record::ActionExecutionRecord>,
+    /// Typed platform observation consumed by the shared dispatch seam.
+    #[serde(skip)]
+    pub surface_delta: Option<crate::action_record::ActionSurfaceDelta>,
 }
 
 impl ToolResult {

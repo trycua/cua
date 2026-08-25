@@ -172,7 +172,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -181,9 +182,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -201,8 +244,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -227,6 +269,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -575,7 +674,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -584,9 +684,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -604,8 +746,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -630,6 +771,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1565,7 +1763,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -1574,9 +1773,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -1594,8 +1835,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -1620,6 +1860,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1736,7 +2033,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -1745,9 +2043,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -1765,8 +2105,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -1791,6 +2130,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2088,7 +2484,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -2097,9 +2494,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -2117,8 +2556,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -2143,6 +2581,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2305,7 +2800,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -2314,9 +2810,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -2334,8 +2872,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -2360,6 +2897,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2542,7 +3136,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -2551,9 +3146,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -2571,8 +3208,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -2597,6 +3233,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3026,7 +3719,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -3035,9 +3729,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -3055,8 +3791,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -3081,6 +3816,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3375,7 +4167,8 @@
                   "delivery_failed",
                   "effect_unconfirmed",
                   "suspected_noop",
-                  "permission_required"
+                  "permission_required",
+                  "surface_changed"
                 ],
                 "type": "string"
               },
@@ -3384,9 +4177,51 @@
                   "pixel",
                   "foreground",
                   "page",
-                  "session"
+                  "session",
+                  "rebind"
                 ],
                 "type": "string"
+              },
+              "window": {
+                "additionalProperties": false,
+                "properties": {
+                  "app_name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "window",
+                      "dialog",
+                      "sheet",
+                      "popover"
+                    ],
+                    "type": "string"
+                  },
+                  "modal": {
+                    "type": "boolean"
+                  },
+                  "pid": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id",
+                  "app_name",
+                  "title",
+                  "kind",
+                  "modal"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -3404,8 +4239,7 @@
               "properties": {
                 "kind": {
                   "enum": [
-                    "value_readback",
-                    "window_change"
+                    "value_readback"
                   ],
                   "type": "string"
                 }
@@ -3430,6 +4264,63 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "window_change": {
+            "additionalProperties": false,
+            "properties": {
+              "foreground_changed": {
+                "type": "boolean"
+              },
+              "new_windows": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "app_name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "window",
+                        "dialog",
+                        "sheet",
+                        "popover"
+                      ],
+                      "type": "string"
+                    },
+                    "modal": {
+                      "type": "boolean"
+                    },
+                    "pid": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "window_id": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "window_id",
+                    "app_name",
+                    "title",
+                    "kind",
+                    "modal"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "new_windows",
+              "foreground_changed"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [

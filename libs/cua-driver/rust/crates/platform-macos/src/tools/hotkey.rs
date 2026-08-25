@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::focus_guard;
-use crate::window_change_detector::WindowChangeDetector;
 
 use super::ToolState;
 
@@ -391,14 +390,7 @@ impl Tool for HotkeyTool {
             }
         };
 
-        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-        // Hotkeys like Cmd+N, Cmd+W, Cmd+T explicitly open/close
-        // windows. The NSMenu path also briefly activates the target via
-        // SLPSSetFrontProcessWithOptions which can race the wildcard
-        // suppressor — wrapping ensures both side-effects are observed
-        // and the prior frontmost is restored if the activation lingers.
         let prior_front = apps::frontmost_pid();
-        let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -479,8 +471,6 @@ impl Tool for HotkeyTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
-
         match result {
             Ok(Ok(())) => {
                 let label = if fg {
@@ -505,11 +495,8 @@ impl Tool for HotkeyTool {
                                    pixel-click to focus then type_text instead.)"
                     });
                 }
-                ToolResult::text(format!(
-                    "Pressed {key_display} on pid {pid}{label}.{}",
-                    changes.result_suffix()
-                ))
-                .with_structured(structured)
+                ToolResult::text(format!("Pressed {key_display} on pid {pid}{label}."))
+                    .with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),

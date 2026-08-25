@@ -66,6 +66,25 @@ automation profile must survive across sessions. `allow_launch: true` states
 that this call may create the separate process; it does not widen runtime
 authorization. `get_browser_state` never performs setup itself.
 
+For standalone browser use where the caller wants Cua Driver to select and pass
+a nonzero DevTools port, add `"launch_posture":"driver_selected_port"`:
+
+```jsonc
+browser_prepare({
+  "session": "research-1",
+  "allow_launch": true,
+  "launch_posture": "driver_selected_port",
+  "profile": {"mode": "isolated_new"}
+})
+```
+
+This still launches a separate driver-owned profile and does not attach to an
+existing profile or accept a `pid`. The result reports
+`automation_exposed:false`: unlike the standard port-zero launch, the fixed
+nonzero-port launch reports `navigator.webdriver === false`. It applies no
+other browser identity or fingerprint overrides and does not guarantee that a
+site will accept the session.
+
 If a site presents a CAPTCHA or bot-verification challenge, Cua Driver reports
 bounded evidence rather than acting on it. A later `get_browser_state` snapshot
 can report `challenge.required: true` with `handling: "caller_policy"`. Route

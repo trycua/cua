@@ -18,7 +18,9 @@ use super::cdp_ws::CdpConnection;
 use super::challenge::browser_challenge_value;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::platform::{
+    BrowserVisualActionKind, PrepareLaunchPosture, PrepareProfile, PrepareRequest, PrepareStrategy,
+};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
@@ -619,16 +621,27 @@ impl BrowserPrepareTool {
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
                 endpoint, and close the temporary tab. Every visible effect is reported; \
-                ambiguity is refused."
+                ambiguity is refused. launch_posture=driver_selected_port is valid only for a \
+                standalone pid-free driver-owned isolated launch. It uses a driver-selected \
+                nonzero DevTools port instead of Chromium's port=0 launch path. The result \
+                reports whether that launch exposed navigator.webdriver; no other browser \
+                identity or fingerprint overrides are applied, and detector bypass is not \
+                guaranteed."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true." },
+                    "pid": { "type": "integer", "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true. Omit pid for launch_posture=driver_selected_port." },
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
                     "allow_launch": {
                         "type": "boolean",
                         "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false)."
+                    },
+                    "launch_posture": {
+                        "type": "string",
+                        "enum": ["standard", "driver_selected_port"],
+                        "default": "standard",
+                        "description": "Standalone driver-owned isolated launch posture. 'driver_selected_port' is accepted only when pid is omitted and allow_launch=true plus an isolated profile are supplied. It uses a driver-selected nonzero DevTools port instead of Chromium's port=0 launch path. The prepare result reports automation_exposed=false for that launch and true for the standard port-zero launch. No other browser identity or fingerprint overrides are applied, and detector bypass is not guaranteed."
                     },
                     "profile": {
                         "type": "object",
@@ -708,6 +721,15 @@ impl Tool for BrowserPrepareTool {
             },
         };
         let allow_launch = args.opt_bool("allow_launch").unwrap_or(false);
+        let launch_posture = match args.get("launch_posture") {
+            None | Some(Value::Null) => PrepareLaunchPosture::Standard,
+            Some(value) => match serde_json::from_value::<PrepareLaunchPosture>(value.clone()) {
+                Ok(posture) => posture,
+                Err(error) => {
+                    return ToolResult::error(format!("invalid browser launch posture: {error}"))
+                }
+            },
+        };
         let pid = match args.get("pid") {
             None => None,
             Some(_) => match args.require_i64("pid") {
@@ -730,6 +752,7 @@ impl Tool for BrowserPrepareTool {
             strategy,
             profile,
             allow_launch,
+            launch_posture,
         };
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
@@ -751,6 +774,9 @@ impl Tool for BrowserPrepareTool {
                     // The ws_url itself stays internal; expose only proof metadata.
                     "endpoint_ownership": outcome.endpoint.map(|e| e.ownership),
                     "prepared_pid": outcome.prepared_pid,
+                    "launch_posture": outcome.launch_posture,
+                    "automation_exposed": outcome.automation_exposed,
+                    "launch_posture_notes": outcome.launch_posture_notes,
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
                 }))
@@ -2652,6 +2678,10 @@ mod tests {
         assert!(!prepare_properties.contains_key("consent"));
         assert!(!prepare_properties.contains_key("allow_restart"));
         assert!(!prepare_properties.contains_key("approval_token"));
+        assert_eq!(
+            prepare_properties["launch_posture"]["enum"],
+            json!(["standard", "driver_selected_port"])
+        );
 
         let dialog = BrowserDialogTool::new(e.clone());
         assert_eq!(
@@ -2895,6 +2925,93 @@ mod tests {
             structured(&result)["refusal"]["code"],
             "browser_route_unavailable"
         );
+    }
+
+    #[tokio::test]
+    async fn driver_selected_port_requires_standalone_isolated_profile() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "launch_posture": "driver_selected_port",
+                "session": "fixed-port-non-standalone"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        assert!(structured(&result)["refusal"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("standalone-only"));
+    }
+
+    #[tokio::test]
+    async fn driver_selected_port_refuses_pid_even_with_isolated_profile() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "allow_launch": true,
+                "launch_posture": "driver_selected_port",
+                "profile": { "mode": "isolated_new" },
+                "session": "fixed-port-with-pid"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        let message = structured(&result)["refusal"]["message"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(message.contains("standalone-only"));
+        assert!(message.contains("omit pid"));
+    }
+
+    #[tokio::test]
+    async fn driver_selected_port_cannot_attach_existing_profile() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "launch_posture": "driver_selected_port",
+                "session": "fixed-port-existing-profile"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        assert!(structured(&result)["refusal"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("standalone-only"));
+    }
+
+    #[tokio::test]
+    async fn driver_selected_port_launch_passes_the_posture_gate_without_pid() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "allow_launch": true,
+                "launch_posture": "driver_selected_port",
+                "profile": { "mode": "isolated_new" },
+                "session": "pid-free-fixed-port-isolated-run"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        assert!(!structured(&result)["refusal"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("standalone-only"));
     }
 
     #[tokio::test]

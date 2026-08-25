@@ -748,6 +748,26 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         Ok(None)
     }
 
+    async fn discover_spawned_endpoint_on_port(
+        &self,
+        pid: i64,
+        port: u16,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let Some(expected_ws_url) = browser_websocket_url(port).await else {
+            return Ok(None);
+        };
+        let endpoint = self
+            .discover_spawned_endpoint(pid, &expected_ws_url)
+            .await?
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the driver-selected DevTools port is not owned by the spawned browser",
+                )
+            })?;
+        Ok(Some(endpoint))
+    }
+
     async fn discover_existing_profile_endpoint(
         &self,
         pid: i64,
@@ -1138,6 +1158,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 prepared_pid: Some(endpoint.ownership.owner_pid),
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+                launch_posture: None,
+                automation_exposed: false,
+                launch_posture_notes: Vec::new(),
                 side_effects: Default::default(),
                 attachment: None,
             });

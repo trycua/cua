@@ -293,6 +293,21 @@ fn codesign_identity_matches(details: &str, identifier: &str, team_identifier: &
     observed_identifier == Some(identifier) && observed_team == Some(team_identifier)
 }
 
+fn codesign_verification_args(requirement: &str) -> [&str; 4] {
+    // The explicit requirement already pins the Apple anchor, vendor team, and
+    // bundle identifier. Bare `--strict` also enables the `sideband` check,
+    // which rejects Finder/resource-fork metadata, including the
+    // non-removable `com.apple.provenance` attribute that newer macOS releases
+    // attach to stock vendor-signed browsers (#4058). Retain sealed-symlink
+    // validation without requiring sideband hygiene.
+    [
+        "--verify",
+        "--strict=symlinks",
+        "--test-requirement",
+        requirement,
+    ]
+}
+
 fn has_trusted_codesign_identity(
     executable: &std::path::Path,
     identifier: &str,
@@ -301,24 +316,8 @@ fn has_trusted_codesign_identity(
     let requirement = format!(
         "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
     );
-    // Note: `--strict` (bare) also enables the `sideband` sub-check, which
-    // rejects "resource forks, Finder attributes, or similar sideband data".
-    // Newer macOS releases attach a kernel/AMFI-enforced `com.apple.provenance`
-    // extended attribute to every executable as part of app-provenance
-    // tracking. `sideband` predates that attribute and misclassifies it as
-    // leftover detritus, so a genuinely vendor-signed, unmodified executable
-    // (e.g. a stock Google Chrome install) fails verification. The attribute
-    // cannot be stripped (SIP/AMFI-protected), so this is not recoverable by
-    // cleaning the target file — scope `--strict` to `symlinks` only, which
-    // still rejects bundles with broken/escaping symlinks but does not choke
-    // on `com.apple.provenance`. See: https://github.com/trycua/cua/issues/4058
     let verified = std::process::Command::new("/usr/bin/codesign")
-        .args([
-            "--verify",
-            "--strict=symlinks",
-            "--test-requirement",
-            &requirement,
-        ])
+        .args(codesign_verification_args(&requirement))
         .arg(executable)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1499,6 +1498,21 @@ mod tests {
             "com.google.Chrome",
             "EQHXZ8M8AV"
         ));
+    }
+
+    #[test]
+    fn vendor_verification_does_not_require_filesystem_metadata_hygiene() {
+        let requirement = "=anchor apple generic and identifier \"com.example.Browser\"";
+        assert_eq!(
+            codesign_verification_args(requirement),
+            [
+                "--verify",
+                "--strict=symlinks",
+                "--test-requirement",
+                requirement
+            ]
+        );
+        assert!(!codesign_verification_args(requirement).contains(&"--strict"));
     }
 
     fn window(window_id: u32, pid: i32, title: &str) -> crate::windows::WindowInfo {

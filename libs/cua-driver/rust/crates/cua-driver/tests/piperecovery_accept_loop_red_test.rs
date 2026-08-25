@@ -143,11 +143,18 @@ fn race_hold(socket: &str) -> bool {
 fn accept_loop_survives_connect_disconnect_races() {
     let mut driver = CliDriver::new();
     assert!(driver.available(), "test daemon failed to start");
-    let socket = driver.daemon_socket().expect("test daemon socket").to_string();
+    let socket = driver
+        .daemon_socket()
+        .expect("test daemon socket")
+        .to_string();
 
     // 0. Serviceable before the hammer (anti-vacuous: the pipe was engaged).
     let before = driver.call("get_config", serde_json::json!({}));
-    assert!(!before.is_error(), "pre-hammer get_config failed: {}", before.text());
+    assert!(
+        !before.is_error(),
+        "pre-hammer get_config failed: {}",
+        before.text()
+    );
 
     // 1. The race group: four hammer styles racing the accept loop for the
     // whole window. No RPC load group: the C probe reproduced the connect
@@ -169,14 +176,22 @@ fn accept_loop_survives_connect_disconnect_races() {
         s.spawn(move || {
             let mut local = 0u64;
             while Instant::now() < deadline {
-                if race_fast(&s1) { local += 1; } else { thread::sleep(Duration::from_millis(5)); }
+                if race_fast(&s1) {
+                    local += 1;
+                } else {
+                    thread::sleep(Duration::from_millis(5));
+                }
             }
             f.fetch_add(local, Ordering::Relaxed);
         });
         s.spawn(move || {
             let mut local = 0u64;
             while Instant::now() < deadline {
-                if race_cancel(&s2) { local += 1; } else { thread::sleep(Duration::from_millis(5)); }
+                if race_cancel(&s2) {
+                    local += 1;
+                } else {
+                    thread::sleep(Duration::from_millis(5));
+                }
             }
             c.fetch_add(local, Ordering::Relaxed);
         });
@@ -185,7 +200,11 @@ fn accept_loop_survives_connect_disconnect_races() {
             let h = hold1;
             let mut local = 0u64;
             while Instant::now() < deadline {
-                if race_hold(&s3) { local += 1; } else { thread::sleep(Duration::from_millis(5)); }
+                if race_hold(&s3) {
+                    local += 1;
+                } else {
+                    thread::sleep(Duration::from_millis(5));
+                }
             }
             h.fetch_add(local, Ordering::Relaxed);
         });
@@ -193,7 +212,11 @@ fn accept_loop_survives_connect_disconnect_races() {
             let h = hold2;
             let mut local = 0u64;
             while Instant::now() < deadline {
-                if race_hold(&s4) { local += 1; } else { thread::sleep(Duration::from_millis(5)); }
+                if race_hold(&s4) {
+                    local += 1;
+                } else {
+                    thread::sleep(Duration::from_millis(5));
+                }
             }
             // Add to the same hold counter.
             h.fetch_add(local, Ordering::Relaxed);
@@ -204,14 +227,20 @@ fn accept_loop_survives_connect_disconnect_races() {
     let hold_opened = hold_opened.load(Ordering::Relaxed);
     eprintln!(
         "[piperecovery] {}s race (no load): fast {} / cancel {} / hold {} opens; daemon alive: {}",
-        RACE_SECS, fast_opened, cancel_opened, hold_opened, daemon_process_alive()
+        RACE_SECS,
+        fast_opened,
+        cancel_opened,
+        hold_opened,
+        daemon_process_alive()
     );
 
     // Anti-vacuous: the race group must have reached the pipe.
     assert!(
         fast_opened + cancel_opened + hold_opened >= 1,
         "race group never reached the pipe (fast {}, cancel {}, hold {})",
-        fast_opened, cancel_opened, hold_opened
+        fast_opened,
+        cancel_opened,
+        hold_opened
     );
 
     // 2. Still serviceable? On main this is the RED assertion: a dead accept
@@ -223,8 +252,8 @@ fn accept_loop_survives_connect_disconnect_races() {
         fast_opened, cancel_opened, hold_opened, daemon_process_alive(), r.text()
     );
 
-    eprintln!("[piperecovery] survived race; daemon alive: {}", daemon_process_alive());
+    eprintln!(
+        "[piperecovery] survived race; daemon alive: {}",
+        daemon_process_alive()
+    );
 }
-
-
-

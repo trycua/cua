@@ -79,6 +79,30 @@ class ShutdownServerTests(unittest.TestCase):
         self.assertEqual(result.escalation, "none")
         self.assertEqual(result.returncode, 0)
         self.assertFalse(result.forced_cleanup)
+        self.assertTrue(result.stop_attempted)
+
+    def test_already_exited_server_skips_stop_and_reports_it(self):
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import sys; sys.exit(3)"],
+            start_new_session=True,
+        )
+        self.processes.append(process)
+        process.wait(timeout=2)
+        stop_marker = self.root / "stop"
+        stop_command = [
+            sys.executable,
+            "-c",
+            "import pathlib, sys; pathlib.Path(sys.argv[1]).touch()",
+            str(stop_marker),
+        ]
+
+        result = shutdown_server(process, stop_command, self.client_log, HELPER_TIMEOUTS)
+
+        self.assertFalse(result.stop_attempted)
+        self.assertEqual(result.escalation, "none")
+        self.assertEqual(result.returncode, 3)
+        self.assertFalse(result.forced_cleanup)
+        self.assertFalse(stop_marker.exists())
 
     def test_sigterm_escalation_is_bounded(self):
         process = self.start_helper(
@@ -98,6 +122,7 @@ class ShutdownServerTests(unittest.TestCase):
         self.assertEqual(result.escalation, "sigterm")
         self.assertEqual(result.returncode, 0)
         self.assertTrue(result.forced_cleanup)
+        self.assertTrue(result.stop_attempted)
 
     def test_sigkill_escalation_cannot_hang(self):
         process = self.start_helper(
@@ -119,6 +144,7 @@ class ShutdownServerTests(unittest.TestCase):
         self.assertEqual(result.escalation, "sigkill")
         self.assertEqual(result.returncode, -signal.SIGKILL)
         self.assertTrue(result.forced_cleanup)
+        self.assertTrue(result.stop_attempted)
 
     def test_status_precedence_preserves_primary_failure(self):
         cases = [

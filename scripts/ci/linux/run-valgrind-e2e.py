@@ -34,6 +34,7 @@ class ShutdownResult:
     escalation: str
     forced_cleanup: bool
     client_stop_status: int
+    stop_attempted: bool
 
 
 class RunnerFailure(Exception):
@@ -129,21 +130,21 @@ def shutdown_server(
 ) -> ShutdownResult:
     returncode = process.poll()
     if returncode is not None:
-        return ShutdownResult(returncode, "none", False, 0)
+        return ShutdownResult(returncode, "none", False, 0, False)
 
     stop_status = run_stop_command(stop_command, client_log, timeouts.client_stop, env)
     returncode = wait_for_exit(process, timeouts.graceful_wait, timeouts.poll_interval)
     if returncode is not None:
-        return ShutdownResult(returncode, "none", stop_status != 0, stop_status)
+        return ShutdownResult(returncode, "none", stop_status != 0, stop_status, True)
 
     signal_process_group(process, signal.SIGTERM)
     returncode = wait_for_exit(process, timeouts.sigterm_wait, timeouts.poll_interval)
     if returncode is not None:
-        return ShutdownResult(returncode, "sigterm", True, stop_status)
+        return ShutdownResult(returncode, "sigterm", True, stop_status, True)
 
     signal_process_group(process, signal.SIGKILL)
     returncode = wait_for_exit(process, timeouts.sigkill_wait, timeouts.poll_interval)
-    return ShutdownResult(returncode, "sigkill", True, stop_status)
+    return ShutdownResult(returncode, "sigkill", True, stop_status, True)
 
 
 def write_command(log: Path, command: Sequence[str]) -> None:
@@ -424,6 +425,11 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
         validate_results(artifact_dir)
         shutdown_result = shutdown_server(process, stop_command, client_log, env=env)
         emit_server_logs(artifact_dir)
+        if not shutdown_result.stop_attempted:
+            raise RunnerFailure(
+                "cua-driver server exited before the planned stop with status "
+                f"{shutdown_result.returncode}"
+            )
         if shutdown_result.client_stop_status != 0:
             raise RunnerFailure(
                 "cua-driver stop failed with status "

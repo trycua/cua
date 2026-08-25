@@ -8,25 +8,26 @@
  viewBox="0.00 0.00 886.80 304.30" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(14.4 289.9)">
 <title>rediscovery</title>
+<polygon fill="#ffffff" stroke="none" points="-14.4,14.4 -14.4,-289.9 872.4,-289.9 872.4,14.4 -14.4,14.4"/>
 <g id="clust1" class="cluster">
 <title>cluster_current</title>
-<polygon fill="none" stroke="#8c959f" stroke-dasharray="5,2" points="8,-69 8,-267.5 142,-267.5 142,-69 8,-69"/>
-<text text-anchor="middle" x="75" y="-250.2" font-family="Times,serif" font-size="14.00">current Cua</text>
+<polygon fill="#ffffff" stroke="#8c959f" stroke-dasharray="5,2" points="8,-69 8,-267.5 142,-267.5 142,-69 8,-69"/>
+<text text-anchor="middle" x="75" y="-250.2" font-family="Times,serif" font-size="14.00" fill="#1f2328">before this PR</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_2746</title>
-<polygon fill="none" stroke="#8c959f" stroke-dasharray="5,2" points="150,-69 150,-267.5 376,-267.5 376,-69 150,-69"/>
-<text text-anchor="middle" x="263" y="-250.2" font-family="Times,serif" font-size="14.00">#2746</text>
+<polygon fill="#ffffff" stroke="#8c959f" stroke-dasharray="5,2" points="150,-69 150,-267.5 376,-267.5 376,-69 150,-69"/>
+<text text-anchor="middle" x="263" y="-250.2" font-family="Times,serif" font-size="14.00" fill="#1f2328">#2746</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_picu</title>
-<polygon fill="none" stroke="#8c959f" stroke-dasharray="5,2" points="384,-8 384,-267.5 536,-267.5 536,-8 384,-8"/>
-<text text-anchor="middle" x="460" y="-250.2" font-family="Times,serif" font-size="14.00">pi&#45;computer&#45;use</text>
+<polygon fill="#ffffff" stroke="#8c959f" stroke-dasharray="5,2" points="384,-8 384,-267.5 536,-267.5 536,-8 384,-8"/>
+<text text-anchor="middle" x="460" y="-250.2" font-family="Times,serif" font-size="14.00" fill="#1f2328">pi&#45;computer&#45;use</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_combined</title>
-<polygon fill="none" stroke="#8c959f" stroke-dasharray="5,2" points="544,-69 544,-267.5 850,-267.5 850,-69 544,-69"/>
-<text text-anchor="middle" x="697" y="-250.2" font-family="Times,serif" font-size="14.00">combined design</text>
+<polygon fill="#ffffff" stroke="#8c959f" stroke-dasharray="5,2" points="544,-69 544,-267.5 850,-267.5 850,-69 544,-69"/>
+<text text-anchor="middle" x="697" y="-250.2" font-family="Times,serif" font-size="14.00" fill="#1f2328">this PR</text>
 </g>
 <!-- current_before -->
 <g id="node1" class="node">

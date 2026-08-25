@@ -676,6 +676,12 @@ launch_app(target, session)
 end_session(session?)             # optional explicit cleanup
 ```
 
+An existing-profile `end_session` restores the Chromium browser's
+remote-debugging toggle when Cua enabled it and no other Cua session still uses
+that browser process and dismisses the exact native consent prompt. If exact
+cleanup cannot be proven, session cleanup fails closed and a later
+`end_session` retries it.
+
 For screen-absolute work, replace the window portion with
 `get_desktop_state() → action(target={kind:"desktop",display_id:"primary"}, ...)
 → get_desktop_state()`. Desktop actions use coordinates from that exact

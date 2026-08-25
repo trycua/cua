@@ -133,6 +133,137 @@ fn exact_allow_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal>
     }
 }
 
+fn exact_cancel_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal> {
+    let mut matches = Vec::new();
+    for (sheet_index, sheet) in nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.role == "AXSheet")
+    {
+        let end = nodes
+            .iter()
+            .enumerate()
+            .skip(sheet_index + 1)
+            .find(|(_, node)| node.depth <= sheet.depth)
+            .map_or(nodes.len(), |(index, _)| index);
+        let sheet_nodes = &nodes[sheet_index..end];
+        let prompt_is_remote_debugging = sheet_nodes.iter().any(|node| {
+            let text = normalized_text(node);
+            text.contains("remote debugging") || text.contains("remote-debugging")
+        });
+        if !prompt_is_remote_debugging {
+            continue;
+        }
+        for node in sheet_nodes {
+            if node.role == "AXButton"
+                && node.actions.iter().any(|action| action == "AXPress")
+                && normalized_text(node) == "cancel"
+            {
+                matches.push(node.element_ptr);
+            }
+        }
+    }
+    match matches.as_slice() {
+        [] => Ok(None),
+        [element] => Ok(Some(*element)),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "multiple semantic cancel actions matched the browser consent sheet",
+        )),
+    }
+}
+
+/// Dismiss any exact Chrome-owned remote-debugging sheet before teardown.
+/// Turning off the setting does not reliably close a sheet that an existing
+/// WebSocket connection already presented.
+pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut dismissed = false;
+    loop {
+        let trees = consent_surface_ids(crate::windows::all_windows(), pid, approved_window_id)
+            .into_iter()
+            .map(|candidate_window_id| {
+                walk_tree_bounded(
+                    pid,
+                    Some(candidate_window_id),
+                    None,
+                    CONSENT_MAX_ELEMENTS,
+                    DEFAULT_MAX_DEPTH,
+                )
+                .nodes
+            })
+            .collect::<Vec<_>>();
+        let prompt_present = trees
+            .iter()
+            .any(|nodes| remote_debugging_sheet_present(nodes));
+        if !prompt_present {
+            for nodes in &trees {
+                release_actionable_nodes(nodes);
+            }
+            return Ok(dismissed);
+        }
+
+        let mut candidates = Vec::new();
+        let mut matcher_error = None;
+        for nodes in &trees {
+            match exact_cancel_button(nodes) {
+                Ok(Some(element)) => candidates.push(element),
+                Ok(None) => {}
+                Err(error) => {
+                    matcher_error = Some(error);
+                    break;
+                }
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        if let Some(error) = matcher_error {
+            for nodes in &trees {
+                release_actionable_nodes(nodes);
+            }
+            return Err(error);
+        }
+        let pressed = match candidates.as_slice() {
+            [element] => unsafe { perform_action(*element as AXUIElementRef, "AXPress") },
+            [] => {
+                for nodes in &trees {
+                    release_actionable_nodes(nodes);
+                }
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "the exact remote-debugging consent sheet exposed no semantic cancel action",
+                ));
+            }
+            _ => {
+                for nodes in &trees {
+                    release_actionable_nodes(nodes);
+                }
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "multiple Chrome-owned remote-debugging consent sheets exposed semantic cancel actions",
+                ));
+            }
+        };
+        for nodes in &trees {
+            release_actionable_nodes(nodes);
+        }
+        if pressed != kAXErrorSuccess {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the exact browser consent cancel action became stale before AXPress",
+            ));
+        }
+        dismissed = true;
+        if Instant::now() >= deadline {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the remote-debugging consent sheet remained after its exact cancel action",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 pub async fn handle(
     request: BrowserConsentRequest,
 ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
@@ -302,6 +433,23 @@ mod tests {
             exact_allow_button(&nodes).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn cancel_matcher_requires_remote_debugging_sheet() {
+        let nodes = vec![
+            node("AXWindow", 0, Some("Chrome"), &[]),
+            node("AXSheet", 1, Some("Allow remote debugging?"), &[]),
+            node("AXButton", 2, Some("Cancel"), &["AXPress"]),
+            node("AXButton", 2, Some("Allow"), &["AXPress"]),
+        ];
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(7));
+
+        let unrelated = vec![
+            node("AXSheet", 1, Some("Save changes?"), &[]),
+            node("AXButton", 2, Some("Cancel"), &["AXPress"]),
+        ];
+        assert_eq!(exact_cancel_button(&unrelated).unwrap(), None);
     }
 
     #[test]

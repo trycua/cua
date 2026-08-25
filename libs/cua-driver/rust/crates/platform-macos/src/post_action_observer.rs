@@ -36,7 +36,6 @@ struct RootKey {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Root {
-    key: RootKey,
     target: Option<ActionSurfaceTarget>,
     focused: bool,
 }
@@ -154,7 +153,9 @@ fn observe_delta(
                     })
                 })
                 .collect();
-            return resolve_surface_delta(candidates, foreground_changed);
+            if let Some(delta) = resolve_surface_delta(candidates, foreground_changed) {
+                return Some(delta);
+            }
         }
         if Instant::now() >= deadline {
             return None;
@@ -251,9 +252,8 @@ unsafe fn insert_root(
         })
     });
     roots.insert(
-        key.clone(),
+        key,
         Root {
-            key,
             target,
             focused: copy_bool_attr(element, "AXFocused").unwrap_or(false),
         },
@@ -290,12 +290,6 @@ mod tests {
             modal,
         };
         Root {
-            key: RootKey {
-                window_id: Some(window_id as u32),
-                parent_window_id: None,
-                role: "AXWindow".into(),
-                subrole: "AXDialog".into(),
-            },
             target: Some(target),
             focused,
         }

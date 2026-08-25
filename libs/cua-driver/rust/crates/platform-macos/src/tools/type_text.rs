@@ -556,7 +556,6 @@ impl Tool for TypeTextTool {
                                        screenshot shows the text didn't land."
                         });
                     }
-                    changes.add_to_structured(&mut s);
                     s
                 })
             }

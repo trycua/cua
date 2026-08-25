@@ -716,7 +716,7 @@ mod tests {
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             enabled: None,
             selected: None,
-            element_ptr: 7,
+            element_ptr: if actions.is_empty() { 0 } else { 7 },
             center_x: 0,
             center_y: 0,
             rect: None,

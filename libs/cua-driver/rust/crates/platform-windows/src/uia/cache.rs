@@ -162,6 +162,12 @@ impl ElementCache {
     }
 
     fn update_with_kind(&self, pid: u32, hwnd: u64, nodes: &[UiaNode], kind: SnapshotKind) {
+        debug_assert!(
+            nodes
+                .iter()
+                .all(|node| (node.element_ptr != 0) == node.element_index.is_some()),
+            "UiaNode element pointer/index invariant violated"
+        );
         let actionable: Vec<&UiaNode> =
             nodes.iter().filter(|n| n.element_index.is_some()).collect();
         let elements: Vec<usize> = actionable.iter().map(|n| n.element_ptr).collect();

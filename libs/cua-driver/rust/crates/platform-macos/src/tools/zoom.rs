@@ -116,8 +116,7 @@ impl Tool for ZoomTool {
                         "width": w, "height": h, "format": "jpeg",
                         "mime_type": "image/jpeg"
                     })),
-                    action_record: None,
-                    surface_delta: None,
+                    ..Default::default()
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Zoom failed: {e}")),

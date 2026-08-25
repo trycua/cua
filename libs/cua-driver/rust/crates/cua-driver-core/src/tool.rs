@@ -1546,11 +1546,9 @@ impl ToolRegistry {
                 );
             }
         }
-        if let Some(delta) = result.surface_delta.take() {
-            if let Some(record) = result.action_record.as_mut() {
+        if let Some(record) = result.action_record.as_mut() {
+            if let Some(delta) = result.surface_delta.take() {
                 record.observe_surface_delta(delta);
-            } else {
-                result.surface_delta = Some(delta);
             }
         }
         if resolved_name == "launch_app" && result.is_error != Some(true) {

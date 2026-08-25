@@ -388,6 +388,28 @@ fn history_admission_requested(explicit: bool, persisted: bool) -> bool {
     explicit || persisted
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+enum MacosMainLoopHost {
+    CursorOverlay,
+    AgentView,
+    ServeThread,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_main_loop_host(cursor_enabled: bool, agent_view_enabled: bool) -> MacosMainLoopHost {
+    if cursor_enabled {
+        // The cursor host also owns NSApplication's main run loop. Agent View
+        // posts its window updates to that same queue, so both surfaces can
+        // coexist without leaving cursor animations waiting forever.
+        MacosMainLoopHost::CursorOverlay
+    } else if agent_view_enabled {
+        MacosMainLoopHost::AgentView
+    } else {
+        MacosMainLoopHost::ServeThread
+    }
+}
+
 #[cfg(test)]
 mod history_admission_tests {
     use super::history_admission_requested;
@@ -402,6 +424,31 @@ mod history_admission_tests {
         assert!(!history_admission_requested(false, false));
         assert!(history_admission_requested(true, false));
         assert!(history_admission_requested(true, true));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_main_loop_host_tests {
+    use super::{macos_main_loop_host, MacosMainLoopHost};
+
+    #[test]
+    fn cursor_overlay_hosts_the_shared_appkit_loop_when_agent_view_is_enabled() {
+        assert_eq!(
+            macos_main_loop_host(true, true),
+            MacosMainLoopHost::CursorOverlay
+        );
+    }
+
+    #[test]
+    fn agent_view_hosts_appkit_only_when_the_cursor_is_disabled() {
+        assert_eq!(
+            macos_main_loop_host(false, true),
+            MacosMainLoopHost::AgentView
+        );
+        assert_eq!(
+            macos_main_loop_host(false, false),
+            MacosMainLoopHost::ServeThread
+        );
     }
 }
 
@@ -729,24 +776,24 @@ fn main() {
 
             // Keep the main thread alive for the daemon.
             //
-            // Agent View needs the AppKit main run loop to process the
-            // dispatch_async_f calls that push frames into NSImageView;
-            // park main in NSApplication.run() when --agent-view is
-            // on. Otherwise just join the serve thread so the process
-            // stays up as long as the daemon does.
-            if pip_cfg.enabled {
-                platform_macos::pip::run_appkit_main_loop();
-            } else if cursor_cfg.enabled {
-                // Render the agent-cursor overlay: park the main thread in the
-                // AppKit run loop so the overlay NSWindow draws. `run_on_main_thread`
-                // self-guards on `has_graphic_access()` and returns immediately
-                // when the daemon has no Window Server session — fall through to
-                // join so the daemon still serves headless. The serve thread runs
-                // on its background thread regardless.
-                platform_macos::cursor::overlay::run_on_main_thread();
-                let _ = serve_handle.join();
-            } else {
-                let _ = serve_handle.join();
+            // Cursor and Agent View share one AppKit application/main queue.
+            // When both are enabled, the cursor host must drain its command
+            // receiver as well as NSApplication events; the Agent View-only
+            // loop would leave cursor-bearing actions waiting indefinitely.
+            match macos_main_loop_host(cursor_cfg.enabled, pip_cfg.enabled) {
+                MacosMainLoopHost::CursorOverlay => {
+                    // `run_on_main_thread` self-guards on graphic-session
+                    // access. If it returns, keep the daemon alive by joining
+                    // the serve thread.
+                    platform_macos::cursor::overlay::run_on_main_thread();
+                    let _ = serve_handle.join();
+                }
+                MacosMainLoopHost::AgentView => {
+                    platform_macos::pip::run_appkit_main_loop();
+                }
+                MacosMainLoopHost::ServeThread => {
+                    let _ = serve_handle.join();
+                }
             }
         }
         cli::Command::Stop { socket } => {

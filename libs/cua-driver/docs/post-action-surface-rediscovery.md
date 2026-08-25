@@ -10,15 +10,7 @@ validation.
 Cua Driver already protects foreground focus and detects visible native windows,
 but the topology survives only in diagnostic text.
 
-```mermaid
-flowchart TB
-    action["macOS action tool"] --> before["snapshot global layer-0 window ids"]
-    before --> actuator["run native actuator under focus guard"]
-    actuator --> after["poll global layer-0 window ids"]
-    after --> prose["append diagnostic prose"]
-    prose --> adapter["project action result without topology"]
-    adapter --> stale["caller remains bound to the prior window"]
-```
+![current cua architecture](diagrams/post-action-surface-rediscovery/current-cua.svg)
 
 ## What pull request #2746 contributes
 
@@ -28,16 +20,7 @@ Its detector, however, still treats every new desktop window as action-related,
 selects an exact target from list length alone, and promotes any topology change
 to confirmed action effect.
 
-```mermaid
-flowchart TB
-    action["macOS action tool"] --> global["diff all visible desktop windows"]
-    global --> json["write legacy JSON"]
-    json --> parse["parse into shared action record"]
-    parse --> confirm["promote effect to confirmed"]
-    confirm --> count{"new window count"}
-    count -->|"one"| exact["emit exact rebind"]
-    count -->|"many"| ambiguous["emit ambiguous rebind"]
-```
+![pr 2746 architecture](diagrams/post-action-surface-rediscovery/pr-2746.svg)
 
 This draft preserves from #2746:
 
@@ -67,14 +50,7 @@ The design is adapted rather than copied verbatim. Cua Driver keeps its Rust
 platform boundary, focus-suppression leases, action execution record, closed
 contract vocabulary, and explicit harness-owned escalation policy.
 
-```mermaid
-flowchart TB
-    before["snapshot target accessibility roots"] --> action["perform action"]
-    action --> signal["event or native-window signal wakes observer"]
-    signal --> after["snapshot target accessibility roots again"]
-    after --> delta["derive appeared closed and focused roots"]
-    delta --> resolver["refresh and validate a visible modal root"]
-```
+![pi computer use architecture](diagrams/post-action-surface-rediscovery/pi-computer-use.svg)
 
 ## Combined architecture
 
@@ -82,23 +58,7 @@ Detection answers what changed. Resolution answers which surface is safe to
 bind. Action accounting answers what the actuator proved. None substitutes for
 another.
 
-```mermaid
-flowchart TB
-    coordinator["shared action coordinator"] --> observer["platform root observer begins"]
-    observer --> actuator["native actuator runs"]
-    actuator --> outcome["typed actuator outcome"]
-    actuator --> finish["platform root observer finishes"]
-    finish --> delta["typed target-root delta"]
-    outcome --> record["action execution record"]
-    delta --> record
-    delta --> resolver["shared candidate resolver"]
-    resolver --> choice{"one validated blocking root"}
-    choice -->|"yes"| rebind["emit exact logical rebind"]
-    choice -->|"no"| correlate["emit candidates for list_windows correlation"]
-    record --> public["closed action result preserves original effect"]
-    rebind --> public
-    correlate --> public
-```
+![combined architecture](diagrams/post-action-surface-rediscovery/combined.svg)
 
 ### Platform observer
 
@@ -145,18 +105,7 @@ delivery.
 
 ## Recovery ladder
 
-```mermaid
-flowchart TB
-    result["action result contains window change"] --> exact{"exact validated target"}
-    exact -->|"yes"| refresh["refresh target window without activation"]
-    exact -->|"no"| list["correlate candidates with list_windows"]
-    list --> found{"blocking surface identified"}
-    found -->|"yes"| refresh
-    found -->|"no"| desktop["request one privacy-sensitive desktop frame"]
-    desktop --> correlate["correlate and return to window scope"]
-    correlate --> refresh
-    refresh --> background["resume background semantic actions"]
-```
+![recovery ladder architecture](diagrams/post-action-surface-rediscovery/recovery-ladder.svg)
 
 The request-scoped desktop frame remains a separate final perception rung. It
 must not silently widen persistent capture scope.

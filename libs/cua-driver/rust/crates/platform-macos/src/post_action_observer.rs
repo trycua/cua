@@ -129,7 +129,7 @@ impl Tool for ObservedActionTool {
                 )
             });
 
-        let before = tokio::task::spawn_blocking(move || snapshot_roots(pid))
+        let before = tokio::task::spawn_blocking(move || begin_observation(pid))
             .await
             .unwrap_or_default();
         let mut result = self.inner.invoke(args).await;
@@ -162,11 +162,11 @@ fn observe_delta(
         std::thread::sleep(POLL_INTERVAL);
     };
 
-    let mut appeared = appeared_roots(&before.roots, &snapshot_roots(pid).roots);
+    let mut appeared = appeared_roots(&before.roots, &snapshot_roots(pid));
     if appeared.is_empty() && signaled {
         for _ in 0..CATCH_UP_ATTEMPTS {
             std::thread::sleep(CATCH_UP_INTERVAL);
-            appeared = appeared_roots(&before.roots, &snapshot_roots(pid).roots);
+            appeared = appeared_roots(&before.roots, &snapshot_roots(pid));
             if !appeared.is_empty() {
                 break;
             }
@@ -240,6 +240,13 @@ fn resolve_candidates(
         .collect()
 }
 
+fn begin_observation(pid: i32) -> RootObservation {
+    RootObservation {
+        roots: snapshot_roots(pid),
+        window_signature: target_window_signature(pid),
+    }
+}
+
 fn target_window_signature(pid: i32) -> HashSet<u32> {
     crate::windows::visible_windows()
         .into_iter()
@@ -248,11 +255,11 @@ fn target_window_signature(pid: i32) -> HashSet<u32> {
         .collect()
 }
 
-fn snapshot_roots(pid: i32) -> RootObservation {
+fn snapshot_roots(pid: i32) -> RootSnapshot {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
-            return RootObservation::default();
+            return RootSnapshot::default();
         }
         AXUIElementSetMessagingTimeout(app, 0.25);
         let windows = copy_ax_windows(app);
@@ -272,10 +279,7 @@ fn snapshot_roots(pid: i32) -> RootObservation {
             CFRelease(window as CFTypeRef);
         }
         CFRelease(app as CFTypeRef);
-        RootObservation {
-            roots,
-            window_signature: target_window_signature(pid),
-        }
+        roots
     }
 }
 

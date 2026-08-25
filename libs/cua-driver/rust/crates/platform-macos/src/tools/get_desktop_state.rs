@@ -125,10 +125,8 @@ impl Tool for GetDesktopStateTool {
 
         ToolResult {
             content,
-            is_error: None,
             structured_content: Some(structured),
-            action_record: None,
-            surface_delta: None,
+            ..Default::default()
         }
     }
 }

@@ -1,0 +1,13 @@
+digraph g {
+  graph [rankdir=TB, bgcolor="transparent", pad="0.2", nodesep="0.3", ranksep="0.4"];
+  node [shape=box, style="rounded,filled", fillcolor="#f6f8fa", color="#57606a", fontcolor="#1f2328", fontname="Arial", fontsize=12, margin="0.15,0.1"];
+  edge [color="#57606a", fontcolor="#1f2328", fontname="Arial", fontsize=10, arrowsize=0.7];
+  action [label="macOS action tool"];
+  before [label="snapshot global layer-0 window ids"];
+  actuator [label="run native actuator under focus guard"];
+  after [label="poll global layer-0 window ids"];
+  prose [label="append diagnostic prose"];
+  adapter [label="project action result without topology"];
+  stale [label="caller remains bound to prior window"];
+  action -> before -> actuator -> after -> prose -> adapter -> stale;
+}

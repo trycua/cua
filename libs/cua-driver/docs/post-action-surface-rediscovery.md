@@ -11,7 +11,7 @@ Cua Driver already protects foreground focus and detects visible native windows,
 but the topology survives only in diagnostic text.
 
 ```mermaid
-flowchart LR
+flowchart TB
     action["macOS action tool"] --> before["snapshot global layer-0 window ids"]
     before --> actuator["run native actuator under focus guard"]
     actuator --> after["poll global layer-0 window ids"]
@@ -29,7 +29,7 @@ selects an exact target from list length alone, and promotes any topology change
 to confirmed action effect.
 
 ```mermaid
-flowchart LR
+flowchart TB
     action["macOS action tool"] --> global["diff all visible desktop windows"]
     global --> json["write legacy JSON"]
     json --> parse["parse into shared action record"]
@@ -68,7 +68,7 @@ platform boundary, focus-suppression leases, action execution record, closed
 contract vocabulary, and explicit harness-owned escalation policy.
 
 ```mermaid
-flowchart LR
+flowchart TB
     before["snapshot target accessibility roots"] --> action["perform action"]
     action --> signal["event or native-window signal wakes observer"]
     signal --> after["snapshot target accessibility roots again"]
@@ -83,7 +83,7 @@ bind. Action accounting answers what the actuator proved. None substitutes for
 another.
 
 ```mermaid
-flowchart LR
+flowchart TB
     coordinator["shared action coordinator"] --> observer["platform root observer begins"]
     observer --> actuator["native actuator runs"]
     actuator --> outcome["typed actuator outcome"]
@@ -146,7 +146,7 @@ delivery.
 ## Recovery ladder
 
 ```mermaid
-flowchart LR
+flowchart TB
     result["action result contains window change"] --> exact{"exact validated target"}
     exact -->|"yes"| refresh["refresh target window without activation"]
     exact -->|"no"| list["correlate candidates with list_windows"]

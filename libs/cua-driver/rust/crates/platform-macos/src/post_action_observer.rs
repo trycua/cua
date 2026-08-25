@@ -190,6 +190,8 @@ fn appeared_roots(before: &RootSnapshot, after: &RootSnapshot) -> Vec<Root> {
         .collect()
 }
 
+/// Resolve ownership after AX has established which roots appeared. WindowServer
+/// may lag AX, so unresolved roots retry ownership only and block an exact target.
 fn resolve_appeared_roots(
     pid: i32,
     roots: &[Root],

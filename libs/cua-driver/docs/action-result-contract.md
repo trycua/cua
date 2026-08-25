@@ -8,9 +8,7 @@ Cua Driver 0.15 separates two facts that earlier releases mixed together:
   `satisfied`, `unsatisfied`, or `unknown`.
 
 The driver reports these facts. The agent harness owns task meaning, visual
-reading, stop/retry decisions, and movement through the action ladder. The
-post-action observer and rebind boundary are specified in
-[`post-action-surface-rediscovery.md`](post-action-surface-rediscovery.md).
+reading, stop/retry decisions, and movement through the action ladder.
 
 ## MCP action result
 

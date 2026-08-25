@@ -31,6 +31,8 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
 const FIXTURE_HTML: &str = include_str!("../../../../tests/fixtures/shared/web/index.html");
+const CAPTCHA_ARTICLE_HTML: &str =
+    include_str!("../../../../tests/fixtures/shared/web/captcha-article.html");
 static STANDALONE_BROWSER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn standalone_fixture_html() -> String {
@@ -1786,6 +1788,56 @@ fn run_semantic_state(spec: &BrowserSpec) {
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });
+}
+
+fn run_challenge_article_false_positive(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-challenge-article-false-positive",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        foreground_page_case(&spec.name, "browser_challenge_article_false_positive"),
+        |evidence| {
+            let mut fixture =
+                launch_browser_with_html(spec, &scenario, CAPTCHA_ARTICLE_HTML.to_owned());
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            let session = format!("standalone-challenge-article-{}", fixture.pid);
+            let (target, tab, _) = bind(&mut fixture, &session);
+            let snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                    "snapshot_format": "semantic_v2",
+                }),
+            );
+
+            assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+            assert!(
+                snapshot.structured()["outline"]
+                    .as_str()
+                    .is_some_and(|outline| outline.contains("ARTICLE_ABOUT_CAPTCHA_MARKER_v1")),
+                "article fixture marker missing from semantic outline: {}",
+                snapshot.raw
+            );
+            assert_eq!(
+                snapshot.structured()["challenge"]["required"],
+                false,
+                "ordinary editorial coverage must not be reported as a live challenge: {}",
+                snapshot.raw
+            );
+            assert_eq!(
+                snapshot.structured()["challenge"]["signals"],
+                serde_json::json!([]),
+                "a false challenge signal leaves callers unable to distinguish editorial copy: {}",
+                snapshot.raw
+            );
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
 }
 
 fn run_background_type(spec: &BrowserSpec) {
@@ -4686,6 +4738,10 @@ standalone_browser_test!(
     run_trust_gated_dom_click
 );
 standalone_browser_test!(standalone_browser_semantic_state, run_semantic_state);
+standalone_browser_test!(
+    standalone_browser_challenge_article_false_positive,
+    run_challenge_article_false_positive
+);
 standalone_browser_test!(standalone_browser_background_type, run_background_type);
 standalone_browser_test!(standalone_browser_type_replace, run_type_replace);
 #[cfg(target_os = "macos")]

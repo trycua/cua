@@ -66,6 +66,13 @@ automation profile must survive across sessions. `allow_launch: true` states
 that this call may create the separate process; it does not widen runtime
 authorization. `get_browser_state` never performs setup itself.
 
+If a site presents a CAPTCHA or bot-verification challenge, Cua Driver reports
+bounded evidence rather than acting on it. A later `get_browser_state` snapshot
+can report `challenge.required: true` with `handling: "caller_policy"`. Route
+that signal through the caller's configured challenge handler, such as a local
+vision model that returns a bounded answer to the agent, and then resume from a
+fresh snapshot.
+
 ## Attach to an existing Chrome or Edge profile
 
 Use this route only when the agent must work in a supported Chromium profile

@@ -862,7 +862,7 @@ Select an already-installed cursor theme for a session.
 
 ### `get_browser_state`
 
-Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
+Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, an opaque continuation, and an advisory challenge report when page state conservatively indicates CAPTCHA or bot verification. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
 
 **Arguments:**
 

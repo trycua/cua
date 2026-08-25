@@ -31,6 +31,7 @@
               ./libs/cua-driver/wayland-helper
               ./libs/cua-driver/compat-fixtures
               ./libs/cua-driver/tests/fixtures/shared/web/index.html
+              ./libs/cua-driver/tests/fixtures/shared/web/captcha-article.html
             ];
           };
 

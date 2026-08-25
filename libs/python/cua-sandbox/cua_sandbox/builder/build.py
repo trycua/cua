@@ -349,7 +349,7 @@ async def build_user_image(
     # Boot the overlay and execute layers
     from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
 
-    runtime = QEMUBaremetalRuntime(api_port=18098, memory_mb=8192, cpu_count=4)
+    runtime = QEMUBaremetalRuntime(api_port=18098, memory_mb=8192, cpu_count=4, network_restrict=False)
 
     build_image = Image.from_file(str(user_path), os_type=image.os_type)
     try:

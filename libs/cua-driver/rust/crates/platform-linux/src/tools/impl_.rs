@@ -790,7 +790,7 @@ impl Tool for GetWindowStateTool {
 
                     // Structured `elements` array: one entry per actionable node.
                     // Shape: `{element_index, element_token, role, label,
-                    // depth, parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // depth, actions?, parent_index?, frame?: {x,y,w,h}}`. Frame is
                     // included whenever AT-SPI Component.GetExtents(Screen)
                     // reported usable bounds; omitted otherwise (some
                     // toolkits leave bounds unset on hidden / virtual
@@ -843,6 +843,9 @@ impl Tool for GetWindowStateTool {
                             }
                             if let Some(selected) = n.selected {
                                 entry["selected"] = json!(selected);
+                            }
+                            if !n.actions.is_empty() {
+                                entry["actions"] = json!(n.actions);
                             }
                             if let Some(parent) = n.parent_element_index {
                                 entry["parent_index"] = json!(parent);
@@ -981,6 +984,58 @@ mod get_window_state_capture_tests {
         assert!(error["reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("surface_identity_unproven")));
+    }
+}
+
+#[cfg(test)]
+mod get_window_state_actions_tests {
+    use super::*;
+    use crate::atspi::AtspiNode;
+
+    fn node(actions: Vec<String>) -> AtspiNode {
+        AtspiNode {
+            element_index: Some(1),
+            role: "button".to_owned(),
+            name: Some("ok".to_owned()),
+            value: None,
+            checked: None,
+            enabled: Some(true),
+            selected: None,
+            description: None,
+            actions,
+            element_key: 1,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn element_entry_includes_actions_when_present() {
+        let n = node(vec!["Press".to_owned(), "Open".to_owned()]);
+        let mut entry = json!({
+            "element_index": n.element_index.unwrap(),
+            "role": n.role,
+            "depth": n.depth,
+        });
+        if !n.actions.is_empty() {
+            entry["actions"] = json!(n.actions);
+        }
+        assert_eq!(entry["actions"], json!(["Press", "Open"]));
+    }
+
+    #[test]
+    fn element_entry_omits_actions_when_empty() {
+        let n = node(Vec::new());
+        let mut entry = json!({
+            "element_index": n.element_index.unwrap(),
+            "role": n.role,
+            "depth": n.depth,
+        });
+        if !n.actions.is_empty() {
+            entry["actions"] = json!(n.actions);
+        }
+        assert!(entry.get("actions").is_none());
     }
 }
 

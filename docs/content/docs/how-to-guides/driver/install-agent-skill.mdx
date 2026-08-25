@@ -11,6 +11,29 @@ The Cua Driver agent skill teaches an agent how to choose tools, address windows
   The skill contains agent instructions. It does not install the `cua-driver` executable. [Install Cua Driver](/how-to-guides/driver/install) on the same machine first.
 </Callout>
 
+## Skill or plugin
+
+The standalone skill is the smallest integration and works when the agent is
+already configured to call Cua Driver. The Cua Driver plugin bundles that same
+skill with the local stdio MCP configuration for Claude Code, Grok Build, and
+Codex CLI.
+
+The source package lives at
+[`libs/cua-driver/plugins/cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver/plugins/cua-driver).
+Each marketplace can point to that package at a pinned commit, so the operating
+instructions and MCP configuration remain identical across agents.
+
+The plugin still does not install the native executable. Install and verify Cua
+Driver first, then install the plugin from a marketplace that lists it. Start a
+new agent session after installation so the agent loads both the skill and MCP
+server.
+
+<Callout type="warn">
+  A marketplace must not expose Cua Driver's local desktop-control endpoint to
+  the public internet merely to convert the stdio integration into a hosted
+  plugin. Keep Cua Driver on the computer it controls.
+</Callout>
+
 ## Install from ClawHub
 
 Run the command from your OpenClaw workspace:

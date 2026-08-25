@@ -17,7 +17,11 @@ grok mcp doctor cua-driver
 
 The `--` separates Grok Build's options from the Cua Driver server command. Grok Build stores user configuration in `~/.grok/config.toml`; add `--scope project` if the configuration belongs to one repository.
 
-Cua Driver currently has no dedicated Grok Build preset, so this page follows Grok Build's native MCP command and the standard `cua-driver mcp` entry point.
+Cua Driver also maintains a shared marketplace-ready plugin package for Grok
+Build, Claude Code, and Codex CLI. Until a marketplace lists that package, use
+the native MCP command above. The package contains the same `cua-driver mcp`
+entry point plus the canonical snapshot-action-verify skill; it does not install
+the native executable.
 
 Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent) for installation, permissions, and runtime modes.
 

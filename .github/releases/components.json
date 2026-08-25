@@ -46,6 +46,27 @@
           "pattern": "(?m)^(version: )\\d+\\.\\d+\\.\\d+( # x-release-please-version)$",
           "replacement": "\\g<1>{version}\\g<2>",
           "expectedMatches": 1
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua-driver/plugins/cua-driver/.claude-plugin/plugin.json",
+          "pattern": "(?m)^(  \"version\": \")[^\"]+(\",)$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua-driver/plugins/cua-driver/.codex-plugin/plugin.json",
+          "pattern": "(?m)^(  \"version\": \")[^\"]+(\",)$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua-driver/plugins/cua-driver/.grok-plugin/plugin.json",
+          "pattern": "(?m)^(  \"version\": \")[^\"]+(\",)$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
         }
       ],
       "channels": {

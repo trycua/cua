@@ -56,7 +56,7 @@ fn def() -> &'static ToolDef {
                 "agent_view_geometry": {
                     "type": "string",
                     "description": "Agent View size + optional position in `WxH` or `WxH+X+Y` \
-                        form (e.g. `320x200+24+24`). Applies on next daemon restart."
+                        form (e.g. `640x420+24+24`). Applies on next daemon restart."
                 }
             },
             "additionalProperties": false

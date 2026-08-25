@@ -1509,7 +1509,8 @@ pub async fn run_serve(
 
     cua_driver_core::authorization::validate_startup_authorization()?;
 
-    eprintln!("Cua Driver daemon listening on {socket_path}");
+    // The "listening" banner is printed only after the first pipe instance is
+    // successfully created (below), so it can never claim a bind that failed.
 
     // Build the current-user descriptor once and reuse it for every pipe
     // instance. Both service and embedded mode fail closed if the ACL cannot
@@ -1554,28 +1555,57 @@ pub async fn run_serve(
     }
 
     let mut first_pipe = true;
+    let mut create_failures: u64 = 0;
     loop {
         // All daemons use the current-user descriptor. Embedded daemons also
         // reserve the pipe name with their first instance.
+        //
+        // DEV-LOOP HARDENING (2026-08-24): create/connect failures used to
+        // bail out of run_serve via ? while the process kept living and the
+        // banner was already printed -- clients then saw "daemon not running"
+        // against a live PID with no error logged anywhere. Retry with a
+        // backoff and log every failure instead.
         let first_pipe_instance = embedded && first_pipe;
-        let server = if sec_attrs_ptr.is_null() {
-            ServerOptions::new()
-                .first_pipe_instance(first_pipe_instance)
-                .create(socket_path)
-                .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
-        } else {
-            unsafe {
+        let mut server = loop {
+            let created = if sec_attrs_ptr.is_null() {
                 ServerOptions::new()
                     .first_pipe_instance(first_pipe_instance)
-                    .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
-                    .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
+                    .create(socket_path)
+            } else {
+                unsafe {
+                    ServerOptions::new()
+                        .first_pipe_instance(first_pipe_instance)
+                        .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
+                }
+            };
+            match created {
+                Ok(s) => {
+                    create_failures = 0;
+                    break s;
+                }
+                Err(e) => {
+                    create_failures += 1;
+                    eprintln!("Cua Driver: create named pipe {socket_path} failed: {e} (failure {create_failures}, retrying in 500ms)");
+                    if create_failures >= 1000 {
+                        anyhow::bail!("create named pipe {socket_path}: {create_failures} consecutive failures, last error: {e}");
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    continue;
+                }
             }
         };
-        first_pipe = false;
+        if first_pipe {
+            first_pipe = false;
+            eprintln!("Cua Driver daemon listening on {socket_path}");
+        }
 
         tokio::select! {
             result = server.connect() => {
-                result.map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
+                if let Err(e) = result {
+                    eprintln!("Cua Driver: named pipe connect on {socket_path} failed: {e} (recreating pipe instance)");
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    continue;
+                }
                 let expected_sid = unsafe { current_user_sid_string() };
                 let client_process_id =
                     unsafe { named_pipe_client_process_id(server.as_raw_handle().cast()) };

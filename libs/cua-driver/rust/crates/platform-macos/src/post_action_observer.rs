@@ -44,9 +44,11 @@ enum RootKey {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Root {
-    target: Option<ActionSurfaceTarget>,
+    window_id: Option<u32>,
+    title: String,
+    modal: bool,
     focused: bool,
 }
 
@@ -160,25 +162,17 @@ fn observe_delta(
         std::thread::sleep(POLL_INTERVAL);
     };
 
-    let mut delta = diff_roots(
-        &before.roots,
-        &snapshot_roots(pid).roots,
-        foreground_changed(prior_front),
-    );
-    if delta.is_none() && signaled {
+    let mut appeared = appeared_roots(&before.roots, &snapshot_roots(pid).roots);
+    if appeared.is_empty() && signaled {
         for _ in 0..CATCH_UP_ATTEMPTS {
             std::thread::sleep(CATCH_UP_INTERVAL);
-            delta = diff_roots(
-                &before.roots,
-                &snapshot_roots(pid).roots,
-                foreground_changed(prior_front),
-            );
-            if delta.is_some() {
+            appeared = appeared_roots(&before.roots, &snapshot_roots(pid).roots);
+            if !appeared.is_empty() {
                 break;
             }
         }
     }
-    delta
+    resolve_appeared_roots(pid, &appeared, foreground_changed(prior_front))
 }
 
 fn foreground_changed(prior_front: Option<i32>) -> bool {
@@ -188,22 +182,62 @@ fn foreground_changed(prior_front: Option<i32>) -> bool {
     )
 }
 
-fn diff_roots(
-    before: &RootSnapshot,
-    after: &RootSnapshot,
-    foreground_changed: bool,
-) -> Option<ActionSurfaceDelta> {
-    let candidates = after
+fn appeared_roots(before: &RootSnapshot, after: &RootSnapshot) -> Vec<Root> {
+    after
         .iter()
         .filter(|(key, _)| !before.contains_key(*key))
-        .filter_map(|(_, root)| {
-            root.target.clone().map(|target| ActionSurfaceCandidate {
-                target,
+        .map(|(_, root)| root.clone())
+        .collect()
+}
+
+fn resolve_appeared_roots(
+    pid: i32,
+    roots: &[Root],
+    foreground_changed: bool,
+) -> Option<ActionSurfaceDelta> {
+    if roots.is_empty() {
+        return None;
+    }
+    let app_name = crate::apps::get_app_name_for_pid(pid).unwrap_or_default();
+    let mut resolved = resolve_candidates(pid, &app_name, roots, &crate::windows::all_windows());
+    for _ in 0..CATCH_UP_ATTEMPTS {
+        if resolved.len() == roots.len() {
+            break;
+        }
+        std::thread::sleep(CATCH_UP_INTERVAL);
+        resolved = resolve_candidates(pid, &app_name, roots, &crate::windows::all_windows());
+    }
+    let incomplete = resolved.len() != roots.len();
+    let mut delta = resolve_surface_delta(resolved, foreground_changed)?;
+    if incomplete {
+        delta.rebind = None;
+    }
+    Some(delta)
+}
+
+fn resolve_candidates(
+    pid: i32,
+    app_name: &str,
+    roots: &[Root],
+    windows: &[crate::windows::WindowInfo],
+) -> Vec<ActionSurfaceCandidate> {
+    roots
+        .iter()
+        .filter_map(|root| {
+            let window_id = root.window_id?;
+            let (owner_pid, owner_app_name) = surface_owner(windows, pid, window_id, app_name)?;
+            Some(ActionSurfaceCandidate {
+                target: ActionSurfaceTarget {
+                    pid: i64::from(owner_pid),
+                    window_id: u64::from(window_id),
+                    app_name: owner_app_name,
+                    title: root.title.clone(),
+                    modal: root.modal,
+                },
                 focused: root.focused,
             })
         })
-        .collect();
-    resolve_surface_delta(candidates, foreground_changed)
+        .collect()
 }
 
 fn target_window_signature(pid: i32) -> HashSet<u32> {
@@ -221,37 +255,16 @@ fn snapshot_roots(pid: i32) -> RootObservation {
             return RootObservation::default();
         }
         AXUIElementSetMessagingTimeout(app, 0.25);
-        let app_name = crate::apps::get_app_name_for_pid(pid).unwrap_or_default();
-        let window_server = crate::windows::all_windows();
-        let window_signature = window_server
-            .iter()
-            .filter(|window| window.pid == pid && window.is_on_screen)
-            .map(|window| window.window_id)
-            .collect();
         let windows = copy_ax_windows(app);
         let mut roots = HashMap::new();
         for window in windows {
             let parent_window_id = ax_get_window_id(window);
-            insert_root(
-                &mut roots,
-                window,
-                parent_window_id,
-                pid,
-                &app_name,
-                &window_server,
-            );
+            insert_root(&mut roots, window, parent_window_id);
             for attribute in ["AXSheets", "AXChildren"] {
                 for child in copy_element_array_attr(window, attribute) {
                     let role = copy_string_attr(child, "AXRole").unwrap_or_default();
                     if matches!(role.as_str(), "AXSheet" | "AXDialog" | "AXPopover") {
-                        insert_root(
-                            &mut roots,
-                            child,
-                            parent_window_id,
-                            pid,
-                            &app_name,
-                            &window_server,
-                        );
+                        insert_root(&mut roots, child, parent_window_id);
                     }
                     CFRelease(child as CFTypeRef);
                 }
@@ -261,7 +274,7 @@ fn snapshot_roots(pid: i32) -> RootObservation {
         CFRelease(app as CFTypeRef);
         RootObservation {
             roots,
-            window_signature,
+            window_signature: target_window_signature(pid),
         }
     }
 }
@@ -270,9 +283,6 @@ unsafe fn insert_root(
     roots: &mut RootSnapshot,
     element: AXUIElementRef,
     parent_window_id: Option<u32>,
-    pid: i32,
-    app_name: &str,
-    window_server: &[crate::windows::WindowInfo],
 ) {
     let role = copy_string_attr(element, "AXRole").unwrap_or_default();
     let subrole = copy_string_attr(element, "AXSubrole").unwrap_or_default();
@@ -299,21 +309,12 @@ unsafe fn insert_root(
                 .map(|frame| frame.map(|value| value.round() as i64)),
         },
     };
-    let target = effective_window_id.and_then(|window_id| {
-        surface_owner(window_server, pid, window_id, app_name).map(|(owner_pid, owner_app_name)| {
-            ActionSurfaceTarget {
-                pid: i64::from(owner_pid),
-                window_id: u64::from(window_id),
-                app_name: owner_app_name,
-                title,
-                modal,
-            }
-        })
-    });
     roots.insert(
         key,
         Root {
-            target,
+            window_id: effective_window_id,
+            title,
+            modal,
             focused: copy_bool_attr(element, "AXFocused").unwrap_or(false),
         },
     );
@@ -339,15 +340,11 @@ fn surface_owner(
 mod tests {
     use super::*;
 
-    fn root(window_id: u64, title: &str, modal: bool) -> Root {
+    fn root(window_id: u32, title: &str, modal: bool) -> Root {
         Root {
-            target: Some(ActionSurfaceTarget {
-                pid: 42,
-                window_id,
-                app_name: "Editor".into(),
-                title: title.into(),
-                modal,
-            }),
+            window_id: Some(window_id),
+            title: title.into(),
+            modal,
             focused: false,
         }
     }
@@ -361,7 +358,7 @@ mod tests {
         };
         let before = RootSnapshot::from([(parent.clone(), root(7, "Draft", false))]);
         let mut after = RootSnapshot::from([(parent, root(7, "Draft — Edited", false))]);
-        assert_eq!(diff_roots(&before, &after, false), None);
+        assert!(appeared_roots(&before, &after).is_empty());
 
         let sheet = RootKey::Native {
             window_id: 8,
@@ -369,12 +366,36 @@ mod tests {
             subrole: String::new(),
         };
         after.insert(sheet, root(8, "Open", true));
-        assert_eq!(
-            diff_roots(&before, &after, false)
-                .and_then(|delta| delta.rebind)
-                .map(|target| target.window_id),
-            Some(8)
-        );
+        assert_eq!(appeared_roots(&before, &after), vec![root(8, "Open", true)]);
+    }
+
+    #[test]
+    fn owner_resolution_can_follow_an_ax_root_without_guessing() {
+        let roots = vec![root(8, "Open", true)];
+        assert!(resolve_candidates(42, "TextEdit", &roots, &[]).is_empty());
+
+        let windows = vec![crate::windows::WindowInfo {
+            window_id: 8,
+            pid: 99,
+            app_name: "Open and Save Panel Service".into(),
+            title: "Open".into(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 640.0,
+                height: 480.0,
+            },
+            layer: 0,
+            z_index: 1,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }];
+        let candidates = resolve_candidates(42, "TextEdit", &roots, &windows);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].target.pid, 99);
+        assert_eq!(candidates[0].target.window_id, 8);
     }
 
     #[test]

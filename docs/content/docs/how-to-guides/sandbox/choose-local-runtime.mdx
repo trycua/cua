@@ -1,0 +1,23 @@
+---
+title: Choose a local sandbox runtime
+description: Run a sandbox on your own machine and let Cua select a compatible runtime for its image type.
+---
+
+Pass `local=True` to use a runtime on your own machine. Cua selects a compatible local runtime from the image type: Docker for Linux containers, QEMU for Linux VMs, Lume for macOS VMs, and QEMU or Hyper-V for Windows VMs.
+
+```python
+import asyncio
+from cua import Image, Sandbox
+
+async def main():
+    # local Docker desktop container
+    async with Sandbox.ephemeral(
+        Image.linux(kind='container'),
+        local=True,
+    ) as sb:
+        await sb.shell.run('echo running locally')
+
+asyncio.run(main())
+```
+
+Choose the image's operating system and isolation level before setting `local=True`. See [Choose and build a sandbox image](/how-to-guides/sandbox/images) for the available image constructors.

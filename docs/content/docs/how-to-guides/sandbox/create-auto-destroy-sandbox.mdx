@@ -1,0 +1,21 @@
+---
+title: Create and auto-destroy a sandbox
+description: Use Sandbox.ephemeral for a temporary sandbox that is deleted automatically after a script or job.
+---
+
+Use `Sandbox.ephemeral` for scripts, CI, and one-off tasks.
+
+```python
+import asyncio
+from cua import Image, Sandbox
+
+async def main():
+    async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+        result = await sb.shell.run('echo hello')
+        print(result.stdout)  # 'hello\n'
+    # sandbox deleted here
+
+asyncio.run(main())
+```
+
+`Sandbox.ephemeral` is **auto-destroyed** when the `async with` block exits. Its context manager tears the sandbox down automatically.

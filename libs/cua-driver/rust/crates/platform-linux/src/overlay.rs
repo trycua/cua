@@ -3180,6 +3180,27 @@ mod tests {
     }
 
     #[test]
+    fn session_removal_drops_the_cursor_and_rejects_late_commands() {
+        let mut map = default_render_map();
+        let command = || {
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "session-a".to_owned(),
+                cmd: OverlayCommand::ClickPulse { x: 12.0, y: 34.0 },
+            })
+        };
+
+        assert_eq!(apply_msg(&mut map, command()).as_deref(), Some("session-a"));
+        assert!(map.cursors.contains_key("session-a"));
+
+        assert!(apply_msg(&mut map, OverlayMsg::Remove("session-a".to_owned())).is_none());
+        assert!(!map.cursors.contains_key("session-a"));
+        assert!(map.ended.contains("session-a"));
+
+        assert!(apply_msg(&mut map, command()).is_none());
+        assert!(!map.cursors.contains_key("session-a"));
+    }
+
+    #[test]
     fn failed_x11_enqueue_is_reported_without_waiting() {
         assert!(!try_send_x11_message(None, test_message()));
 

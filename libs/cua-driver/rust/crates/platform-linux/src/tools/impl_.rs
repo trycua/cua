@@ -1938,33 +1938,34 @@ fn resolve_cursor_key(args: &Value) -> String {
     "default".to_owned()
 }
 
-#[cfg(test)]
-mod cursor_key_resolution_tests {
-    use super::resolve_cursor_key;
-    use serde_json::json;
+/// Return the cursor key only for a lifecycle-owned session. Cursor positioning
+/// for keyboard actions deliberately does not opt anonymous calls or the
+/// legacy cursor_id-only path into session semantics. The proxy-minted
+/// `_session_id` is trusted lifecycle state and must behave like a public named
+/// session for cursor ownership.
+fn named_session_cursor_key(args: &Value) -> Option<String> {
+    ["session", "_session_id"].into_iter().find_map(|key| {
+        args.get(key)
+            .and_then(Value::as_str)
+            .filter(|session| !session.is_empty())
+            .map(str::to_owned)
+    })
+}
 
-    #[test]
-    fn trusted_implicit_session_owns_the_cursor() {
-        assert_eq!(resolve_cursor_key(&json!({})), "default");
-        assert_eq!(
-            resolve_cursor_key(&json!({"_session_id": "implicit-lease"})),
-            "implicit-lease"
-        );
-        assert_eq!(
-            resolve_cursor_key(&json!({
-                "_session_id": "implicit-lease",
-                "cursor_id": "legacy"
-            })),
-            "implicit-lease"
-        );
-        assert_eq!(
-            resolve_cursor_key(&json!({
-                "session": "named",
-                "_session_id": "implicit-lease"
-            })),
-            "named"
-        );
-    }
+fn finite_cursor_point(point: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    point.filter(|(x, y)| x.is_finite() && y.is_finite())
+}
+
+fn choose_keyboard_cursor_target(
+    explicit: Option<(f64, f64)>,
+    remembered: Option<(f64, f64)>,
+    window_center: Option<(f64, f64)>,
+    current_pointer: Option<(f64, f64)>,
+) -> Option<(f64, f64)> {
+    finite_cursor_point(explicit)
+        .or_else(|| finite_cursor_point(remembered))
+        .or_else(|| finite_cursor_point(window_center))
+        .or_else(|| finite_cursor_point(current_pointer))
 }
 
 fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
@@ -2064,6 +2065,146 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
         return;
     }
     crate::overlay::animate_cursor_to_for(cursor_id.to_owned(), sx, sy).await;
+}
+
+/// Keep the logical cursor position in sync with every visibly targeted
+/// pointer action. Overlay delivery is intentionally best-effort: registry
+/// state is still updated when no renderer is running or its queue is closed.
+async fn reveal_pointer_action_for(
+    state: &ToolState,
+    cursor_id: &str,
+    sx: f64,
+    sy: f64,
+    click_pulse: bool,
+) {
+    if !sx.is_finite() || !sy.is_finite() {
+        return;
+    }
+    state.cursor_registry.update_position(cursor_id, sx, sy);
+    overlay_glide_to_for(cursor_id, sx, sy).await;
+    if click_pulse {
+        crate::overlay::send_command_for(
+            cursor_id.to_owned(),
+            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+        );
+    }
+}
+
+fn keyboard_window_center(xid: u64) -> Option<(f64, f64)> {
+    if xid == 0 {
+        return None;
+    }
+    if crate::wayland::is_wayland() {
+        return crate::wayland::window_geometry(xid).and_then(|(x, y, width, height)| {
+            (width > 0 && height > 0).then_some((
+                f64::from(x) + f64::from(width) / 2.0,
+                f64::from(y) + f64::from(height) / 2.0,
+            ))
+        });
+    }
+    window_screen_center(xid)
+        .ok()
+        .map(|(x, y)| (f64::from(x), f64::from(y)))
+}
+
+fn current_pointer_position() -> Option<(f64, f64)> {
+    if crate::wayland::is_wayland() {
+        return crate::wayland::last_synth_cursor_pos().map(|(x, y)| (f64::from(x), f64::from(y)));
+    }
+
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::rust_connection::RustConnection;
+
+    let (connection, screen_num) = RustConnection::connect(None).ok()?;
+    let root = connection.setup().roots[screen_num].root;
+    let reply = connection.query_pointer(root).ok()?.reply().ok()?;
+    Some((f64::from(reply.root_x), f64::from(reply.root_y)))
+}
+
+fn explicit_keyboard_cursor_target(
+    pid: u32,
+    xid: u64,
+    element_index: Option<usize>,
+    pixel_target: Option<(f64, f64)>,
+) -> Option<(f64, f64)> {
+    if let Some(element_index) = element_index {
+        let (sx, sy) = element_screen_center(pid, element_index).ok()?;
+        return Some((sx, sy));
+    }
+
+    let (x, y) = pixel_target?;
+    if crate::wayland::wayland_input_enabled() {
+        return crate::wayland::window_geometry(xid)
+            .map(|(wx, wy, _, _)| (f64::from(wx) + x.round(), f64::from(wy) + y.round()));
+    }
+    window_local_to_screen(xid, x, y).ok()
+}
+
+/// Position and reveal a named session's cursor before keyboard/value input.
+/// `preserve_legacy_element_visual` retains the existing element-only feedback
+/// for type_text/set_value anonymous calls without adding session-style fallback
+/// placement to them. Geometry and overlay failures are observational and never
+/// affect the tool's actual input result.
+async fn position_named_session_keyboard_cursor(
+    state: &ToolState,
+    args: &Value,
+    pid: u32,
+    xid: u64,
+    element_index: Option<usize>,
+    pixel_target: Option<(f64, f64)>,
+    preserve_legacy_element_visual: bool,
+) {
+    let named_cursor_id = named_session_cursor_key(args);
+    let cursor_id = match named_cursor_id {
+        Some(ref cursor_id) => cursor_id.clone(),
+        None if preserve_legacy_element_visual && element_index.is_some() => {
+            resolve_cursor_key(args)
+        }
+        None => return,
+    };
+
+    let remembered = named_cursor_id.as_ref().and_then(|_| {
+        state
+            .cursor_registry
+            .get(&cursor_id)
+            .and_then(|cursor| cursor.x.zip(cursor.y))
+    });
+    let explicit = tokio::task::spawn_blocking(move || {
+        explicit_keyboard_cursor_target(pid, xid, element_index, pixel_target)
+    })
+    .await
+    .ok()
+    .flatten();
+
+    let fallback = if named_cursor_id.is_some()
+        && explicit.is_none()
+        && finite_cursor_point(remembered).is_none()
+    {
+        tokio::task::spawn_blocking(move || {
+            let center = keyboard_window_center(xid);
+            let pointer = center.is_none().then(current_pointer_position).flatten();
+            (center, pointer)
+        })
+        .await
+        .unwrap_or((None, None))
+    } else {
+        (None, None)
+    };
+
+    let Some((sx, sy)) =
+        choose_keyboard_cursor_target(explicit, remembered, fallback.0, fallback.1)
+    else {
+        return;
+    };
+    if xid != 0 {
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
+    }
+    state.cursor_registry.update_position(&cursor_id, sx, sy);
+    overlay_glide_to_for(&cursor_id, sx, sy).await;
 }
 
 async fn track_overlay_drag_for(
@@ -2317,7 +2458,8 @@ impl Tool for ClickTool {
             // / Windows desktop paths already do this). Without it the overlay
             // sits idle elsewhere while only the real pointer warps, so a viewer
             // sees the cursor "click somewhere else."
-            overlay_glide_to_for(&cursor_id, sx as f64, sy as f64).await;
+            reveal_pointer_action_for(&self.state, &cursor_id, f64::from(sx), f64::from(sy), true)
+                .await;
             let r = tokio::task::spawn_blocking(move || {
                 if crate::wayland::wayland_input_enabled() {
                     if !modifiers.is_empty() {
@@ -2431,11 +2573,7 @@ impl Tool for ClickTool {
                     cursor_overlay::OverlayCommand::PinAbove(xid),
                 );
             }
-            overlay_glide_to_for(&cursor_id, sx, sy).await;
-            crate::overlay::send_command_for(
-                cursor_id.clone(),
-                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
-            );
+            reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
 
             // Chromium can execute a genuine AT-SPI action without focus. Try
             // that route before applying its background synthetic-input gate.
@@ -2573,11 +2711,7 @@ impl Tool for ClickTool {
                 .and_then(|r| r.ok())
         };
         if let Some((sx, sy)) = glide_target {
-            overlay_glide_to_for(&cursor_id, sx, sy).await;
-            crate::overlay::send_command_for(
-                cursor_id.clone(),
-                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
-            );
+            reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
         }
 
         let (xi, yi) = (x as i32, y as i32);
@@ -2837,6 +2971,8 @@ impl Tool for TypeTextTool {
             let text =
                 cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
                     .into_owned();
+            position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
+                .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
@@ -2928,21 +3064,16 @@ impl Tool for TypeTextTool {
             );
         }
 
-        let cursor_id = resolve_cursor_key(&args);
-        if let Some(idx) = resolved_elem_idx {
-            crate::overlay::send_command_for(
-                cursor_id.clone(),
-                cursor_overlay::OverlayCommand::PinAbove(xid),
-            );
-            if let Ok(Ok((screen_x, screen_y))) =
-                tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
-            {
-                overlay_glide_to_for(&cursor_id, screen_x, screen_y).await;
-                self.state
-                    .cursor_registry
-                    .update_position(&cursor_id, screen_x, screen_y);
-            }
-        }
+        position_named_session_keyboard_cursor(
+            &self.state,
+            &args,
+            pid,
+            xid,
+            resolved_elem_idx,
+            px.zip(py),
+            true,
+        )
+        .await;
 
         let text_len = text.chars().count();
         // Native toolkit editables have a stronger focus-free route than raw
@@ -3454,6 +3585,8 @@ impl Tool for PressKeyTool {
             let key = input.key;
             let display = key.clone();
             let modifiers = input.modifiers.unwrap_or_default();
+            position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
+                .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
@@ -3503,17 +3636,17 @@ impl Tool for PressKeyTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        let resolved_element_index = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
         let xid_opt = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
                 window_id_arg.or_else(|| window_id.map(|v| v as u64))
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
-        };
-        let resolved_element_idx = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
-                Some(*element_index)
-            }
-            cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let xid = match xid_opt {
             Some(x) => x,
@@ -3557,17 +3690,28 @@ impl Tool for PressKeyTool {
         if px.is_some() != py.is_some() {
             return ToolResult::error("Pass both x and y to press_key, or neither.");
         }
-        if px.is_some() && resolved_element_idx.is_some() {
+        if px.is_some() && resolved_element_index.is_some() {
             return ToolResult::error(
                 "Pass either element_index (ax) or x,y (px) to press_key, not both.",
             );
         }
 
+        position_named_session_keyboard_cursor(
+            &self.state,
+            &args,
+            pid,
+            xid,
+            resolved_element_index,
+            px.zip(py),
+            false,
+        )
+        .await;
+
         // Nested cua-compositor addresses the owning Wayland client directly.
         // Preserve legacy modifiers by promoting the request to a chord.
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
-                focus_nested_inject_target(pid, xid, resolved_element_idx, px.zip(py)).await
+                focus_nested_inject_target(pid, xid, resolved_element_index, px.zip(py)).await
             {
                 return error;
             }
@@ -3625,7 +3769,7 @@ impl Tool for PressKeyTool {
         if crate::wayland::wayland_input_enabled() {
             let key_w = key.clone();
             let chord = press_key_chord(&mods, &key);
-            let idx = resolved_element_idx;
+            let idx = resolved_element_index;
             let result = tokio::task::spawn_blocking(move || {
                 crate::wayland::with_target_foreground(pid, xid, || {
                     if let Some(idx) = idx {
@@ -3657,7 +3801,7 @@ impl Tool for PressKeyTool {
         // click restores the prior top-level before returning.
         let deliver_fg = delivery.is_foreground();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if resolved_element_idx.is_none()
+            if resolved_element_index.is_none()
                 && mods.is_empty()
                 && key_for_task.eq_ignore_ascii_case("enter")
             {
@@ -3673,7 +3817,7 @@ impl Tool for PressKeyTool {
             // XSendEvent (no focus steal) for apps that accept it.
             if deliver_fg {
                 return crate::input::with_x11_foreground(xid, 80, || {
-                    if let Some(element_index) = resolved_element_idx {
+                    if let Some(element_index) = resolved_element_index {
                         if !crate::atspi::focus_element(pid, element_index)? {
                             anyhow::bail!(
                                 "AT-SPI Component.GrabFocus returned false for element {element_index}"
@@ -3683,7 +3827,7 @@ impl Tool for PressKeyTool {
                     crate::input::send_key_xtest(&key_for_task, &m)
                 });
             }
-            if let Some(element_index) = resolved_element_idx {
+            if let Some(element_index) = resolved_element_index {
                 if !crate::atspi::focus_element(pid, element_index)? {
                     anyhow::bail!(
                         "AT-SPI Component.GrabFocus returned false for element {element_index}"
@@ -3784,6 +3928,8 @@ impl Tool for HotkeyTool {
                 return ToolResult::error("keys must include at least one non-modifier key.");
             };
             let display = keys.join("+");
+            position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
+                .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
@@ -3899,6 +4045,17 @@ impl Tool for HotkeyTool {
                 "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
             );
         }
+
+        position_named_session_keyboard_cursor(
+            &self.state,
+            &args,
+            pid,
+            xid,
+            resolved_element_index,
+            px.zip(py),
+            false,
+        )
+        .await;
 
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
@@ -4044,7 +4201,9 @@ impl Tool for HotkeyTool {
 
 // ── set_value ─────────────────────────────────────────────────────────────────
 
-pub struct SetValueTool;
+pub struct SetValueTool {
+    state: Arc<ToolState>,
+}
 static SV_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -4090,32 +4249,23 @@ impl Tool for SetValueTool {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let idx = match resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
-                element_index
-            }
+        let (idx, resolved_window_id) = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element {
+                element_index,
+                window_id,
+                ..
+            } => (*element_index, window_id.map(u64::from)),
             cua_driver_core::element_token::ResolvedElement::None => return ToolResult::error(
                 "set_value requires element_index or element_token to address the target element.",
             ),
         };
-        let cursor_id = resolve_cursor_key(&args);
         let value_for_task = value.clone();
-        // Pulse the agent cursor onto the target element before writing, so a
-        // value write gets the same visual feedback as a click — the viewer can
-        // see *where* the agent is acting. No-op when the element bounds can't
-        // be resolved or the overlay is disabled.
-        if let Ok(Ok((sx, sy))) =
-            tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
-        {
-            let window_id = args.u64_or("window_id", 0);
-            if window_id != 0 {
-                crate::overlay::send_command_for(
-                    cursor_id.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(window_id),
-                );
-            }
-            overlay_glide_to_for(&cursor_id, sx, sy).await;
-        }
+        let xid = args
+            .opt_u64("window_id")
+            .or(resolved_window_id)
+            .unwrap_or(0);
+        position_named_session_keyboard_cursor(&self.state, &args, pid, xid, Some(idx), None, true)
+            .await;
         let result =
             tokio::task::spawn_blocking(move || crate::atspi::set_value(pid, idx, &value_for_task))
                 .await;
@@ -4129,7 +4279,9 @@ impl Tool for SetValueTool {
 
 // ── scroll ────────────────────────────────────────────────────────────────────
 
-pub struct ScrollTool;
+pub struct ScrollTool {
+    state: Arc<ToolState>,
+}
 static SCROLL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -4181,6 +4333,16 @@ impl Tool for ScrollTool {
             let display = direction.clone();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
+            if named_session_cursor_key(&args).is_some() {
+                reveal_pointer_action_for(
+                    &self.state,
+                    &cursor_id,
+                    f64::from(x),
+                    f64::from(y),
+                    false,
+                )
+                .await;
+            }
             let result = tokio::task::spawn_blocking(move || {
                 if wayland {
                     crate::wayland::scroll_desktop(x, y, &direction, amount as u32)
@@ -4249,6 +4411,49 @@ impl Tool for ScrollTool {
             }
         };
 
+        let pixel_target = match (
+            args.get("x").and_then(|value| value.as_f64()),
+            args.get("y").and_then(|value| value.as_f64()),
+        ) {
+            (Some(x), Some(y)) => {
+                // Pixel targets use the latest screenshot's coordinate frame.
+                // Apply the same buffer-to-window ratio as click/drag before
+                // positioning either the agent cursor or the input device.
+                let ratio = self.state.resize_registry.ratio(pid).unwrap_or(1.0);
+                Some((x * ratio, y * ratio))
+            }
+            (None, None) => None,
+            _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
+        };
+        let resolved_element_index = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        if pixel_target.is_some() && resolved_element_index.is_some() {
+            return ToolResult::error(
+                "Pass either element_index (ax) or x,y (px) to scroll, not both.",
+            );
+        }
+
+        if named_session_cursor_key(&args).is_some() {
+            let visual_target = tokio::task::spawn_blocking(move || {
+                explicit_keyboard_cursor_target(pid, xid, resolved_element_index, pixel_target)
+                    .or_else(|| keyboard_window_center(xid))
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some((sx, sy)) = visual_target {
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(xid),
+                );
+                reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, false).await;
+            }
+        }
+
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
@@ -4283,25 +4488,6 @@ impl Tool for ScrollTool {
                     }));
                 }
             }
-        }
-
-        let pixel_target = match (
-            args.get("x").and_then(|value| value.as_f64()),
-            args.get("y").and_then(|value| value.as_f64()),
-        ) {
-            (Some(x), Some(y)) => Some((x, y)),
-            (None, None) => None,
-            _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
-        };
-        if pixel_target.is_some()
-            && matches!(
-                &resolved,
-                cua_driver_core::element_token::ResolvedElement::Element { .. }
-            )
-        {
-            return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to scroll, not both.",
-            );
         }
 
         if crate::wayland::is_inject_mode() {
@@ -4612,11 +4798,7 @@ impl Tool for DoubleClickTool {
                             cursor_id.clone(),
                             cursor_overlay::OverlayCommand::PinAbove(xid),
                         );
-                        overlay_glide_to_for(&cursor_id, sx, sy).await;
-                        crate::overlay::send_command_for(
-                            cursor_id.clone(),
-                            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
-                        );
+                        reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
@@ -4703,11 +4885,7 @@ impl Tool for DoubleClickTool {
                 .and_then(|r| r.ok())
         };
         if let Some((sx, sy)) = glide_target {
-            overlay_glide_to_for(&cursor_id, sx, sy).await;
-            crate::overlay::send_command_for(
-                cursor_id.clone(),
-                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
-            );
+            reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
@@ -4846,11 +5024,7 @@ impl Tool for RightClickTool {
                             cursor_id.clone(),
                             cursor_overlay::OverlayCommand::PinAbove(xid),
                         );
-                        overlay_glide_to_for(&cursor_id, sx, sy).await;
-                        crate::overlay::send_command_for(
-                            cursor_id.clone(),
-                            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
-                        );
+                        reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
@@ -4937,11 +5111,7 @@ impl Tool for RightClickTool {
                 .and_then(|r| r.ok())
         };
         if let Some((sx, sy)) = glide_target {
-            overlay_glide_to_for(&cursor_id, sx, sy).await;
-            crate::overlay::send_command_for(
-                cursor_id.clone(),
-                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
-            );
+            reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
@@ -8035,8 +8205,18 @@ pub fn build_registry_with_provider(
         },
         &pid_window_candidates,
     ));
-    r.register(pid_window_guarded(SetValueTool, &pid_window_candidates));
-    r.register(pid_window_guarded(ScrollTool, &pid_window_candidates));
+    r.register(pid_window_guarded(
+        SetValueTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
+    r.register(pid_window_guarded(
+        ScrollTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
     cua_driver_core::clipboard::register_clipboard_tools(
         &mut r,
         Arc::new(crate::clipboard::LinuxClipboard::new()),
@@ -8204,6 +8384,77 @@ mod pid_window_target_tests {
             PidWindowTargetResolution::Ambiguous(windows)
                 if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
         ));
+    }
+}
+
+#[cfg(test)]
+mod session_cursor_target_tests {
+    use super::{
+        choose_keyboard_cursor_target, named_session_cursor_key, reveal_pointer_action_for,
+        ToolState,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn lifecycle_owned_sessions_opt_into_keyboard_cursor_positioning() {
+        assert_eq!(
+            named_session_cursor_key(&json!({"session": "editing-run"})).as_deref(),
+            Some("editing-run")
+        );
+        assert_eq!(
+            named_session_cursor_key(&json!({"cursor_id": "legacy"})),
+            None
+        );
+        assert_eq!(
+            named_session_cursor_key(&json!({"_session_id": "implicit"})).as_deref(),
+            Some("implicit")
+        );
+        assert_eq!(named_session_cursor_key(&json!({})), None);
+    }
+
+    #[test]
+    fn keyboard_cursor_uses_explicit_then_remembered_then_safe_seed() {
+        let explicit = Some((10.0, 20.0));
+        let remembered = Some((30.0, 40.0));
+        let window_center = Some((50.0, 60.0));
+        let current_pointer = Some((70.0, 80.0));
+
+        assert_eq!(
+            choose_keyboard_cursor_target(explicit, remembered, window_center, current_pointer),
+            explicit
+        );
+        assert_eq!(
+            choose_keyboard_cursor_target(None, remembered, window_center, current_pointer),
+            remembered
+        );
+        assert_eq!(
+            choose_keyboard_cursor_target(None, None, window_center, current_pointer),
+            window_center
+        );
+        assert_eq!(
+            choose_keyboard_cursor_target(None, None, None, current_pointer),
+            current_pointer
+        );
+    }
+
+    #[test]
+    fn invalid_coordinates_do_not_poison_session_position_reuse() {
+        assert_eq!(
+            choose_keyboard_cursor_target(Some((f64::NAN, 1.0)), Some((12.0, 34.0)), None, None,),
+            Some((12.0, 34.0))
+        );
+    }
+
+    #[tokio::test]
+    async fn pointer_position_survives_an_unavailable_overlay() {
+        let state = ToolState::new();
+        reveal_pointer_action_for(&state, "no-renderer", 123.0, 456.0, true).await;
+
+        let cursor = state
+            .cursor_registry
+            .get("no-renderer")
+            .expect("pointer action records its position independently of rendering");
+        assert_eq!(cursor.x.zip(cursor.y), Some((123.0, 456.0)));
     }
 }
 

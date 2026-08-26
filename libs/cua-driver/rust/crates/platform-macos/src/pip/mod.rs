@@ -419,7 +419,7 @@ unsafe fn render_dock(
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
     let dock_frame = appkit_rect(layout.dock, bounds_height);
-    let dock = visual_effect_view(dock_frame, dock_frame.size.height * 0.27, 6, 1, false);
+    let dock = visual_effect_view(dock_frame, dock_frame.size.height * 0.30, 6, 1, true);
     let appearance_name = ns_string("NSAppearanceNameVibrantDark");
     let dark_appearance: *mut AnyObject =
         msg_send![class!(NSAppearance), appearanceNamed: appearance_name];
@@ -483,8 +483,7 @@ unsafe fn render_dock(
         }
 
         let dot_size = 3.2_f64.min(icon_frame.size.width * 0.10);
-        let dot_x =
-            icon_frame.origin.x - dock_frame.origin.x + (icon_frame.size.width - dot_size) / 2.0;
+        let dot_x = icon_frame.origin.x + (icon_frame.size.width - dot_size) / 2.0;
         add_circle(dock, dot_x, 2.2, dot_size, color(0.20, 0.72, 0.38, 0.92));
     }
     let _: () = msg_send![canvas, addSubview: dock];

@@ -1,0 +1,65 @@
+---
+title: 'Sandbox read-after-write consistency'
+description: 'What a successful sandbox mutation guarantees immediately, and which effects finish asynchronously.'
+---
+
+Read-after-write consistency answers a practical question: after an API call succeeds, what can the next read safely assume?
+
+Cua Sandbox separates **control-plane acceptance** from **runtime convergence**. A successful create or update means the requested resource specification was stored. It does not mean controllers have already created, resized, bound, restarted, or removed the computers behind that resource.
+
+## The platform contract
+
+For sandbox pools, templates, claims, and namespaces:
+
+- A successful create or update returns the resource version accepted by the Kubernetes API. A following direct `get` or `list` can read that stored resource and specification.
+- Controller-written status and dependent resources converge asynchronously. Readiness, replica counts, claim binding, services, virtual machines, and replacement capacity can lag behind the accepted specification.
+- A successful delete means deletion was accepted. It does not mean the resource name, its dependents, or its compute capacity have disappeared yet.
+
+This is why a returned object is an acknowledgement, not a universal readiness barrier.
+
+The same contract applies when an advanced client writes the sandbox custom resources through the authenticated `/api/k8s` proxy. That route forwards the Kubernetes response; it does not add a controller-readiness or deletion-completion wait.
+
+## Operation behavior
+
+| Operation                           | Guaranteed when the call returns                                                                                                       | Still converging                                                                                                                                                                                                                                                                                         |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create or reconcile a pool          | The pool specification is stored. First-time creation also creates its namespace, and `Pool.apply()` reconciles the pool and template. | The pool controller creates sandbox replicas on its reconciliation loop. Each sandbox then creates its runtime and service, and reports ready only after the runtime is running. `status.replicas` and `status.readyReplicas` can therefore trail `spec.replicas`.                                       |
+| Change pool replicas or autoscaling | The new desired specification is stored.                                                                                               | Scale-up, scale-down, autoscaler resources, and status converge later. Sandboxes selected for scale-down also complete their own teardown.                                                                                                                                                               |
+| Create or update a template         | The template specification is stored.                                                                                                  | Existing sandboxes keep the template embedded when they were created. The new template applies to sandboxes created or replaced afterward; it does not rewrite a running sandbox in place.                                                                                                               |
+| Create a claim                      | The claim exists and can be read.                                                                                                      | Binding is asynchronous. The claim can remain `Pending` while capacity starts, then become `Bound` or `Failed`. `Pool.create_claim()` returns the handle before binding; `Pool.claim()` waits for binding, and a handle returned by `create_claim()` can be awaited with `handle.wait()`.                |
+| Renew a claim                       | The new lifecycle shutdown time is stored if the patch succeeds.                                                                       | Renewal cannot revive a claim whose deletion has already started. A caller that loses the race with expiry must acquire a new claim.                                                                                                                                                                     |
+| Release or delete a claim           | Claim deletion was accepted.                                                                                                           | The claim finalizer either returns the sandbox to its pool and restarts it, or destroys it according to the shutdown policy. The claim can remain visible as terminating, and its capacity is not reusable until the sandbox becomes ready and re-enters the warm queue.                                 |
+| Delete a pool                       | Pool and namespace deletion were requested. Repeating the delete is safe.                                                              | The pool finalizer drains unclaimed sandboxes and waits for claim-owned sandboxes. Sandbox finalizers remove runtimes and services, and Kubernetes finishes namespace garbage collection. Reads can still show terminating resources, and recreating the same name can conflict until deletion finishes. |
+| Delete a template directly          | Template deletion was accepted.                                                                                                        | Existing sandboxes are not deleted. A pool that still references the missing template cannot replenish capacity until the template is restored or the pool is changed.                                                                                                                                   |
+| Create a namespace directly         | The namespace exists. The backend makes a best-effort wait for tenant adoption before returning.                                       | If tenant role bindings are late, the first in-namespace write can briefly fail with `403`. Workload OIDC credentials are also provisioned best-effort; sandboxes that require them can remain pending until the secret exists.                                                                          |
+| Delete a namespace directly         | Namespace deletion was accepted.                                                                                                       | The namespace remains `Terminating` while Kubernetes deletes its contents and runs finalizers. Its name is unavailable until that process completes.                                                                                                                                                     |
+
+Pool and claim creation-age TTLs use these same delete paths. Expiry is detected by periodic controller loops, so the TTL is an eligibility time, not an exact deletion timestamp. Pool and claim reapers normally check every 30 seconds, then normal finalization begins.
+
+## Choose the right completion signal
+
+Use the signal that matches the effect you need:
+
+- **Stored configuration:** wait for the create, reconcile, or update call, then fetch the resource again if you need its current server representation.
+- **Usable sandbox:** use `Pool.claim()` or call `await handle.wait()` after `Pool.create_claim()`. A `Bound` claim is the platform's handoff that identifies the sandbox and its services.
+- **Pool capacity:** poll a fresh pool read until `status.readyReplicas` reaches the required value. Do not use `spec.replicas` as proof that machines are ready.
+- **Completed deletion:** poll the resource until `get` returns not found or it disappears from `list`. Treat a visible `deletionTimestamp` or namespace phase `Terminating` as deletion in progress.
+- **Safe name reuse:** wait for completed deletion. Retrying create while the old resource or namespace is terminating can return a conflict.
+
+## Derived views are not barriers
+
+Usage and state-query views are derived from observed resource events. They may add collection, export, query, or short cache delays after the authoritative Kubernetes resource changes. Billing totals also depend on metering and upstream billing state. Use these views for reporting and observability, not to decide whether a create, update, or delete has converged.
+
+The same rule applies to controller-written status: it describes the latest observed state, but only the operation-specific condition you need should act as your barrier.
+
+## Design idempotent workflows
+
+Eventual convergence is easiest to handle when workflows are safe to retry:
+
+1. Give pools and named claims stable names.
+2. Reconcile desired configuration instead of assuming a prior attempt failed completely.
+3. Wait on readiness or absence before starting the next dependent operation.
+4. Treat timeouts as unknown outcomes, then read the resource before retrying.
+5. Use a new claim after expiry or termination instead of trying to reuse a dead handle.
+
+For lifecycle examples, see [Sandbox lifecycle](/how-to-guides/sandbox/lifecycle). For automatic cleanup, see [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims).

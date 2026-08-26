@@ -199,22 +199,58 @@ fn helper_owner() -> Option<String> {
 }
 
 fn snapshot_for_owner(owner: &str) -> Option<Vec<KwinWindow>> {
-    for attempt in 0..3 {
-        if let Some(snapshot) = call_to(owner, "GetWindows", &[]).and_then(|raw| parse_snapshot(&raw))
-        {
-            return Some(snapshot);
-        }
-        if attempt < 2 {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-    None
+    // Keep this synchronous API safe to call from either sync or async driver
+    // code by running the zbus/Tokio client on its own OS thread. In
+    // particular, do not use zbus's blocking wrapper directly from a Tokio
+    // task: that would create an async-sandwich nested-runtime hazard.
+    let owner = owner.to_owned();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+
+        runtime.block_on(async move {
+            let connection = tokio::time::timeout(CALL_TIMEOUT, zbus::Connection::session())
+                .await
+                .ok()?
+                .ok()?;
+            let proxy = tokio::time::timeout(
+                CALL_TIMEOUT,
+                zbus::Proxy::new(&connection, owner.as_str(), PATH, IFACE),
+            )
+            .await
+            .ok()?
+            .ok()?;
+
+            for attempt in 0..3 {
+                let raw = tokio::time::timeout(
+                    CALL_TIMEOUT,
+                    proxy.call::<_, _, String>("GetWindows", &()),
+                )
+                .await
+                .ok()
+                .and_then(Result::ok);
+                if let Some(snapshot) = raw.as_deref().and_then(parse_snapshot) {
+                    return Some(snapshot);
+                }
+                if attempt < 2 {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+            None
+        })
+    })
+    .join()
+    .ok()
+    .flatten()
 }
 
 pub fn parse_snapshot(raw: &str) -> Option<Vec<KwinWindow>> {
-    let start = raw.find('[')?;
-    let end = raw.rfind(']')?;
-    let values: Vec<serde_json::Value> = serde_json::from_str(&raw[start..=end]).ok()?;
+    // `raw` is the actual QString payload decoded by zbus, not gdbus's
+    // human-readable GVariant rendering. Parsing the display representation is
+    // unsafe because GLib may change its quoting/escaping for valid titles.
+    let values: Vec<serde_json::Value> = serde_json::from_str(raw).ok()?;
 
     let mut tokens = HashSet::new();
     let mut active_count = 0usize;

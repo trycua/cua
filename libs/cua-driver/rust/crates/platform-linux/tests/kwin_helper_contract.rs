@@ -22,7 +22,7 @@ fn atspi_window(pid: u32, x: i32, y: i32, width: u32, height: u32) -> WindowInfo
 #[test]
 fn parses_versioned_kwin_snapshot() {
     let snapshot = parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3}]"#,
     )
     .expect("valid KWin helper snapshot");
 
@@ -33,9 +33,19 @@ fn parses_versioned_kwin_snapshot() {
 }
 
 #[test]
+fn preserves_title_with_apostrophe_from_dbus_string() {
+    let snapshot = parse_snapshot(
+        r#"[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3,"title":"owner's editor","app_id":"org.example.Editor"}]"#,
+    )
+    .expect("apostrophe in the decoded D-Bus string must remain valid JSON");
+
+    assert_eq!(snapshot[0].title, "owner's editor");
+}
+
+#[test]
 fn parses_snapshot_when_title_contains_closing_bracket() {
     let snapshot = parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3,"title":"A ] title","app_id":"org.example.Editor"}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3,"title":"A ] title","app_id":"org.example.Editor"}]"#,
     )
     .expect("title brackets must not break snapshot parsing");
 
@@ -45,7 +55,7 @@ fn parses_snapshot_when_title_contains_closing_bracket() {
 #[test]
 fn parses_fractional_plasma_geometry() {
     let snapshot = parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":332,"h":99.33333333333336,"active":false,"minimized":false,"stacking":3}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":100,"y":80,"w":332,"h":99.33333333333336,"active":false,"minimized":false,"stacking":3}]"#,
     )
     .expect("finite fractional geometry is valid metadata");
 
@@ -55,7 +65,7 @@ fn parses_fractional_plasma_geometry() {
 #[test]
 fn correlates_one_same_pid_window_with_bounded_frame_delta() {
     let snapshot = parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3}]"#,
     )
     .unwrap();
 
@@ -67,7 +77,7 @@ fn correlates_one_same_pid_window_with_bounded_frame_delta() {
 #[test]
 fn rejects_duplicate_same_pid_geometry_candidates() {
     let snapshot = parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3},{"token":42,"pid":1200,"x":102,"y":82,"w":798,"h":598,"active":false,"minimized":false,"stacking":4}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3},{"token":42,"pid":1200,"x":102,"y":82,"w":798,"h":598,"active":false,"minimized":false,"stacking":4}]"#,
     )
     .unwrap();
 
@@ -80,7 +90,7 @@ fn rejects_duplicate_same_pid_geometry_candidates() {
 #[test]
 fn refuses_minimized_same_pid_window() {
     let snapshot = parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":true,"stacking":3}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":true,"stacking":3}]"#,
     )
     .unwrap();
 
@@ -93,7 +103,7 @@ fn refuses_minimized_same_pid_window() {
 #[test]
 fn rejects_zero_token() {
     assert!(parse_snapshot(
-        r#"('[{"token":0,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":false,"minimized":false,"stacking":0}]',)"#,
+        r#"[{"token":0,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":false,"minimized":false,"stacking":0}]"#,
     )
     .is_none());
 }
@@ -101,7 +111,7 @@ fn rejects_zero_token() {
 #[test]
 fn rejects_duplicate_tokens() {
     assert!(parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":false,"minimized":false,"stacking":0},{"token":41,"pid":1300,"x":20,"y":20,"w":10,"h":10,"active":false,"minimized":false,"stacking":1}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":false,"minimized":false,"stacking":0},{"token":41,"pid":1300,"x":20,"y":20,"w":10,"h":10,"active":false,"minimized":false,"stacking":1}]"#,
     )
     .is_none());
 }
@@ -109,7 +119,7 @@ fn rejects_duplicate_tokens() {
 #[test]
 fn rejects_multiple_active_records() {
     assert!(parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":true,"minimized":false,"stacking":0},{"token":42,"pid":1300,"x":20,"y":20,"w":10,"h":10,"active":true,"minimized":false,"stacking":1}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":true,"minimized":false,"stacking":0},{"token":42,"pid":1300,"x":20,"y":20,"w":10,"h":10,"active":true,"minimized":false,"stacking":1}]"#,
     )
     .is_none());
 }
@@ -117,7 +127,7 @@ fn rejects_multiple_active_records() {
 #[test]
 fn refuses_when_a_different_token_is_active() {
     let snapshot = parse_snapshot(
-        r#"('[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3},{"token":42,"pid":1300,"x":0,"y":0,"w":800,"h":600,"active":true,"minimized":false,"stacking":4}]',)"#,
+        r#"[{"token":41,"pid":1200,"x":100,"y":80,"w":800,"h":600,"active":false,"minimized":false,"stacking":3},{"token":42,"pid":1300,"x":0,"y":0,"w":800,"h":600,"active":true,"minimized":false,"stacking":4}]"#,
     )
     .unwrap();
 

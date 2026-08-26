@@ -429,7 +429,7 @@ Booted locally, that image printed `Image(windows/registry:latest, kind=vm, ...)
 
   A second failure to expect is `403 k8s request is not allowed` on `update template`. A template can be **created but never updated**: both branches of the gateway's image policy are guarded by `input.method != "PATCH"`, so any request that takes the update path is refused, with the same opaque message you get for a disallowed image. Reusing the sandbox name guarantees it. A fresh name usually avoids it but **not reliably** — of four boots of the same image, one reused name and one fresh name both returned 403, while two other fresh names reached `READY` in 157 s and 187 s. Retry; it is intermittent, and nothing about your image changes the outcome.
 
-  The SDK surfaces these 403s as `PoolAccessDeniedError`. The same error also appears when the pool name you chose is already owned by **another account** — pool names are globally unique across accounts — and in that case the fix is a different pool name, not a retry.
+  The SDK surfaces these 403s as `PoolAccessDeniedError`. The same error also appears when the pool name you chose is already owned by **another account** — [pool names are globally unique across accounts](/concepts/how-pool-names-work) — and in that case the fix is a different pool name, not a retry.
 </Callout>
 
 The reader's remaining work is the part that has to be theirs: open Prism, *Accounts → Add Microsoft*, approve the device code, and click Launch.

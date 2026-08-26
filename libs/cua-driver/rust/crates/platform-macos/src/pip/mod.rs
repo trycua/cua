@@ -419,7 +419,7 @@ unsafe fn render_dock(
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
     let dock_frame = appkit_rect(layout.dock, bounds_height);
-    let dock = visual_effect_view(dock_frame, dock_frame.size.height * 0.27, 13, 1, false);
+    let dock = visual_effect_view(dock_frame, dock_frame.size.height * 0.27, 6, 1, false);
     let appearance_name = ns_string("NSAppearanceNameVibrantDark");
     let dark_appearance: *mut AnyObject =
         msg_send![class!(NSAppearance), appearanceNamed: appearance_name];
@@ -427,8 +427,8 @@ unsafe fn render_dock(
         let _: () = msg_send![dock, setAppearance: dark_appearance];
     }
     let dock_layer: *mut AnyObject = msg_send![dock, layer];
-    set_layer_background(dock_layer, color(0.13, 0.15, 0.17, 0.30));
-    set_layer_border(dock_layer, 0.7, color(1.0, 1.0, 1.0, 0.22));
+    set_layer_background(dock_layer, color(0.30, 0.32, 0.34, 0.22));
+    set_layer_border(dock_layer, 0.65, color(1.0, 1.0, 1.0, 0.20));
     let _: () = msg_send![dock_layer, setShadowOpacity: 0.34_f32];
     let _: () = msg_send![dock_layer, setShadowRadius: 14.0_f64];
     let _: () = msg_send![dock_layer, setShadowOffset: NSSize::new(0.0, -6.0)];
@@ -665,8 +665,8 @@ unsafe fn install_wallpaper(
         let _: () = msg_send![glass_frame, setAppearance: dark_appearance];
     }
     let glass_layer: *mut AnyObject = msg_send![glass_frame, layer];
-    set_layer_background(glass_layer, color(0.025, 0.055, 0.075, 0.58));
-    set_layer_border(glass_layer, 0.7, color(0.78, 0.90, 0.96, 0.20));
+    set_layer_background(glass_layer, color(0.015, 0.03, 0.045, 0.78));
+    set_layer_border(glass_layer, 0.65, color(0.78, 0.90, 0.96, 0.10));
     let _: () = msg_send![content_view, addSubview: glass_frame];
 
     let inset = 7.0;
@@ -692,7 +692,7 @@ unsafe fn install_wallpaper(
         rounded_view(container_frame, 9.5, color(0.02, 0.03, 0.04, 0.68), true);
     let _: () = msg_send![wallpaper_container, setAutoresizingMask: 18u64];
     let container_layer: *mut AnyObject = msg_send![wallpaper_container, layer];
-    set_layer_border(container_layer, 0.65, color(0.86, 0.94, 0.98, 0.16));
+    set_layer_border(container_layer, 0.6, color(0.86, 0.94, 0.98, 0.09));
     let container_bounds: objc2_foundation::NSRect = msg_send![wallpaper_container, bounds];
     let wallpaper_view: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSImageView), alloc];

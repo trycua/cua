@@ -56,7 +56,7 @@ pub enum DaemonClientKind {
     Unknown,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct DaemonRequest {
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +76,116 @@ pub struct DaemonRequest {
     /// are never accepted here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_kind: Option<DaemonClientKind>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DaemonRequestWire {
+    method: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    args: Option<serde_json::Value>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    observation_origin: Option<ToolObservationOrigin>,
+    #[serde(default)]
+    client_kind: Option<DaemonClientKind>,
+}
+
+fn validate_shutdown_target(
+    method: &str,
+    args: &Option<serde_json::Value>,
+) -> Result<(), String> {
+    if method != "shutdown" {
+        return Ok(());
+    }
+    let Some(expected_value) = args
+        .as_ref()
+        .and_then(|value| value.get("expected_pid"))
+    else {
+        // Legacy/unbound stop requests remain supported. The Unix release
+        // uninstaller uses the bound form below for its destructive path.
+        return Ok(());
+    };
+    let expected_pid = expected_value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value != 0)
+        .ok_or_else(|| "shutdown expected_pid must be a positive 32-bit process id".to_owned())?;
+    let actual_pid = std::process::id();
+    if expected_pid != actual_pid {
+        return Err(format!(
+            "shutdown expected_pid {expected_pid} does not match daemon pid {actual_pid}"
+        ));
+    }
+    Ok(())
+}
+
+impl<'de> Deserialize<'de> for DaemonRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = DaemonRequestWire::deserialize(deserializer)?;
+        validate_shutdown_target(&wire.method, &wire.args).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            method: wire.method,
+            name: wire.name,
+            args: wire.args,
+            session_id: wire.session_id,
+            observation_origin: wire.observation_origin,
+            client_kind: wire.client_kind,
+        })
+    }
+}
+
+const STOP_EXPECTED_PID_ENV: &str = "CUA_DRIVER_STOP_EXPECTED_PID";
+
+fn stop_expected_pid_from_env() -> anyhow::Result<Option<u32>> {
+    let Some(raw) = std::env::var_os(STOP_EXPECTED_PID_ENV) else {
+        return Ok(None);
+    };
+    let raw = raw
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("{STOP_EXPECTED_PID_ENV} must be valid UTF-8"))?;
+    let pid = raw
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value != 0)
+        .ok_or_else(|| anyhow::anyhow!("{STOP_EXPECTED_PID_ENV} must be a positive process id"))?;
+    Ok(Some(pid))
+}
+
+fn serialize_request_with_expected_pid(
+    request: &DaemonRequest,
+    expected_pid: Option<u32>,
+) -> anyhow::Result<String> {
+    let mut value = serde_json::to_value(request)?;
+    if request.method == "shutdown" {
+        if let Some(expected_pid) = expected_pid {
+            let object = value
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("daemon request must serialize as an object"))?;
+            let args = object
+                .entry("args")
+                .or_insert_with(|| serde_json::json!({}));
+            let args = args
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("shutdown request args must be an object"))?;
+            args.insert("expected_pid".to_owned(), serde_json::json!(expected_pid));
+        }
+    }
+    serde_json::to_string(&value).map_err(Into::into)
+}
+
+fn serialize_request(request: &DaemonRequest) -> anyhow::Result<String> {
+    let expected_pid = if request.method == "shutdown" {
+        stop_expected_pid_from_env()?
+    } else {
+        None
+    };
+    serialize_request_with_expected_pid(request, expected_pid)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -215,7 +325,7 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
 
     let mut writer = stream.try_clone()?;
-    let line = serde_json::to_string(request)? + "\n";
+    let line = serialize_request(request)? + "\n";
     let write_deadline = Instant::now() + Duration::from_secs(120);
     crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
 
@@ -276,7 +386,7 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
         };
 
         let mut writer = pipe.try_clone()?;
-        writer.write_all((serde_json::to_string(request)? + "\n").as_bytes())?;
+        writer.write_all((serialize_request(request)? + "\n").as_bytes())?;
         writer.flush()?;
 
         let response_line = BufReader::new(pipe)
@@ -294,8 +404,8 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use super::{
-        current_daemon_metadata, socket_path_for_namespace, DaemonClientKind, DaemonRequest,
-        DaemonResponse, ToolObservationOrigin,
+        current_daemon_metadata, serialize_request_with_expected_pid, socket_path_for_namespace,
+        DaemonClientKind, DaemonRequest, DaemonResponse, ToolObservationOrigin,
     };
 
     #[test]
@@ -315,6 +425,53 @@ mod tests {
         assert_eq!(request.session_id, None);
         assert_eq!(request.observation_origin, None);
         assert_eq!(request.client_kind, None);
+    }
+
+    #[test]
+    fn pid_bound_shutdown_is_serialized_and_enforced_by_receiver() {
+        let request = DaemonRequest {
+            method: "shutdown".into(),
+            name: None,
+            args: None,
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        let current_pid = std::process::id();
+        let line = serialize_request_with_expected_pid(&request, Some(current_pid)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["args"]["expected_pid"], current_pid);
+        serde_json::from_value::<DaemonRequest>(value).expect("matching daemon pid must be accepted");
+
+        let other_pid = if current_pid == u32::MAX {
+            current_pid - 1
+        } else {
+            current_pid + 1
+        };
+        let error = serde_json::from_value::<DaemonRequest>(serde_json::json!({
+            "method": "shutdown",
+            "args": {"expected_pid": other_pid}
+        }))
+        .expect_err("mismatched daemon pid must be rejected before dispatch");
+        assert!(error.to_string().contains("does not match daemon pid"));
+    }
+
+    #[test]
+    fn legacy_unbound_shutdown_remains_accepted() {
+        serde_json::from_value::<DaemonRequest>(serde_json::json!({
+            "method": "shutdown"
+        }))
+        .expect("legacy stop remains supported outside the destructive uninstall path");
+    }
+
+    #[test]
+    fn malformed_shutdown_pid_fails_closed() {
+        let error = serde_json::from_value::<DaemonRequest>(serde_json::json!({
+            "method": "shutdown",
+            "args": {"expected_pid": "not-a-pid"}
+        }))
+        .expect_err("malformed pid binding must be rejected");
+        assert!(error.to_string().contains("positive 32-bit process id"));
     }
 
     #[test]

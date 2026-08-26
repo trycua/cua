@@ -621,6 +621,16 @@ pub trait PipBackend: Send + Sync {
     /// otherwise mutates the underlying native window or browser tab.
     fn remove_target(&self, _workspace_id: &str, _identity_key: &str) {}
 
+    /// Make the floating surface ignore or resume native pointer input.
+    ///
+    /// Implementations must not return until the native window-system state is
+    /// applied. Cua Driver uses this around physical desktop actions so an
+    /// overlapping always-on-top Agent View cannot intercept the action meant
+    /// for an underlying target.
+    fn set_input_passthrough(&self, _passthrough: bool) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Close the window and release native resources. Called from
     /// `main.rs` on shutdown.
     fn shutdown(self: Box<Self>);

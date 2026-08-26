@@ -6,7 +6,6 @@
 //! moves, resizes, focuses, or closes the represented applications.
 
 use std::sync::mpsc::{self, Receiver, Sender};
-#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 #[cfg(target_os = "linux")]
@@ -23,11 +22,31 @@ enum UiMessage {
     Frame(PipFrame),
     RemoveTarget(String, String),
     RemoveWorkspace(String),
+    SetInputTransparent(bool, mpsc::SyncSender<anyhow::Result<()>>),
     Shutdown,
 }
 
 pub struct LinuxPipBackend {
     tx: Sender<UiMessage>,
+}
+
+impl LinuxPipBackend {
+    /// Synchronously include or exclude Agent View from X11 pointer hit-testing.
+    ///
+    /// Cua actions should enable transparency before injecting input and restore
+    /// interaction afterward. Waiting for the X11 thread to flush the shape
+    /// change prevents an always-on-top Agent View from intercepting the action.
+    pub fn set_input_transparent(&self, transparent: bool) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        self.tx
+            .send(UiMessage::SetInputTransparent(transparent, reply_tx))
+            .map_err(|_| anyhow::anyhow!("Agent View X11 thread is not running"))?;
+        reply_rx
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|error| {
+                anyhow::anyhow!("timed out updating Agent View input shape: {error}")
+            })?
+    }
 }
 
 impl PipBackend for LinuxPipBackend {
@@ -44,6 +63,10 @@ impl PipBackend for LinuxPipBackend {
         let _ = self
             .tx
             .send(UiMessage::RemoveWorkspace(workspace_id.to_owned()));
+    }
+
+    fn set_input_passthrough(&self, passthrough: bool) -> anyhow::Result<()> {
+        self.set_input_transparent(passthrough)
     }
 
     fn remove_target(&self, workspace_id: &str, identity_key: &str) {
@@ -225,7 +248,16 @@ fn run_x11_window(
     let mut running = true;
     while running {
         while let Ok(message) = rx.try_recv() {
-            handle_message(message, &mut model, &mut dirty, &mut running);
+            handle_x11_message(
+                &conn,
+                window,
+                width,
+                height,
+                message,
+                &mut model,
+                &mut dirty,
+                &mut running,
+            );
         }
 
         loop {
@@ -286,7 +318,16 @@ fn run_x11_window(
 
         if running {
             match rx.recv_timeout(Duration::from_millis(16)) {
-                Ok(message) => handle_message(message, &mut model, &mut dirty, &mut running),
+                Ok(message) => handle_x11_message(
+                    &conn,
+                    window,
+                    width,
+                    height,
+                    message,
+                    &mut model,
+                    &mut dirty,
+                    &mut running,
+                ),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
             }
@@ -296,6 +337,62 @@ fn run_x11_window(
     let _ = conn.free_gc(gc);
     let _ = conn.destroy_window(window);
     let _ = conn.flush();
+}
+
+#[cfg(target_os = "linux")]
+fn handle_x11_message(
+    conn: &impl x11rb::connection::Connection,
+    window: u32,
+    width: u16,
+    height: u16,
+    message: UiMessage,
+    model: &mut PipViewModel,
+    dirty: &mut bool,
+    running: &mut bool,
+) {
+    match message {
+        UiMessage::SetInputTransparent(transparent, reply) => {
+            let result = set_x11_input_transparent(conn, window, width, height, transparent);
+            let _ = reply.send(result);
+        }
+        message => handle_message(message, model, dirty, running),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_x11_input_transparent(
+    conn: &impl x11rb::connection::Connection,
+    window: u32,
+    width: u16,
+    height: u16,
+    transparent: bool,
+) -> anyhow::Result<()> {
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::{ClipOrdering, Rectangle};
+
+    let interactive_region = [Rectangle {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    }];
+    let rectangles = if transparent {
+        &[][..]
+    } else {
+        &interactive_region[..]
+    };
+    conn.shape_rectangles(
+        SO::SET,
+        SK::INPUT,
+        ClipOrdering::UNSORTED,
+        window,
+        0,
+        0,
+        rectangles,
+    )?
+    .check()?;
+    conn.flush()?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -356,6 +453,11 @@ fn handle_message(
         }
         UiMessage::RemoveWorkspace(workspace_id) => {
             *dirty |= !model.remove_workspace(&workspace_id).is_empty();
+        }
+        UiMessage::SetInputTransparent(_, reply) => {
+            let _ = reply.send(Err(anyhow::anyhow!(
+                "Agent View input shape update reached a non-X11 handler"
+            )));
         }
         UiMessage::Shutdown => *running = false,
     }
@@ -1067,6 +1169,51 @@ mod tests {
         assert_eq!(clamp_i16(i32::MAX), i16::MAX);
         assert_eq!(clamp_i16(i32::MIN), i16::MIN);
         assert_eq!(clamp_i16(24), 24);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires a live X11 server (run under xvfb-run)"]
+    fn x11_input_transparency_toggle_changes_input_shape() -> anyhow::Result<()> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK};
+        use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, WindowClass};
+
+        let (conn, screen_num) = x11rb::connect(None)?;
+        let screen = &conn.setup().roots[screen_num];
+        let window = conn.generate_id()?;
+        let width = 320;
+        let height = 240;
+        conn.create_window(
+            screen.root_depth,
+            window,
+            screen.root,
+            0,
+            0,
+            width,
+            height,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new(),
+        )?
+        .check()?;
+        conn.map_window(window)?.check()?;
+        conn.flush()?;
+
+        set_x11_input_transparent(&conn, window, width, height, true)?;
+        let transparent = conn.shape_get_rectangles(window, SK::INPUT)?.reply()?;
+        assert!(transparent.rectangles.is_empty());
+
+        set_x11_input_transparent(&conn, window, width, height, false)?;
+        let interactive = conn.shape_get_rectangles(window, SK::INPUT)?.reply()?;
+        assert_eq!(interactive.rectangles.len(), 1);
+        assert_eq!(interactive.rectangles[0].width, width);
+        assert_eq!(interactive.rectangles[0].height, height);
+
+        conn.destroy_window(window)?.check()?;
+        conn.flush()?;
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]

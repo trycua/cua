@@ -17,7 +17,7 @@ pub struct WindowsPipBackendFactory;
 
 #[cfg(target_os = "windows")]
 mod native {
-    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::sync::{mpsc, Arc, Mutex};
 
     use image::imageops::FilterType;
@@ -38,22 +38,25 @@ mod native {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
         GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, LoadCursorW, PostMessageW,
-        PostQuitMessage, RegisterClassExW, SetWindowLongPtrW, ShowWindow, TranslateMessage,
-        CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HTBOTTOM, HTBOTTOMLEFT,
-        HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
-        IDC_ARROW, MA_NOACTIVATE, MSG, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNOACTIVATE, WM_APP,
-        WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCCREATE,
-        WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_THICKFRAME,
+        PostQuitMessage, RegisterClassExW, SendMessageW, SetWindowLongPtrW, ShowWindow,
+        TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, GWL_EXSTYLE,
+        HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP,
+        HTTOPLEFT, HTTOPRIGHT, HTTRANSPARENT, IDC_ARROW, MA_NOACTIVATE, MSG, SM_CXSCREEN,
+        SM_CYSCREEN, SW_SHOWNOACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONUP,
+        WM_MOUSEACTIVATE, WM_NCCREATE, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WM_SIZE, WNDCLASSEXW,
+        WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+        WS_POPUP, WS_THICKFRAME,
     };
 
     use super::WindowsPipBackendFactory;
 
     const REDRAW: u32 = WM_APP + 1;
     const SHUTDOWN: u32 = WM_APP + 2;
+    const SET_INPUT_PASSTHROUGH: u32 = WM_APP + 3;
 
     struct State {
         hwnd: AtomicIsize,
+        input_passthrough: AtomicBool,
         model: Mutex<PipViewModel>,
     }
 
@@ -64,6 +67,26 @@ mod native {
                 let _ =
                     unsafe { PostMessageW(HWND(hwnd as *mut _), message, WPARAM(0), LPARAM(0)) };
             }
+        }
+
+        fn set_input_passthrough(&self, passthrough: bool) -> anyhow::Result<()> {
+            let hwnd = self.hwnd.load(Ordering::Acquire);
+            if hwnd == 0 {
+                anyhow::bail!("Agent View window is not running");
+            }
+            let applied = unsafe {
+                SendMessageW(
+                    HWND(hwnd as *mut _),
+                    SET_INPUT_PASSTHROUGH,
+                    WPARAM(usize::from(passthrough)),
+                    LPARAM(0),
+                )
+            };
+            anyhow::ensure!(
+                applied.0 == 1,
+                "Agent View rejected the synchronous input-passthrough update"
+            );
+            Ok(())
         }
     }
 
@@ -95,6 +118,10 @@ mod native {
             self.state.post(REDRAW);
         }
 
+        fn set_input_passthrough(&self, passthrough: bool) -> anyhow::Result<()> {
+            self.state.set_input_passthrough(passthrough)
+        }
+
         fn shutdown(self: Box<Self>) {
             self.state.post(SHUTDOWN);
         }
@@ -104,6 +131,7 @@ mod native {
         fn start(&self, cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>> {
             let state = Arc::new(State {
                 hwnd: AtomicIsize::new(0),
+                input_passthrough: AtomicBool::new(false),
                 model: Mutex::new(PipViewModel::new(12)),
             });
             let thread_state = Arc::clone(&state);
@@ -239,6 +267,21 @@ mod native {
             }
             WM_ERASEBKGND => LRESULT(1),
             WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+            SET_INPUT_PASSTHROUGH => {
+                let passthrough = wparam.0 != 0;
+                if !state_ptr.is_null() {
+                    (&*state_ptr)
+                        .input_passthrough
+                        .store(passthrough, Ordering::Release);
+                }
+                let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                SetWindowLongPtrW(
+                    hwnd,
+                    GWL_EXSTYLE,
+                    extended_style_with_input_passthrough(style, passthrough),
+                );
+                LRESULT(1)
+            }
             WM_LBUTTONUP => {
                 if !state_ptr.is_null() {
                     let x = lparam.0 as i16 as i32;
@@ -257,6 +300,9 @@ mod native {
                 LRESULT(0)
             }
             WM_NCHITTEST => {
+                if !state_ptr.is_null() && (&*state_ptr).input_passthrough.load(Ordering::Acquire) {
+                    return LRESULT(HTTRANSPARENT as isize);
+                }
                 let hit = DefWindowProcW(hwnd, message, wparam, lparam);
                 if hit.0 == HTCLIENT as isize {
                     let screen_x = lparam.0 as i16 as i32;
@@ -474,6 +520,15 @@ mod native {
 
     fn contains(rect: (i32, i32, i32, i32), x: i32, y: i32) -> bool {
         x >= rect.0 && y >= rect.1 && x < rect.0 + rect.2 && y < rect.1 + rect.3
+    }
+
+    fn extended_style_with_input_passthrough(style: isize, passthrough: bool) -> isize {
+        let transparent = WS_EX_TRANSPARENT.0 as isize;
+        if passthrough {
+            style | transparent
+        } else {
+            style & !transparent
+        }
     }
 
     fn pixels(rect: LayoutRect) -> (i32, i32, i32, i32) {
@@ -945,6 +1000,17 @@ mod native {
             assert_eq!(model.selected_frames()[0].target.identity_key, "tall");
             assert_eq!(model.remove_workspace("agent-a").len(), 1);
             assert_eq!(model.selected_workspace_id(), Some("agent-b"));
+        }
+
+        #[test]
+        fn input_passthrough_only_toggles_the_transparent_extended_style() {
+            let base = (WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW).0 as isize;
+            let passthrough = extended_style_with_input_passthrough(base, true);
+            assert_ne!(passthrough & WS_EX_TRANSPARENT.0 as isize, 0);
+            assert_eq!(passthrough & base, base);
+
+            let interactive = extended_style_with_input_passthrough(passthrough, false);
+            assert_eq!(interactive, base);
         }
     }
 }

@@ -29,6 +29,10 @@ display. The view is resizable on macOS, Windows, and Linux X11/XWayland.
 Agent View does not claim targets and does not add claim/release semantics to
 the CLI, MCP tools, SDKs, or target schemas. Switching the presentation never
 focuses, moves, resizes, closes, or otherwise controls an underlying target.
+During physical Cua Driver actions, the always-on-top surface temporarily
+becomes input-transparent so an overlapping Agent View cannot intercept input
+intended for the represented application. Local switching and resizing resume
+as soon as the action finishes.
 
 ## What becomes a card
 

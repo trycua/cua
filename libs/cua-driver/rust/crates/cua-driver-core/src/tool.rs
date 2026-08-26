@@ -1517,6 +1517,18 @@ impl ToolRegistry {
         } else {
             None
         };
+        let pip_input_passthrough = if _desktop_action.is_some() {
+            match pip_hook::begin_pip_input_passthrough() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "Agent View could not yield pointer input before {resolved_name}: {error}"
+                    ));
+                }
+            }
+        } else {
+            None
+        };
         let pending_turn = should_record
             .then(|| {
                 if private_consent_turn {
@@ -1530,6 +1542,7 @@ impl ToolRegistry {
             .flatten();
 
         let mut result = tool.invoke(args.clone()).await;
+        drop(pip_input_passthrough);
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture

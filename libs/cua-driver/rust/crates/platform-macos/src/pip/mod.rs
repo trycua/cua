@@ -52,6 +52,11 @@ extern "C" {
         context: *mut c_void,
         work: unsafe extern "C" fn(*mut c_void),
     );
+    fn dispatch_sync_f(
+        queue: *const c_void,
+        context: *mut c_void,
+        work: unsafe extern "C" fn(*mut c_void),
+    );
 }
 
 fn dispatch_to_main<T: Send + 'static>(payload: T, cb: unsafe extern "C" fn(*mut c_void)) {
@@ -59,6 +64,18 @@ fn dispatch_to_main<T: Send + 'static>(payload: T, cb: unsafe extern "C" fn(*mut
     unsafe {
         let main_queue = &raw const _dispatch_main_q as *const c_void;
         dispatch_async_f(main_queue, Box::into_raw(boxed) as *mut c_void, cb);
+    }
+}
+
+fn dispatch_to_main_sync<T>(payload: T, cb: unsafe extern "C" fn(*mut c_void)) {
+    let context = Box::into_raw(Box::new(payload)) as *mut c_void;
+    unsafe {
+        if libc::pthread_main_np() != 0 {
+            cb(context);
+        } else {
+            let main_queue = &raw const _dispatch_main_q as *const c_void;
+            dispatch_sync_f(main_queue, context, cb);
+        }
     }
 }
 
@@ -83,8 +100,25 @@ impl PipBackend for MacosPipBackend {
         );
     }
 
+    fn set_input_passthrough(&self, passthrough: bool) -> anyhow::Result<()> {
+        dispatch_to_main_sync(passthrough, set_input_passthrough_cb);
+        Ok(())
+    }
+
     fn shutdown(self: Box<Self>) {
         dispatch_to_main((), shutdown_cb);
+    }
+}
+
+unsafe extern "C" fn set_input_passthrough_cb(ctx: *mut c_void) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let passthrough: bool = *Box::from_raw(ctx as *mut bool);
+    let handles = HANDLES.lock().unwrap();
+    if let Some(handles) = handles.as_ref() {
+        let window = handles.window as *mut AnyObject;
+        let _: () = msg_send![window, setIgnoresMouseEvents: passthrough];
     }
 }
 

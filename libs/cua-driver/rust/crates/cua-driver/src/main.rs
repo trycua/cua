@@ -285,6 +285,13 @@ fn maybe_init_pip() {
                                     timestamp_ms: frame.timestamp_ms,
                                 });
                             }
+                            cua_driver_core::pip_hook::PipHookEvent::SetInputPassthrough {
+                                passthrough,
+                            } => {
+                                return b
+                                    .set_input_passthrough(passthrough)
+                                    .map_err(|error| error.to_string());
+                            }
                             cua_driver_core::pip_hook::PipHookEvent::RemoveWorkspace {
                                 workspace_id,
                             } => b.remove_workspace(&workspace_id),
@@ -295,6 +302,7 @@ fn maybe_init_pip() {
                         }
                     }
                 }
+                Ok(())
             });
             cua_driver_core::session::register_session_end_hook(|workspace_id| {
                 cua_driver_core::pip_hook::remove_pip_workspace(workspace_id);

@@ -647,19 +647,21 @@ func validateReportingBoundary(ctx context.Context, transaction pgx.Tx) error {
 		return fmt.Errorf("reporting schema owner is %s, want k8s_reporting_owner", schemaOwner)
 	}
 
-	var relationKind, viewOwner string
-	if err := transaction.QueryRow(ctx, `
-		select relation.relkind::text, relation.relowner::regrole::text
-		from pg_class as relation
-		join pg_namespace as namespace on namespace.oid = relation.relnamespace
-		where namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources'`).Scan(&relationKind, &viewOwner); err != nil {
-		return fmt.Errorf("read reporting relation: %w", err)
-	}
-	if relationKind != "v" {
-		return fmt.Errorf("reporting relation current_resources has kind %s, want view", relationKind)
-	}
-	if viewOwner != "k8s_reporting_owner" {
-		return fmt.Errorf("reporting view owner is %s, want k8s_reporting_owner", viewOwner)
+	for _, relationName := range []string{"current_resources", "hourly_reservation_usage"} {
+		var relationKind, viewOwner string
+		if err := transaction.QueryRow(ctx, `
+			select relation.relkind::text, relation.relowner::regrole::text
+			from pg_class as relation
+			join pg_namespace as namespace on namespace.oid = relation.relnamespace
+			where namespace.nspname = 'k8s_reporting' and relation.relname = $1`, relationName).Scan(&relationKind, &viewOwner); err != nil {
+			return fmt.Errorf("read reporting relation %s: %w", relationName, err)
+		}
+		if relationKind != "v" {
+			return fmt.Errorf("reporting relation %s has kind %s, want view", relationName, relationKind)
+		}
+		if viewOwner != "k8s_reporting_owner" {
+			return fmt.Errorf("reporting view %s owner is %s, want k8s_reporting_owner", relationName, viewOwner)
+		}
 	}
 	return nil
 }
@@ -706,7 +708,7 @@ func readReportingACLs(ctx context.Context, transaction pgx.Tx) ([]reportingACL,
 			  and acl.grantee <> relation.relowner
 			  and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
 			  and (acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole)
-			       or (namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources' and acl.grantee <> relation.relowner))
+			       or (namespace.nspname = 'k8s_reporting' and relation.relname in ('current_resources', 'hourly_reservation_usage') and acl.grantee <> relation.relowner))
 			union all
 			select
 				'routine'::text,
@@ -790,6 +792,7 @@ func expectedReportingACLs() []reportingACL {
 		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_collection_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "billing_meter_owner"},
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "current_resources"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "hourly_reservation_usage"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRoutine}, routineIdentity: "usage_sandbox_events", owner: "k8s_reporting_owner", privilege: reportingPrivilegeExecute, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRoutine}, routineIdentity: "reservation_hour_facts", owner: "k8s_reporting_owner", privilege: reportingPrivilegeExecute, grantee: "cyclops_usage_reader", grantor: "k8s_reporting_owner"},

@@ -189,14 +189,14 @@ func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
 	upgrade := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if upgrade.Current != 1 || upgrade.Target != 6 || upgrade.Pending != 5 || upgrade.Applied != 5 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+	if upgrade.Current != 1 || upgrade.Target != 7 || upgrade.Pending != 6 || upgrade.Applied != 6 || upgrade.Skipped != 1 || upgrade.Result != "success" {
 		t.Fatalf("version-one upgrade summary = %+v", upgrade)
 	}
 
 	noOp := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if noOp.Current != 6 || noOp.Target != 6 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 6 || noOp.Result != "success" {
+	if noOp.Current != 7 || noOp.Target != 7 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 7 || noOp.Result != "success" {
 		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
 	}
 }
@@ -1592,8 +1592,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 6 {
-		t.Fatalf("migration ledger row count = %d, want 6", len(ledger))
+	if len(ledger) != 7 {
+		t.Fatalf("migration ledger row count = %d, want 7", len(ledger))
 	}
 	for index, want := range []struct {
 		version  int64
@@ -1605,6 +1605,7 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 		{4, "000004_filter_invalid_usage_sandbox_events.sql"},
 		{5, "000005_hourly_reservation_meter.sql"},
 		{6, "000006_chat_conversations.sql"},
+		{7, "000007_metabase_hourly_reservation_usage.sql"},
 	} {
 		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
 			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
@@ -1849,6 +1850,7 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 		{"k8s_state", "resource_event_outbox_usage_lookup_idx", "k8s_state_owner"},
 		{"k8s_api", "current_resources", "k8s_state_owner"},
 		{"k8s_reporting", "current_resources", "k8s_reporting_owner"},
+		{"k8s_reporting", "hourly_reservation_usage", "k8s_reporting_owner"},
 	} {
 		var owner string
 		if err := connection.QueryRow(ctx, `select relation.relowner::regrole::text from pg_class relation join pg_namespace namespace on namespace.oid = relation.relnamespace where namespace.nspname = $1 and relation.relname = $2`, want.schema, want.name).Scan(&owner); err != nil {
@@ -1876,7 +1878,7 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 	for _, schema := range []string{"k8s_state", "k8s_api", "k8s_reporting", "cyclops_migrations"} {
 		assertNoPublicSchemaPrivilege(t, ctx, connection, schema, "USAGE")
 	}
-	for _, relation := range []string{"public.github_trust_policies", "public.chat_conversations", "k8s_state.resource_state", "k8s_state.resource_event_outbox", "k8s_api.current_resources", "k8s_reporting.current_resources", "cyclops_migrations.applied_migrations"} {
+	for _, relation := range []string{"public.github_trust_policies", "public.chat_conversations", "k8s_state.resource_state", "k8s_state.resource_event_outbox", "k8s_api.current_resources", "k8s_reporting.current_resources", "k8s_reporting.hourly_reservation_usage", "cyclops_migrations.applied_migrations"} {
 		assertNoPublicTablePrivilege(t, ctx, connection, relation)
 	}
 }
@@ -1937,7 +1939,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 6 {
+		if err != nil || count != 7 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)
@@ -2217,6 +2219,9 @@ func assertMetabaseBoundary(t *testing.T, ctx context.Context, inspectionURL, me
 	if err := connection.QueryRow(ctx, `select count(*) from k8s_reporting.current_resources where cluster_id = 'migration-test'`).Scan(&count); err != nil || count != 4 {
 		t.Errorf("metabase cannot read reporting view: count=%d err=%v", count, err)
 	}
+	if err := connection.QueryRow(ctx, `select count(*) from k8s_reporting.hourly_reservation_usage`).Scan(&count); err != nil {
+		t.Errorf("metabase cannot read hourly reservation usage view: err=%v", err)
+	}
 	var readOnly string
 	if err := connection.QueryRow(ctx, `show default_transaction_read_only`).Scan(&readOnly); err != nil || readOnly != "on" {
 		t.Errorf("metabase default_transaction_read_only = %q err=%v, want on", readOnly, err)
@@ -2239,6 +2244,7 @@ func assertMetabaseBoundary(t *testing.T, ctx context.Context, inspectionURL, me
 		`select 1 from k8s_api.current_resources limit 1`,
 		`select 1 from public.github_trust_policies limit 1`,
 		`delete from k8s_reporting.current_resources`,
+		`delete from k8s_reporting.hourly_reservation_usage`,
 	} {
 		assertStatementFails(t, ctx, metabaseURL, statement)
 	}
@@ -2379,6 +2385,7 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 				('relation:billing_meter.reservation_hour_collection_current', 'SELECT', 'k8s_reporting_owner', 'billing_meter_owner', false),
 				('schema:k8s_reporting', 'USAGE', 'k8s_metabase', 'k8s_reporting_owner', false),
 				('relation:k8s_reporting.current_resources', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),
+				('relation:k8s_reporting.hourly_reservation_usage', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),
 				('schema:k8s_reporting', 'USAGE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
 				('routine:k8s_reporting.usage_sandbox_events(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
 				('routine:k8s_reporting.reservation_hour_facts(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
@@ -2409,7 +2416,7 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 			from pg_class as relation
 			join pg_namespace as namespace on namespace.oid = relation.relnamespace
 			join lateral aclexplode(relation.relacl) as acl on true
-			where namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources'
+			where namespace.nspname = 'k8s_reporting' and relation.relname in ('current_resources', 'hourly_reservation_usage')
 			  and acl.grantee <> relation.relowner
 			  and (acl.grantee <> 'k8s_metabase'::regrole or acl.privilege_type <> 'SELECT' or acl.is_grantable)
 			union all

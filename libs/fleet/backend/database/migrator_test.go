@@ -520,8 +520,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 6 {
-		t.Fatalf("expected exactly six migrations, got %d", len(files))
+	if len(files) != 7 {
+		t.Fatalf("expected exactly seven migrations, got %d", len(files))
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -643,6 +643,21 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	} {
 		if !strings.Contains(chatConversations.SQL, expected) {
 			t.Errorf("chat conversation migration is missing contract %q", expected)
+		}
+	}
+
+	metabaseUsage := files[6]
+	if metabaseUsage.Version != 7 || metabaseUsage.Name != "000007_metabase_hourly_reservation_usage.sql" {
+		t.Fatalf("expected version 7 Metabase usage migration, got version=%d name=%q", metabaseUsage.Version, metabaseUsage.Name)
+	}
+	for _, expected := range []string{
+		"CREATE VIEW k8s_reporting.hourly_reservation_usage",
+		"FROM billing_meter.reservation_hour_collection_current AS collection",
+		"LEFT JOIN billing_meter.reservation_hour_current AS fact",
+		"GRANT SELECT ON k8s_reporting.hourly_reservation_usage TO k8s_metabase",
+	} {
+		if !strings.Contains(metabaseUsage.SQL, expected) {
+			t.Errorf("Metabase usage migration is missing contract %q", expected)
 		}
 	}
 }

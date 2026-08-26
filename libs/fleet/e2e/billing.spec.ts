@@ -52,7 +52,7 @@ test("usage appears without a billing flag or admin badge", async ({
 }) => {
 	await setBillingFlag(page, false);
 	await page.goto("/pools");
-	await expect(page.getByRole("link", { name: "User API keys" })).toBeVisible();
+	await expect(page.getByRole("link", { name: "API keys" })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Usage", exact: true })).toBeVisible();
 	await expect(page.getByText("Admin", { exact: true })).toHaveCount(0);
 });
@@ -126,7 +126,7 @@ test("admin can view and reset usage for another subject", async ({ page }) => {
 		page.getByRole("heading", { name: "View usage by subject" }),
 	).toBeVisible();
 	await page
-		.getByRole("textbox", { name: "User subject ID" })
+		.getByRole("textbox", { name: "Keycloak user subject ID" })
 		.fill(`  ${targetSubject}  `);
 	await page.getByRole("button", { name: "View usage" }).click();
 
@@ -135,7 +135,9 @@ test("admin can view and reset usage for another subject", async ({ page }) => {
 	await expect.poll(() => requestedSubjects.at(-1)).toBe(targetSubject);
 
 	await page.getByRole("button", { name: "Reset to my usage" }).click();
-	await expect(page.getByText("Showing your usage")).toBeVisible();
+	// The default-state hint was removed — no description once the
+	// subject lookup is reset (see FormField in BillingUsage.tsx).
+	await expect(page.getByText("Showing usage for")).toHaveCount(0);
 	await expect(page.getByRole("cell", { name: "prod-web-fleet" })).toBeVisible();
 	await expect.poll(() => requestedSubjects.at(-1)).toBeNull();
 });

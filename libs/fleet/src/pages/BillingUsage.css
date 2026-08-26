@@ -5,12 +5,11 @@
 
 .usage-admin {
   display: grid;
-  grid-template-columns: minmax(220px, 0.65fr) minmax(320px, 1fr);
-  gap: 28px;
+  gap: 8px;
   align-items: end;
   margin-block-end: 20px;
   padding: 22px 24px;
-  border: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
+  border: none;
   border-radius: var(--cua-radius-container, 12px);
   background:
     linear-gradient(120deg, rgba(255, 255, 255, 0.05), transparent 52%),
@@ -69,14 +68,31 @@
 }
 
 .usage-summary__label,
-.usage-panel__eyebrow,
-.usage-breakdown__header {
+.usage-panel__eyebrow {
   color: var(--cua-color-text-muted, rgba(224, 230, 238, 0.68));
   font-family: var(--cua-dashboard-font-mono, monospace);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+/* Matches Cloudscape's own table column-header cells (API keys/Pools
+   tables) — see table/header-cell/styles.scoped.css: bold, base font,
+   no letter-spacing/uppercase, unlike this page's mono eyebrow style. */
+.usage-breakdown__header {
+  color: var(--cua-color-text-body, rgba(224, 230, 238, 0.84));
+  font-family: var(--cua-dashboard-font-body, "Urbanist", sans-serif);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.usage-summary__value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .usage-summary__metric strong {
@@ -89,7 +105,7 @@
   line-height: 1;
 }
 
-.usage-summary__metric > span:last-child {
+.usage-summary__value > span {
   color: var(--cua-color-text-muted, rgba(224, 230, 238, 0.68));
   font-size: 13px;
 }
@@ -98,7 +114,7 @@
   min-width: 0;
   padding: 22px 24px 18px;
   overflow: hidden;
-  border: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.14));
+  border: none;
   border-radius: var(--cua-radius-container, 12px);
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 45%),
@@ -159,9 +175,10 @@
 }
 
 .usage-breakdown__row {
-  min-height: 58px;
+  box-sizing: border-box;
+  height: 60px;
   padding: 10px 12px;
-  border-block-end: 1px solid rgba(255, 255, 255, 0.08);
+  border-block-end: none;
   color: var(--cua-color-text-body, #f6f8fb);
   font-size: 14px;
 }
@@ -235,7 +252,6 @@
   }
 
   .usage-admin {
-    gap: 20px;
     padding: 18px 16px;
   }
 

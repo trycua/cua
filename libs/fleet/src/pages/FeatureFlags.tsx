@@ -387,7 +387,6 @@ export function FeatureFlags() {
             variant="h1"
             counter={loading ? undefined : `(${flags.length})`}
             info={<Badge color="blue">Admin only · Feature flagged</Badge>}
-            description="Manage typed values under /feature-flags/cyclops-cs/. Terraform and external keys remain protected."
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button

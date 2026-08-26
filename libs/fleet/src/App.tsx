@@ -43,7 +43,7 @@ import {
 import { AdminRoute } from "./components/AdminRoute";
 import { FlashContext, type FlashMsg } from "./components/FlashContext";
 import { logout, userInfo } from "./auth/keycloak";
-import cuaLockup from "@cua/design/assets/brand/cua-lockup-white.svg";
+import cuaMark from "@cua/design/assets/brand/cua-mark-white.svg";
 import designTokens from "@cua/design/tokens.json";
 import { localVisualPreviewPath } from "./local-visual-preview";
 import { ChatThreadsProvider } from "./chat/ChatThreadsContext";
@@ -53,6 +53,21 @@ import {
 } from "./components/ThreadNavigation";
 
 const VERSION_CHECK_INTERVAL_MS = 60_000;
+
+// Cloudscape icon paths (@cloudscape-design/components/icon), inlined as
+// real DOM nodes so they inherit `currentColor` from the nav link's text
+// color — matches hover/active states without a second theming pass.
+const SVG_OPEN =
+  '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">';
+const NAV_ICONS: Record<string, string> = {
+  "grid-view": `${SVG_OPEN}<path d="M6 10H2v4h4v-4ZM14 10h-4v4h4v-4ZM6 2H2v4h4V2ZM14 2h-4v4h4V2Z"/></svg>`,
+  history: `${SVG_OPEN}<path d="M1 0v5l5-.04"/><path d="M1 8c0 3.87 3.13 7 7 7s7-3.13 7-7-3.13-7-7-7C5.21 1 2.8 2.63 1.67 5"/><path d="M9 4v5H5"/></svg>`,
+  key: `${SVG_OPEN}<path d="M10 1a5.002 5.002 0 0 0-4.6 6.96L1 12.36v2.65h4v-2h3v-2.42c.61.27 1.29.42 2 .42 2.76 0 5-2.24 5-5s-2.24-5-5-5V1Z"/><path d="M10.5 7a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" fill="currentColor" stroke="none"/></svg>`,
+  settings: `${SVG_OPEN}<path d="M6.11 1.729c.07-.42.44-.729.86-.729h2.02c.43 0 .79.31.86.729l.17.999c.05.29.24.529.5.679.06.03.11.06.17.1.25.15.56.2.84.1l.95-.35c.4-.15.85 0 1.07.38l1.01 1.747c.21.37.13.839-.2 1.108l-.78.64c-.23.189-.34.479-.33.768v.2c0 .29.11.579.33.769l.78.639c.33.27.42.739.2 1.108l-1.01 1.748c-.21.37-.66.529-1.06.38l-.95-.35a.966.966 0 0 0-.84.1c-.06.03-.11.07-.17.1-.26.14-.45.389-.5.679l-.17.998A.878.878 0 0 1 9 15H6.98a.87.87 0 0 1-.86-.729l-.17-.998a.988.988 0 0 0-.5-.68c-.06-.03-.11-.06-.17-.1a.996.996 0 0 0-.84-.1l-.95.35c-.4.15-.85 0-1.06-.38l-1.01-1.747a.873.873 0 0 1 .2-1.108l.78-.64c.23-.189.34-.479.33-.768v-.2c0-.3-.11-.579-.33-.769l-.78-.639a.861.861 0 0 1-.2-1.108l1.01-1.748c.21-.37.66-.529 1.07-.38l.95.35c.28.1.58.06.84-.1.06-.03.11-.07.17-.1.26-.14.45-.379.5-.678l.15-1Z"/><path d="M10 8c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2Z"/></svg>`,
+  flag: `${SVG_OPEN}<path d="M1.99 16V1M2 2.14c4 2.71 8-2.99 12-.28v7.28c-4-2.89-8 2.61-12-.28"/></svg>`,
+  "add-plus": `${SVG_OPEN}<path d="M2.01 8h12M8 14l.01-12"/></svg>`,
+  folder: `${SVG_OPEN}<path d="M15 5v9H2V2h6l1 2h5c.55 0 1 .45 1 1Z"/></svg>`,
+};
 
 function TitledPage({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -163,22 +178,18 @@ function ShellLayout({
   const navigate = useNavigate();
   const [staleDismissed, setStaleDismissed] = useState(false);
   const { stale } = useStaleCheck();
-  const [navigationOpen, setNavigationOpen] = useState(
-    () => window.innerWidth >= designTokens.layout.breakpoint.tablet,
-  );
-  const tabletOrWider = useMediaQuery(
-    `(min-width: ${designTokens.layout.breakpoint.tablet}px)`,
-  );
-  const mobile = useMediaQuery(
-    `(max-width: ${designTokens.layout.breakpoint.mobile - 1}px)`,
-  );
-  const previousPath = useRef(location.pathname);
   const user = userInfo();
   const { admin, chat } = useFeatureFlags();
   const threadNavigation = useThreadNavigation();
+  const tabletOrWider = useMediaQuery(
+    `(min-width: ${designTokens.layout.breakpoint.tablet}px)`,
+  );
+  const [navigationOpen, setNavigationOpen] = useState(
+    () => window.innerWidth >= designTokens.layout.breakpoint.tablet,
+  );
 
   useEffect(() => {
-    setNavigationOpen(tabletOrWider);
+    if (tabletOrWider) setNavigationOpen(true);
   }, [tabletOrWider]);
 
   useEffect(() => {
@@ -194,12 +205,28 @@ function ShellLayout({
   }, [threadNavigation.threadTitles]);
 
   useEffect(() => {
-    const changed = previousPath.current !== location.pathname;
-    if (changed && mobile && location.pathname.startsWith("/agent")) {
-      setNavigationOpen(false);
+    const iconsByHrefPrefix: Array<[string, string]> = [
+      ["#/pools", NAV_ICONS["grid-view"]],
+      ["#/usage", NAV_ICONS.history],
+      ["#/user-keys", NAV_ICONS.key],
+      ["#/settings", NAV_ICONS.settings],
+      ["#/admin/feature-flags", NAV_ICONS.flag],
+      ["#/agent/new", NAV_ICONS["add-plus"]],
+      ["#/agent/archived", NAV_ICONS.folder],
+    ];
+    for (const link of document.querySelectorAll<HTMLAnchorElement>(
+      ".cua-shell__nav a",
+    )) {
+      if (link.querySelector(".cua-nav-icon")) continue;
+      const href = link.getAttribute("href") ?? "";
+      const icon = iconsByHrefPrefix.find(([prefix]) => href.startsWith(prefix))?.[1];
+      if (!icon) continue;
+      const span = document.createElement("span");
+      span.className = "cua-nav-icon";
+      span.innerHTML = icon;
+      link.insertBefore(span, link.firstChild);
     }
-    previousPath.current = location.pathname;
-  }, [location.pathname, mobile]);
+  });
 
   return (
     <div className="cua-dashboard-theme cua-shell">
@@ -207,7 +234,8 @@ function ShellLayout({
         <TopNavigation
           identity={{
             href: "#/",
-            logo: { src: cuaLockup, alt: "Cua" },
+            title: "Cua Fleets",
+            logo: { src: cuaMark, alt: "Cua" },
           }}
           utilities={[
             {
@@ -232,11 +260,16 @@ function ShellLayout({
         }}
         toolsHide
         navigationOpen={navigationOpen}
-        onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
+        onNavigationChange={({ detail }) => {
+          // Desktop/tablet stays pinned open; only mobile's drawer toggle
+          // (shown via CSS below designTokens.layout.breakpoint.tablet)
+          // can actually close it.
+          if (tabletOrWider) return;
+          setNavigationOpen(detail.open);
+        }}
         navigation={
           <div className="cua-shell__nav">
             <SideNavigation
-              header={mobile ? undefined : { href: "#/pools", text: "Cua" }}
               activeHref={`#${location.pathname}`}
               onFollow={(event) => {
                 if (event.detail.external) return;
@@ -258,7 +291,7 @@ function ShellLayout({
               items={[
                 { type: "link", text: "Pools", href: "#/pools" },
                 { type: "link", text: "Usage", href: "#/usage" },
-                { type: "link", text: "User API keys", href: "#/user-keys" },
+                { type: "link", text: "API keys", href: "#/user-keys" },
                 { type: "link", text: "Settings", href: "#/settings" },
                 ...(admin
                   ? [
@@ -347,7 +380,7 @@ export function App() {
             <Route
               path="/user-keys"
               element={
-                <TitledPage title="User API keys">
+                <TitledPage title="API keys">
                   <UserApiKeys />
                 </TitledPage>
               }

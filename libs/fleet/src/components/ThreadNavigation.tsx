@@ -1,7 +1,6 @@
 import Button from "@cloudscape-design/components/button"
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown"
 import type { SideNavigationProps } from "@cloudscape-design/components/side-navigation"
-import { useLocation } from "react-router-dom"
 import { displayThreadTitle, useChatThreads } from "../chat/ChatThreadsContext"
 import { groupConversations } from "../pages/AgentChat"
 
@@ -16,14 +15,11 @@ export function useThreadNavigation(): {
   createThread: () => Promise<void>
   isCreatePending: () => boolean
 } {
-  const location = useLocation()
   const {
     activeThreads,
     activeThreadsError,
-    activeThreadsLoading,
     archiveThread,
     createThread,
-    creatingThread,
     generationLocked,
     threadMutationLocked,
     isCreatePending,
@@ -45,56 +41,49 @@ export function useThreadNavigation(): {
     {
       type: "section",
       text: "Threads",
-      defaultExpanded: location.pathname.startsWith("/agent"),
+      defaultExpanded: true,
       items: [
         {
           type: "link",
-          text: activeThreadsLoading ? "Loading threads" : "New thread",
+          // Keep this label stable regardless of list-loading state — it
+          // used to be a separate icon button with a fixed ariaLabel
+          // ("New thread"), independent of the outer link's loading-text
+          // swap; the button was folded into this single link, so the
+          // text itself now has to stay stable for the same reason (you
+          // can create a thread while the list is still loading).
+          text: "New thread",
           href: "#/agent/new",
-          info: (
-            <Button
-              ariaLabel="New thread"
-              disabled={disabled}
-              iconName="add-plus"
-              loading={creatingThread}
-              loadingText="Creating thread"
-              onClick={() => void createThread()}
-              variant="inline-icon"
-            />
-          ),
         },
-        ...(activeThreadsError
-          ? [{ type: "link" as const, text: "Unable to load threads", href: "#/agent/retry", info: retryControl }]
-          : []),
-        ...groups.map(group => ({
-          type: "section" as const,
-          text: group.label,
-          defaultExpanded: true,
-          items: group.conversations.map(thread => {
-            const title = displayThreadTitle(thread.title)
-            return {
-            type: "link" as const,
-            text: title,
-            href: `#/agent/${encodeURIComponent(thread.id)}`,
-            info: (
-              <ButtonDropdown
-                ariaLabel={`Actions for ${title}`}
-                disabled={disabled}
-                expandToViewport
-                items={[{ id: "archive", text: "Archive" }]}
-                onItemClick={({ detail }) => {
-                  if (detail.id === "archive") void archiveThread(thread.id)
-                }}
-                variant="icon"
-              />
-            ),
-          }}),
-        })),
         {
           type: "link",
           text: "Archived threads",
           href: "#/agent/archived",
         },
+        ...(activeThreadsError
+          ? [{ type: "link" as const, text: "Unable to load threads", href: "#/agent/retry", info: retryControl }]
+          : []),
+        ...groups.flatMap(group =>
+          group.conversations.map(thread => {
+            const title = displayThreadTitle(thread.title)
+            return {
+              type: "link" as const,
+              text: title,
+              href: `#/agent/${encodeURIComponent(thread.id)}`,
+              info: (
+                <ButtonDropdown
+                  ariaLabel={`Actions for ${title}`}
+                  disabled={disabled}
+                  expandToViewport
+                  items={[{ id: "archive", text: "Archive" }]}
+                  onItemClick={({ detail }) => {
+                    if (detail.id === "archive") void archiveThread(thread.id)
+                  }}
+                  variant="icon"
+                />
+              ),
+            }
+          }),
+        ),
       ],
     },
   ]

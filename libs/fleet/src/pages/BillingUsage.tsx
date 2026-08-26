@@ -171,15 +171,13 @@ export function BillingUsagePage() {
       {admin && (
         <section className="usage-admin" aria-labelledby="usage-admin-title">
           <div className="usage-admin__copy">
-            <p className="usage-panel__eyebrow">Admin</p>
             <h2 id="usage-admin-title">View usage by subject</h2>
-            <p>Load reserved-resource usage for any Keycloak user subject ID.</p>
           </div>
           <div className="usage-admin__controls">
             <FormField
-              label="User subject ID"
+              label="Keycloak user subject ID"
               errorText={subjectError || undefined}
-              description={activeSubject ? `Showing usage for ${activeSubject}` : "Showing your usage"}
+              description={activeSubject ? `Showing usage for ${activeSubject}` : undefined}
             >
               <Input
                 value={subjectInput}
@@ -217,25 +215,29 @@ export function BillingUsagePage() {
           <section className="usage-summary" aria-label="Usage summary">
             <div className="usage-summary__metric">
               <span className="usage-summary__label">Reserved CPU</span>
-              <strong>{resourceFormatter.format(totals.cpuProvisioned)}</strong>
-              <span>Core-hours across the selected range</span>
+              <div className="usage-summary__value">
+                <strong>{resourceFormatter.format(totals.cpuProvisioned)}</strong>
+                <span>Core-hours</span>
+              </div>
             </div>
             <div className="usage-summary__metric">
               <span className="usage-summary__label">Reserved memory</span>
-              <strong>{resourceFormatter.format(totals.memoryProvisioned)}</strong>
-              <span>GiB-hours across the selected range</span>
+              <div className="usage-summary__value">
+                <strong>{resourceFormatter.format(totals.memoryProvisioned)}</strong>
+                <span>GiB-hours</span>
+              </div>
             </div>
             <div className="usage-summary__metric">
               <span className="usage-summary__label">Cost</span>
-              <strong>{moneyFormatter.format(totals.cost)}</strong>
-              <span>Reserved resources across {pools.length} {pools.length === 1 ? "pool" : "pools"}</span>
+              <div className="usage-summary__value">
+                <strong>{moneyFormatter.format(totals.cost)}</strong>
+              </div>
             </div>
           </section>
 
           <section className="usage-panel" aria-labelledby="usage-breakdown-title">
             <div className="usage-panel__heading">
               <div>
-                <p className="usage-panel__eyebrow">Breakdown</p>
                 <h2 id="usage-breakdown-title">Cost by pool</h2>
               </div>
             </div>

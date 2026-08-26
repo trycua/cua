@@ -31,7 +31,6 @@ test.describe("Pools page header", () => {
       const topNavigation = page.locator("#cua-shell-topnav")
       const header = page.locator(".cua-pagehead")
       const semanticMain = page.getByRole("main")
-      const navigation = page.getByRole("navigation", { name: "Main navigation" })
       const table = page.locator(".cua-pagebody")
       const title = page.locator(".cua-pagehead__title")
       const refreshPools = page.getByRole("button", { name: "Refresh pools" })
@@ -41,23 +40,29 @@ test.describe("Pools page header", () => {
       await expect(mesh).toHaveCount(0)
       await expect(page).toHaveTitle("Pools · Cua")
       await expect(page.locator(".cua-pagehead canvas")).toHaveCount(0)
-      const [topNavigationBox, navigationBox, headerBox, tableBox] = await Promise.all([
+      const navigationPanel = page.locator('[class*="awsui_navigation-container_"]').first()
+      const [topNavigationBox, headerBox, tableBox, panelBox] = await Promise.all([
         topNavigation.boundingBox(),
-        navigation.boundingBox(),
         header.boundingBox(),
         table.boundingBox(),
+        navigationPanel.boundingBox(),
       ])
-      const navigationOpen = await page
-        .getByRole("button", { name: "Close navigation" })
-        .isVisible()
+      // Neither geometry alone nor the "is-navigation-open" class is a
+      // reliable open/closed signal on its own with this AppLayout
+      // variant: a collapsed drawer still keeps a ~64px gutter for the
+      // <nav> landmark's toggle button (not 0 width), and the desktop
+      // pinned-open sidebar (a static grid column, not a toggleable
+      // overlay) never gets "is-navigation-open" at all. A width well
+      // past the gutter is what actually distinguishes "really open".
+      const navigationOpen = Boolean(panelBox && panelBox.width > 100)
       expect(topNavigationBox).not.toBeNull()
       expect(topNavigationBox!.x).toBeLessThanOrEqual(1)
       expect(Math.abs(topNavigationBox!.width - viewport.width)).toBeLessThanOrEqual(1)
       expect(headerBox).not.toBeNull()
       expect(tableBox).not.toBeNull()
 
-      const paneStart = navigationOpen && navigationBox
-        ? navigationBox.x + navigationBox.width
+      const paneStart = navigationOpen && panelBox
+        ? panelBox.x + panelBox.width
         : 0
       expect(headerBox!.x - paneStart).toBeGreaterThan(1)
       expect(viewport.width - (headerBox!.x + headerBox!.width)).toBeGreaterThan(1)
@@ -156,8 +161,9 @@ test.describe("Pools page header", () => {
           .getByRole("navigation", { name: "Main navigation" })
           .boundingBox()
         expect(openNavigationBox).not.toBeNull()
+        // Threshold bumped for the 59px top-nav height (see shell.css).
         expect(openNavigationBox!.y).toBeLessThanOrEqual(
-          viewport.width < 688 ? 1 : 50,
+          viewport.width < 688 ? 1 : 65,
         )
       }
     })
@@ -532,8 +538,8 @@ test.describe("Retired navigation", () => {
 
     await expect(page.getByRole("link", { name: "Nodes" })).toHaveCount(0)
     await expect(page.getByRole("link", { name: "Operator events" })).toHaveCount(0)
-    await expect(page.getByRole("link", { name: "API keys", exact: true })).toHaveCount(0)
-    await expect(page.getByRole("link", { name: "User API keys" })).toBeVisible()
+    await expect(page.getByRole("link", { name: "User API keys" })).toHaveCount(0)
+    await expect(page.getByRole("link", { name: "API keys", exact: true })).toBeVisible()
     await expect(page.getByRole("link", { name: "Settings" })).toBeVisible()
 
     for (const route of ["/nodes", "/operator-events", "/operator-logs", "/api-keys"]) {

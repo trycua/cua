@@ -66,11 +66,12 @@ test.describe("User API keys", () => {
   test("renders the API keys page with existing keys", async ({ page }) => {
     await page.goto("/user-keys")
 
-    // The shared page shell and key table should both be visible.
+    // The shared page shell and key table should both be visible. Page
+    // title (h1) and the key-table's own Header (h2) both read "API keys"
+    // now, so disambiguate by heading level.
     await expect(
-      page.getByRole("heading", { name: "User API keys" }),
+      page.getByRole("heading", { name: "API keys", exact: true, level: 1 }),
     ).toBeVisible()
-    await expect(page.getByRole("heading", { name: "API keys", exact: true })).toBeVisible()
 
     // The existing mock key should be listed
     await expect(page.getByText("my-key")).toBeVisible()
@@ -173,10 +174,7 @@ test.describe("User API keys", () => {
     await page.goto("/user-keys")
 
     // The scope multiselect should mention namespaces
-    await expect(page.getByText("Scope (optional)")).toBeVisible()
-    await expect(
-      page.getByText(/restrict this key to specific namespaces/i),
-    ).toBeVisible()
+    await expect(page.getByText("Allowed Namespaces (optional)")).toBeVisible()
   })
 
   test("filters namespace options by typed text", async ({ page }) => {

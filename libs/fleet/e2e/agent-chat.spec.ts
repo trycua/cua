@@ -102,7 +102,7 @@ test("sidebar threads replace Chat and mark the route thread current", async ({
       navigation.getByRole("link", { name: "Pools", exact: true }).boundingBox(),
       navigation.getByRole("link", { name: "Usage", exact: true }).boundingBox(),
       navigation
-        .getByRole("link", { name: "User API keys", exact: true })
+        .getByRole("link", { name: "API keys", exact: true })
         .boundingBox(),
       navigation
         .getByRole("link", { name: "Settings", exact: true })
@@ -158,7 +158,7 @@ test("new thread posts before navigating", async ({ page }) => {
   });
 
   await page.goto("/agent/conversation-1");
-  await page.getByRole("button", { name: "New thread" }).click();
+  await page.getByRole("link", { name: "New thread" }).click();
 
   await expect.poll(() => chat.createRequests).toBe(1);
   await expect(page).toHaveURL(/\/agent\/conversation-2$/);
@@ -251,7 +251,7 @@ test("stale active-list responses cannot erase a newly created thread", async ({
 
   await page.goto("/agent/conversation-1");
   await expect.poll(() => chat.listRequests).toBeGreaterThan(0);
-  await page.getByRole("button", { name: "New thread" }).click();
+  await page.getByRole("link", { name: "New thread" }).click();
   await expect(page).toHaveURL(/\/agent\/conversation-2$/);
 
   chat.releaseList();
@@ -928,10 +928,10 @@ test("recovers from New thread creation failure without a stuck route", async ({
     ],
   });
   await page.goto("/agent/usable-thread");
-  await page.getByRole("button", { name: "New thread" }).click();
+  await page.getByRole("link", { name: "New thread" }).click();
   await expect(page).toHaveURL(/\/agent\/usable-thread$/);
   await expect(page.getByPlaceholder("Ask a question")).toBeEnabled();
-  await page.getByRole("button", { name: "New thread" }).click();
+  await page.getByRole("link", { name: "New thread" }).click();
   await expect.poll(() => chat.createRequests).toBe(2);
   await expect(page).toHaveURL(/\/agent\/conversation-2$/);
 });
@@ -1064,7 +1064,7 @@ test("archived restore is disabled during another thread mutation", async ({
   });
 
   await page.goto("/agent/archived");
-  await page.getByRole("button", { name: "New thread" }).click();
+  await page.getByRole("link", { name: "New thread" }).click();
   await expect.poll(() => chat.createRequests).toBe(1);
   await expect(
     page.getByRole("button", { name: "Restore Archived mutation target" }),
@@ -2098,7 +2098,7 @@ test("pending New thread keeps the created summary without reclaiming navigation
   });
 
   await page.goto("/agent/conversation-1");
-  await page.getByRole("button", { name: "New thread" }).click();
+  await page.getByRole("link", { name: "New thread" }).click();
   await expect.poll(() => chat.createRequests).toBe(1);
   await page.goto("/pools");
 
@@ -2245,7 +2245,7 @@ test("a pending create prevents a turn and opens its created thread", async ({
   });
 
   await page.goto("/agent/conversation-1");
-  await page.getByRole("button", { name: "New thread" }).click();
+  await page.getByRole("link", { name: "New thread" }).click();
   await expect.poll(() => chat.createRequests).toBe(1);
   await expect(page.getByPlaceholder("Ask a question")).toBeDisabled();
   await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();

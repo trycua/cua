@@ -242,7 +242,6 @@ steps:
     <PageShell
       eyebrow="Account"
       title="Settings"
-      description="Manage your identity, payment method, and automation access."
     >
       <SpaceBetween size="l">
         <ExpandableSection

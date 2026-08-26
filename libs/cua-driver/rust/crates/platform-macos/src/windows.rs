@@ -357,9 +357,6 @@ impl SpaceMetadataSource for crate::input::skylight::SpaceQuery {
 }
 
 /// Attribute Spaces to every window in the enumeration, whatever its layer.
-/// Layer selection and Space lookup are independent: a pid-filtered
-/// enumeration admits accessory layers *and* keeps Space metadata on its
-/// layer-0 records.
 pub(crate) fn resolve_space_metadata(
     windows: &mut [WindowInfo],
     source: &impl SpaceMetadataSource,

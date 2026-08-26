@@ -111,9 +111,10 @@ pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
 mod tests {
     use super::*;
 
-    /// The schema is the contract agents read: a pid query admits every
-    /// layer, a desktop query stays layer-0. The behavior itself is covered
-    /// in `crate::windows::tests`.
+    /// The layer contract — pid queries admit every layer, desktop queries
+    /// stay layer-0 — must be stated in the tool's schema, since callers can
+    /// only learn it from there. The behavior itself is covered in
+    /// `crate::windows::tests`.
     #[test]
     fn pid_filter_documents_that_it_admits_every_layer() {
         let described = def().input_schema["properties"]["pid"]["description"]

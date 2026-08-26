@@ -656,18 +656,12 @@ unsafe fn install_wallpaper(
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
-    let glass_frame = visual_effect_view(bounds, 13.5, 13, 0, true);
+    let glass_frame = rounded_view(bounds, 13.5, color(0.012, 0.016, 0.020, 0.92), true);
     let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
-    let appearance_name = ns_string("NSAppearanceNameVibrantDark");
-    let dark_appearance: *mut AnyObject =
-        msg_send![class!(NSAppearance), appearanceNamed: appearance_name];
-    if !dark_appearance.is_null() {
-        let _: () = msg_send![glass_frame, setAppearance: dark_appearance];
-    }
     let glass_layer: *mut AnyObject = msg_send![glass_frame, layer];
-    // Keep the rim neutral even over a saturated wallpaper. The material still
-    // supplies depth, while the graphite wash prevents a bright cyan halo.
-    set_layer_background(glass_layer, color(0.012, 0.016, 0.020, 0.92));
+    // A visual-effect material inherits saturated wallpaper colors too
+    // aggressively at this scale. Use a translucent neutral rim instead, then
+    // rely on the inset highlight and native panel shadow for glass-like depth.
     set_layer_border(glass_layer, 0.7, color(0.90, 0.93, 0.95, 0.16));
     let _: () = msg_send![content_view, addSubview: glass_frame];
 

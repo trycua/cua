@@ -994,12 +994,16 @@ mod session_badge_and_action_tests {
     fn idle_hide_zero_keeps_a_positioned_session_cursor_visible() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.motion.idle_hide_ms = 0.0;
-        assert!(core.apply_command_base(OverlayCommand::ClickPulse { x: 40.0, y: 60.0 }, false,));
+        assert!(core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
+            false,
+            false,
+        ));
 
         core.tick_motion(2.0);
 
         assert!(core.cursor_is_revealed());
-        assert!(core.pos.is_some());
+        assert_eq!(core.pos, (40.0, 60.0));
         assert_eq!(core.idle_alpha, 1.0);
     }
 

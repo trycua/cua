@@ -156,6 +156,9 @@ pub struct PipConfig {
     /// when this is true; the field is kept here so backends that
     /// share a `start()` path can early-return.
     pub enabled: bool,
+    /// Refuse foreground/global desktop input while Agent View is active.
+    /// The first implementation is intentionally macOS-only.
+    pub background_only: bool,
     pub geometry: PipGeometry,
     /// Native window title shared by all platform backends.
     pub title: String,
@@ -165,6 +168,7 @@ impl Default for PipConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            background_only: false,
             geometry: PipGeometry::default(),
             title: "Cua Agent View".to_owned(),
         }
@@ -176,6 +180,7 @@ impl PipConfig {
     /// Recognised flags (all opt-in):
     /// ```text
     /// --agent-view
+    /// --agent-view-background-only
     /// --agent-view-geometry  WxH | WxH+X+Y
     /// ```
     /// Unknown flags are ignored so this never conflicts with the
@@ -191,6 +196,10 @@ impl PipConfig {
         while i < args.len() {
             match args[i].as_str() {
                 "--agent-view" => cfg.enabled = true,
+                "--agent-view-background-only" => {
+                    cfg.enabled = true;
+                    cfg.background_only = true;
+                }
                 "--agent-view-geometry" => {
                     if let Some(geom) = args.get(i + 1).and_then(|s| PipGeometry::parse(s)) {
                         cfg.geometry = geom;
@@ -233,6 +242,9 @@ impl PipConfig {
         let cli = PipConfig::parse(&args[1..]);
         if cli.enabled {
             cfg.enabled = true;
+        }
+        if cli.background_only {
+            cfg.background_only = true;
         }
         // CLI geometry only overrides when explicitly passed — detect by
         // diffing against PipGeometry::default() (the parse() entry point
@@ -977,6 +989,13 @@ mod tests {
     }
 
     #[test]
+    fn background_only_mode_implies_agent_view() {
+        let cfg = PipConfig::parse(&["--agent-view-background-only".to_owned()]);
+        assert!(cfg.enabled);
+        assert!(cfg.background_only);
+    }
+
+    #[test]
     fn ignores_removed_pip_cli_names() {
         let cfg = PipConfig::parse(&[
             "--experimental-pip".to_owned(),
@@ -985,6 +1004,7 @@ mod tests {
             "--pip".to_owned(),
         ]);
         assert!(!cfg.enabled);
+        assert!(!cfg.background_only);
         assert_eq!(cfg.geometry.width, PipGeometry::default().width);
         assert_eq!(cfg.geometry.height, PipGeometry::default().height);
     }

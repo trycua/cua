@@ -34,6 +34,51 @@ becomes input-transparent so an overlapping Agent View cannot intercept input
 intended for the represented application. Local switching and resizing resume
 as soon as the action finishes.
 
+## macOS background-only mode
+
+For a same-login-session view that refuses actions known to disturb the user's
+foreground desktop, start the daemon with:
+
+```console
+cua-driver serve --agent-view-background-only
+```
+
+This flag implies `--agent-view`. It does not create or connect to a VM, switch
+macOS users, or start another WindowServer session. Agent View remains one
+non-activating PiP window in the current login session. The window cards and
+cursor inside it are presentation: cards are exact target captures, and the
+cursor is the last agent action position drawn over its target.
+
+The mode changes dispatch behavior on macOS:
+
+- exact native-window input remains available only with both `pid` and
+  `window_id`, using the existing background delivery path;
+- exact browser-tab input remains available through the existing CDP path;
+- applications and browser endpoints must already be open and available,
+  because launching or preparing one can activate or relaunch main-session UI;
+- after showing the PiP, Cua Driver deactivates its observer application so
+  daemon startup does not leave Agent View as the foreground application;
+- the process-global cursor overlay is disabled, while the last agent action
+  position continues to render as the synthetic cursor inside Agent View;
+  calls that reconfigure that global overlay are also refused;
+- `delivery_mode: "foreground"` is refused before authorization, recording,
+  cursor animation, or platform input;
+- global pointer/drag operations, persistent foregrounding, app launch/kill,
+  permission prompts, menu invocation, replay, and window movement/resizing
+  are refused before dispatch;
+- Cua Driver's own process is refused as an input target, so the agent cannot
+  click or type into its observer window; and
+- a synchronous PiP backend startup error fails daemon startup instead of
+  silently continuing in the requested mode without a view.
+
+This is deliberately narrower than full macOS session isolation. Applications,
+the pasteboard, notifications, and other per-user resources still belong to the
+same login session. An allowed background action can also change its target's
+content or cause that application to create UI. The contract is therefore
+"background-only exact-target input," not a second desktop, VM, or security
+boundary. Use ordinary Agent View when foreground fallbacks and window/app
+management are required.
+
 ## What becomes a card
 
 A target is added or refreshed only after Cua Driver receives exact target
@@ -60,6 +105,6 @@ application or tab is never changed by presentation cleanup.
 ## Public contract
 
 Agent View uses the existing daemon flag, geometry option, runtime sessions,
-and exact target arguments. This session-oriented behavior does not introduce
-new MCP tools, CLI flags, SDK types, capability IDs, claim tokens, or public
-target/session fields.
+background-only mode, and exact target arguments. This session-oriented
+behavior does not introduce new MCP tools, SDK types, capability IDs, claim
+tokens, or public target/session fields.

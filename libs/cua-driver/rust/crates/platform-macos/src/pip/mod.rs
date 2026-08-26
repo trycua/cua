@@ -1555,6 +1555,15 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         return;
     }
 
+    let window_title = if cfg.background_only {
+        "Cua Agent View — Background Only"
+    } else {
+        cfg.title.as_str()
+    };
+    let window_title = ns_string(window_title);
+    if !window_title.is_null() {
+        let _: () = msg_send![window, setTitle: window_title];
+    }
     let clear: *mut AnyObject = msg_send![class!(NSColor), clearColor];
     let _: () = msg_send![window, setBackgroundColor: clear];
     let _: () = msg_send![window, setOpaque: false];
@@ -1635,6 +1644,14 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         selected_workspace_id: None,
     });
     let _: () = msg_send![window, orderFrontRegardless];
+    if cfg.background_only {
+        // Starting an accessory NSApplication can briefly make the observer
+        // process frontmost even though this NSPanel carries the
+        // non-activating style mask. Return activation to the application
+        // macOS had underneath us; the floating panel remains visible.
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, deactivate];
+    }
 
     tracing::info!(
         target: "pip",

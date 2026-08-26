@@ -222,13 +222,14 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
 /// per-call binaries don't keep an AppKit/event loop alive long
 /// enough to be useful).
 ///
-fn maybe_init_pip() {
-    let cfg = match pip_preview::default_config_path() {
-        Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-        None => pip_preview::PipConfig::from_args(),
-    };
+fn maybe_init_pip(cfg: &pip_preview::PipConfig) -> anyhow::Result<()> {
     if !cfg.enabled {
-        return;
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    if cfg.background_only {
+        anyhow::bail!("--agent-view-background-only is currently available only on macOS");
     }
 
     // Register the platform factory. The set is idempotent so multiple
@@ -240,7 +241,7 @@ fn maybe_init_pip() {
     #[cfg(target_os = "linux")]
     pip_preview::set_pip_backend_factory(Box::new(platform_linux::pip::LinuxPipBackendFactory));
 
-    match pip_preview::start_pip(&cfg) {
+    match pip_preview::start_pip(cfg) {
         Ok(backend) => {
             // Bridge: when the tool dispatcher in cua-driver-core wants
             // to push a frame, forward to the live backend handle.
@@ -308,12 +309,26 @@ fn maybe_init_pip() {
             cua_driver_core::session::register_session_end_hook(|workspace_id| {
                 cua_driver_core::pip_hook::remove_pip_workspace(workspace_id);
             });
+            #[cfg(target_os = "macos")]
+            if cfg.background_only {
+                cua_driver_core::pip_hook::enable_background_only();
+                eprintln!(
+                    "⚗️  Agent View enabled (macOS background-only mode; foreground and global UI actions are refused)"
+                );
+            } else {
+                eprintln!("⚗️  Agent View enabled (native macOS, Windows, and Linux presentation)");
+            }
+            #[cfg(not(target_os = "macos"))]
             eprintln!("⚗️  Agent View enabled (native macOS, Windows, and Linux presentation)");
         }
         Err(e) => {
+            if cfg.background_only {
+                anyhow::bail!("background-only Agent View could not start: {e}");
+            }
             eprintln!("⚗️  Agent View requested but unavailable: {e}");
         }
     }
+    Ok(())
 }
 
 // ── Public SDK runtime host ──────────────────────────────────────────────
@@ -427,6 +442,11 @@ fn macos_main_loop_host(cursor_enabled: bool, agent_view_enabled: bool) -> Macos
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_cursor_overlay_enabled(requested: bool, background_only: bool) -> bool {
+    requested && !background_only
+}
+
 #[cfg(test)]
 mod history_admission_tests {
     use super::history_admission_requested;
@@ -446,7 +466,7 @@ mod history_admission_tests {
 
 #[cfg(all(test, target_os = "macos"))]
 mod macos_main_loop_host_tests {
-    use super::{macos_main_loop_host, MacosMainLoopHost};
+    use super::{macos_cursor_overlay_enabled, macos_main_loop_host, MacosMainLoopHost};
 
     #[test]
     fn cursor_overlay_hosts_the_shared_appkit_loop_when_agent_view_is_enabled() {
@@ -466,6 +486,12 @@ mod macos_main_loop_host_tests {
             macos_main_loop_host(false, false),
             MacosMainLoopHost::ServeThread
         );
+    }
+
+    #[test]
+    fn background_only_mode_keeps_the_cursor_inside_agent_view() {
+        assert!(!macos_cursor_overlay_enabled(true, true));
+        assert!(macos_cursor_overlay_enabled(true, false));
     }
 }
 
@@ -682,14 +708,22 @@ fn main() {
                 Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
                 None => pip_preview::PipConfig::from_args(),
             };
-            maybe_init_pip();
+            if let Err(error) = maybe_init_pip(&pip_cfg) {
+                eprintln!("cua-driver: Agent View startup error: {error}");
+                std::process::exit(64);
+            }
 
             // Agent-cursor overlay. The DAEMON is the process that actually
             // performs clicks / AX presses, so the overlay NSWindow + render
             // loop must run HERE. The MCP proxy never renders, so the daemon
             // owns every cursor command and window. Init the channel before spawning
             // the serve thread so `run_on_main_thread()` always finds it ready.
-            let cursor_cfg = cursor_overlay::CursorConfig::from_args();
+            let mut cursor_cfg = cursor_overlay::CursorConfig::from_args();
+            // Agent View renders the action position inside its exact-target
+            // card. Do not also draw a process-global cursor over the user's
+            // foreground desktop in background-only mode.
+            cursor_cfg.enabled =
+                macos_cursor_overlay_enabled(cursor_cfg.enabled, pip_cfg.background_only);
 
             // Honour the compat flag forwarded by the MCP proxy
             // (launch_daemon_and_wait passes `serve
@@ -1071,7 +1105,11 @@ fn main() -> anyhow::Result<()> {
                 claude_code_compat,
                 cua_driver_core::embedded_mode(),
             )?;
-            maybe_init_pip();
+            let pip_cfg = match pip_preview::default_config_path() {
+                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
+                None => pip_preview::PipConfig::from_args(),
+            };
+            maybe_init_pip(&pip_cfg)?;
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
             // run_serve_cmd builds its own runtime; must run on a fresh thread.

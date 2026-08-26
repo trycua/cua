@@ -662,6 +662,15 @@ pub fn parse_command() -> Command {
             "                              Native presentation is available on macOS, Windows,"
         );
         println!("                              and Linux (X11/XWayland).");
+        println!("  --agent-view-background-only     macOS: enable Agent View and refuse");
+        println!(
+            "                                          foreground, global-pointer, app-launch,"
+        );
+        println!("                                          and window-management actions before dispatch.");
+        println!(
+            "                                          Exact-window background input and exact"
+        );
+        println!("                                          browser-tab input remain available.");
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 640x420 in the top-right");
         println!("                                          corner of the main display.");

@@ -1245,6 +1245,7 @@ mod tests {
 
         let config = PipConfig {
             enabled: true,
+            background_only: false,
             geometry: PipGeometry {
                 width: 720,
                 height: 520,

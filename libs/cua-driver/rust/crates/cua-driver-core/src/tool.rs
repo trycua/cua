@@ -1081,6 +1081,9 @@ impl ToolRegistry {
         {
             return result;
         }
+        if let Some(refusal) = crate::pip_hook::enforce_background_only(resolved_name, &args) {
+            return refusal;
+        }
 
         // This registry is the canonical native dispatch boundary shared by
         // the same-process SDK and every transport adapter. Authorization must

@@ -215,7 +215,7 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-/// Wire up the experimental multi-target Agent View.
+/// Wire up the multi-target Agent View.
 ///
 /// Called from every long-running entry point (Serve and Mcp on all
 /// platforms; the `Call` arm intentionally skips PiP since the

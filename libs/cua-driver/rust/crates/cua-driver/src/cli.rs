@@ -230,7 +230,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--session",
     "--profile-mode",
     "--profile-name",
-    // Experimental Agent View value flag for geometry override
+    // Agent View value flag for the optional geometry override
     // (`--agent-view` itself is a bare flag and doesn't
     // need to be listed here).
     "--agent-view-geometry",

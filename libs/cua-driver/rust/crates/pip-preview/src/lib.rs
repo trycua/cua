@@ -1,14 +1,12 @@
-//! Shared model and platform contract for the experimental Agent View.
+//! Shared model and platform contract for Agent View.
 //!
 //! Agent View is an opt-in surface rather than one process-global "latest screenshot".
 //! Frames carry an existing session/workspace identity and an exact native
 //! window or browser-tab identity. Platform backends can therefore keep
 //! several target cards visible without introducing target claims or leases.
 //!
-//! macOS is the first working implementation (NSWindow + NSImageView).
-//! Windows + Linux ship as compile-clean stubs whose `start()` returns
-//! a clear "not yet implemented" error so the rest of the daemon
-//! continues without a PiP window.
+//! Native backends render the shared model on macOS, Windows, and Linux
+//! X11/XWayland while keeping platform-specific window-system code isolated.
 
 use std::sync::OnceLock;
 
@@ -158,8 +156,7 @@ pub struct PipConfig {
     /// share a `start()` path can early-return.
     pub enabled: bool,
     pub geometry: PipGeometry,
-    /// Window title — kept here so the "experimental" label stays in
-    /// one place. Defaults to "cua-driver — agent view (experimental)".
+    /// Native window title shared by all platform backends.
     pub title: String,
 }
 
@@ -168,7 +165,7 @@ impl Default for PipConfig {
         Self {
             enabled: false,
             geometry: PipGeometry::default(),
-            title: "Cua Agent View (experimental)".to_owned(),
+            title: "Cua Agent View".to_owned(),
         }
     }
 }

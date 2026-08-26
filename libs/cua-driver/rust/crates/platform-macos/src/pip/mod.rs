@@ -31,6 +31,12 @@ struct NativeHandles {
     delegate: usize,
 }
 
+/// Outer corner radius of the Agent View container chrome.
+const CONTAINER_RADIUS: f64 = 12.5;
+/// Thickness of the chrome between the panel edge and the miniature desktop.
+/// Kept thin so the container reads as macOS glass rather than as a bezel.
+const FRAME_INSET: f64 = 4.0;
+
 static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
 static VIEW_MODEL: Mutex<Option<PipViewModel>> = Mutex::new(None);
 
@@ -159,6 +165,22 @@ unsafe fn set_layer_background(
 
     let cg_color: *mut CGColor = msg_send![background, CGColor];
     let _: () = msg_send![layer, setBackgroundColor: cg_color];
+}
+
+/// Opt a container layer into the macOS squircle corner curve so the chrome
+/// reads as continuous rather than as a circular-arc rectangle.
+unsafe fn set_continuous_corners(layer: *mut objc2::runtime::AnyObject) {
+    use objc2::msg_send;
+
+    let responds: bool = msg_send![layer, respondsToSelector: objc2::sel!(setCornerCurve:)];
+    if !responds {
+        return;
+    }
+    let curve = ns_string("continuous");
+    if curve.is_null() {
+        return;
+    }
+    let _: () = msg_send![layer, setCornerCurve: curve];
 }
 
 unsafe fn set_layer_border(
@@ -655,16 +677,40 @@ unsafe fn install_wallpaper(
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
-    let glass_frame = rounded_view(bounds, 13.5, color(0.012, 0.016, 0.020, 0.92), true);
+    // Outer container chrome. A deterministic neutral layer keeps the rim free
+    // of the saturated wallpaper cast an NSVisualEffectView material picks up at
+    // this scale; the bright outer rim, the top specular, the dark inner
+    // hairline and a tight inset shadow supply the dimensionality instead.
+    let glass_frame = rounded_view(
+        bounds,
+        CONTAINER_RADIUS,
+        color(0.58, 0.60, 0.64, 0.82),
+        true,
+    );
     let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
     let glass_layer: *mut AnyObject = msg_send![glass_frame, layer];
-    // A visual-effect material inherits saturated wallpaper colors too
-    // aggressively at this scale. Use a translucent neutral rim instead, then
-    // rely on the inset highlight and native panel shadow for glass-like depth.
-    set_layer_border(glass_layer, 0.7, color(0.90, 0.93, 0.95, 0.16));
+    set_continuous_corners(glass_layer);
+    set_layer_border(glass_layer, 0.8, color(1.0, 1.0, 1.0, 0.52));
     let _: () = msg_send![content_view, addSubview: glass_frame];
 
-    let inset = 7.0;
+    // Light-from-above specular along the top edge of the chrome.
+    let highlight = rounded_view(
+        objc2_foundation::NSRect::new(
+            objc2_foundation::NSPoint::new(CONTAINER_RADIUS, bounds.size.height - 1.7),
+            objc2_foundation::NSSize::new(
+                (bounds.size.width - 2.0 * CONTAINER_RADIUS).max(1.0),
+                1.0,
+            ),
+        ),
+        0.5,
+        color(1.0, 1.0, 1.0, 0.32),
+        true,
+    );
+    let _: () = msg_send![highlight, setAutoresizingMask: 10u64];
+    let _: () = msg_send![glass_frame, addSubview: highlight];
+
+    let inset = FRAME_INSET;
+    let container_radius = CONTAINER_RADIUS - inset;
     let container_frame = objc2_foundation::NSRect::new(
         objc2_foundation::NSPoint::new(inset, inset),
         objc2_foundation::NSSize::new(
@@ -672,22 +718,36 @@ unsafe fn install_wallpaper(
             (bounds.size.height - 2.0 * inset).max(1.0),
         ),
     );
-    let wallpaper_shadow = rounded_view(container_frame, 9.5, color(0.0, 0.0, 0.0, 0.01), false);
+    let wallpaper_shadow = rounded_view(
+        container_frame,
+        container_radius,
+        color(0.0, 0.0, 0.0, 0.01),
+        false,
+    );
     let _: () = msg_send![wallpaper_shadow, setAutoresizingMask: 18u64];
     let shadow_layer: *mut AnyObject = msg_send![wallpaper_shadow, layer];
-    let _: () = msg_send![shadow_layer, setShadowOpacity: 0.52_f32];
-    let _: () = msg_send![shadow_layer, setShadowRadius: 9.0_f64];
-    let _: () = msg_send![shadow_layer, setShadowOffset: objc2_foundation::NSSize::new(0.0, -2.0)];
-    let shadow_color = color(0.0, 0.0, 0.0, 0.88);
+    set_continuous_corners(shadow_layer);
+    // Tight and close, so the desktop reads as sunk into a thin frame instead
+    // of sitting behind a black halo that swallows the chrome.
+    let _: () = msg_send![shadow_layer, setShadowOpacity: 0.55_f32];
+    let _: () = msg_send![shadow_layer, setShadowRadius: 3.0_f64];
+    let _: () = msg_send![shadow_layer, setShadowOffset: objc2_foundation::NSSize::new(0.0, -1.0)];
+    let shadow_color = color(0.0, 0.0, 0.0, 0.85);
     let shadow_cg: *mut CGColor = msg_send![shadow_color, CGColor];
     let _: () = msg_send![shadow_layer, setShadowColor: shadow_cg];
     let _: () = msg_send![content_view, addSubview: wallpaper_shadow];
 
-    let wallpaper_container =
-        rounded_view(container_frame, 9.5, color(0.02, 0.03, 0.04, 0.68), true);
+    let wallpaper_container = rounded_view(
+        container_frame,
+        container_radius,
+        color(0.02, 0.03, 0.04, 0.68),
+        true,
+    );
     let _: () = msg_send![wallpaper_container, setAutoresizingMask: 18u64];
     let container_layer: *mut AnyObject = msg_send![wallpaper_container, layer];
-    set_layer_border(container_layer, 0.6, color(0.86, 0.94, 0.98, 0.09));
+    set_continuous_corners(container_layer);
+    // Dark hairline where the miniature desktop meets the chrome.
+    set_layer_border(container_layer, 0.8, color(0.0, 0.0, 0.0, 0.42));
     let container_bounds: objc2_foundation::NSRect = msg_send![wallpaper_container, bounds];
     let wallpaper_view: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSImageView), alloc];
@@ -819,8 +879,11 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let content_view: *mut AnyObject = msg_send![window, contentView];
     let _: () = msg_send![content_view, setWantsLayer: true];
     let content_layer: *mut AnyObject = msg_send![content_view, layer];
-    let _: () = msg_send![content_layer, setCornerRadius: 12.5_f64];
-    let _: () = msg_send![content_layer, setMasksToBounds: true];
+    let _: () = msg_send![content_layer, setCornerRadius: CONTAINER_RADIUS];
+    set_continuous_corners(content_layer);
+    // The chrome view clips its own children. Masking here too would clip the
+    // chrome's own outer rim stroke in half and flatten the frame.
+    let _: () = msg_send![content_layer, setMasksToBounds: false];
     set_layer_background(content_layer, color(0.0, 0.0, 0.0, 0.0));
     let bounds: NSRect = msg_send![content_view, bounds];
     let (wallpaper_container, wallpaper_view) = install_wallpaper(content_view, screen, bounds);
@@ -830,6 +893,13 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         msg_send![allocated, initWithFrame: bounds]
     };
     let _: () = msg_send![canvas, setAutoresizingMask: 18u64];
+    // The content view no longer masks, so the canvas clips its own contents to
+    // the container silhouette.
+    let _: () = msg_send![canvas, setWantsLayer: true];
+    let canvas_layer: *mut AnyObject = msg_send![canvas, layer];
+    let _: () = msg_send![canvas_layer, setCornerRadius: CONTAINER_RADIUS];
+    set_continuous_corners(canvas_layer);
+    let _: () = msg_send![canvas_layer, setMasksToBounds: true];
     let _: () = msg_send![content_view, addSubview: canvas];
 
     let delegate = agent_view_delegate_instance();

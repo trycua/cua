@@ -36,6 +36,7 @@ struct NativeHandles {
 
 /// Outer corner radius of the Agent View container chrome.
 const CONTAINER_RADIUS: f64 = 15.0;
+const PIP_CORNER_RADIUS: f64 = 12.0;
 /// The miniature desktop sits inside an asymmetric hardware-like glass shell.
 const SHELL_SIDE_INSET: f64 = 9.0;
 const SHELL_TOP_INSET: f64 = 20.0;
@@ -1281,7 +1282,7 @@ unsafe fn install_wallpaper(
         if SHOW_SHELL_BORDER {
             CONTAINER_RADIUS
         } else {
-            0.0
+            PIP_CORNER_RADIUS
         },
         color(0.18, 0.21, 0.25, if SHOW_SHELL_BORDER { 0.16 } else { 0.0 }),
         true,
@@ -1362,7 +1363,11 @@ unsafe fn install_wallpaper(
     }
 
     let container_frame = desktop_frame(bounds);
-    let container_radius = if SHOW_SHELL_BORDER { 8.5 } else { 0.0 };
+    let container_radius = if SHOW_SHELL_BORDER {
+        8.5
+    } else {
+        PIP_CORNER_RADIUS
+    };
     let wallpaper_shadow = rounded_view(
         container_frame,
         container_radius,
@@ -1575,7 +1580,7 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         setCornerRadius: if SHOW_SHELL_BORDER {
             CONTAINER_RADIUS
         } else {
-            0.0
+            PIP_CORNER_RADIUS
         }
     ];
     set_continuous_corners(content_layer);
@@ -1599,7 +1604,11 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let canvas_layer: *mut AnyObject = msg_send![canvas, layer];
     let _: () = msg_send![
         canvas_layer,
-        setCornerRadius: if SHOW_SHELL_BORDER { 8.5_f64 } else { 0.0 }
+        setCornerRadius: if SHOW_SHELL_BORDER {
+            8.5_f64
+        } else {
+            PIP_CORNER_RADIUS
+        }
     ];
     set_continuous_corners(canvas_layer);
     let _: () = msg_send![canvas_layer, setMasksToBounds: true];

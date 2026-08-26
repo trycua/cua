@@ -331,6 +331,7 @@ pub struct PipFrame {
 pub struct PipViewModel {
     max_targets: usize,
     frames: HashMap<String, PipFrame>,
+    workspace_activity_ms: HashMap<String, u64>,
     selected_workspace_id: Option<String>,
     selection_pinned: bool,
 }
@@ -348,6 +349,7 @@ impl PipViewModel {
         Self {
             max_targets: max_targets.max(1),
             frames: HashMap::new(),
+            workspace_activity_ms: HashMap::new(),
             selected_workspace_id: None,
             selection_pinned: false,
         }
@@ -355,6 +357,13 @@ impl PipViewModel {
 
     pub fn upsert(&mut self, frame: PipFrame) -> Option<String> {
         let workspace_id = frame.target.workspace_id.clone();
+        self.workspace_activity_ms
+            .entry(workspace_id.clone())
+            .and_modify(|timestamp| *timestamp = (*timestamp).max(frame.timestamp_ms))
+            .or_insert(frame.timestamp_ms);
+        if self.selected_workspace_id.is_none() || !self.selection_pinned {
+            self.selected_workspace_id = Some(workspace_id.clone());
+        }
         if frame.target.target_kind == PipTargetKind::NativeWindow
             && frame.target.native_container.is_some_and(|container| {
                 self.frames.values().any(|existing| {
@@ -377,9 +386,6 @@ impl PipViewModel {
         }
         let view_id = frame.target.view_id();
         self.frames.insert(view_id.clone(), frame);
-        if self.selected_workspace_id.is_none() || !self.selection_pinned {
-            self.selected_workspace_id = Some(workspace_id.clone());
-        }
         if self.frames.len() <= self.max_targets {
             return None;
         }
@@ -414,6 +420,7 @@ impl PipViewModel {
         if let Some(id) = evicted.as_ref() {
             self.frames.remove(id);
         }
+        self.prune_empty_workspace_activity();
         self.reconcile_selection();
         evicted
     }
@@ -437,6 +444,7 @@ impl PipViewModel {
             .as_ref()
             .is_some_and(|view_id| self.frames.remove(view_id).is_some());
         if removed {
+            self.prune_empty_workspace_activity();
             self.reconcile_selection();
         }
         removed
@@ -452,6 +460,7 @@ impl PipViewModel {
         for id in &removed {
             self.frames.remove(id);
         }
+        self.workspace_activity_ms.remove(workspace_id);
         if self.selected_workspace_id.as_deref() == Some(workspace_id) {
             self.selection_pinned = false;
         }
@@ -501,10 +510,13 @@ impl PipViewModel {
                     workspace_id: frame.target.workspace_id.clone(),
                     workspace_label: sanitize_label(&frame.target.workspace_label, 48),
                     target_count: 0,
-                    updated_ms: 0,
+                    updated_ms: self
+                        .workspace_activity_ms
+                        .get(&frame.target.workspace_id)
+                        .copied()
+                        .unwrap_or(frame.timestamp_ms),
                 });
             entry.target_count += 1;
-            entry.updated_ms = entry.updated_ms.max(frame.timestamp_ms);
         }
         let mut summaries = summaries.into_values().collect::<Vec<_>>();
         summaries.sort_by(|a, b| {
@@ -560,10 +572,18 @@ impl PipViewModel {
         }
         self.selection_pinned = false;
         self.selected_workspace_id = self
-            .frames
-            .values()
-            .max_by_key(|frame| frame.timestamp_ms)
-            .map(|frame| frame.target.workspace_id.clone());
+            .workspaces()
+            .into_iter()
+            .next()
+            .map(|workspace| workspace.workspace_id);
+    }
+
+    fn prune_empty_workspace_activity(&mut self) {
+        self.workspace_activity_ms.retain(|workspace_id, _| {
+            self.frames
+                .values()
+                .any(|frame| frame.target.workspace_id == *workspace_id)
+        });
     }
 
     pub fn len(&self) -> usize {
@@ -839,6 +859,44 @@ mod tests {
         let frames = model.selected_frames();
         assert_eq!(frames.len(), 2);
         assert!(frames
+            .iter()
+            .all(|frame| frame.target.target_kind == PipTargetKind::BrowserTab));
+    }
+
+    #[test]
+    fn suppressed_native_container_activity_still_drives_auto_follow() {
+        let mut model = PipViewModel::new(6);
+        let first_container = PipNativeContainer {
+            pid: 42,
+            window_id: 7,
+        };
+        let second_container = PipNativeContainer {
+            pid: 84,
+            window_id: 9,
+        };
+        model.upsert(browser_frame(
+            "agent-a",
+            "browser:first:tab-a",
+            "browser-cdp:page-a",
+            first_container,
+            1,
+        ));
+        model.upsert(browser_frame(
+            "agent-b",
+            "browser:second:tab-b",
+            "browser-cdp:page-b",
+            second_container,
+            2,
+        ));
+        assert_eq!(model.selected_workspace_id(), Some("agent-b"));
+
+        model.upsert(native_frame("agent-a", "window:42:7", first_container, 3));
+
+        assert_eq!(model.selected_workspace_id(), Some("agent-a"));
+        assert_eq!(model.workspaces()[0].workspace_id, "agent-a");
+        assert_eq!(model.workspaces()[0].updated_ms, 3);
+        assert!(model
+            .selected_frames()
             .iter()
             .all(|frame| frame.target.target_kind == PipTargetKind::BrowserTab));
     }

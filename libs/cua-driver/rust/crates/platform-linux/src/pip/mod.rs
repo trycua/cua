@@ -1304,6 +1304,7 @@ mod tests {
                 png_bytes: png(width, height, base),
                 action_label: "observe".to_owned(),
                 timestamp_ms: index as u64,
+                cursor_position: None,
             });
         }
         let seconds = std::env::var("CUA_AGENT_VIEW_SMOKE_SECONDS")

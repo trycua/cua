@@ -1735,6 +1735,7 @@ impl ToolRegistry {
                 Err(_) => return None,
             };
             let png_bytes = BASE64.decode(preview.screenshot.data_base64).ok()?;
+            let cursor_position = pip_cursor_position(tool_name, args, &png_bytes, None, None);
             let target_label = if preview.title.trim().is_empty() {
                 preview.url
             } else {
@@ -1756,6 +1757,7 @@ impl ToolRegistry {
                 png_bytes,
                 action_label,
                 timestamp_ms,
+                cursor_position,
             });
         }
 
@@ -1763,6 +1765,8 @@ impl ToolRegistry {
             return None;
         };
         let png_bytes = screenshot_for(Some(window_id), Some(pid))?;
+        let cursor_position =
+            pip_cursor_position(tool_name, args, &png_bytes, Some(window_id), Some(pid));
         Some(pip_hook::PipHookFrame {
             target: pip_hook::PipHookTarget {
                 workspace_id,
@@ -1776,6 +1780,7 @@ impl ToolRegistry {
             png_bytes,
             action_label,
             timestamp_ms,
+            cursor_position,
         })
     }
 
@@ -4873,6 +4878,57 @@ fn pip_target_public_key(target: &PipCaptureTarget) -> String {
     }
 }
 
+fn pip_cursor_position(
+    tool_name: &str,
+    args: &Value,
+    png_bytes: &[u8],
+    window_id: Option<u64>,
+    pid: Option<i64>,
+) -> Option<(f64, f64)> {
+    use crate::tool_args::ArgsExt;
+
+    let point = if tool_name == "drag" || tool_name == "browser_drag" {
+        Some((args.opt_f64("to_x")?, args.opt_f64("to_y")?))
+    } else if matches!(
+        tool_name,
+        "click"
+            | "double_click"
+            | "right_click"
+            | "move_cursor"
+            | "browser_click"
+            | "browser_double_click"
+            | "browser_right_click"
+    ) {
+        match (args.opt_f64("x"), args.opt_f64("y")) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => crate::recording::resolve_click_point(
+                tool_name,
+                args,
+                window_id,
+                pid,
+                args.opt_u64("element_index"),
+            ),
+        }
+    } else {
+        None
+    }?;
+    let (width, height) = pip_png_dimensions(png_bytes)?;
+    Some((
+        (point.0 / width).clamp(0.0, 1.0),
+        (point.1 / height).clamp(0.0, 1.0),
+    ))
+}
+
+fn pip_png_dimensions(bytes: &[u8]) -> Option<(f64, f64)> {
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() < 24 || &bytes[..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?) as f64;
+    let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?) as f64;
+    (width > 0.0 && height > 0.0).then_some((width, height))
+}
+
 fn pip_result_proves_target_absent(result: &ToolResult) -> bool {
     let code = result
         .structured_content
@@ -4978,6 +5034,47 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
 #[cfg(test)]
 mod pip_routing_tests {
     use super::*;
+
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn pointer_coordinates_are_normalized_to_the_captured_target() {
+        assert_eq!(
+            pip_cursor_position(
+                "click",
+                &serde_json::json!({"x": 50, "y": 25}),
+                &png_header(200, 100),
+                None,
+                None,
+            ),
+            Some((0.25, 0.25))
+        );
+        assert_eq!(
+            pip_cursor_position(
+                "drag",
+                &serde_json::json!({"to_x": 180, "to_y": 90}),
+                &png_header(200, 100),
+                None,
+                None,
+            ),
+            Some((0.9, 0.9))
+        );
+        assert_eq!(
+            pip_cursor_position(
+                "type_text",
+                &serde_json::json!({"x": 50, "y": 25}),
+                &png_header(200, 100),
+                None,
+                None,
+            ),
+            None
+        );
+    }
 
     #[test]
     fn browser_tab_identity_wins_over_its_native_container_window() {

@@ -41,6 +41,12 @@ const SHELL_SIDE_INSET: f64 = 9.0;
 const SHELL_TOP_INSET: f64 = 20.0;
 const SHELL_BOTTOM_INSET: f64 = 10.0;
 const SESSION_SELECTOR_HEIGHT: f64 = 34.0;
+const RESIZE_HIT_INSET: f64 = 7.0;
+
+const RESIZE_LEFT: isize = 1;
+const RESIZE_RIGHT: isize = 2;
+const RESIZE_BOTTOM: isize = 4;
+const RESIZE_TOP: isize = 8;
 
 static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
 static VIEW_MODEL: Mutex<Option<PipViewModel>> = Mutex::new(None);
@@ -552,6 +558,36 @@ unsafe fn render_target_window(
         let _: () = msg_send![image_view, setImage: image];
     }
     let _: () = msg_send![window, addSubview: image_view];
+    if let Some((normalized_x, normalized_y)) = frame.cursor_position {
+        let pointer_size = NSSize::new(18.0, 22.0);
+        let x = (normalized_x.clamp(0.0, 1.0) * window_frame.size.width)
+            .clamp(0.0, (window_frame.size.width - pointer_size.width).max(0.0));
+        let y_from_top = normalized_y.clamp(0.0, 1.0) * window_frame.size.height;
+        let y = (window_frame.size.height - y_from_top - pointer_size.height).clamp(
+            0.0,
+            (window_frame.size.height - pointer_size.height).max(0.0),
+        );
+        let pointer: *mut AnyObject = {
+            let alloc: *mut AnyObject = msg_send![class!(NSImageView), alloc];
+            msg_send![
+                alloc,
+                initWithFrame: NSRect::new(NSPoint::new(x, y), pointer_size)
+            ]
+        };
+        let arrow_cursor: *mut AnyObject = msg_send![class!(NSCursor), arrowCursor];
+        let arrow_image: *mut AnyObject = msg_send![arrow_cursor, image];
+        let _: () = msg_send![pointer, setImage: arrow_image];
+        let _: () = msg_send![pointer, setImageScaling: 0u64];
+        let _: () = msg_send![pointer, setWantsLayer: true];
+        let pointer_layer: *mut AnyObject = msg_send![pointer, layer];
+        let _: () = msg_send![pointer_layer, setShadowOpacity: 0.72_f32];
+        let _: () = msg_send![pointer_layer, setShadowRadius: 2.5_f64];
+        let _: () = msg_send![pointer_layer, setShadowOffset: NSSize::new(0.0, -1.0)];
+        let shadow_color = color(0.0, 0.0, 0.0, 0.92);
+        let shadow_cg: *mut CGColor = msg_send![shadow_color, CGColor];
+        let _: () = msg_send![pointer_layer, setShadowColor: shadow_cg];
+        let _: () = msg_send![window, addSubview: pointer];
+    }
     let _: () = msg_send![shadow, addSubview: window];
     let _: () = msg_send![canvas, addSubview: shadow];
 }
@@ -814,6 +850,225 @@ unsafe fn install_shell_details(
         let _: () = msg_send![bar, setAutoresizingMask: 1u64];
         let _: () = msg_send![content_view, addSubview: bar];
     }
+}
+
+fn resized_window_frame(
+    start: objc2_foundation::NSRect,
+    delta_x: f64,
+    delta_y: f64,
+    direction: isize,
+    minimum: objc2_foundation::NSSize,
+) -> objc2_foundation::NSRect {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    let mut x = start.origin.x;
+    let mut y = start.origin.y;
+    let mut width = start.size.width;
+    let mut height = start.size.height;
+    if direction & RESIZE_LEFT != 0 {
+        let applied = delta_x.min(width - minimum.width);
+        x += applied;
+        width -= applied;
+    }
+    if direction & RESIZE_RIGHT != 0 {
+        width = (width + delta_x).max(minimum.width);
+    }
+    if direction & RESIZE_BOTTOM != 0 {
+        let applied = delta_y.min(height - minimum.height);
+        y += applied;
+        height -= applied;
+    }
+    if direction & RESIZE_TOP != 0 {
+        height = (height + delta_y).max(minimum.height);
+    }
+    NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+}
+
+fn agent_view_shell_hit_class() -> &'static objc2::runtime::AnyClass {
+    use objc2::class;
+    use objc2::declare::ClassBuilder;
+
+    static CLASS: OnceLock<&'static objc2::runtime::AnyClass> = OnceLock::new();
+    CLASS.get_or_init(|| {
+        let mut builder = ClassBuilder::new("CuaDriverAgentViewShellHitView", class!(NSView))
+            .expect("CuaDriverAgentViewShellHitView already registered");
+        unsafe {
+            builder.add_method(
+                objc2::sel!(acceptsFirstMouse:),
+                shell_accepts_first_mouse as extern "C" fn(_, _, _) -> objc2::runtime::Bool,
+            );
+            builder.add_method(
+                objc2::sel!(mouseDown:),
+                shell_mouse_down as extern "C" fn(_, _, _),
+            );
+        }
+        builder.register()
+    })
+}
+
+extern "C" fn shell_accepts_first_mouse(
+    _view: *mut objc2::runtime::AnyObject,
+    _selector: objc2::runtime::Sel,
+    _event: *mut objc2::runtime::AnyObject,
+) -> objc2::runtime::Bool {
+    objc2::runtime::Bool::YES
+}
+
+extern "C" fn shell_mouse_down(
+    view: *mut objc2::runtime::AnyObject,
+    _selector: objc2::runtime::Sel,
+    event: *mut objc2::runtime::AnyObject,
+) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    if view.is_null() || event.is_null() {
+        return;
+    }
+    unsafe {
+        let window: *mut AnyObject = msg_send![view, window];
+        if window.is_null() {
+            return;
+        }
+        let direction = rust_string(msg_send![view, toolTip])
+            .and_then(|value| value.parse::<isize>().ok())
+            .unwrap_or(0);
+        if direction == 0 {
+            let _: () = msg_send![window, performWindowDragWithEvent: event];
+            return;
+        }
+
+        let start_frame: objc2_foundation::NSRect = msg_send![window, frame];
+        let minimum: objc2_foundation::NSSize = msg_send![window, minSize];
+        let start_mouse: objc2_foundation::NSPoint =
+            msg_send![objc2::class!(NSEvent), mouseLocation];
+        let event_mask: u64 = (1 << 2) | (1 << 6);
+        let distant_future: *mut AnyObject = msg_send![objc2::class!(NSDate), distantFuture];
+        let default_mode = ns_string("kCFRunLoopDefaultMode");
+        loop {
+            let next: *mut AnyObject = msg_send![
+                window,
+                nextEventMatchingMask: event_mask
+                untilDate: distant_future
+                inMode: default_mode
+                dequeue: true
+            ];
+            if next.is_null() {
+                break;
+            }
+            let event_type: usize = msg_send![next, type];
+            if event_type == 2 {
+                break;
+            }
+            let mouse: objc2_foundation::NSPoint = msg_send![objc2::class!(NSEvent), mouseLocation];
+            let frame = resized_window_frame(
+                start_frame,
+                mouse.x - start_mouse.x,
+                mouse.y - start_mouse.y,
+                direction,
+                minimum,
+            );
+            let _: () = msg_send![window, setFrame: frame display: true];
+        }
+    }
+}
+
+unsafe fn add_shell_hit_view(
+    parent: *mut objc2::runtime::AnyObject,
+    frame: objc2_foundation::NSRect,
+    direction: isize,
+    autoresizing_mask: u64,
+) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let allocated: *mut AnyObject = msg_send![agent_view_shell_hit_class(), alloc];
+    let view: *mut AnyObject = msg_send![allocated, initWithFrame: frame];
+    let direction_string = ns_string(&direction.to_string());
+    let _: () = msg_send![view, setToolTip: direction_string];
+    let _: () = msg_send![view, setAutoresizingMask: autoresizing_mask];
+    let _: () = msg_send![parent, addSubview: view];
+}
+
+unsafe fn install_shell_interaction(
+    content_view: *mut objc2::runtime::AnyObject,
+    bounds: objc2_foundation::NSRect,
+) {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    let edge = RESIZE_HIT_INSET;
+    let width = bounds.size.width;
+    let height = bounds.size.height;
+    add_shell_hit_view(
+        content_view,
+        NSRect::new(
+            NSPoint::new(edge, height - edge),
+            NSSize::new(width - 2.0 * edge, edge),
+        ),
+        RESIZE_TOP,
+        10,
+    );
+    add_shell_hit_view(
+        content_view,
+        NSRect::new(
+            NSPoint::new(edge, 0.0),
+            NSSize::new(width - 2.0 * edge, edge),
+        ),
+        RESIZE_BOTTOM,
+        10,
+    );
+    add_shell_hit_view(
+        content_view,
+        NSRect::new(
+            NSPoint::new(0.0, edge),
+            NSSize::new(edge, height - 2.0 * edge),
+        ),
+        RESIZE_LEFT,
+        20,
+    );
+    add_shell_hit_view(
+        content_view,
+        NSRect::new(
+            NSPoint::new(width - edge, edge),
+            NSSize::new(edge, height - 2.0 * edge),
+        ),
+        RESIZE_RIGHT,
+        17,
+    );
+    for (origin, direction, mask) in [
+        (NSPoint::new(0.0, 0.0), RESIZE_LEFT | RESIZE_BOTTOM, 4),
+        (
+            NSPoint::new(width - edge, 0.0),
+            RESIZE_RIGHT | RESIZE_BOTTOM,
+            1,
+        ),
+        (
+            NSPoint::new(0.0, height - edge),
+            RESIZE_LEFT | RESIZE_TOP,
+            8,
+        ),
+        (
+            NSPoint::new(width - edge, height - edge),
+            RESIZE_RIGHT | RESIZE_TOP,
+            2,
+        ),
+    ] {
+        add_shell_hit_view(
+            content_view,
+            NSRect::new(origin, NSSize::new(edge, edge)),
+            direction,
+            mask,
+        );
+    }
+    add_shell_hit_view(
+        content_view,
+        NSRect::new(
+            NSPoint::new(edge, height - SHELL_TOP_INSET),
+            NSSize::new(width - 2.0 * edge, SHELL_TOP_INSET - edge),
+        ),
+        0,
+        10,
+    );
 }
 
 unsafe fn render_snapshot(snapshot: &ViewSnapshot) {
@@ -1265,6 +1520,8 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let _: () = msg_send![window, setBackgroundColor: clear];
     let _: () = msg_send![window, setOpaque: false];
     let _: () = msg_send![window, setHasShadow: true];
+    // Screen sharing and recordings should include Agent View itself.
+    let _: () = msg_send![window, setSharingType: 1u64];
     let _: () = msg_send![window, setMovableByWindowBackground: true];
     let _: () = msg_send![window, setIgnoresMouseEvents: false];
     let _: () = msg_send![window, setBecomesKeyOnlyIfNeeded: true];
@@ -1304,6 +1561,7 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let _: () = msg_send![canvas_layer, setMasksToBounds: true];
     let _: () = msg_send![content_view, addSubview: canvas];
     install_shell_details(content_view, bounds);
+    install_shell_interaction(content_view, bounds);
 
     let delegate = agent_view_delegate_instance();
     let _: () = msg_send![window, setDelegate: delegate];
@@ -1397,5 +1655,39 @@ mod tests {
                 && icon.origin.x + icon.size.width <= selector.size.width
                 && icon.origin.y + icon.size.height <= selector.size.height
         }));
+    }
+
+    #[test]
+    fn every_resize_direction_keeps_the_opposite_edges_anchored() {
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        let start = NSRect::new(NSPoint::new(100.0, 100.0), NSSize::new(600.0, 400.0));
+        let minimum = NSSize::new(360.0, 260.0);
+        let left = resized_window_frame(start, 40.0, 0.0, RESIZE_LEFT, minimum);
+        assert_eq!(left.origin.x, 140.0);
+        assert_eq!(left.size.width, 560.0);
+        let right = resized_window_frame(start, 40.0, 0.0, RESIZE_RIGHT, minimum);
+        assert_eq!(right.origin.x, 100.0);
+        assert_eq!(right.size.width, 640.0);
+        let bottom = resized_window_frame(start, 0.0, 30.0, RESIZE_BOTTOM, minimum);
+        assert_eq!(bottom.origin.y, 130.0);
+        assert_eq!(bottom.size.height, 370.0);
+        let top = resized_window_frame(start, 0.0, 30.0, RESIZE_TOP, minimum);
+        assert_eq!(top.origin.y, 100.0);
+        assert_eq!(top.size.height, 430.0);
+        let corner = resized_window_frame(start, -25.0, 35.0, RESIZE_LEFT | RESIZE_TOP, minimum);
+        assert_eq!(corner.origin, NSPoint::new(75.0, 100.0));
+        assert_eq!(corner.size, NSSize::new(625.0, 435.0));
+    }
+
+    #[test]
+    fn resize_geometry_enforces_the_minimum_without_moving_far_edges() {
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        let start = NSRect::new(NSPoint::new(100.0, 100.0), NSSize::new(600.0, 400.0));
+        let minimum = NSSize::new(360.0, 260.0);
+        let frame = resized_window_frame(start, 500.0, 500.0, RESIZE_LEFT | RESIZE_BOTTOM, minimum);
+        assert_eq!(frame.origin, NSPoint::new(340.0, 240.0));
+        assert_eq!(frame.size, minimum);
     }
 }

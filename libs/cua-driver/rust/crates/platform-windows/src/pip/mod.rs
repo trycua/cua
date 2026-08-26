@@ -809,6 +809,7 @@ mod native {
                 png_bytes,
                 action_label: "click".to_owned(),
                 timestamp_ms,
+                cursor_position: None,
             }
         }
 

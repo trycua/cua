@@ -283,6 +283,7 @@ fn maybe_init_pip() {
                                     png_bytes: frame.png_bytes,
                                     action_label: frame.action_label,
                                     timestamp_ms: frame.timestamp_ms,
+                                    cursor_position: frame.cursor_position,
                                 });
                             }
                             cua_driver_core::pip_hook::PipHookEvent::SetInputPassthrough {

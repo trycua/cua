@@ -318,6 +318,8 @@ pub struct PipFrame {
     /// Wall-clock timestamp (ms since Unix epoch) — used by backends
     /// that want to show "last update Xs ago" in the title bar.
     pub timestamp_ms: u64,
+    /// Normalized location of the synthetic agent pointer within the target image.
+    pub cursor_position: Option<(f64, f64)>,
 }
 
 /// Platform-neutral latest-frame model with bounded target retention.
@@ -353,6 +355,7 @@ impl PipViewModel {
     }
 
     pub fn upsert(&mut self, frame: PipFrame) -> Option<String> {
+        let mut frame = frame;
         let workspace_id = frame.target.workspace_id.clone();
         self.workspace_activity_ms
             .entry(workspace_id.clone())
@@ -382,6 +385,12 @@ impl PipViewModel {
             }
         }
         let view_id = frame.target.view_id();
+        if frame.cursor_position.is_none() {
+            frame.cursor_position = self
+                .frames
+                .get(&view_id)
+                .and_then(|previous| previous.cursor_position);
+        }
         self.frames.insert(view_id.clone(), frame);
         if self.frames.len() <= self.max_targets {
             return None;
@@ -680,6 +689,7 @@ mod tests {
             png_bytes: vec![1],
             action_label: "click".to_owned(),
             timestamp_ms,
+            cursor_position: None,
         }
     }
 
@@ -703,6 +713,7 @@ mod tests {
             png_bytes: vec![1],
             action_label: "get_browser_state".to_owned(),
             timestamp_ms,
+            cursor_position: None,
         }
     }
 
@@ -723,6 +734,19 @@ mod tests {
         model.upsert(frame("agent-a", "window:1:2", 1));
         model.upsert(frame("agent-a", "browser:bt:tab", 2));
         assert_eq!(model.len(), 2);
+    }
+
+    #[test]
+    fn non_pointer_updates_preserve_the_last_cursor_position() {
+        let mut model = PipViewModel::new(4);
+        let mut clicked = frame("agent-a", "window:1:2", 1);
+        clicked.cursor_position = Some((0.25, 0.75));
+        model.upsert(clicked);
+        model.upsert(frame("agent-a", "window:1:2", 2));
+        assert_eq!(
+            model.selected_frames()[0].cursor_position,
+            Some((0.25, 0.75))
+        );
     }
 
     #[test]

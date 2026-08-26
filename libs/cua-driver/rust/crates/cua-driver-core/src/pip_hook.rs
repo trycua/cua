@@ -46,6 +46,7 @@ pub struct PipHookFrame {
     pub png_bytes: Vec<u8>,
     pub action_label: String,
     pub timestamp_ms: u64,
+    pub cursor_position: Option<(f64, f64)>,
 }
 
 pub enum PipHookEvent {

@@ -60,7 +60,7 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
     let height = height.max(1.0);
     let short_edge = width.min(height);
     let outer_gap = (short_edge * 0.018).clamp(5.0, 11.0);
-    let dock_height = (height * 0.10).clamp(30.0, 50.0).min(height * 0.22);
+    let dock_height = (height * 0.12).clamp(38.0, 58.0).min(height * 0.22);
     let dock_bottom_margin = (height * 0.028).clamp(10.0, 16.0);
     let dock_y = (height - dock_height - dock_bottom_margin).max(outer_gap);
     let desktop_y = outer_gap;
@@ -77,8 +77,8 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
     let max_icon_width = ((width - 4.0 * outer_gap - dock_gap * (icon_count - 1) as f64)
         / icon_count as f64)
         .max(16.0);
-    let icon_size = (dock_height - 10.0).min(max_icon_width).clamp(18.0, 40.0);
-    let dock_width = (icon_count as f64 * icon_size + (icon_count - 1) as f64 * dock_gap + 20.0)
+    let icon_size = (dock_height - 16.0).min(max_icon_width).clamp(20.0, 42.0);
+    let dock_width = (icon_count as f64 * icon_size + (icon_count - 1) as f64 * dock_gap + 28.0)
         .min(width - 2.0 * outer_gap)
         .max(icon_size + 20.0);
     let dock = LayoutRect {

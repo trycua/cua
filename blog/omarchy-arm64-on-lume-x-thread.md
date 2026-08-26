@@ -8,7 +8,7 @@ Silicon.
 Hyprland boots. The Omarchy shell renders. Keyboard, mouse, networking, native
 ARM64 Chromium, and transparent Rosetta translation all work. 🧵
 
-**Attach:** `blog/assets/omarchy-arm64-lume/omarchy-apple-silicon-hero.png`
+**Attach:** https://github.com/user-attachments/assets/811018be-6ed8-4b94-b719-4d147affdde3
 
 **Alt text:** Omarchy on Apple Silicon. A technical diagram shows an Omarchy
 desktop running inside an ARM64 Lume VM, with official source and an Arch Linux
@@ -32,7 +32,7 @@ Omarchy v4.0.1 source
 Rosetta is an optional sidecar for the remaining self-contained x86-64 user
 applications—not the foundation of the system.
 
-**Attach:** `blog/assets/omarchy-arm64-lume/omarchy-arm64-architecture.png`
+**Attach:** https://github.com/user-attachments/assets/352315ab-87d8-4b6c-acfa-dfc2be79b025
 
 **Alt text:** Four-layer architecture from Apple Silicon through Lume and
 Apple Virtualization.framework to Arch Linux ARM and official Omarchy 4.0.1
@@ -71,7 +71,7 @@ The gaps:
 • 27 package names are absent, but 16 look packaging-only and 7 source-portable
 • dynamic x86-64 apps still need x86-64 libraries
 
-**Attach:** `blog/assets/omarchy-arm64-lume/omarchy-arm64-capability-matrix.png`
+**Attach:** https://github.com/user-attachments/assets/629c9343-5a27-4749-beca-3099ac3af313
 
 **Alt text:** A capability matrix marks desktop boot, input, networking,
 Chromium, and Rosetta user-space translation as tested; graphics acceleration

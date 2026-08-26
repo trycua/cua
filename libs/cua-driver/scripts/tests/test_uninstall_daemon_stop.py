@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 
 
@@ -75,6 +76,7 @@ awk -F'|' -v p="$pid" '$1 == p {{ print $2 }}' '{self.map}'
         args = [path, "30"] if command == "sleep" else [path, "-f", "/dev/null"]
         process = subprocess.Popen(args)
         self.processes.append(process)
+        threading.Thread(target=process.wait, daemon=True).start()
         with self.map.open("a", encoding="utf-8") as handle:
             handle.write(f"{process.pid}|{real}|alive\n")
         return process, real

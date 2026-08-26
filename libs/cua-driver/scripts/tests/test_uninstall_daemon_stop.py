@@ -155,6 +155,33 @@ printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
         self.assertIn("trusted installed cua-driver stop helper is unavailable", result.stderr)
         self.assertIsNone(daemon.poll())
 
+    def test_pgrep_error_fails_closed(self) -> None:
+        executable(self.bin / "pgrep", "exit 2")
+        pid_file = self.home / "missing.pid"
+
+        result = self.run_stop(self.setup(pid_file, None, "/missing/cua-driver"))
+
+        self.assertIn("status=1 result=failed", result.stdout)
+        self.assertIn("process inspection failed", result.stderr)
+
+    def test_pgrep_no_match_exit_one_is_clean(self) -> None:
+        executable(self.bin / "pgrep", "exit 1")
+        pid_file = self.home / "missing.pid"
+
+        result = self.run_stop(self.setup(pid_file, None, "/missing/cua-driver"))
+
+        self.assertIn("status=0 result=none", result.stdout)
+
+    def test_ps_failure_for_candidate_fails_closed(self) -> None:
+        executable(self.bin / "pgrep", "printf '2147483646\\n'; exit 0")
+        executable(self.bin / "ps", "exit 2")
+        pid_file = self.home / "missing.pid"
+
+        result = self.run_stop(self.setup(pid_file, None, "/missing/cua-driver"))
+
+        self.assertIn("status=1 result=failed", result.stdout)
+        self.assertIn("process inspection failed", result.stderr)
+
     def test_supervisor_failure_aborts_before_runtime_removal(self) -> None:
         tools = self.root / "main-bin"
         tools.mkdir()

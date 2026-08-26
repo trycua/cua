@@ -1278,8 +1278,12 @@ unsafe fn install_wallpaper(
     // covered by a sharp inset copy while the outer copy is blurred and tinted.
     let glass_frame = rounded_view(
         bounds,
-        CONTAINER_RADIUS,
-        color(0.18, 0.21, 0.25, 0.16),
+        if SHOW_SHELL_BORDER {
+            CONTAINER_RADIUS
+        } else {
+            0.0
+        },
+        color(0.18, 0.21, 0.25, if SHOW_SHELL_BORDER { 0.16 } else { 0.0 }),
         true,
     );
     let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
@@ -1358,7 +1362,7 @@ unsafe fn install_wallpaper(
     }
 
     let container_frame = desktop_frame(bounds);
-    let container_radius = 8.5;
+    let container_radius = if SHOW_SHELL_BORDER { 8.5 } else { 0.0 };
     let wallpaper_shadow = rounded_view(
         container_frame,
         container_radius,
@@ -1549,7 +1553,7 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let clear: *mut AnyObject = msg_send![class!(NSColor), clearColor];
     let _: () = msg_send![window, setBackgroundColor: clear];
     let _: () = msg_send![window, setOpaque: false];
-    let _: () = msg_send![window, setHasShadow: true];
+    let _: () = msg_send![window, setHasShadow: SHOW_SHELL_BORDER];
     // Screen sharing and recordings should include Agent View itself.
     let _: () = msg_send![window, setSharingType: 1u64];
     let _: () = msg_send![window, setMovableByWindowBackground: true];
@@ -1566,7 +1570,14 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let content_view: *mut AnyObject = msg_send![window, contentView];
     let _: () = msg_send![content_view, setWantsLayer: true];
     let content_layer: *mut AnyObject = msg_send![content_view, layer];
-    let _: () = msg_send![content_layer, setCornerRadius: CONTAINER_RADIUS];
+    let _: () = msg_send![
+        content_layer,
+        setCornerRadius: if SHOW_SHELL_BORDER {
+            CONTAINER_RADIUS
+        } else {
+            0.0
+        }
+    ];
     set_continuous_corners(content_layer);
     // The chrome view clips its own children. Masking here too would clip the
     // chrome's own outer rim stroke in half and flatten the frame.
@@ -1586,7 +1597,10 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     // the container silhouette.
     let _: () = msg_send![canvas, setWantsLayer: true];
     let canvas_layer: *mut AnyObject = msg_send![canvas, layer];
-    let _: () = msg_send![canvas_layer, setCornerRadius: 8.5_f64];
+    let _: () = msg_send![
+        canvas_layer,
+        setCornerRadius: if SHOW_SHELL_BORDER { 8.5_f64 } else { 0.0 }
+    ];
     set_continuous_corners(canvas_layer);
     let _: () = msg_send![canvas_layer, setMasksToBounds: true];
     let _: () = msg_send![content_view, addSubview: canvas];

@@ -32,10 +32,11 @@ struct NativeHandles {
 }
 
 /// Outer corner radius of the Agent View container chrome.
-const CONTAINER_RADIUS: f64 = 12.5;
-/// Thickness of the chrome between the panel edge and the miniature desktop.
-/// Kept thin so the container reads as macOS glass rather than as a bezel.
-const FRAME_INSET: f64 = 4.0;
+const CONTAINER_RADIUS: f64 = 15.0;
+/// The miniature desktop sits inside an asymmetric hardware-like glass shell.
+const SHELL_SIDE_INSET: f64 = 9.0;
+const SHELL_TOP_INSET: f64 = 20.0;
+const SHELL_BOTTOM_INSET: f64 = 10.0;
 
 static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
 static VIEW_MODEL: Mutex<Option<PipViewModel>> = Mutex::new(None);
@@ -554,17 +555,53 @@ unsafe fn render_dock(
     let _: () = msg_send![canvas, addSubview: dock];
 }
 
-unsafe fn render_resize_affordance(canvas: *mut objc2::runtime::AnyObject, width: f64) {
+fn desktop_frame(bounds: objc2_foundation::NSRect) -> objc2_foundation::NSRect {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    NSRect::new(
+        NSPoint::new(SHELL_SIDE_INSET, SHELL_BOTTOM_INSET),
+        NSSize::new(
+            (bounds.size.width - 2.0 * SHELL_SIDE_INSET).max(1.0),
+            (bounds.size.height - SHELL_TOP_INSET - SHELL_BOTTOM_INSET).max(1.0),
+        ),
+    )
+}
+
+unsafe fn install_shell_details(
+    content_view: *mut objc2::runtime::AnyObject,
+    bounds: objc2_foundation::NSRect,
+) {
     use objc2::msg_send;
     use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    let grip_width = 24.0;
+    let grip = rounded_view(
+        NSRect::new(
+            NSPoint::new(
+                (bounds.size.width - grip_width) / 2.0,
+                bounds.size.height - 9.0,
+            ),
+            NSSize::new(grip_width, 3.0),
+        ),
+        1.5,
+        color(0.08, 0.10, 0.13, 0.52),
+        true,
+    );
+    // Keep the grip centred and pinned to the shell's top edge while resizing.
+    let _: () = msg_send![grip, setAutoresizingMask: 13u64];
+    let grip_layer: *mut objc2::runtime::AnyObject = msg_send![grip, layer];
+    let _: () = msg_send![grip_layer, setShadowOpacity: 0.32_f32];
+    let _: () = msg_send![grip_layer, setShadowRadius: 0.8_f64];
+    let _: () = msg_send![grip_layer, setShadowOffset: NSSize::new(0.0, 1.0)];
+    let _: () = msg_send![content_view, addSubview: grip];
 
     let marker = color(1.0, 1.0, 1.0, 0.48);
     for (index, length) in [10.0_f64, 6.0].into_iter().enumerate() {
         let bar = rounded_view(
             NSRect::new(
                 NSPoint::new(
-                    (width - 15.0 + index as f64 * 4.0).max(0.0),
-                    6.0 + index as f64 * 2.0,
+                    (bounds.size.width - 16.0 + index as f64 * 4.0).max(0.0),
+                    4.5 + index as f64 * 2.0,
                 ),
                 NSSize::new(length, 1.2),
             ),
@@ -573,7 +610,9 @@ unsafe fn render_resize_affordance(canvas: *mut objc2::runtime::AnyObject, width
             false,
         );
         let _: () = msg_send![bar, setFrameCenterRotation: -45.0_f64];
-        let _: () = msg_send![canvas, addSubview: bar];
+        // Move with the right edge while remaining in the bottom shell rail.
+        let _: () = msg_send![bar, setAutoresizingMask: 1u64];
+        let _: () = msg_send![content_view, addSubview: bar];
     }
 }
 
@@ -626,7 +665,6 @@ unsafe fn render_frames(frames: &[PipFrame]) {
         }
         render_dock(canvas, frames, &layout, bounds.size.height);
     }
-    render_resize_affordance(canvas, bounds.size.width);
 }
 
 unsafe extern "C" fn shutdown_cb(_ctx: *mut c_void) {
@@ -771,15 +809,8 @@ unsafe fn install_wallpaper(
     let _: () = msg_send![highlight, setAutoresizingMask: 10u64];
     let _: () = msg_send![glass_frame, addSubview: highlight];
 
-    let inset = FRAME_INSET;
-    let container_radius = CONTAINER_RADIUS - inset;
-    let container_frame = objc2_foundation::NSRect::new(
-        objc2_foundation::NSPoint::new(inset, inset),
-        objc2_foundation::NSSize::new(
-            (bounds.size.width - 2.0 * inset).max(1.0),
-            (bounds.size.height - 2.0 * inset).max(1.0),
-        ),
-    );
+    let container_frame = desktop_frame(bounds);
+    let container_radius = 8.5;
     let wallpaper_shadow = rounded_view(
         container_frame,
         container_radius,
@@ -789,11 +820,10 @@ unsafe fn install_wallpaper(
     let _: () = msg_send![wallpaper_shadow, setAutoresizingMask: 18u64];
     let shadow_layer: *mut AnyObject = msg_send![wallpaper_shadow, layer];
     set_continuous_corners(shadow_layer);
-    // Tight and close, so the desktop reads as sunk into a thin frame instead
-    // of sitting behind a black halo that swallows the chrome.
-    let _: () = msg_send![shadow_layer, setShadowOpacity: 0.55_f32];
-    let _: () = msg_send![shadow_layer, setShadowRadius: 3.0_f64];
-    let _: () = msg_send![shadow_layer, setShadowOffset: objc2_foundation::NSSize::new(0.0, -1.0)];
+    // The inset shadow separates the desktop from the thicker shell rails.
+    let _: () = msg_send![shadow_layer, setShadowOpacity: 0.62_f32];
+    let _: () = msg_send![shadow_layer, setShadowRadius: 4.0_f64];
+    let _: () = msg_send![shadow_layer, setShadowOffset: objc2_foundation::NSSize::new(0.0, -1.5)];
     let shadow_color = color(0.0, 0.0, 0.0, 0.85);
     let shadow_cg: *mut CGColor = msg_send![shadow_color, CGColor];
     let _: () = msg_send![shadow_layer, setShadowColor: shadow_cg];
@@ -805,7 +835,10 @@ unsafe fn install_wallpaper(
     let seam_outset = 0.75;
     let seam = rounded_view(
         objc2_foundation::NSRect::new(
-            objc2_foundation::NSPoint::new(inset - seam_outset, inset - seam_outset),
+            objc2_foundation::NSPoint::new(
+                container_frame.origin.x - seam_outset,
+                container_frame.origin.y - seam_outset,
+            ),
             objc2_foundation::NSSize::new(
                 container_frame.size.width + 2.0 * seam_outset,
                 container_frame.size.height + 2.0 * seam_outset,
@@ -972,20 +1005,22 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     set_layer_background(content_layer, color(0.0, 0.0, 0.0, 0.0));
     let bounds: NSRect = msg_send![content_view, bounds];
     let (wallpaper_container, wallpaper_view) = install_wallpaper(content_view, screen, bounds);
+    let inner_frame = desktop_frame(bounds);
 
     let canvas: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSView), alloc];
-        msg_send![allocated, initWithFrame: bounds]
+        msg_send![allocated, initWithFrame: inner_frame]
     };
     let _: () = msg_send![canvas, setAutoresizingMask: 18u64];
     // The content view no longer masks, so the canvas clips its own contents to
     // the container silhouette.
     let _: () = msg_send![canvas, setWantsLayer: true];
     let canvas_layer: *mut AnyObject = msg_send![canvas, layer];
-    let _: () = msg_send![canvas_layer, setCornerRadius: CONTAINER_RADIUS];
+    let _: () = msg_send![canvas_layer, setCornerRadius: 8.5_f64];
     set_continuous_corners(canvas_layer);
     let _: () = msg_send![canvas_layer, setMasksToBounds: true];
     let _: () = msg_send![content_view, addSubview: canvas];
+    install_shell_details(content_view, bounds);
 
     let delegate = agent_view_delegate_instance();
     let _: () = msg_send![window, setDelegate: delegate];
@@ -1046,5 +1081,17 @@ mod tests {
         );
         assert_eq!(tall.size, NSSize::new(1056.0, 660.0));
         assert_eq!(tall.origin, NSPoint::new(-338.0, 0.0));
+    }
+
+    #[test]
+    fn desktop_frame_preserves_asymmetric_shell_rails() {
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        let outer = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(620.0, 420.0));
+        let inner = desktop_frame(outer);
+
+        assert_eq!(inner.origin, NSPoint::new(9.0, 10.0));
+        assert_eq!(inner.size, NSSize::new(602.0, 390.0));
+        assert_eq!(outer.size.height - inner.origin.y - inner.size.height, 20.0);
     }
 }

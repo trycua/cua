@@ -95,14 +95,14 @@ The local uninstaller leaves `cua-driver`, `CuaDriver.app`, release services,
 release state, and release TCC grants untouched. On macOS it revokes only
 `com.trycua.driver.local`; pass `--keep-tcc` to retain that local grant.
 
-The release Unix uninstaller stops the daemon before removing the runtime. It
-uses the PID file written by `cua-driver serve`, invokes the installed
-`cua-driver stop` command, and verifies that the owned PID has exited. This
-keeps shutdown in the Rust daemon lifecycle instead of duplicating the CLI's
-argument parsing in Bash, and leaves MCP stdio children alone.
+The release Unix uninstaller shuts down the release service before removing
+anything. It first requires the systemd/launchd supervisor to stop, then uses
+the daemon PID file to validate the installed release process, invokes the
+trusted installed `cua-driver stop`, and escalates only that validated PID if
+needed. It verifies the daemon stays stopped before cleanup begins.
 
-If the PID file is missing or stale, the script falls back to a small
-executable-identity check limited to the release install paths. A failure to
-inspect or stop an owned process is reported as `daemon_stop_incomplete`, the
-closing message reflects the incomplete stop, and the uninstaller exits
-non-zero rather than claiming a clean uninstall.
+With a missing or stale PID file, the script performs only a narrow
+release-executable process check. It never signals an ambiguous process. If
+supervisor shutdown, ownership validation, process inspection, or final
+shutdown verification cannot be proven safe, uninstall aborts non-zero while
+the runtime is still in place.

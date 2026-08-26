@@ -6934,7 +6934,7 @@ impl Tool for SetConfigTool {
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
-                "agent_view":{"type":"boolean","description":"Enable the experimental multi-target Agent View (applies next restart)."},
+                "agent_view":{"type":"boolean","description":"Enable the multi-target Agent View (applies next restart)."},
                 "agent_view_geometry":{"type":"string","description":"Agent View size + optional position in `WxH` or `WxH+X+Y` form."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,

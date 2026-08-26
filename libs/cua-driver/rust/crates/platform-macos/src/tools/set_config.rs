@@ -49,7 +49,7 @@ fn def() -> &'static ToolDef {
                 },
                 "agent_view": {
                     "type": "boolean",
-                    "description": "Enable the experimental multi-target Agent View. Exact native \
+                    "description": "Enable the multi-target Agent View. Exact native \
                         windows and Chrome tabs are grouped automatically by session; no target \
                         claiming is involved. Applies on next daemon restart."
                 },

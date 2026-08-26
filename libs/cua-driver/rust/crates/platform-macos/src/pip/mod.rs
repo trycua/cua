@@ -6,7 +6,8 @@
 //! never claims, moves, resizes, or closes the underlying targets.
 
 use std::ffi::{c_void, CStr};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use pip_preview::{
     layout_desktop, png_dimensions, PipBackend, PipBackendFactory, PipConfig, PipFrame,
@@ -81,6 +82,11 @@ fn dispatch_to_main_sync<T>(payload: T, cb: unsafe extern "C" fn(*mut c_void)) {
 
 pub struct MacosPipBackend;
 
+struct InputPassthroughRequest {
+    passthrough: bool,
+    applied: Arc<AtomicBool>,
+}
+
 impl PipBackend for MacosPipBackend {
     fn push_frame(&self, frame: PipFrame) {
         if HANDLES.lock().unwrap().is_none() {
@@ -101,7 +107,17 @@ impl PipBackend for MacosPipBackend {
     }
 
     fn set_input_passthrough(&self, passthrough: bool) -> anyhow::Result<()> {
-        dispatch_to_main_sync(passthrough, set_input_passthrough_cb);
+        let applied = Arc::new(AtomicBool::new(false));
+        dispatch_to_main_sync(
+            InputPassthroughRequest {
+                passthrough,
+                applied: Arc::clone(&applied),
+            },
+            set_input_passthrough_cb,
+        );
+        if !applied.load(Ordering::Acquire) {
+            anyhow::bail!("Agent View window is not running");
+        }
         Ok(())
     }
 
@@ -114,11 +130,12 @@ unsafe extern "C" fn set_input_passthrough_cb(ctx: *mut c_void) {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
 
-    let passthrough: bool = *Box::from_raw(ctx as *mut bool);
+    let request: InputPassthroughRequest = *Box::from_raw(ctx as *mut InputPassthroughRequest);
     let handles = HANDLES.lock().unwrap();
     if let Some(handles) = handles.as_ref() {
         let window = handles.window as *mut AnyObject;
-        let _: () = msg_send![window, setIgnoresMouseEvents: passthrough];
+        let _: () = msg_send![window, setIgnoresMouseEvents: request.passthrough];
+        request.applied.store(true, Ordering::Release);
     }
 }
 
